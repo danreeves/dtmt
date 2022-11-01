@@ -4,8 +4,7 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use glob::Pattern;
-
-use dtmt::Context;
+use tokio::sync::RwLock;
 
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
@@ -76,16 +75,6 @@ pub(crate) fn command_definition() -> Command {
                                 are supported for this.",
                 ),
         )
-        .arg(
-            Arg::new("oodle")
-                .long("oodle")
-                .default_value("oodle-cli")
-                .help(
-                    "Name of or path to the Oodle decompression helper. \
-                    The helper is a small executable that wraps the Oodle library \
-                    with a CLI.",
-                ),
-        )
         .arg(Arg::new("ljd").long("ljd").help(
             "Path to a custom ljd executable. If not set, \
                                 `ljd` will be called from PATH.",
@@ -102,6 +91,6 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<Context>, _matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(_ctx: Arc<RwLock<dtmt::Context>>, _matches: &ArgMatches) -> Result<()> {
     unimplemented!()
 }
