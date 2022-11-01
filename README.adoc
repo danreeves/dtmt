@@ -1,0 +1,13 @@
+= Darktide Mod Tools
+:idprefix:
+:idseparator:
+:toc: macro
+:toclevels: 1
+:!toc-title:
+:caution-caption: :fire:
+:important-caption: :exclamtion:
+:note-caption: :paperclip:
+:tip-caption: :bulb:
+:warning-caption: :warning:
+
+A set of tools to develop mods for the newest generation of the Bitsquid game engine that powers the game _Warhammer 40.000: Darktide_.

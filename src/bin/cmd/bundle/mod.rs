@@ -1,0 +1,31 @@
+use std::sync::Arc;
+
+use clap::{ArgMatches, Command};
+use color_eyre::eyre::Result;
+
+use dtmt::Context;
+
+mod decompress;
+mod extract;
+mod list;
+
+pub(crate) fn command_definition() -> Command {
+    Command::new("bundle")
+        .subcommand_required(true)
+        .about("Manipulate the game's bundle files")
+        .subcommand(decompress::command_definition())
+        .subcommand(extract::command_definition())
+        .subcommand(list::command_definition())
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(ctx: Arc<Context>, matches: &ArgMatches) -> Result<()> {
+    match matches.subcommand() {
+        Some(("decompress", sub_matches)) => decompress::run(ctx, sub_matches).await,
+        Some(("extract", sub_matches)) => extract::run(ctx, sub_matches).await,
+        Some(("list", sub_matches)) => list::run(ctx, sub_matches).await,
+        _ => unreachable!(
+            "clap is configured to require a subcommand, and they're all handled above"
+        ),
+    }
+}
