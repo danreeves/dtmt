@@ -78,9 +78,9 @@ where
             if !res.status.success() {
                 let stderr = String::from_utf8_lossy(&res.stderr);
                 let stdout = String::from_utf8_lossy(&res.stdout);
-                return Err(eyre::eyre!("failed to run Oodle decompression helper")
+                return Err(eyre::eyre!("failed to run Oodle decompression helper"))
                     .with_section(move || stdout.to_string().header("Logs:"))
-                    .with_section(move || stderr.to_string().header("Stderr:")));
+                    .with_section(move || stderr.to_string().header("Stderr:"));
             }
 
             Ok(())
