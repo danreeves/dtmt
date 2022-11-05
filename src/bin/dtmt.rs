@@ -63,14 +63,16 @@ async fn main() -> Result<()> {
         .get_matches();
 
     {
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+        let fmt_layer = tracing_subscriber::fmt::layer().pretty();
         let filter_layer =
             EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
 
         tracing_subscriber::registry()
             .with(filter_layer)
             .with(fmt_layer)
-            .with(ErrorLayer::default())
+            .with(ErrorLayer::new(
+                tracing_subscriber::fmt::format::Pretty::default(),
+            ))
             .init();
     }
 
