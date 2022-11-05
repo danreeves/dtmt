@@ -2,15 +2,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::Result;
+use color_eyre::{
+    eyre::{self, Context, Result},
+    Help, Report, SectionExt,
+};
+use dtmt::Bundle;
+use futures::future::try_join_all;
 use glob::Pattern;
-use tokio::sync::RwLock;
+use tokio::{fs, sync::RwLock};
 
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
         Ok(p) => Ok(p),
         Err(e) => Err(format!("Invalid glob pattern '{}': {}", s, e)),
     }
+}
+
+fn flatten_name(s: &str) -> String {
+    s.replace('/', "_")
 }
 
 pub(crate) fn command_definition() -> Command {
@@ -48,7 +57,7 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(parse_glob_pattern)
                 .help(
                     "Do not extract files that match the given glob pattern(s).\n\
-                                This takes precedence over `include`.",
+                        This takes precedence over `include`.",
                 ),
         )
         .arg(
@@ -72,25 +81,239 @@ pub(crate) fn command_definition() -> Command {
                 .action(ArgAction::SetTrue)
                 .help(
                     "Attempt to decompile files after extracting them. Not all file types \
-                                are supported for this.",
+                        are supported for this.",
                 ),
         )
-        .arg(Arg::new("ljd").long("ljd").help(
-            "Path to a custom ljd executable. If not set, \
-                                `ljd` will be called from PATH.",
-        ))
-        .arg(Arg::new("revorb").long("revorb").help(
-            "Path to a custom revorb executable. If not set, \
-                                `revorb` will be called from PATH.",
-        ))
-        .arg(Arg::new("ww2ogg").long("ww2ogg").help(
-            "Path to a custom ww2ogg executable. If not set, \
-                                `ww2ogg` will be called from PATH.\nSee the documentation for how \
-                                to set up the script.",
-        ))
+        .arg(
+            Arg::new("ljd")
+                .long("ljd")
+                .help(
+                    "Path to a custom ljd executable. If not set, \
+                        `ljd` will be called from PATH.",
+                )
+                .default_value("ljd"),
+        )
+        .arg(
+            Arg::new("revorb")
+                .long("revorb")
+                .help(
+                    "Path to a custom revorb executable. If not set, \
+                        `revorb` will be called from PATH.",
+                )
+                .default_value("revorb"),
+        )
+        .arg(
+            Arg::new("ww2ogg")
+                .long("ww2ogg")
+                .help(
+                    "Path to a custom ww2ogg executable. If not set, \
+                        `ww2ogg` will be called from PATH.\nSee the documentation for how \
+                        to set up the script for this.",
+                )
+                .default_value("ww2ogg"),
+        )
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<RwLock<dtmt::Context>>, _matches: &ArgMatches) -> Result<()> {
-    unimplemented!()
+pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+    {
+        let ljd_bin = matches
+            .get_one::<String>("ljd")
+            .expect("no default value for 'ljd' parameter");
+        let revorb_bin = matches
+            .get_one::<String>("revorb")
+            .expect("no default value for 'revorb' parameter");
+        let ww2ogg_bin = matches
+            .get_one::<String>("ww2ogg")
+            .expect("no default value for 'ww2ogg' parameter");
+
+        let mut ctx = ctx.write().await;
+        ctx.ljd = Some(ljd_bin.clone());
+        ctx.revorb = Some(revorb_bin.clone());
+        ctx.ww2ogg = Some(ww2ogg_bin.clone());
+    }
+
+    let includes = match matches.get_many::<Pattern>("include") {
+        Some(values) => values.collect(),
+        None => Vec::new(),
+    };
+
+    let excludes = match matches.get_many::<Pattern>("exclude") {
+        Some(values) => values.collect(),
+        None => Vec::new(),
+    };
+
+    let bundles = matches
+        .get_many::<PathBuf>("bundle")
+        .unwrap_or_default()
+        .cloned();
+
+    let bundles = try_join_all(bundles.into_iter().map(|p| async {
+        let ctx = ctx.clone();
+        let path_display = p.display().to_string();
+        async move { Bundle::open(ctx, &p).await }
+            .await
+            .with_section(|| path_display.header("Bundle Path:"))
+    }))
+    .await?;
+
+    let files: Vec<_> = bundles
+        .iter()
+        .flat_map(|bundle| bundle.files())
+        .filter(|file| {
+            let name = file.base_name();
+
+            // When there is no `includes`, all files are included
+            let is_included = includes.is_empty() || includes.iter().any(|glob| glob.matches(name));
+            // When there is no `excludes`, no file is excluded
+            let is_excluded =
+                !excludes.is_empty() && excludes.iter().any(|glob| glob.matches(name));
+
+            is_included && !is_excluded
+        })
+        .collect();
+
+    let should_decompile = matches.get_flag("decompile");
+    let should_flatten = matches.get_flag("flatten");
+    let is_dry_run = matches.get_flag("dry-run");
+
+    let dest = matches
+        .get_one::<PathBuf>("destination")
+        .expect("required argument 'destination' missing");
+
+    {
+        let res = match fs::metadata(&dest).await {
+            Ok(meta) if !meta.is_dir() => Err(eyre::eyre!("Destination path is not a directory")),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(eyre::eyre!("Destination path does not exist"))
+                    .with_suggestion(|| "Create the directory")
+            }
+            Err(err) => Err(Report::new(err)),
+            _ => Ok(()),
+        };
+
+        if res.is_err() {
+            return res.wrap_err(format!(
+                "Failed to open destination directory: {}",
+                dest.display()
+            ));
+        }
+    }
+
+    let mut tasks = Vec::with_capacity(files.len());
+
+    for file in files {
+        let name = file.name(should_decompile);
+        let data = if should_decompile {
+            file.decompiled(ctx.clone()).await
+        } else {
+            file.raw()
+        };
+
+        match data {
+            Ok(mut files) => {
+                match files.len() {
+                    0 => {
+                        println!(
+                            "Decompilation did not produce any data for file {}",
+                            file.name(should_decompile)
+                        );
+                    }
+                    // For a single file we want to use the bundle file's name.
+                    1 => {
+                        // We already checked `files.len()`.
+                        let file = files.pop().unwrap();
+
+                        let name = file.name().unwrap_or(&name);
+                        let name = if should_flatten {
+                            flatten_name(name)
+                        } else {
+                            name.clone()
+                        };
+
+                        let mut path = dest.clone();
+                        path.push(name);
+
+                        if is_dry_run {
+                            tracing::info!(path = %path.display(), "Writing file");
+                        } else {
+                            tracing::debug!(path = %path.display(), "Writing file");
+                            tasks.push(tokio::spawn(async move {
+                                fs::write(&path, file.data())
+                                    .await
+                                    .wrap_err("failed to write extracted file to disc")
+                                    .with_section(|| path.display().to_string().header("Path"))
+                            }));
+                        }
+                    }
+                    // For multiple files we create a directory and name files
+                    // by index.
+                    _ => {
+                        for (i, file) in files.into_iter().enumerate() {
+                            let mut path = dest.clone();
+
+                            let name = file
+                                .name()
+                                .map(|name| {
+                                    if should_flatten {
+                                        flatten_name(name)
+                                    } else {
+                                        name.clone()
+                                    }
+                                })
+                                .unwrap_or(format!("{}", i));
+
+                            path.push(name);
+
+                            if is_dry_run {
+                                tracing::info!(path = %path.display(), "Writing file");
+                            } else {
+                                tracing::debug!(path = %path.display(), "Writing file");
+                                tasks.push(tokio::spawn(async move {
+                                    let parent = match path.parent() {
+                                        Some(parent) => parent,
+                                        None => {
+                                            eyre::bail!(
+                                                "Decompilation produced invalid path: {}",
+                                                &path.display()
+                                            )
+                                        }
+                                    };
+
+                                    fs::create_dir_all(parent)
+                                        .await
+                                        .wrap_err("failed to create parent directory")
+                                        .with_section(|| {
+                                            parent.display().to_string().header("Path")
+                                        })?;
+
+                                    fs::write(&path, file.data())
+                                        .await
+                                        .wrap_err("failed to write extracted file to disc")
+                                        .with_section(|| path.display().to_string().header("Path"))
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                let err = err
+                    .wrap_err("Failed to decompile")
+                    .with_section(|| name.header("File"));
+
+                tracing::error!("{:#}", err);
+            }
+        };
+    }
+
+    let results = try_join_all(tasks).await?;
+
+    for res in results {
+        if let Err(err) = res {
+            tracing::error!("{:#}", err);
+        }
+    }
+
+    Ok(())
 }

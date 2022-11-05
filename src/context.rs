@@ -7,6 +7,9 @@ use crate::murmur::{Dictionary, HashGroup, Murmur32, Murmur64};
 pub struct Context {
     pub lookup: Dictionary,
     pub oodle: Option<String>,
+    pub ljd: Option<String>,
+    pub revorb: Option<String>,
+    pub ww2ogg: Option<String>,
 }
 
 impl Context {
@@ -14,6 +17,9 @@ impl Context {
         Self {
             lookup: Dictionary::new(),
             oodle: None,
+            ljd: None,
+            revorb: None,
+            ww2ogg: None,
         }
     }
 }

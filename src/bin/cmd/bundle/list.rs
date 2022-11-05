@@ -61,7 +61,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
                 let v = &f.variants()[0];
                 println!(
                     "\t{}.{}: {} bytes",
-                    f.name(),
+                    f.base_name(),
                     f.file_type().ext_name(),
                     v.size()
                 );

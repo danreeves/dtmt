@@ -1,6 +1,7 @@
 mod binary;
 mod bundle;
 mod context;
+mod filetype;
 pub mod murmur;
 mod oodle;
 

@@ -14,7 +14,7 @@ use crate::context::lookup_hash;
 use crate::murmur::{HashGroup, Murmur64};
 use crate::oodle;
 
-mod file;
+pub(crate) mod file;
 
 use file::BundleFile;
 

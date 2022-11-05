@@ -2,11 +2,13 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use color_eyre::{Help, Result, SectionExt};
+use futures::future::join_all;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek};
 use tokio::sync::RwLock;
 
 use crate::binary::*;
 use crate::context::lookup_hash;
+use crate::filetype::*;
 use crate::murmur::{HashGroup, Murmur64};
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -407,8 +409,16 @@ impl BundleFile {
         })
     }
 
-    pub fn name(&self) -> &String {
+    pub fn base_name(&self) -> &String {
         &self.name
+    }
+
+    pub fn name(&self, decompiled: bool) -> String {
+        if decompiled {
+            format!("{}.{}", self.name, self.file_type.decompiled_ext_name())
+        } else {
+            format!("{}.{}", self.name, self.file_type.ext_name())
+        }
     }
 
     pub fn hash(&self) -> Murmur64 {
@@ -421,5 +431,90 @@ impl BundleFile {
 
     pub fn variants(&self) -> &Vec<BundleFileVariant> {
         &self.variants
+    }
+
+    pub fn raw(&self) -> Result<Vec<UserFile>> {
+        let files = self
+            .variants
+            .iter()
+            .map(|variant| UserFile {
+                data: variant.data().clone(),
+                name: Some(self.name(false)),
+            })
+            .collect();
+
+        Ok(files)
+    }
+
+    #[tracing::instrument(skip_all)]
+    pub async fn decompiled(&self, ctx: Arc<RwLock<crate::Context>>) -> Result<Vec<UserFile>> {
+        let file_type = self.file_type();
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            tracing::debug!(
+                name = self.name(true),
+                variants = self.variants.len(),
+                "Attempting to decompile"
+            );
+        }
+
+        let tasks = self.variants.iter().map(|variant| {
+            let ctx = ctx.clone();
+
+            async move {
+                let res = match file_type {
+                    BundleFileType::Lua => lua::decompile(ctx, variant.data()).await,
+                    _ => {
+                        tracing::debug!("Can't decompile, unknown file type");
+                        Ok(vec![UserFile::with_name(
+                            variant.data.clone(),
+                            self.name(true),
+                        )])
+                    }
+                };
+
+                match res {
+                    Ok(files) => files,
+                    Err(err) => {
+                        let err = err
+                            .wrap_err("failed to decompile file")
+                            .with_section(|| self.name(true).header("File:"));
+                        tracing::error!("{}", err);
+                        vec![]
+                    }
+                }
+            }
+        });
+
+        let results = join_all(tasks).await;
+
+        Ok(results.into_iter().flatten().collect())
+    }
+}
+
+pub struct UserFile {
+    // TODO: Might be able to avoid some allocations with a Cow here
+    data: Vec<u8>,
+    name: Option<String>,
+}
+
+impl UserFile {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data, name: None }
+    }
+
+    pub fn with_name(data: Vec<u8>, name: String) -> Self {
+        Self {
+            data,
+            name: Some(name),
+        }
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn name(&self) -> Option<&String> {
+        self.name.as_ref()
     }
 }
