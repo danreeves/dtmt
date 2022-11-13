@@ -68,14 +68,10 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
         .get_one::<PathBuf>("destination")
         .expect("required parameter 'destination' is missing");
 
-    let is_dir = {
-        let meta = fs::metadata(out_path)
-            .await
-            .wrap_err("failed to access destination path")
-            .with_section(|| out_path.display().to_string().header("Path:"))?;
-
-        meta.is_dir()
-    };
+    let is_dir = fs::metadata(out_path)
+        .await
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false);
 
     let paths = collect_bundle_paths(bundles).await;
 
