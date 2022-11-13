@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::value_parser;
-use clap::{command, Arg, ArgAction};
+use clap::{command, Arg};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
 use tokio::fs::File;
@@ -33,16 +33,6 @@ async fn main() -> Result<()> {
 
     let matches = command!()
         .subcommand_required(true)
-        .arg(
-            Arg::new("verbose")
-                .long("verbose")
-                .short('v')
-                .action(ArgAction::Count)
-                .help(
-                    "Increase verbosity of informational and debugging output. \
-                    May be specified multiple times.",
-                ),
-        )
         .arg(
             Arg::new("dictionary")
                 .help(

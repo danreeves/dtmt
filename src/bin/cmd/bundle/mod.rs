@@ -4,9 +4,17 @@ use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use tokio::sync::RwLock;
 
+use dtmt::Oodle;
+
 mod decompress;
 mod extract;
 mod list;
+
+#[cfg(target_os = "windows")]
+const OODLE_LIB_NAME: &str = "oo2core_8_win64";
+
+#[cfg(target_os = "linux")]
+const OODLE_LIB_NAME: &str = "liboo2corelinux64.so";
 
 pub(crate) fn command_definition() -> Command {
     Command::new("bundle")
@@ -15,11 +23,12 @@ pub(crate) fn command_definition() -> Command {
         .arg(
             Arg::new("oodle")
                 .long("oodle")
-                .default_value("oodle-cli")
+                .default_value(OODLE_LIB_NAME)
                 .help(
-                    "Name of or path to the Oodle decompression helper. \
-                    The helper is a small executable that wraps the Oodle library \
-                    with a CLI.",
+                    "The oodle library to load. This may either be:\n\
+                        - A library name that will be searched for in the system's default paths.\n\
+                        - A file path relative to the current working directory.\n\
+                        - An absolute file path.",
                 ),
         )
         .subcommand(decompress::command_definition())
@@ -29,12 +38,10 @@ pub(crate) fn command_definition() -> Command {
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
-    let oodle_bin = matches
-        .get_one::<String>("oodle")
-        .expect("no default value for 'oodle' parameter");
-    {
+    if let Some(name) = matches.get_one::<String>("oodle") {
+        let oodle = Oodle::new(name)?;
         let mut ctx = ctx.write().await;
-        ctx.oodle = Some(oodle_bin.clone());
+        ctx.oodle = Some(oodle);
     }
 
     match matches.subcommand() {

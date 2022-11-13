@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use color_eyre::{Help, Result, SectionExt};
 use futures::future::join_all;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use tokio::sync::RwLock;
 
 use crate::binary::*;
@@ -156,6 +156,10 @@ impl BundleFileType {
             BundleFileType::WwiseStream => String::from("ogg"),
             _ => self.ext_name(),
         }
+    }
+
+    pub fn hash(&self) -> u64 {
+        *Murmur64::from(*self).deref()
     }
 }
 
@@ -313,7 +317,7 @@ struct BundleFileHeader {
 
 impl BundleFileHeader {
     #[tracing::instrument(name = "FileHeader::read", skip_all)]
-    async fn read<R>(mut r: R) -> Result<Self>
+    async fn read<R>(r: &mut R) -> Result<Self>
     where
         R: AsyncRead + AsyncSeek + std::marker::Unpin,
     {
@@ -321,15 +325,15 @@ impl BundleFileHeader {
         // identifier between the different file entries.
         // Back in VT2 days, these different 'files' were used to separate
         // versions, e.g. different languages for the same `.strings` file.
-        skip_u32(&mut r, 0).await?;
-        skip_u32(&mut r, 0).await?;
-        skip_u32(&mut r, 0).await?;
+        skip_u32(r, 0).await?;
+        skip_u32(r, 0).await?;
+        skip_u32(r, 0).await?;
 
-        let size_1 = read_u32(&mut r).await? as usize;
+        let size_1 = read_u32(r).await? as usize;
 
-        skip_u8(&mut r, 1).await?;
+        skip_u8(r, 1).await?;
 
-        let size_2 = read_u32(&mut r).await? as usize;
+        let size_2 = read_u32(r).await? as usize;
 
         tracing::debug!(size_1, size_2);
 
@@ -368,15 +372,15 @@ pub struct BundleFile {
 
 impl BundleFile {
     #[tracing::instrument(name = "File::read", skip_all)]
-    pub async fn read<R>(ctx: Arc<RwLock<crate::Context>>, mut r: R) -> Result<Self>
+    pub async fn read<R>(ctx: Arc<RwLock<crate::Context>>, r: &mut R) -> Result<Self>
     where
         R: AsyncRead + AsyncSeek + std::marker::Unpin,
     {
-        let file_type = BundleFileType::from(read_u64(&mut r).await?);
-        let hash = Murmur64::from(read_u64(&mut r).await?);
+        let file_type = BundleFileType::from(read_u64(r).await?);
+        let hash = Murmur64::from(read_u64(r).await?);
         let name = lookup_hash(ctx, hash, HashGroup::Filename).await;
 
-        let header_count = read_u8(&mut r)
+        let header_count = read_u8(r)
             .await
             .with_section(|| format!("{}.{}", name, file_type.ext_name()).header("File:"))?;
         let header_count = header_count as usize;
@@ -384,7 +388,7 @@ impl BundleFile {
         let mut headers = Vec::with_capacity(header_count);
 
         for _ in 0..header_count {
-            let header = BundleFileHeader::read(&mut r)
+            let header = BundleFileHeader::read(r)
                 .await
                 .with_section(|| format!("{}.{}", name, file_type.ext_name()).header("File:"))?;
             headers.push(header);
@@ -407,6 +411,40 @@ impl BundleFile {
             hash,
             name,
         })
+    }
+
+    #[tracing::instrument(name = "File::write", skip_all)]
+    pub async fn write<W>(&self, _ctx: Arc<RwLock<crate::Context>>, w: &mut W) -> Result<()>
+    where
+        W: AsyncWrite + AsyncSeek + std::marker::Unpin,
+    {
+        write_u64(w, self.file_type.hash()).await?;
+        write_u64(w, *self.hash).await?;
+
+        let header_count = self.variants.len();
+        write_u8(w, header_count as u8).await?;
+
+        for variant in self.variants.iter() {
+            // TODO: Unknown what these are
+            write_u32(w, 0).await?;
+            write_u32(w, 0).await?;
+            write_u32(w, 0).await?;
+
+            write_u32(w, variant.data.len() as u32).await?;
+
+            // TODO: Unknown what this is
+            write_u8(w, 1).await?;
+
+            // TODO: The previous size value and this one are somehow connected,
+            // but so far it is unknown how
+            write_u32(w, 0).await?;
+        }
+
+        for variant in self.variants.iter() {
+            w.write_all(&variant.data).await?;
+        }
+
+        Ok(())
     }
 
     pub fn base_name(&self) -> &String {

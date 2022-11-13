@@ -4,7 +4,6 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
-use dtmt::lookup_hash;
 use dtmt::murmur::HashGroup;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -71,8 +70,9 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
                 .get_many::<HashGroup>("group")
                 .unwrap_or_default();
 
+            let ctx = ctx.read().await;
             for group in groups {
-                let value = lookup_hash(ctx.clone(), *hash, *group).await;
+                let value = ctx.lookup_hash(*hash, *group);
                 println!("{}", value);
             }
 
