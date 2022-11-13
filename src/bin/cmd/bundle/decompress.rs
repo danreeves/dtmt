@@ -8,7 +8,7 @@ use color_eyre::{Help, SectionExt};
 use dtmt::decompress;
 use futures::future::try_join_all;
 use tokio::fs::{self, File};
-use tokio::io::{BufReader, BufWriter};
+use tokio::io::BufReader;
 use tokio::sync::RwLock;
 
 use crate::cmd::util::collect_bundle_paths;
@@ -55,7 +55,8 @@ where
     let in_file = File::open(bundle).await?;
     let out_file = File::create(destination).await?;
 
-    decompress(ctx, BufReader::new(in_file), BufWriter::new(out_file)).await
+    // A `BufWriter` does not help here, as we're mostly just out chunks.
+    decompress(ctx, BufReader::new(in_file), out_file).await
 }
 
 #[tracing::instrument(skip_all)]
