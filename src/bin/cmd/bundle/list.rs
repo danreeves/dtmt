@@ -8,6 +8,8 @@ use dtmt::Bundle;
 use futures::future::try_join_all;
 use tokio::sync::RwLock;
 
+use crate::cmd::util::collect_bundle_paths;
+
 pub(crate) fn command_definition() -> Command {
     Command::new("list")
         .about("List the contents of one or multiple bundles.")
@@ -36,7 +38,13 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
         .unwrap_or_default()
         .cloned();
 
-    let bundles = try_join_all(bundles.into_iter().map(|p| async {
+    let paths = collect_bundle_paths(bundles).await;
+
+    if paths.is_empty() {
+        return Err(eyre::eyre!("No bundle provided"));
+    }
+
+    let bundles = try_join_all(paths.into_iter().map(|p| async {
         let ctx = ctx.clone();
         let path_display = p.display().to_string();
         async move { Bundle::open(ctx, &p).await }

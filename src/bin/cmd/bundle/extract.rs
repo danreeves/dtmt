@@ -11,6 +11,8 @@ use futures::future::try_join_all;
 use glob::Pattern;
 use tokio::{fs, sync::RwLock};
 
+use crate::cmd::util::collect_bundle_paths;
+
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
         Ok(p) => Ok(p),
@@ -148,7 +150,13 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
         .unwrap_or_default()
         .cloned();
 
-    let bundles = try_join_all(bundles.into_iter().map(|p| async {
+    let paths = collect_bundle_paths(bundles).await;
+
+    if paths.is_empty() {
+        return Err(eyre::eyre!("No bundle provided"));
+    }
+
+    let bundles = try_join_all(paths.into_iter().map(|p| async {
         let ctx = ctx.clone();
         let path_display = p.display().to_string();
         async move { Bundle::open(ctx, &p).await }
