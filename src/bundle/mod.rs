@@ -113,7 +113,8 @@ impl Bundle {
         // `AsyncRead` and the bundle name separately.
         let path = path.as_ref();
         let bundle_name = if let Some(name) = path.file_name() {
-            let hash = Murmur64::try_from(name.to_string_lossy().as_ref())?;
+            let hash = Murmur64::try_from(name.to_string_lossy().as_ref())
+                .wrap_err_with(|| format!("failed to turn string into hash: {:?}", name))?;
             ctx.read().await.lookup_hash(hash, HashGroup::Filename)
         } else {
             eyre::bail!("Invalid path to bundle file: {}", path.display());

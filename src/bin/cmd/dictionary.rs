@@ -16,7 +16,7 @@ pub(crate) fn command_definition() -> Command {
         .about("Manipulate a hash dictionary file.")
         .subcommand(
             Command::new("lookup")
-                .about("Lookup a hash in the dictionary")
+                .about("Lookup a hash in the dictionary.")
                 .arg(Arg::new("hash").help("The hash to look up").required(true))
                 .arg(
                     Arg::new("group")
@@ -52,7 +52,7 @@ pub(crate) fn command_definition() -> Command {
                 ),
         )
         .subcommand(Command::new("save").about(
-            "Save back the currently loaded dictionary, with hashes pre-computed.\
+            "Save back the currently loaded dictionary, with hashes pre-computed. \
                 Pre-computing hashes speeds up loading large dictionaries, as they would \
                 otherwise need to be computed on the fly.",
         ))

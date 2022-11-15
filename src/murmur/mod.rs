@@ -64,12 +64,23 @@ impl<'de> Visitor<'de> for Murmur64 {
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(
-            "an usinged 64 bit integer \
+            "an usigned 64 bit integer \
             or a string in hexadecimal format encoding such an integer",
         )
     }
 
-    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let bytes = value.to_le_bytes();
+        self.visit_u64(u64::from_le_bytes(bytes))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
         Ok(Self::from(value))
     }
 
@@ -79,7 +90,10 @@ impl<'de> Visitor<'de> for Murmur64 {
     {
         match Murmur64::try_from(value) {
             Ok(hash) => Ok(hash),
-            Err(err) => Err(E::custom(err)),
+            Err(err) => Err(E::custom(format!(
+                "failed to convert '{}' to Murmur64: {}",
+                value, err
+            ))),
         }
     }
 }
@@ -112,7 +126,7 @@ impl TryFrom<&str> for Murmur32 {
     type Error = ParseIntError;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        u32::from_str_radix(value, 8).map(Self)
+        u32::from_str_radix(value, 16).map(Self)
     }
 }
 
@@ -142,12 +156,30 @@ impl<'de> Visitor<'de> for Murmur32 {
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(
-            "an usinged 32 bit integer \
+            "an usigned 32 bit integer \
             or a string in hexadecimal format encoding such an integer",
         )
     }
 
-    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E> {
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        let bytes = value.to_le_bytes();
+        self.visit_u32(u64::from_le_bytes(bytes) as u32)
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        self.visit_u32(value as u32)
+    }
+
+    fn visit_u32<E>(self, value: u32) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
         Ok(Self::from(value))
     }
 
@@ -157,7 +189,10 @@ impl<'de> Visitor<'de> for Murmur32 {
     {
         match Murmur32::try_from(value) {
             Ok(hash) => Ok(hash),
-            Err(err) => Err(E::custom(err)),
+            Err(err) => Err(E::custom(format!(
+                "failed to convert '{}' to Murmur32: {}",
+                value, err
+            ))),
         }
     }
 }

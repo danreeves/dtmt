@@ -8,7 +8,6 @@ use clap::parser::ValueSource;
 use clap::value_parser;
 use clap::{command, Arg};
 use color_eyre::eyre::{Context, Result};
-use color_eyre::{Help, SectionExt};
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::sync::RwLock;
@@ -81,8 +80,7 @@ async fn main() -> Result<()> {
             let mut ctx = ctx.write().await;
             let res = File::open(&path)
                 .await
-                .wrap_err("Failed to open dictionary file")
-                .with_section(|| path.display().to_string().header("Path:"));
+                .wrap_err_with(|| format!("failed to open dictionary file: {}", path.display()));
 
             let f = match res {
                 Ok(f) => f,
@@ -98,7 +96,7 @@ async fn main() -> Result<()> {
 
             let r = BufReader::new(f);
             if let Err(err) = ctx.lookup.from_csv(r).await {
-                tracing::error!("{}", err);
+                tracing::error!("{:?}", err);
             }
         });
     }
