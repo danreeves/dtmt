@@ -8,6 +8,7 @@ use dtmt::Oodle;
 
 mod decompress;
 mod extract;
+mod inject;
 mod list;
 
 #[cfg(target_os = "windows")]
@@ -33,6 +34,7 @@ pub(crate) fn command_definition() -> Command {
         )
         .subcommand(decompress::command_definition())
         .subcommand(extract::command_definition())
+        .subcommand(inject::command_definition())
         .subcommand(list::command_definition())
 }
 
@@ -47,6 +49,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
     match matches.subcommand() {
         Some(("decompress", sub_matches)) => decompress::run(ctx, sub_matches).await,
         Some(("extract", sub_matches)) => extract::run(ctx, sub_matches).await,
+        Some(("inject", sub_matches)) => inject::run(ctx, sub_matches).await,
         Some(("list", sub_matches)) => list::run(ctx, sub_matches).await,
         _ => unreachable!(
             "clap is configured to require a subcommand, and they're all handled above"

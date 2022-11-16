@@ -19,6 +19,14 @@ pub use murmurhash64::hash;
 pub use murmurhash64::hash32;
 pub use murmurhash64::hash_inverse as inverse;
 
+fn _swap_bytes_u32(value: u32) -> u32 {
+    u32::from_le_bytes(value.to_be_bytes())
+}
+
+fn _swap_bytes_u64(value: u64) -> u64 {
+    u64::from_le_bytes(value.to_be_bytes())
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Murmur64(u64);
 
@@ -74,7 +82,7 @@ impl<'de> Visitor<'de> for Murmur64 {
         E: serde::de::Error,
     {
         let bytes = value.to_le_bytes();
-        self.visit_u64(u64::from_le_bytes(bytes))
+        Ok(Self::from(u64::from_le_bytes(bytes)))
     }
 
     fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>

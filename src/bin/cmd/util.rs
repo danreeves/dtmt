@@ -18,7 +18,7 @@ where
         }
         Err(err) => {
             if err.kind() != io::ErrorKind::NotADirectory {
-                tracing::error!(%err, "Failed to read path");
+                tracing::error!("Failed to read path: {:?}", err);
             }
             let paths = vec![PathBuf::from(path.as_ref())];
             tracing::debug!(is_dir = false, resolved_paths = ?paths);

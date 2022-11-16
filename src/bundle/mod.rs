@@ -56,8 +56,8 @@ impl EntryHeader {
     where
         R: AsyncRead + AsyncSeek + std::marker::Unpin,
     {
-        let extension_hash = r.read_u64().await?;
-        let name_hash = r.read_u64().await?;
+        let extension_hash = read_u64(r).await?;
+        let name_hash = read_u64(r).await?;
         let flags = read_u32(r).await?;
 
         // NOTE: Known values so far:
@@ -67,7 +67,7 @@ impl EntryHeader {
         if flags != 0x0 {
             tracing::debug!(
                 flags,
-                "Unexpected meta flags for file {:08X}.{:08X}",
+                "Unexpected meta flags for file {:016X}.{:016X}",
                 name_hash,
                 extension_hash
             );
@@ -113,17 +113,20 @@ impl Bundle {
         // `AsyncRead` and the bundle name separately.
         let path = path.as_ref();
         let bundle_name = if let Some(name) = path.file_name() {
-            let hash = Murmur64::try_from(name.to_string_lossy().as_ref())
-                .wrap_err_with(|| format!("failed to turn string into hash: {:?}", name))?;
-            ctx.read().await.lookup_hash(hash, HashGroup::Filename)
+            match Murmur64::try_from(name.to_string_lossy().as_ref()) {
+                Ok(hash) => ctx.read().await.lookup_hash(hash, HashGroup::Filename),
+                Err(err) => {
+                    tracing::debug!("failed to turn bundle name into hash: {}", err);
+                    name.to_string_lossy().to_string()
+                }
+            }
         } else {
             eyre::bail!("Invalid path to bundle file: {}", path.display());
         };
 
         let f = fs::File::open(path)
             .await
-            .wrap_err("Failed to open bundle file")
-            .with_section(|| path.display().to_string().header("Path"))?;
+            .wrap_err_with(|| format!("failed to open bundle file {}", path.display()))?;
 
         let mut r = BufReader::new(f);
 
@@ -171,6 +174,7 @@ impl Bundle {
         r.seek(SeekFrom::Current(4)).await?;
 
         let mut decompressed = Vec::with_capacity(unpacked_size);
+        let mut unpacked_size_tracked = unpacked_size;
 
         for (chunk_index, chunk_size) in chunk_sizes.into_iter().enumerate() {
             let span = tracing::debug_span!("Decompressing chunk", chunk_index, chunk_size);
@@ -199,6 +203,14 @@ impl Bundle {
                     OodleLZ_FuzzSafe::No,
                     OodleLZ_CheckCRC::No,
                 )?;
+
+                if unpacked_size_tracked < CHUNK_SIZE {
+                    raw_buffer.resize(unpacked_size_tracked, 0);
+                } else {
+                    unpacked_size_tracked -= CHUNK_SIZE;
+                }
+
+                tracing::trace!(raw_size = raw_buffer.len());
 
                 decompressed.append(&mut raw_buffer);
                 Ok(())
@@ -254,6 +266,8 @@ impl Bundle {
             let buf = Vec::new();
             let mut c = Cursor::new(buf);
 
+            tracing::trace!(num_files = self.files.len());
+
             async {
                 for file in self.files.iter() {
                     file.write(ctx.clone(), &mut c).await?;
@@ -267,19 +281,48 @@ impl Bundle {
             c.into_inner()
         };
 
+        // Ceiling division (or division toward infinity) to calculate
+        // the number of chunks required to fit the unpacked data.
+        let num_chunks = (unpacked_data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        tracing::trace!(num_chunks);
+        write_u32(w, num_chunks as u32).await?;
+
+        let chunk_sizes_start = w.stream_position().await?;
+        tracing::trace!(chunk_sizes_start);
+        w.seek(SeekFrom::Current(num_chunks as i64 * 4)).await?;
+
+        write_padding(w).await?;
+
+        tracing::trace!(unpacked_size = unpacked_data.len());
+        write_u32(w, unpacked_data.len() as u32).await?;
+        // NOTE: Unknown u32 that's always been 0 so far
+        write_u32(w, 0).await?;
+
         let chunks = unpacked_data.chunks(CHUNK_SIZE);
 
         let ctx = ctx.read().await;
         let oodle_lib = ctx.oodle.as_ref().unwrap();
+        let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
         for chunk in chunks {
             let compressed = oodle_lib.compress(chunk)?;
+            tracing::trace!(
+                raw_chunk_size = chunk.len(),
+                compressed_chunk_size = compressed.len()
+            );
+            chunk_sizes.push(compressed.len());
             write_u32(w, compressed.len() as u32).await?;
             write_padding(w).await?;
             w.write_all(&compressed).await?;
         }
 
-        todo!("compress data and count chunks");
+        w.seek(SeekFrom::Start(chunk_sizes_start)).await?;
+
+        for size in chunk_sizes {
+            write_u32(w, size as u32).await?;
+        }
+
+        Ok(())
     }
 
     pub fn name(&self) -> &String {
@@ -288,6 +331,10 @@ impl Bundle {
 
     pub fn files(&self) -> &Vec<BundleFile> {
         &self.files
+    }
+
+    pub fn files_mut(&mut self) -> impl Iterator<Item = &mut BundleFile> {
+        self.files.iter_mut()
     }
 }
 

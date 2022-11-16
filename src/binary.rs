@@ -35,11 +35,11 @@ macro_rules! make_read {
 
 macro_rules! make_write {
     ($func:ident, $op:ident, $type:ty) => {
-        pub(crate) async fn $func<W>(r: &mut W, val: $type) -> Result<()>
+        pub(crate) async fn $func<W>(w: &mut W, val: $type) -> Result<()>
         where
             W: AsyncWrite + AsyncSeek + std::marker::Unpin,
         {
-            let res = r
+            let res = w
                 .$op(val)
                 .await
                 .wrap_err(concat!("failed to write ", stringify!($type)));
@@ -48,7 +48,7 @@ macro_rules! make_write {
                 return res;
             }
 
-            let pos = r.stream_position().await;
+            let pos = w.stream_position().await;
             if pos.is_ok() {
                 res.with_section(|| {
                     format!("{pos:#X} ({pos})", pos = pos.unwrap()).header("Position: ")
@@ -61,7 +61,7 @@ macro_rules! make_write {
 }
 
 macro_rules! make_skip {
-    ($func:ident, $read:ident, $op:ident, $type:ty) => {
+    ($func:ident, $read:ident, $type:ty) => {
         pub(crate) async fn $func<R>(r: &mut R, cmp: $type) -> Result<()>
         where
             R: AsyncRead + AsyncSeek + std::marker::Unpin,
@@ -92,8 +92,8 @@ make_write!(write_u8, write_u8, u8);
 make_write!(write_u32, write_u32_le, u32);
 make_write!(write_u64, write_u64_le, u64);
 
-make_skip!(skip_u8, read_u8, read_u8, u8);
-make_skip!(skip_u32, read_u32, read_u32_le, u32);
+make_skip!(skip_u8, read_u8, u8);
+make_skip!(skip_u32, read_u32, u32);
 
 pub(crate) async fn skip_padding<S>(stream: &mut S) -> Result<()>
 where
@@ -112,7 +112,7 @@ where
     Ok(())
 }
 
-pub(crate) async fn read_up_to<R>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize>
+pub(crate) async fn _read_up_to<R>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize>
 where
     R: AsyncRead + AsyncSeek + std::marker::Unpin,
 {
@@ -141,6 +141,8 @@ where
 {
     let pos = w.stream_position().await?;
     let size = 16 - (pos % 16) as usize;
+
+    tracing::trace!(padding_size = size, "Writing padding");
 
     if size > 0 && size < 16 {
         let buf = vec![0; size];

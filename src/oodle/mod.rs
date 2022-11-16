@@ -79,8 +79,6 @@ impl Oodle {
             )
         };
 
-        tracing::debug!(uncompressed_size = ret, "Decompressed chunk");
-
         if ret == 0 {
             eyre::bail!("Failed to decompress chunk.");
         }
@@ -93,7 +91,9 @@ impl Oodle {
     where
         I: AsRef<[u8]>,
     {
-        let raw = data.as_ref();
+        let mut raw = Vec::from(data.as_ref());
+        raw.resize(CHUNK_SIZE, 0);
+
         // TODO: Query oodle for buffer size
         let mut out = vec![0u8; CHUNK_SIZE];
 
@@ -122,6 +122,8 @@ impl Oodle {
         if ret == 0 {
             eyre::bail!("Failed to compress chunk.");
         }
+
+        out.resize(ret as usize, 0);
 
         Ok(out)
     }

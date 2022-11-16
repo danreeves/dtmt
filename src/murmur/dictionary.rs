@@ -15,6 +15,12 @@ pub enum HashGroup {
     Other,
 }
 
+impl HashGroup {
+    pub fn all() -> [Self; 3] {
+        [Self::Filename, Self::Filetype, Self::Other]
+    }
+}
+
 impl std::fmt::Display for HashGroup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

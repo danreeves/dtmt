@@ -1,4 +1,3 @@
-use std::ops::Deref;
 use std::sync::Arc;
 
 use color_eyre::{Help, Result, SectionExt};
@@ -158,8 +157,8 @@ impl BundleFileType {
         }
     }
 
-    pub fn hash(&self) -> u64 {
-        *Murmur64::from(*self).deref()
+    pub fn hash(&self) -> Murmur64 {
+        Murmur64::from(*self)
     }
 }
 
@@ -171,7 +170,7 @@ impl From<u64> for BundleFileType {
 
 impl From<Murmur64> for BundleFileType {
     fn from(hash: Murmur64) -> BundleFileType {
-        match hash.deref() {
+        match *hash {
             0x931e336d7646cc26 => BundleFileType::Animation,
             0xdcfb9e18fff13984 => BundleFileType::AnimationCurves,
             0x3eed05ba83af5090 => BundleFileType::Apb,
@@ -361,6 +360,11 @@ impl BundleFileVariant {
     pub fn data(&self) -> &Vec<u8> {
         &self.data
     }
+
+    pub fn set_data(&mut self, data: Vec<u8>) {
+        self.header.size = data.len();
+        self.data = data;
+    }
 }
 
 pub struct BundleFile {
@@ -418,7 +422,7 @@ impl BundleFile {
     where
         W: AsyncWrite + AsyncSeek + std::marker::Unpin,
     {
-        write_u64(w, self.file_type.hash()).await?;
+        write_u64(w, *self.file_type.hash()).await?;
         write_u64(w, *self.hash).await?;
 
         let header_count = self.variants.len();
@@ -459,6 +463,14 @@ impl BundleFile {
         }
     }
 
+    pub fn matches_name<S>(&self, name: S) -> bool
+    where
+        S: AsRef<str>,
+    {
+        let name = name.as_ref();
+        self.name == name || self.name(false) == name || self.name(true) == name
+    }
+
     pub fn hash(&self) -> Murmur64 {
         self.hash
     }
@@ -469,6 +481,10 @@ impl BundleFile {
 
     pub fn variants(&self) -> &Vec<BundleFileVariant> {
         &self.variants
+    }
+
+    pub fn variants_mut(&mut self) -> impl Iterator<Item = &mut BundleFileVariant> {
+        self.variants.iter_mut()
     }
 
     pub fn raw(&self) -> Result<Vec<UserFile>> {

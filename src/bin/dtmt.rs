@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
                     if is_default {
                         return;
                     }
-                    tracing::error!("{}", err);
+                    tracing::error!("{:#}", err);
 
                     return;
                 }
