@@ -190,7 +190,9 @@ dependencies = [
  "libloading",
  "nanorand",
  "pin-project-lite",
+ "sdk",
  "serde",
+ "serde_sjson",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -590,6 +592,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4501abdff3ae82a1c1b477a17252eb69cee9e66eb915c1abaa4f44d873df9f09"
 
 [[package]]
+name = "sdk"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "csv-async",
+ "futures",
+ "futures-util",
+ "glob",
+ "libloading",
+ "nanorand",
+ "pin-project-lite",
+ "serde",
+ "serde_sjson",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-error",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -607,6 +629,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_sjson"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

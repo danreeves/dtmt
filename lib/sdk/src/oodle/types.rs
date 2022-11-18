@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 use core::ffi::{c_char, c_int, c_size_t, c_ulonglong, c_void};
 
-use clap::ValueEnum;
-
 // Type definitions taken from Unreal Engine's `oodle2.h`
 
 #[repr(C)]
@@ -44,19 +42,18 @@ impl From<bool> for OodleLZ_CheckCRC {
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 pub enum OodleLZ_Verbosity {
     None = 0,
     Minimal = 1,
     Some = 2,
     Lots = 3,
-    #[clap(hide = true)]
     Force32 = 0x40000000,
 }
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 pub enum OodleLZ_Decode_ThreadPhase {
     Phase1 = 1,
     Phase2 = 2,
@@ -69,9 +66,8 @@ impl OodleLZ_Decode_ThreadPhase {
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 pub enum OodleLZ_Compressor {
-    #[clap(hide = true)]
     Invalid = -1,
     // None = memcpy, pass through uncompressed bytes
     None = 3,
@@ -97,13 +93,12 @@ pub enum OodleLZ_Compressor {
     Lzblw = 5,
     Lza = 6,
     Count = 14,
-    #[clap(hide = true)]
     Force32 = 0x40000000,
 }
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-#[derive(Clone, Copy, Debug, ValueEnum)]
+#[derive(Clone, Copy, Debug)]
 pub enum OodleLZ_CompressionLevel {
     // don't compress, just copy raw bytes
     None = 0,
@@ -133,7 +128,6 @@ pub enum OodleLZ_CompressionLevel {
     HyperFast3 = -3,
     // fastest, less compression
     HyperFast4 = -4,
-    #[clap(hide = true)]
     Force32 = 0x40000000,
 }
 

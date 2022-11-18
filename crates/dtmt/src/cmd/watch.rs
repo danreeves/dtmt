@@ -21,6 +21,6 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<RwLock<dtmt::Context>>, _matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, _matches: &ArgMatches) -> Result<()> {
     unimplemented!()
 }

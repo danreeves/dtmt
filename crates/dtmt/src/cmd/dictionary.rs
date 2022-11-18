@@ -1,15 +1,31 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+use clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueEnum};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
-use dtmt::murmur::HashGroup;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::LinesStream;
 use tokio_stream::StreamExt;
+
+#[derive(Copy, Clone, PartialEq, ValueEnum)]
+pub enum HashGroup {
+    Filename,
+    Filetype,
+    Other,
+}
+
+impl From<HashGroup> for sdk::murmur::HashGroup {
+    fn from(value: HashGroup) -> Self {
+        match value {
+            HashGroup::Filename => sdk::murmur::HashGroup::Filename,
+            HashGroup::Filetype => sdk::murmur::HashGroup::Filetype,
+            HashGroup::Other => sdk::murmur::HashGroup::Other,
+        }
+    }
+}
 
 pub(crate) fn command_definition() -> Command {
     Command::new("dictionary")
@@ -59,7 +75,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("lookup", sub_matches)) => {
             let hash = sub_matches
@@ -72,7 +88,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
 
             let ctx = ctx.read().await;
             for group in groups {
-                let value = ctx.lookup_hash(*hash, *group);
+                let value = ctx.lookup_hash(*hash, (*group).into());
                 println!("{}", value);
             }
 
@@ -98,7 +114,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -
             {
                 let mut ctx = ctx.write().await;
                 for line in lines.into_iter() {
-                    ctx.lookup.add(line?, *group);
+                    ctx.lookup.add(line?, (*group).into());
                 }
             }
 

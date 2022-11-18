@@ -5,7 +5,7 @@ use color_eyre::{
     eyre::{self, Context, Result},
     Help,
 };
-use dtmt::Bundle;
+use sdk::Bundle;
 use tokio::{fs::File, io::AsyncReadExt, sync::RwLock};
 
 pub(crate) fn command_definition() -> Command {
@@ -42,7 +42,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
     let bundle_path = matches
         .get_one::<PathBuf>("bundle")
         .expect("required parameter not found");

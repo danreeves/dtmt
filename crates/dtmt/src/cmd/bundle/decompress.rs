@@ -5,8 +5,8 @@ use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Result};
 use color_eyre::{Help, SectionExt};
 
-use dtmt::decompress;
 use futures::future::try_join_all;
+use sdk::decompress;
 use tokio::fs::{self, File};
 use tokio::io::BufReader;
 use tokio::sync::RwLock;
@@ -44,7 +44,7 @@ pub(crate) fn command_definition() -> Command {
 
 #[tracing::instrument(skip(ctx))]
 async fn decompress_bundle<P1, P2>(
-    ctx: Arc<RwLock<dtmt::Context>>,
+    ctx: Arc<RwLock<sdk::Context>>,
     bundle: P1,
     destination: P2,
 ) -> Result<()>
@@ -60,7 +60,7 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
     let bundles = matches
         .get_many::<PathBuf>("bundle")
         .unwrap_or_default()

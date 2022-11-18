@@ -4,8 +4,8 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Result};
 use color_eyre::{Help, SectionExt};
-use dtmt::Bundle;
 use futures::future::try_join_all;
+use sdk::Bundle;
 use tokio::sync::RwLock;
 
 use crate::cmd::util::collect_bundle_paths;
@@ -32,7 +32,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
     let bundles = matches
         .get_many::<PathBuf>("bundle")
         .unwrap_or_default()

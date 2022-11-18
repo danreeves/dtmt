@@ -6,9 +6,9 @@ use color_eyre::{
     eyre::{self, Context, Result},
     Help, Report, SectionExt,
 };
-use dtmt::Bundle;
 use futures::future::try_join_all;
 use glob::Pattern;
+use sdk::Bundle;
 use tokio::{fs, sync::RwLock};
 
 use crate::cmd::util::collect_bundle_paths;
@@ -117,7 +117,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<dtmt::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
     {
         let ljd_bin = matches
             .get_one::<String>("ljd")

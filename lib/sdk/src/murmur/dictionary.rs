@@ -1,4 +1,3 @@
-use clap::ValueEnum;
 use color_eyre::{eyre::Context, Help, Result, SectionExt};
 use csv_async::{AsyncDeserializer, AsyncSerializer};
 use serde::{Deserialize, Serialize};
@@ -7,7 +6,7 @@ use tokio_stream::StreamExt;
 
 use super::{murmurhash64, Murmur32, Murmur64, SEED};
 
-#[derive(Copy, Clone, Deserialize, PartialEq, Serialize, ValueEnum)]
+#[derive(Copy, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HashGroup {
     Filename,

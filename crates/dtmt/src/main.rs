@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    let ctx = dtmt::Context::new();
+    let ctx = sdk::Context::new();
     let ctx = Arc::new(RwLock::new(ctx));
 
     {
