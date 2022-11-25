@@ -27,10 +27,10 @@ fn _swap_bytes_u64(value: u64) -> u64 {
     u64::from_le_bytes(value.to_be_bytes())
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub struct Murmur64(u64);
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub struct Murmur32(u32);
 
 impl Deref for Murmur64 {

@@ -2,10 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::{
-    eyre::{self, Context, Result},
-    Help, Report, SectionExt,
-};
+use color_eyre::eyre::{self, Context, Result};
+use color_eyre::{Help, Report, SectionExt};
 use futures::future::try_join_all;
 use glob::Pattern;
 use sdk::Bundle;
@@ -165,21 +163,51 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
     }))
     .await?;
 
-    let files: Vec<_> = bundles
-        .iter()
-        .flat_map(|bundle| bundle.files())
-        .filter(|file| {
-            let name = file.base_name();
+    let files: Vec<_> = {
+        let iter = bundles.iter().flat_map(|bundle| bundle.files());
 
-            // When there is no `includes`, all files are included
-            let is_included = includes.is_empty() || includes.iter().any(|glob| glob.matches(name));
-            // When there is no `excludes`, no file is excluded
-            let is_excluded =
-                !excludes.is_empty() && excludes.iter().any(|glob| glob.matches(name));
+        // Short-curcit the iteration if there is nothing to filter by
+        if includes.is_empty() && excludes.is_empty() {
+            iter.collect()
+        } else {
+            iter.filter(|file| {
+                let name = file.name(false);
+                let decompiled_name = file.name(true);
 
-            is_included && !is_excluded
-        })
-        .collect();
+                // When there is no `includes`, all files are included
+                let is_included = includes.is_empty()
+                    || includes
+                        .iter()
+                        .any(|glob| glob.matches(&name) || glob.matches(&decompiled_name));
+                // When there is no `excludes`, no file is excluded
+                let is_excluded = !excludes.is_empty()
+                    && excludes
+                        .iter()
+                        .any(|glob| glob.matches(&name) || glob.matches(&decompiled_name));
+
+                is_included && !is_excluded
+            })
+            .collect()
+        }
+    };
+
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let includes: Vec<_> = includes.iter().map(|pattern| pattern.as_str()).collect();
+        let excludes: Vec<_> = excludes.iter().map(|pattern| pattern.as_str()).collect();
+        let bundle_files: Vec<_> = bundles
+            .iter()
+            .flat_map(|bundle| bundle.files())
+            .map(|file| file.name(false))
+            .collect();
+        let filtered: Vec<_> = files.iter().map(|file| file.name(false)).collect();
+        tracing::debug!(
+            ?includes,
+            ?excludes,
+            files = ?bundle_files,
+            ?filtered,
+            "Built file list to extract"
+        );
+    }
 
     let should_decompile = matches.get_flag("decompile");
     let should_flatten = matches.get_flag("flatten");

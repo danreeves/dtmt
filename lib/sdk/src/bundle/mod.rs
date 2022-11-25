@@ -18,7 +18,7 @@ use crate::oodle::CHUNK_SIZE;
 
 pub(crate) mod file;
 
-use file::BundleFile;
+pub use file::BundleFile;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum BundleFormat {

@@ -8,6 +8,6 @@ pub mod murmur;
 mod oodle;
 
 pub use bundle::decompress;
-pub use bundle::Bundle;
+pub use bundle::{Bundle, BundleFile};
 pub use context::Context;
 pub use oodle::Oodle;

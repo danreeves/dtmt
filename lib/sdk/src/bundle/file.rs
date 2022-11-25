@@ -1,7 +1,9 @@
+use std::io::Cursor;
 use std::sync::Arc;
 
 use color_eyre::{Help, Result, SectionExt};
 use futures::future::join_all;
+use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use tokio::sync::RwLock;
 
@@ -10,7 +12,7 @@ use crate::context::lookup_hash;
 use crate::filetype::*;
 use crate::murmur::{HashGroup, Murmur64};
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum BundleFileType {
     Animation,
     AnimationCurves,
@@ -159,6 +161,16 @@ impl BundleFileType {
 
     pub fn hash(&self) -> Murmur64 {
         Murmur64::from(*self)
+    }
+}
+
+impl Serialize for BundleFileType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let value = self.ext_name();
+        value.serialize(serializer)
     }
 }
 
@@ -357,7 +369,7 @@ impl BundleFileVariant {
         self.header.size
     }
 
-    pub fn data(&self) -> &Vec<u8> {
+    pub fn data(&self) -> &[u8] {
         &self.data
     }
 
@@ -492,7 +504,7 @@ impl BundleFile {
             .variants
             .iter()
             .map(|variant| UserFile {
-                data: variant.data().clone(),
+                data: variant.data().to_vec(),
                 name: Some(self.name(false)),
             })
             .collect();
@@ -500,7 +512,7 @@ impl BundleFile {
         Ok(files)
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(name = "File::decompiled", skip_all)]
     pub async fn decompiled(&self, ctx: Arc<RwLock<crate::Context>>) -> Result<Vec<UserFile>> {
         let file_type = self.file_type();
 
@@ -516,14 +528,17 @@ impl BundleFile {
             let ctx = ctx.clone();
 
             async move {
+                let data = variant.data();
+
                 let res = match file_type {
-                    BundleFileType::Lua => lua::decompile(ctx, variant.data()).await,
+                    BundleFileType::Lua => lua::decompile(ctx, data).await,
+                    BundleFileType::Package => {
+                        let mut c = Cursor::new(data);
+                        package::decompile(ctx, &mut c).await
+                    }
                     _ => {
                         tracing::debug!("Can't decompile, unknown file type");
-                        Ok(vec![UserFile::with_name(
-                            variant.data.clone(),
-                            self.name(true),
-                        )])
+                        Ok(vec![UserFile::with_name(data.to_vec(), self.name(true))])
                     }
                 };
 
@@ -533,7 +548,7 @@ impl BundleFile {
                         let err = err
                             .wrap_err("failed to decompile file")
                             .with_section(|| self.name(true).header("File:"));
-                        tracing::error!("{}", err);
+                        tracing::error!("{:?}", err);
                         vec![]
                     }
                 }
