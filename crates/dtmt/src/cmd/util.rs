@@ -125,7 +125,7 @@ mod tests {
 
         for p in paths.iter() {
             let name = p.file_name().and_then(std::ffi::OsStr::to_str).unwrap();
-            assert!(bundle_names.iter().find(|&n| n == &name).is_some());
+            assert!(bundle_names.iter().any(|n| n == &name));
         }
     }
 }

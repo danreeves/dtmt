@@ -34,7 +34,7 @@ impl Context {
             s.to_owned()
         } else {
             tracing::debug!(%hash, "Murmur64 lookup failed");
-            format!("{:016X}", hash)
+            format!("{hash:016X}")
         }
     }
 
@@ -48,7 +48,7 @@ impl Context {
             s.to_owned()
         } else {
             tracing::debug!(%hash, "Murmur32 lookup failed");
-            format!("{:08X}", hash)
+            format!("{hash:08X}")
         }
     }
 }
@@ -69,6 +69,6 @@ where
         s.to_owned()
     } else {
         tracing::debug!(%hash, "Murmur64 lookup failed");
-        format!("{:016X}", hash)
+        format!("{hash:016X}")
     }
 }

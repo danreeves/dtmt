@@ -146,7 +146,7 @@ impl BundleFileType {
             BundleFileType::WwiseStream => String::from("wwise_stream"),
             BundleFileType::Xml => String::from("xml"),
 
-            BundleFileType::Unknown(s) => format!("{:016X}", s),
+            BundleFileType::Unknown(s) => format!("{s:016X}"),
         }
     }
 

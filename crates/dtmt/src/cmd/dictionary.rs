@@ -89,7 +89,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
             let ctx = ctx.read().await;
             for group in groups {
                 let value = ctx.lookup_hash(*hash, (*group).into());
-                println!("{}", value);
+                println!("{value}");
             }
 
             Ok(())

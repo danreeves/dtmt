@@ -132,7 +132,7 @@ where
         }
     };
 
-    Err(err).with_section(|| format!("{pos:#X} ({pos})", pos = pos).header("Position: "))
+    Err(err).with_section(|| format!("{pos:#X} ({pos})").header("Position: "))
 }
 
 pub(crate) async fn write_padding<W>(w: &mut W) -> Result<usize>

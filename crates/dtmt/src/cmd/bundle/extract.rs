@@ -14,7 +14,7 @@ use crate::cmd::util::collect_bundle_paths;
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
         Ok(p) => Ok(p),
-        Err(e) => Err(format!("Invalid glob pattern '{}': {}", s, e)),
+        Err(e) => Err(format!("Invalid glob pattern '{s}': {e}")),
     }
 }
 
@@ -297,7 +297,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                                         name.clone()
                                     }
                                 })
-                                .unwrap_or(format!("{}", i));
+                                .unwrap_or(format!("{i}"));
 
                             path.push(name);
 

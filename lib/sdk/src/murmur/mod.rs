@@ -99,8 +99,7 @@ impl<'de> Visitor<'de> for Murmur64 {
         match Murmur64::try_from(value) {
             Ok(hash) => Ok(hash),
             Err(err) => Err(E::custom(format!(
-                "failed to convert '{}' to Murmur64: {}",
-                value, err
+                "failed to convert '{value}' to Murmur64: {err}"
             ))),
         }
     }
@@ -120,7 +119,7 @@ impl Serialize for Murmur64 {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("{:016X}", self))
+        serializer.serialize_str(&format!("{self:016X}"))
     }
 }
 
@@ -155,7 +154,7 @@ impl Serialize for Murmur32 {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("{:08X}", self))
+        serializer.serialize_str(&format!("{self:08X}"))
     }
 }
 
@@ -198,8 +197,7 @@ impl<'de> Visitor<'de> for Murmur32 {
         match Murmur32::try_from(value) {
             Ok(hash) => Ok(hash),
             Err(err) => Err(E::custom(format!(
-                "failed to convert '{}' to Murmur32: {}",
-                value, err
+                "failed to convert '{value}' to Murmur32: {err}"
             ))),
         }
     }
