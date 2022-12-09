@@ -154,7 +154,7 @@ where
 }
 
 pub mod sync {
-    use std::io::{self, Read, Seek, SeekFrom, Write};
+    use std::io::{self, Read, Seek, SeekFrom};
 
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
     use color_eyre::eyre::WrapErr;
@@ -163,12 +163,12 @@ pub mod sync {
     macro_rules! make_read {
         ($func:ident, $read:ident, $type:ty) => {
             fn $read(&mut self) -> io::Result<$type> {
-                ReadBytesExt::$func::<LittleEndian>(&mut self)
+                ReadBytesExt::$func::<LittleEndian>(self)
             }
 
             fn $func(&mut self) -> Result<$type> {
-                let res = ReadExt::$read(&mut self)
-                    .wrap_err(concat!("failed to read ", stringify!($type)));
+                let res =
+                    ReadExt::$read(self).wrap_err(concat!("failed to read ", stringify!($type)));
 
                 if res.is_ok() {
                     return res;
@@ -189,11 +189,11 @@ pub mod sync {
     macro_rules! make_write {
         ($func:ident, $write:ident, $type:ty) => {
             fn $write(&mut self, val: $type) -> io::Result<()> {
-                WriteBytesExt::$func::<LittleEndian>(&mut self, val)
+                WriteBytesExt::$func::<LittleEndian>(self, val)
             }
 
             fn $func(&mut self, val: $type) -> Result<()> {
-                let res = WriteExt::$write(&mut self, val)
+                let res = WriteExt::$write(self, val)
                     .wrap_err(concat!("failed to write ", stringify!($type)));
 
                 if res.is_ok() {
@@ -215,7 +215,7 @@ pub mod sync {
     macro_rules! make_skip {
         ($func:ident, $read:ident, $type:ty) => {
             fn $func(&mut self, cmp: $type) -> Result<()> {
-                let val = ReadExt::$read(&mut self)?;
+                let val = ReadExt::$read(self)?;
 
                 if val != cmp {
                     let pos = self.stream_position().unwrap_or(u64::MAX);
@@ -235,7 +235,7 @@ pub mod sync {
 
     pub trait ReadExt: ReadBytesExt + Seek {
         fn read_u8(&mut self) -> io::Result<u8> {
-            ReadBytesExt::read_u8(&mut self)
+            ReadBytesExt::read_u8(self)
         }
 
         make_read!(read_u32, read_u32_le, u32);
