@@ -1,13 +1,14 @@
 use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 
+use futures::{Stream, StreamExt};
 use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
-use tokio_stream::StreamExt;
 
 #[tracing::instrument]
-pub async fn resolve_bundle_path<P>(path: P) -> Vec<PathBuf>
+pub async fn foo<P>(path: P) -> Vec<PathBuf>
 where
     P: AsRef<Path> + std::fmt::Debug,
 {
@@ -28,7 +29,7 @@ where
 
     let stream = ReadDirStream::new(dir);
     let paths: Vec<PathBuf> = stream
-        .filter_map(|entry| {
+        .filter_map(|entry| async move {
             if let Ok(path) = entry.map(|e| e.path()) {
                 match path.file_name().and_then(OsStr::to_str) {
                     Some(name) if name.len() == 16 => {
@@ -52,13 +53,52 @@ where
     paths
 }
 
+pub async fn resolve_bundle_path<P>(path: P) -> Pin<Box<dyn Stream<Item = PathBuf>>>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let dir = match fs::read_dir(path.as_ref()).await {
+        Ok(dir) => {
+            tracing::trace!(is_dir = true);
+            dir
+        }
+        Err(err) => {
+            if err.kind() != io::ErrorKind::NotADirectory {
+                tracing::error!("Failed to read path: {:?}", err);
+            }
+            let paths = vec![PathBuf::from(path.as_ref())];
+            tracing::debug!(is_dir = false, resolved_paths = ?paths);
+            return Box::pin(futures::stream::iter(paths));
+        }
+    };
+
+    let stream = ReadDirStream::new(dir);
+    let stream = stream.filter_map(|entry| async move {
+        if let Ok(path) = entry.map(|e| e.path()) {
+            match path.file_name().and_then(OsStr::to_str) {
+                Some(name) if name.len() == 16 => {
+                    if name.chars().all(|c| c.is_ascii_hexdigit()) {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        }
+    });
+    Box::pin(stream)
+}
+
 #[tracing::instrument(skip_all)]
 pub async fn collect_bundle_paths<I>(paths: I) -> Vec<PathBuf>
 where
     I: Iterator<Item = PathBuf> + std::fmt::Debug,
 {
     let tasks = paths.map(|p| async move {
-        match tokio::spawn(async move { resolve_bundle_path(&p).await }).await {
+        match tokio::spawn(async move { foo(&p).await }).await {
             Ok(paths) => paths,
             Err(err) => {
                 tracing::error!(%err, "failed to spawn task to resolve bundle paths");
@@ -71,6 +111,17 @@ where
     results.into_iter().flatten().collect()
 }
 
+#[tracing::instrument(skip_all)]
+pub fn resolve_bundle_paths<I>(paths: I) -> impl Stream<Item = PathBuf>
+where
+    I: Iterator<Item = PathBuf> + std::fmt::Debug,
+{
+    let limit = 10;
+    futures::stream::iter(paths)
+        .then(resolve_bundle_path)
+        .flat_map_unordered(limit, |p| p)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -78,12 +129,12 @@ mod tests {
     use tempfile::tempdir;
     use tokio::process::Command;
 
-    use super::resolve_bundle_path;
+    use super::foo;
 
     #[tokio::test]
     async fn resolve_single_file() {
         let path = PathBuf::from("foo");
-        let paths = resolve_bundle_path(&path).await;
+        let paths = foo(&path).await;
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], path);
     }
@@ -91,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_empty_directory() {
         let dir = tempdir().expect("failed to create temporary directory");
-        let paths = resolve_bundle_path(dir).await;
+        let paths = foo(dir).await;
         assert!(paths.is_empty());
     }
 
@@ -119,7 +170,7 @@ mod tests {
         .await
         .expect("failed to create temporary files");
 
-        let paths = resolve_bundle_path(dir).await;
+        let paths = foo(dir).await;
 
         assert_eq!(bundle_names.len(), paths.len());
 

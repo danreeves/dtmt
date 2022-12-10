@@ -1,17 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::{self, Result};
-use color_eyre::{Help, SectionExt};
+use clap::{value_parser, Arg, ArgMatches, Command};
+use color_eyre::eyre::Result;
 
-use futures::future::try_join_all;
 use sdk::decompress;
 use tokio::fs::{self, File};
 use tokio::io::BufReader;
 use tokio::sync::RwLock;
-
-use crate::cmd::util::collect_bundle_paths;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("decompress")
@@ -23,11 +19,9 @@ pub(crate) fn command_definition() -> Command {
         .arg(
             Arg::new("bundle")
                 .required(true)
-                .action(ArgAction::Append)
                 .value_parser(value_parser!(PathBuf))
                 .help(
-                    "Path to the bundle(s) to read. If this points to a directory instead \
-                            of a file, all files in that directory will be checked.",
+                    "Path to the bundle to read. Unlike other operations, this only accepts only a single bundle.",
                 ),
         )
         .arg(
@@ -36,7 +30,7 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help(
                     "The destination to write to. If this points to a directory, the \
-                            decompressed bundles will be written there, with their original name. \
+                            name of the input bundle will be used. \
                             Parent directories must exist.",
                 ),
         )
@@ -61,10 +55,9 @@ where
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
-    let bundles = matches
-        .get_many::<PathBuf>("bundle")
-        .unwrap_or_default()
-        .cloned();
+    let bundle = matches
+        .get_one::<PathBuf>("bundle")
+        .expect("required argument 'bundle' is missing");
     let out_path = matches
         .get_one::<PathBuf>("destination")
         .expect("required parameter 'destination' is missing");
@@ -74,46 +67,11 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
         .map(|meta| meta.is_dir())
         .unwrap_or(false);
 
-    let paths = collect_bundle_paths(bundles).await;
+    let name = bundle.file_name();
 
-    if paths.is_empty() {
-        return Err(eyre::eyre!("No bundle provided"));
-    }
-
-    if paths.len() == 1 {
-        let bundle = &paths[0];
-        let name = bundle.file_name();
-
-        if is_dir && name.is_some() {
-            decompress_bundle(ctx, bundle, out_path.join(name.unwrap())).await?;
-        } else {
-            decompress_bundle(ctx, bundle, out_path).await?;
-        }
+    if is_dir && name.is_some() {
+        decompress_bundle(ctx, bundle, out_path.join(name.unwrap())).await
     } else {
-        if !is_dir {
-            return Err(eyre::eyre!(
-                "Multiple bundles provided, but destination is not a directory."
-            ))
-            .with_section(|| out_path.display().to_string().header("Path:"))?;
-        }
-
-        let _ = try_join_all(paths.into_iter().map(|p| async {
-            let ctx = ctx.clone();
-            async move {
-                let name = if let Some(name) = p.file_name() {
-                    name
-                } else {
-                    return Err(eyre::eyre!("Invalid bundle path. No file name."))
-                        .with_section(|| p.display().to_string().header("Path:"))?;
-                };
-
-                let dest = out_path.join(name);
-                decompress_bundle(ctx, p, dest).await
-            }
-            .await
-        }))
-        .await?;
+        decompress_bundle(ctx, bundle, out_path).await
     }
-
-    Ok(())
 }
