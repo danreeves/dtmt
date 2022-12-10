@@ -4,7 +4,7 @@ use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use tokio::sync::RwLock;
 
-pub(crate) fn command_definition() -> Command {
+pub(crate) fn _command_definition() -> Command {
     Command::new("new")
         .about("Create a new project")
         .arg(Arg::new("name").help(

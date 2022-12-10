@@ -5,7 +5,7 @@ use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use tokio::sync::RwLock;
 
-pub(crate) fn command_definition() -> Command {
+pub(crate) fn _command_definition() -> Command {
     Command::new("build").about("Build a project").arg(
         Arg::new("directory")
             .required(false)
