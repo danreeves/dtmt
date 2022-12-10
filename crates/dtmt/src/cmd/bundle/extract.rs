@@ -1,15 +1,16 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
 use futures::future::try_join_all;
+use futures::{StreamExt, TryFutureExt};
 use glob::Pattern;
-use sdk::Bundle;
+use sdk::{Bundle, BundleFile};
 use tokio::{fs, sync::RwLock};
 
-use crate::cmd::util::collect_bundle_paths;
+use crate::cmd::util::resolve_bundle_paths;
 
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
@@ -148,29 +149,94 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
         .unwrap_or_default()
         .cloned();
 
-    let paths = collect_bundle_paths(bundles).await;
+    let should_decompile = matches.get_flag("decompile");
+    let should_flatten = matches.get_flag("flatten");
+    let is_dry_run = matches.get_flag("dry-run");
 
-    if paths.is_empty() {
-        return Err(eyre::eyre!("No bundle provided"));
+    let dest = matches
+        .get_one::<PathBuf>("destination")
+        .expect("required argument 'destination' missing");
+
+    {
+        let res = match fs::metadata(&dest).await {
+            Ok(meta) if !meta.is_dir() => Err(eyre::eyre!("Destination path is not a directory")),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                Err(eyre::eyre!("Destination path does not exist"))
+                    .with_suggestion(|| format!("Create the directory '{}'", dest.display()))
+            }
+            Err(err) => Err(Report::new(err)),
+            _ => Ok(()),
+        };
+
+        if res.is_err() {
+            return res.wrap_err(format!(
+                "Failed to open destination directory: {}",
+                dest.display()
+            ));
+        }
     }
 
-    let bundles = try_join_all(paths.into_iter().map(|p| async {
-        let ctx = ctx.clone();
-        let path_display = p.display().to_string();
-        async move { Bundle::open(ctx, &p).await }
+    let mut paths = Box::pin(resolve_bundle_paths(bundles));
+
+    // TODO: Find a way to do this with `for_each_concurrent`. The first attempt
+    // just kept head-butting into a "use of moved value" wall.
+    while let Some(path) = paths.next().await {
+        let res = Bundle::open(ctx.clone(), &path)
+            .and_then(|bundle| {
+                extract_bundle(
+                    ctx.clone(),
+                    bundle,
+                    &dest,
+                    ExtractOptions {
+                        includes: &includes,
+                        excludes: &excludes,
+                        decompile: should_decompile,
+                        flatten: should_flatten,
+                        dry_run: is_dry_run,
+                    },
+                )
+            })
             .await
-            .with_section(|| path_display.header("Bundle Path:"))
-    }))
-    .await?;
+            .wrap_err_with(|| format!("failed to extract from bundle '{}'", path.display()));
 
-    let files: Vec<_> = {
-        let iter = bundles.iter().flat_map(|bundle| bundle.files());
+        if let Err(err) = res {
+            tracing::error!("{:#}", err)
+        }
+    }
 
-        // Short-curcit the iteration if there is nothing to filter by
+    Ok(())
+}
+
+struct ExtractOptions<'a> {
+    decompile: bool,
+    flatten: bool,
+    dry_run: bool,
+    includes: &'a dyn AsRef<[&'a Pattern]>,
+    excludes: &'a dyn AsRef<[&'a Pattern]>,
+}
+
+#[tracing::instrument(
+    skip(ctx, bundle, options),
+    fields(decompile = options.decompile, flatten = options.flatten, dry_run = options.dry_run)
+)]
+async fn extract_bundle<P>(
+    ctx: Arc<RwLock<sdk::Context>>,
+    bundle: Bundle,
+    dest: P,
+    options: ExtractOptions<'_>,
+) -> Result<()>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let includes = options.includes.as_ref();
+    let excludes = options.excludes.as_ref();
+    let dest = dest.as_ref();
+
+    let files: Box<dyn Iterator<Item = &BundleFile>> = {
         if includes.is_empty() && excludes.is_empty() {
-            iter.collect()
+            Box::new(bundle.files().iter())
         } else {
-            iter.filter(|file| {
+            let iter = bundle.files().iter().filter(|file| {
                 let name = file.name(false);
                 let decompiled_name = file.name(true);
 
@@ -186,61 +252,31 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                         .any(|glob| glob.matches(&name) || glob.matches(&decompiled_name));
 
                 is_included && !is_excluded
-            })
-            .collect()
+            });
+            Box::new(iter)
         }
     };
 
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        let includes: Vec<_> = includes.iter().map(|pattern| pattern.as_str()).collect();
-        let excludes: Vec<_> = excludes.iter().map(|pattern| pattern.as_str()).collect();
-        let bundle_files: Vec<_> = bundles
-            .iter()
-            .flat_map(|bundle| bundle.files())
-            .map(|file| file.name(false))
-            .collect();
-        let filtered: Vec<_> = files.iter().map(|file| file.name(false)).collect();
-        tracing::debug!(
-            ?includes,
-            ?excludes,
-            files = ?bundle_files,
-            ?filtered,
-            "Built file list to extract"
-        );
-    }
+    // TODO: Disabled for now, as the `files` iterator would be consumed.
+    // if tracing::enabled!(tracing::Level::DEBUG) {
+    //     let includes: Vec<_> = includes.iter().map(|pattern| pattern.as_str()).collect();
+    //     let excludes: Vec<_> = excludes.iter().map(|pattern| pattern.as_str()).collect();
+    //     let bundle_files: Vec<_> = bundle.files().iter().map(|file| file.name(false)).collect();
+    //     let filtered: Vec<_> = files.map(|file| file.name(false)).collect();
+    //     tracing::debug!(
+    //         ?includes,
+    //         ?excludes,
+    //         files = ?bundle_files,
+    //         ?filtered,
+    //         "Built file list to extract"
+    //     );
+    // }
 
-    let should_decompile = matches.get_flag("decompile");
-    let should_flatten = matches.get_flag("flatten");
-    let is_dry_run = matches.get_flag("dry-run");
-
-    let dest = matches
-        .get_one::<PathBuf>("destination")
-        .expect("required argument 'destination' missing");
-
-    {
-        let res = match fs::metadata(&dest).await {
-            Ok(meta) if !meta.is_dir() => Err(eyre::eyre!("Destination path is not a directory")),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                Err(eyre::eyre!("Destination path does not exist"))
-                    .with_suggestion(|| "Create the directory")
-            }
-            Err(err) => Err(Report::new(err)),
-            _ => Ok(()),
-        };
-
-        if res.is_err() {
-            return res.wrap_err(format!(
-                "Failed to open destination directory: {}",
-                dest.display()
-            ));
-        }
-    }
-
-    let mut tasks = Vec::with_capacity(files.len());
+    let mut tasks = Vec::with_capacity(bundle.files().len());
 
     for file in files {
-        let name = file.name(should_decompile);
-        let data = if should_decompile {
+        let name = file.name(options.decompile);
+        let data = if options.decompile {
             file.decompiled(ctx.clone()).await
         } else {
             file.raw()
@@ -250,10 +286,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
             Ok(mut files) => {
                 match files.len() {
                     0 => {
-                        println!(
-                            "Decompilation did not produce any data for file {}",
-                            file.name(should_decompile)
-                        );
+                        tracing::warn!("Decompilation did not produce any data for file {}", name);
                     }
                     // For a single file we want to use the bundle file's name.
                     1 => {
@@ -261,16 +294,16 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                         let file = files.pop().unwrap();
 
                         let name = file.name().unwrap_or(&name);
-                        let name = if should_flatten {
+                        let name = if options.flatten {
                             flatten_name(name)
                         } else {
                             name.clone()
                         };
 
-                        let mut path = dest.clone();
+                        let mut path = dest.to_path_buf();
                         path.push(name);
 
-                        if is_dry_run {
+                        if options.dry_run {
                             tracing::info!(path = %path.display(), "Writing file");
                         } else {
                             tracing::debug!(path = %path.display(), "Writing file");
@@ -286,12 +319,12 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                     // by index.
                     _ => {
                         for (i, file) in files.into_iter().enumerate() {
-                            let mut path = dest.clone();
+                            let mut path = dest.to_path_buf();
 
                             let name = file
                                 .name()
                                 .map(|name| {
-                                    if should_flatten {
+                                    if options.flatten {
                                         flatten_name(name)
                                     } else {
                                         name.clone()
@@ -301,7 +334,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
 
                             path.push(name);
 
-                            if is_dry_run {
+                            if options.dry_run {
                                 tracing::info!(path = %path.display(), "Writing file");
                             } else {
                                 tracing::debug!(path = %path.display(), "Writing file");
@@ -343,6 +376,8 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
         };
     }
 
+    // TODO: Check if this might need buffered execution to avoid
+    // running out of file handles.
     let results = try_join_all(tasks).await?;
 
     for res in results {

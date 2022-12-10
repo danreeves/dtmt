@@ -4,11 +4,11 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Result};
 use color_eyre::{Help, SectionExt};
-use futures::future::try_join_all;
+use futures::StreamExt;
 use sdk::Bundle;
 use tokio::sync::RwLock;
 
-use crate::cmd::util::collect_bundle_paths;
+use crate::cmd::util::resolve_bundle_paths;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("list")
@@ -31,39 +31,23 @@ pub(crate) fn command_definition() -> Command {
         )
 }
 
-#[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
-    let bundles = matches
-        .get_many::<PathBuf>("bundle")
-        .unwrap_or_default()
-        .cloned();
+#[derive(Copy, Clone)]
+enum OutputFormat {
+    Text,
+}
 
-    let paths = collect_bundle_paths(bundles).await;
+fn print_bundle_list(bundle: Bundle, fmt: OutputFormat) {
+    match fmt {
+        OutputFormat::Text => {
+            println!("Bundle: {}", bundle.name());
 
-    if paths.is_empty() {
-        return Err(eyre::eyre!("No bundle provided"));
-    }
-
-    let bundles = try_join_all(paths.into_iter().map(|p| async {
-        let ctx = ctx.clone();
-        let path_display = p.display().to_string();
-        async move { Bundle::open(ctx, &p).await }
-            .await
-            .with_section(|| path_display.header("Bundle Path:"))
-    }))
-    .await?;
-
-    if matches.get_flag("json") {
-        unimplemented!("JSON output is not implemented yet");
-    } else {
-        for b in bundles.iter() {
-            println!("Bundle: {}", b.name());
-
-            for f in b.files().iter() {
+            for f in bundle.files().iter() {
                 if f.variants().len() != 1 {
-                    return Err(eyre::eyre!("Expected exactly one version for this file."))
+                    let err = eyre::eyre!("Expected exactly one version for this file.")
                         .with_section(|| f.variants().len().to_string().header("Bundle:"))
-                        .with_section(|| b.name().clone().header("Bundle:"));
+                        .with_section(|| bundle.name().clone().header("Bundle:"));
+
+                    tracing::error!("{:#}", err);
                 }
 
                 let v = &f.variants()[0];
@@ -75,7 +59,40 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 );
             }
         }
-
-        Ok(())
     }
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+    let bundles = matches
+        .get_many::<PathBuf>("bundle")
+        .unwrap_or_default()
+        .cloned();
+
+    let paths = resolve_bundle_paths(bundles);
+
+    let fmt = if matches.get_flag("json") {
+        unimplemented!("JSON output is not implemented yet");
+    } else {
+        OutputFormat::Text
+    };
+
+    paths
+        .for_each_concurrent(10, |p| async {
+            let ctx = ctx.clone();
+            async move {
+                match Bundle::open(ctx, &p).await {
+                    Ok(bundle) => {
+                        print_bundle_list(bundle, fmt);
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to open bundle '{}': {:#}", p.display(), err);
+                    }
+                }
+            }
+            .await
+        })
+        .await;
+
+    Ok(())
 }
