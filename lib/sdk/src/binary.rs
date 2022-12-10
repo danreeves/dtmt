@@ -302,6 +302,6 @@ pub mod sync {
             }
         };
 
-        Err(err).with_section(|| format!("{pos:#X} ({pos})", pos = pos).header("Position: "))
+        Err(err).with_section(|| format!("{pos:#X} ({pos})").header("Position: "))
     }
 }
