@@ -30,8 +30,14 @@ fn _swap_bytes_u64(value: u64) -> u64 {
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub struct Murmur64(u64);
 
-#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
-pub struct Murmur32(u32);
+impl Murmur64 {
+    pub fn hash<B>(s: B) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        hash(s.as_ref(), SEED as u64).into()
+    }
+}
 
 impl Deref for Murmur64 {
     type Target = u64;
@@ -120,6 +126,18 @@ impl Serialize for Murmur64 {
         S: Serializer,
     {
         serializer.serialize_str(&format!("{self:016X}"))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
+pub struct Murmur32(u32);
+
+impl Murmur32 {
+    pub fn hash<B>(s: B) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        hash32(s.as_ref(), SEED).into()
     }
 }
 

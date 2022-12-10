@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::Result;
+use sdk::murmur::{Murmur32, Murmur64};
 use tokio::sync::RwLock;
 
 pub(crate) fn command_definition() -> Command {
@@ -24,13 +25,28 @@ pub(crate) fn command_definition() -> Command {
                         ),
                 ),
         )
-        .subcommand(
-            Command::new("lookup")
-                .arg(Arg::new("hash").required(true).help("The hash to look up.")),
-        )
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, _matches: &ArgMatches) -> Result<()> {
-    unimplemented!()
+pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+    match matches.subcommand() {
+        Some(("hash", sub_matches)) => {
+            let s = sub_matches
+                .get_one::<String>("string")
+                .expect("missing required argument");
+
+            if sub_matches.get_flag("half") {
+                let hash = Murmur32::hash(&s);
+                println!("{hash:08X}");
+            } else {
+                let hash = Murmur64::hash(&s);
+                println!("{hash:016X}");
+            }
+
+            Ok(())
+        }
+        _ => unreachable!(
+            "clap is configured to require a subcommand, and they're all handled above"
+        ),
+    }
 }
