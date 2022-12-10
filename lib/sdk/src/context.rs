@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -11,6 +12,7 @@ pub struct Context {
     pub ljd: Option<String>,
     pub revorb: Option<String>,
     pub ww2ogg: Option<String>,
+    pub game_dir: Option<PathBuf>,
 }
 
 impl Context {
@@ -21,6 +23,7 @@ impl Context {
             ljd: None,
             revorb: None,
             ww2ogg: None,
+            game_dir: None,
         }
     }
 

@@ -8,6 +8,7 @@ use clap::parser::ValueSource;
 use clap::value_parser;
 use clap::{command, Arg};
 use color_eyre::eyre::{Context, Result};
+use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::sync::RwLock;
@@ -23,6 +24,11 @@ mod cmd {
     pub mod new;
     mod util;
     pub mod watch;
+}
+
+#[derive(Default, Deserialize, Serialize)]
+struct GlobalConfig {
+    game_dir: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -68,7 +74,7 @@ async fn main() -> Result<()> {
     let ctx = sdk::Context::new();
     let ctx = Arc::new(RwLock::new(ctx));
 
-    {
+    let dicitonary_task = {
         let path = matches
             .get_one::<PathBuf>("dictionary")
             .cloned()
@@ -85,21 +91,43 @@ async fn main() -> Result<()> {
             let f = match res {
                 Ok(f) => f,
                 Err(err) => {
-                    if is_default {
-                        return;
+                    if !is_default {
+                        // The dictionary is entirely optional, so only report the error
+                        // when the user asked for a specific path.
+                        tracing::error!("{:#}", err);
                     }
-                    tracing::error!("{:#}", err);
-
                     return;
                 }
             };
 
             let r = BufReader::new(f);
             if let Err(err) = ctx.lookup.from_csv(r).await {
-                tracing::error!("{:?}", err);
+                tracing::error!("{:#}", err);
             }
-        });
-    }
+        })
+    };
+
+    let global_config_task = {
+        let ctx = ctx.clone();
+        tokio::spawn(async move {
+            let conf = tokio::task::spawn_blocking(|| {
+                confy::load::<GlobalConfig>(clap::crate_name!(), None)
+                    .wrap_err("failed to load global configuration")
+            })
+            .await;
+
+            match conf {
+                Ok(Ok(cfg)) => {
+                    let mut ctx = ctx.write().await;
+                    ctx.game_dir = cfg.game_dir;
+                }
+                Ok(Err(err)) => tracing::error!("{:#}", err),
+                Err(err) => tracing::error!("{:#}", err),
+            }
+        })
+    };
+
+    tokio::try_join!(dicitonary_task, global_config_task)?;
 
     match matches.subcommand() {
         Some(("bundle", sub_matches)) => cmd::bundle::run(ctx, sub_matches).await?,
