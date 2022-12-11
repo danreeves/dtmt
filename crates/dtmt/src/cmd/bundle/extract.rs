@@ -237,8 +237,8 @@ where
             Box::new(bundle.files().iter())
         } else {
             let iter = bundle.files().iter().filter(|file| {
-                let name = file.name(false);
-                let decompiled_name = file.name(true);
+                let name = file.name(false, None);
+                let decompiled_name = file.name(true, None);
 
                 // When there is no `includes`, all files are included
                 let is_included = includes.is_empty()
@@ -275,7 +275,7 @@ where
     let mut tasks = Vec::with_capacity(bundle.files().len());
 
     for file in files {
-        let name = file.name(options.decompile);
+        let name = file.name(options.decompile, None);
         let data = if options.decompile {
             file.decompiled(ctx.clone()).await
         } else {

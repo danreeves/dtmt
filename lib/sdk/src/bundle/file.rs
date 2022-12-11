@@ -323,6 +323,7 @@ impl From<BundleFileType> for Murmur64 {
 }
 
 struct BundleFileHeader {
+    variant: u32,
     size: usize,
 }
 
@@ -332,18 +333,10 @@ impl BundleFileHeader {
     where
         R: AsyncRead + AsyncSeek + std::marker::Unpin,
     {
-        // NOTE: One of these must be the version number, or any kind of
-        // identifier between the different file entries.
-        // Back in VT2 days, these different 'files' were used to separate
-        // versions, e.g. different languages for the same `.strings` file.
-        skip_u32(r, 0).await?;
-        skip_u32(r, 0).await?;
-        skip_u32(r, 0).await?;
-
+        let variant = read_u32(r).await?;
+        skip_u8(r, 0).await?;
         let size_1 = read_u32(r).await? as usize;
-
         skip_u8(r, 1).await?;
-
         let size_2 = read_u32(r).await? as usize;
 
         tracing::debug!(size_1, size_2);
@@ -355,7 +348,7 @@ impl BundleFileHeader {
             size_1
         };
 
-        Ok(Self { size })
+        Ok(Self { size, variant })
     }
 }
 
@@ -396,12 +389,13 @@ impl BundleFile {
         let hash = Murmur64::from(read_u64(r).await?);
         let name = lookup_hash(ctx, hash, HashGroup::Filename).await;
 
-        let header_count = read_u8(r)
+        let header_count = read_u32(r)
             .await
             .with_section(|| format!("{}.{}", name, file_type.ext_name()).header("File:"))?;
         let header_count = header_count as usize;
 
         let mut headers = Vec::with_capacity(header_count);
+        skip_u32(r, 0).await?;
 
         for _ in 0..header_count {
             let header = BundleFileHeader::read(r)
@@ -438,19 +432,18 @@ impl BundleFile {
         write_u64(w, *self.hash).await?;
 
         let header_count = self.variants.len();
-        write_u8(w, header_count as u8).await?;
+        write_u32(w, header_count as u32).await?;
+        // TODO: Unknown what this is
+        write_u32(w, 0).await?;
 
         for variant in self.variants.iter() {
             // TODO: Unknown what these are
-            write_u32(w, 0).await?;
-            write_u32(w, 0).await?;
-            write_u32(w, 0).await?;
-
+            write_u32(w, variant.header.variant).await?;
+            // TODO: Unknown what this is
+            write_u8(w, 0).await?;
             write_u32(w, variant.data.len() as u32).await?;
-
             // TODO: Unknown what this is
             write_u8(w, 1).await?;
-
             // TODO: The previous size value and this one are somehow connected,
             // but so far it is unknown how
             write_u32(w, 0).await?;
@@ -467,12 +460,22 @@ impl BundleFile {
         &self.name
     }
 
-    pub fn name(&self, decompiled: bool) -> String {
-        if decompiled {
-            format!("{}.{}", self.name, self.file_type.decompiled_ext_name())
-        } else {
-            format!("{}.{}", self.name, self.file_type.ext_name())
+    pub fn name(&self, decompiled: bool, variant: Option<u32>) -> String {
+        let mut s = self.name.clone();
+        s.push('.');
+
+        if let Some(variant) = variant {
+            s.push_str(&variant.to_string());
+            s.push('.');
         }
+
+        if decompiled {
+            s.push_str(&self.file_type.decompiled_ext_name());
+        } else {
+            s.push_str(&self.file_type.ext_name());
+        }
+
+        s
     }
 
     pub fn matches_name<S>(&self, name: S) -> bool
@@ -480,7 +483,7 @@ impl BundleFile {
         S: AsRef<str>,
     {
         let name = name.as_ref();
-        self.name == name || self.name(false) == name || self.name(true) == name
+        self.name == name || self.name(false, None) == name || self.name(true, None) == name
     }
 
     pub fn hash(&self) -> Murmur64 {
@@ -503,9 +506,16 @@ impl BundleFile {
         let files = self
             .variants
             .iter()
-            .map(|variant| UserFile {
-                data: variant.data().to_vec(),
-                name: Some(self.name(false)),
+            .map(|variant| {
+                let name = if self.variants.len() > 1 {
+                    self.name(false, Some(variant.header.variant))
+                } else {
+                    self.name(false, None)
+                };
+                UserFile {
+                    data: variant.data().to_vec(),
+                    name: Some(name),
+                }
             })
             .collect();
 
@@ -518,7 +528,7 @@ impl BundleFile {
 
         if tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!(
-                name = self.name(true),
+                name = self.name(true, None),
                 variants = self.variants.len(),
                 "Attempting to decompile"
             );
@@ -529,6 +539,11 @@ impl BundleFile {
 
             async move {
                 let data = variant.data();
+                let name = if self.variants.len() > 1 {
+                    self.name(true, Some(variant.header.variant))
+                } else {
+                    self.name(true, None)
+                };
 
                 let res = match file_type {
                     BundleFileType::Lua => lua::decompile(ctx, data).await,
@@ -538,7 +553,7 @@ impl BundleFile {
                     }
                     _ => {
                         tracing::debug!("Can't decompile, unknown file type");
-                        Ok(vec![UserFile::with_name(data.to_vec(), self.name(true))])
+                        Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])
                     }
                 };
 
@@ -547,7 +562,7 @@ impl BundleFile {
                     Err(err) => {
                         let err = err
                             .wrap_err("failed to decompile file")
-                            .with_section(|| self.name(true).header("File:"));
+                            .with_section(|| name.header("File:"));
                         tracing::error!("{:?}", err);
                         vec![]
                     }
