@@ -36,10 +36,10 @@ pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -
                 .expect("missing required argument");
 
             if sub_matches.get_flag("half") {
-                let hash = Murmur32::hash(&s);
+                let hash = Murmur32::hash(s);
                 println!("{hash:08X}");
             } else {
-                let hash = Murmur64::hash(&s);
+                let hash = Murmur64::hash(s);
                 println!("{hash:016X}");
             }
 
