@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
 use futures::future::try_join_all;
-use futures::{StreamExt, TryFutureExt};
+use futures::StreamExt;
 use glob::Pattern;
 use sdk::{Bundle, BundleFile};
 use tokio::fs;
@@ -174,58 +175,66 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
         }
     }
 
-    let mut paths = Box::pin(resolve_bundle_paths(bundles));
+    let includes = Arc::new(includes);
+    let excludes = Arc::new(excludes);
+    let ctx = Arc::new(ctx);
 
-    // TODO: Find a way to do this with `for_each_concurrent`. The first attempt
-    // just kept head-butting into a "use of moved value" wall.
-    while let Some(path) = paths.next().await {
-        let res = Bundle::open(&ctx, &path)
-            .and_then(|bundle| {
-                extract_bundle(
-                    &ctx,
-                    bundle,
-                    &dest,
-                    ExtractOptions {
-                        includes: &includes,
-                        excludes: &excludes,
-                        decompile: should_decompile,
-                        flatten: should_flatten,
-                        dry_run: is_dry_run,
-                    },
-                )
-            })
+    resolve_bundle_paths(bundles)
+        .for_each_concurrent(10, |p| async {
+            let ctx = ctx.clone();
+            let includes = includes.clone();
+            let excludes = excludes.clone();
+
+            let options = ExtractOptions {
+                includes,
+                excludes,
+                decompile: should_decompile,
+                flatten: should_flatten,
+                dry_run: is_dry_run,
+            };
+
+            async move {
+                match extract_bundle(ctx, &p, &dest, options).await {
+                    Ok(_) => {}
+                    Err(err) => tracing::error!("{err:#}"),
+                }
+            }
             .await
-            .wrap_err_with(|| format!("failed to extract from bundle '{}'", path.display()));
-
-        if let Err(err) = res {
-            tracing::error!("{:#}", err)
-        }
-    }
+        })
+        .await;
 
     Ok(())
 }
 
+#[derive(Clone)]
 struct ExtractOptions<'a> {
     decompile: bool,
     flatten: bool,
     dry_run: bool,
-    includes: &'a dyn AsRef<[&'a Pattern]>,
-    excludes: &'a dyn AsRef<[&'a Pattern]>,
+    includes: Arc<Vec<&'a Pattern>>,
+    excludes: Arc<Vec<&'a Pattern>>,
 }
 
 #[tracing::instrument(
-    skip(ctx, bundle, options),
+    skip(ctx, options),
     fields(decompile = options.decompile, flatten = options.flatten, dry_run = options.dry_run)
 )]
-async fn extract_bundle<P>(
-    ctx: &sdk::Context,
-    bundle: Bundle,
-    dest: P,
+async fn extract_bundle<P1, P2>(
+    ctx: Arc<sdk::Context>,
+    path: P1,
+    dest: P2,
     options: ExtractOptions<'_>,
 ) -> Result<()>
 where
-    P: AsRef<Path> + std::fmt::Debug,
+    P1: AsRef<Path> + std::fmt::Debug,
+    P2: AsRef<Path> + std::fmt::Debug,
 {
+    let bundle = {
+        let data = fs::read(path.as_ref()).await?;
+        let name = Bundle::get_name_from_path(&ctx, path.as_ref());
+        Bundle::from_binary(&ctx, name, data)?
+    };
+
     let includes = options.includes.as_ref();
     let excludes = options.excludes.as_ref();
     let dest = dest.as_ref();
@@ -275,7 +284,7 @@ where
     for file in files {
         let name = file.name(options.decompile, None);
         let data = if options.decompile {
-            file.decompiled(ctx).await
+            file.decompiled(&ctx).await
         } else {
             file.raw()
         };

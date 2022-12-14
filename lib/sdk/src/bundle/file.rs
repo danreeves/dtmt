@@ -1,11 +1,11 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, Write};
 
+use color_eyre::eyre::Context;
 use color_eyre::{Help, Result, SectionExt};
 use futures::future::join_all;
 use serde::Serialize;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
 
-use crate::binary::*;
+use crate::binary::sync::*;
 use crate::filetype::*;
 use crate::murmur::{HashGroup, Murmur64};
 
@@ -326,22 +326,36 @@ struct BundleFileHeader {
 }
 
 impl BundleFileHeader {
-    #[tracing::instrument(name = "FileHeader::read", skip_all)]
-    async fn read<R>(r: &mut R) -> Result<Self>
+    #[tracing::instrument(name = "FileHeader::from_reader", skip_all)]
+    fn from_reader<R>(r: &mut R) -> Result<Self>
     where
-        R: AsyncRead + AsyncSeek + std::marker::Unpin,
+        R: Read + Seek,
     {
-        let variant = read_u32(r).await?;
-        skip_u8(r, 0).await?;
-        let size = read_u32(r).await? as usize;
-        skip_u8(r, 1).await?;
-        let len_data_file_name = read_u32(r).await? as usize;
+        let variant = r.read_u32()?;
+        r.skip_u8(0)?;
+        let size = r.read_u32()? as usize;
+        r.skip_u8(1)?;
+        let len_data_file_name = r.read_u32()? as usize;
 
         Ok(Self {
             size,
             variant,
             len_data_file_name,
         })
+    }
+
+    #[tracing::instrument(name = "FileHeader::to_writer", skip_all)]
+    fn to_writer<W>(&self, w: &mut W) -> Result<()>
+    where
+        W: Write + Seek,
+    {
+        w.write_u32(self.variant)?;
+        w.write_u8(0)?;
+        w.write_u32(self.size as u32)?;
+        w.write_u8(1)?;
+        w.write_u32(self.len_data_file_name as u32)?;
+
+        Ok(())
     }
 }
 
@@ -379,41 +393,35 @@ pub struct BundleFile {
 
 impl BundleFile {
     #[tracing::instrument(name = "File::read", skip_all)]
-    pub async fn read<R>(ctx: &crate::Context, r: &mut R) -> Result<Self>
+    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R) -> Result<Self>
     where
-        R: AsyncRead + AsyncSeek + std::marker::Unpin,
+        R: Read + Seek,
     {
-        let file_type = BundleFileType::from(read_u64(r).await?);
-        let hash = Murmur64::from(read_u64(r).await?);
+        let file_type = BundleFileType::from(r.read_u64()?);
+        let hash = Murmur64::from(r.read_u64()?);
         let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
-        let header_count = read_u32(r)
-            .await
-            .with_section(|| format!("{}.{}", name, file_type.ext_name()).header("File:"))?;
-        let header_count = header_count as usize;
+        tracing::trace!(name, ?file_type);
 
+        let header_count = r.read_u32()? as usize;
         let mut headers = Vec::with_capacity(header_count);
-        skip_u32(r, 0).await?;
+        r.skip_u32(0)?;
 
         for _ in 0..header_count {
-            let header = BundleFileHeader::read(r)
-                .await
-                .with_section(|| format!("{}.{}", name, file_type.ext_name()).header("File:"))?;
+            let header = BundleFileHeader::from_reader(r)?;
             headers.push(header);
         }
 
         let mut variants = Vec::with_capacity(header_count);
-
-        for header in headers.into_iter() {
+        for (i, header) in headers.into_iter().enumerate() {
+            let _span = tracing::trace_span!("Read file header {}", i, size = header.size);
             let mut data = vec![0; header.size];
-            r.read_exact(&mut data).await?;
+            r.read_exact(&mut data)
+                .wrap_err_with(|| format!("failed to read header {i}"))?;
 
-            let data_file_name = {
-                let mut buf = vec![0; header.len_data_file_name];
-                r.read_exact(&mut buf).await?;
-
-                String::from_utf8(buf)?
-            };
+            let data_file_name = r
+                .read_string_len(header.len_data_file_name)
+                .wrap_err("failed to read data file name")?;
 
             let variant = BundleFileVariant {
                 header,
@@ -432,38 +440,25 @@ impl BundleFile {
         })
     }
 
-    #[tracing::instrument(name = "File::write", skip_all)]
-    pub async fn write<W>(&self, w: &mut W) -> Result<()>
-    where
-        W: AsyncWrite + AsyncSeek + std::marker::Unpin,
-    {
-        write_u64(w, *self.file_type.hash()).await?;
-        write_u64(w, *self.hash).await?;
+    #[tracing::instrument(name = "File::to_binary", skip_all)]
+    pub fn to_binary(&self) -> Result<Vec<u8>> {
+        let mut w = Cursor::new(Vec::new());
+
+        w.write_u64(*self.file_type.hash())?;
+        w.write_u64(*self.hash)?;
 
         let header_count = self.variants.len();
-        write_u32(w, header_count as u32).await?;
-        // TODO: Unknown what this is
-        write_u32(w, 0).await?;
+        w.write_u8(header_count as u8)?;
 
         for variant in self.variants.iter() {
-            // TODO: Unknown what these are
-            write_u32(w, variant.header.variant).await?;
-            // TODO: Unknown what this is
-            write_u8(w, 0).await?;
-            write_u32(w, variant.data.len() as u32).await?;
-            // TODO: Unknown what this is
-            write_u8(w, 1).await?;
-            // TODO: The previous size value and this one are somehow connected,
-            // but so far it is unknown how
-            write_u32(w, variant.data_file_name.len() as u32).await?;
+            variant.header.to_writer(&mut w)?;
         }
 
         for variant in self.variants.iter() {
-            w.write_all(&variant.data).await?;
-            w.write_all(variant.data_file_name.as_bytes()).await?;
+            w.write_all(&variant.data)?;
         }
 
-        Ok(())
+        Ok(w.into_inner())
     }
 
     pub fn base_name(&self) -> &String {
@@ -558,10 +553,7 @@ impl BundleFile {
 
             let res = match file_type {
                 BundleFileType::Lua => lua::decompile(ctx, data).await,
-                BundleFileType::Package => {
-                    let mut c = Cursor::new(data);
-                    package::decompile(ctx, &mut c).await
-                }
+                BundleFileType::Package => package::decompile(ctx, data),
                 _ => {
                     tracing::debug!("Can't decompile, unknown file type");
                     Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])

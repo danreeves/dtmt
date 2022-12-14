@@ -4,8 +4,7 @@ use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
 
 use sdk::decompress;
-use tokio::fs::{self, File};
-use tokio::io::BufReader;
+use tokio::fs;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("decompress")
@@ -40,11 +39,11 @@ where
     P1: AsRef<Path> + std::fmt::Debug,
     P2: AsRef<Path> + std::fmt::Debug,
 {
-    let in_file = File::open(bundle).await?;
-    let out_file = File::create(destination).await?;
+    let binary = fs::read(bundle).await?;
+    let data = decompress(ctx, binary)?;
+    fs::write(destination, &data).await?;
 
-    // A `BufWriter` does not help here, as we're mostly just out chunks.
-    decompress(ctx, BufReader::new(in_file), out_file).await
+    Ok(())
 }
 
 #[tracing::instrument(skip_all)]

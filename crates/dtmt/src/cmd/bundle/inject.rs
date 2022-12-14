@@ -4,7 +4,7 @@ use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::Help;
 use sdk::Bundle;
-use tokio::fs::File;
+use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 
 pub(crate) fn command_definition() -> Command {
@@ -52,9 +52,11 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
     tracing::trace!(bundle_path = %bundle_path.display(), file_path = %file_path.display());
 
-    let mut bundle = Bundle::open(&ctx, bundle_path)
-        .await
-        .wrap_err("Failed to open bundle file")?;
+    let mut bundle = {
+        let binary = fs::read(bundle_path).await?;
+        let name = Bundle::get_name_from_path(&ctx, bundle_path);
+        Bundle::from_binary(&ctx, name, binary).wrap_err("Failed to open bundle file")?
+    };
 
     if let Some(_name) = matches.get_one::<String>("replace") {
         let mut file = File::open(&file_path)
@@ -95,13 +97,13 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
         }
 
         let out_path = matches.get_one::<PathBuf>("output").unwrap_or(bundle_path);
-        let mut out_file = File::create(out_path)
-            .await
-            .wrap_err_with(|| format!("failed to open output file {}", out_path.display()))?;
-        bundle
-            .write(&ctx, &mut out_file)
-            .await
+        let data = bundle
+            .to_binary(&ctx)
             .wrap_err("failed to write changed bundle to output")?;
+
+        fs::write(out_path, &data)
+            .await
+            .wrap_err("failed to write data to output file")?;
 
         Ok(())
     } else {

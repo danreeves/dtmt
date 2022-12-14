@@ -1,12 +1,12 @@
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::ops::{Deref, DerefMut};
 
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use serde::Serialize;
-use tokio::io::{AsyncRead, AsyncSeek};
 
-use crate::binary::*;
+use crate::binary::sync::ReadExt;
 use crate::bundle::file::{BundleFileType, UserFile};
 use crate::murmur::{HashGroup, Murmur64};
 
@@ -34,22 +34,23 @@ impl Package {
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn decompile<R>(ctx: &crate::Context, data: &mut R) -> Result<Vec<UserFile>>
+pub fn decompile<B>(ctx: &crate::Context, binary: B) -> Result<Vec<UserFile>>
 where
-    R: AsyncRead + AsyncSeek + std::marker::Unpin,
+    B: AsRef<[u8]>,
 {
+    let mut r = Cursor::new(binary.as_ref());
     // TODO: Figure out what this is
-    let unknown = read_u32(data).await?;
+    let unknown = r.read_u32()?;
     if unknown != 0x2b {
         tracing::warn!("Unknown u32 header. Expected 0x2b, got: {unknown:#08X} ({unknown})");
     }
 
-    let file_count = read_u32(data).await? as usize;
+    let file_count = r.read_u32()? as usize;
     let mut package = Package::new();
 
     for i in 0..file_count {
-        let t = BundleFileType::from(read_u64(data).await?);
-        let hash = Murmur64::from(read_u64(data).await?);
+        let t = BundleFileType::from(r.read_u64()?);
+        let hash = Murmur64::from(r.read_u64()?);
         let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
         tracing::trace!(index = i, r"type" = ?t, %hash, name, "Package entry");

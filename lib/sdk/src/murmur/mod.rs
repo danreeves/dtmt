@@ -1,7 +1,8 @@
 use std::fmt;
-use std::num::ParseIntError;
 use std::ops::Deref;
 
+use color_eyre::eyre::Context;
+use color_eyre::Report;
 use serde::de::Visitor;
 use serde::{Deserialize, Serialize};
 use serde::{Deserializer, Serializer};
@@ -54,10 +55,12 @@ impl From<u64> for Murmur64 {
 }
 
 impl TryFrom<&str> for Murmur64 {
-    type Error = ParseIntError;
+    type Error = Report;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        u64::from_str_radix(value, 16).map(Self)
+        u64::from_str_radix(value, 16)
+            .map(Self)
+            .wrap_err_with(|| format!("failed to convert value to Murmur64: {value}"))
     }
 }
 
@@ -148,10 +151,12 @@ impl From<u32> for Murmur32 {
 }
 
 impl TryFrom<&str> for Murmur32 {
-    type Error = ParseIntError;
+    type Error = Report;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        u32::from_str_radix(value, 16).map(Self)
+        u32::from_str_radix(value, 16)
+            .map(Self)
+            .wrap_err_with(|| format!("failed to convert value to Murmur32: {value}"))
     }
 }
 

@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::{self, Result};
+use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, SectionExt};
 use futures::StreamExt;
 use sdk::Bundle;
-use tracing::Instrument;
+use tokio::fs;
 
 use crate::cmd::util::resolve_bundle_paths;
 
@@ -31,12 +31,23 @@ pub(crate) fn command_definition() -> Command {
         )
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum OutputFormat {
     Text,
 }
 
-fn print_bundle_list(bundle: Bundle, fmt: OutputFormat) {
+#[tracing::instrument(skip(ctx))]
+async fn print_bundle_contents<P>(ctx: &sdk::Context, path: P, fmt: OutputFormat) -> Result<()>
+where
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let p = path.as_ref();
+    let bundle = {
+        let binary = fs::read(p).await?;
+        let name = Bundle::get_name_from_path(ctx, p);
+        Bundle::from_binary(ctx, name, binary)?
+    };
+
     match fmt {
         OutputFormat::Text => {
             println!("Bundle: {}", bundle.name());
@@ -60,6 +71,8 @@ fn print_bundle_list(bundle: Bundle, fmt: OutputFormat) {
             }
         }
     }
+
+    Ok(())
 }
 
 #[tracing::instrument(skip_all)]
@@ -81,20 +94,16 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
     paths
         .for_each_concurrent(10, |p| async {
-            let span = tracing::info_span!("list bundle");
             let ctx = ctx.clone();
             async move {
-                let span = tracing::info_span!("open bundle");
-                if let Err(err) = Bundle::open(&ctx, &p)
-                    .instrument(span)
+                if let Err(err) = print_bundle_contents(&ctx, &p, fmt)
                     .await
-                    .map(|bundle| print_bundle_list(bundle, fmt))
+                    .wrap_err_with(|| format!("failed to list contents of bundle {}", p.display()))
                 {
-                    tracing::error!("Failed to open bundle '{}': {:?}", p.display(), err);
+                    tracing::error!("{err:?}");
                 }
             }
-            .instrument(span)
-            .await
+            .await;
         })
         .await;
 
