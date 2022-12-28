@@ -7,6 +7,7 @@ use color_eyre::{Help, SectionExt};
 use futures::StreamExt;
 use sdk::Bundle;
 use tokio::sync::RwLock;
+use tracing::Instrument;
 
 use crate::cmd::util::resolve_bundle_paths;
 
@@ -79,17 +80,19 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
 
     paths
         .for_each_concurrent(10, |p| async {
+            let span = tracing::info_span!("list bundle");
             let ctx = ctx.clone();
             async move {
-                match Bundle::open(ctx, &p).await {
-                    Ok(bundle) => {
-                        print_bundle_list(bundle, fmt);
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to open bundle '{}': {:#}", p.display(), err);
-                    }
+                let span = tracing::info_span!("open bundle");
+                if let Err(err) = Bundle::open(ctx, &p)
+                    .instrument(span)
+                    .await
+                    .map(|bundle| print_bundle_list(bundle, fmt))
+                {
+                    tracing::error!("Failed to open bundle '{}': {:?}", p.display(), err);
                 }
             }
+            .instrument(span)
             .await
         })
         .await;
