@@ -20,7 +20,7 @@ pub(crate) mod file;
 
 pub use file::BundleFile;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum BundleFormat {
     F7,
     F8,
@@ -198,24 +198,30 @@ impl Bundle {
                 let mut compressed_buffer = vec![0u8; chunk_size];
                 r.read_exact(&mut compressed_buffer).await?;
 
-                // TODO: Optimize to not reallocate?
-                let ctx = ctx.read().await;
-                let oodle_lib = ctx.oodle.as_ref().unwrap();
-                let mut raw_buffer = oodle_lib.decompress(
-                    &compressed_buffer,
-                    OodleLZ_FuzzSafe::No,
-                    OodleLZ_CheckCRC::No,
-                )?;
-
-                if unpacked_size_tracked < CHUNK_SIZE {
-                    raw_buffer.resize(unpacked_size_tracked, 0);
+                if format >= BundleFormat::F8 && chunk_size == CHUNK_SIZE {
+                    decompressed.append(&mut compressed_buffer);
                 } else {
-                    unpacked_size_tracked -= CHUNK_SIZE;
+                    // TODO: Optimize to not reallocate?
+                    let ctx = ctx.read().await;
+                    let oodle_lib = ctx.oodle.as_ref().unwrap();
+                    let mut raw_buffer = oodle_lib
+                        .decompress(
+                            &compressed_buffer,
+                            OodleLZ_FuzzSafe::No,
+                            OodleLZ_CheckCRC::No,
+                        )
+                        .wrap_err_with(|| format!("failed to decompress chunk {chunk_index}"))?;
+
+                    if unpacked_size_tracked < CHUNK_SIZE {
+                        raw_buffer.resize(unpacked_size_tracked, 0);
+                    } else {
+                        unpacked_size_tracked -= CHUNK_SIZE;
+                    }
+
+                    tracing::trace!(raw_size = raw_buffer.len());
+
+                    decompressed.append(&mut raw_buffer);
                 }
-
-                tracing::trace!(raw_size = raw_buffer.len());
-
-                decompressed.append(&mut raw_buffer);
                 Ok(())
             }
             .instrument(span)

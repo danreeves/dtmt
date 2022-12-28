@@ -5,3 +5,7 @@
 === Added
 
 - implement decompilation for `.strings` files
+
+=== Fixed
+
+- fix issue where some bundles couldn't be opened anymore

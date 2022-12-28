@@ -11,6 +11,8 @@ use types::*;
 
 // Hardcoded chunk size of Bitsquid's bundle compression
 pub const CHUNK_SIZE: usize = 512 * 1024;
+pub const COMPRESSOR: OodleLZ_Compressor = OodleLZ_Compressor::Kraken;
+pub const LEVEL: OodleLZ_CompressionLevel = OodleLZ_CompressionLevel::Optimal2;
 
 pub struct Oodle {
     lib: Library,
@@ -80,7 +82,7 @@ impl Oodle {
         };
 
         if ret == 0 {
-            eyre::bail!("Failed to decompress chunk.");
+            eyre::bail!("Decompression failed.");
         }
 
         Ok(out)
@@ -97,18 +99,15 @@ impl Oodle {
         // TODO: Query oodle for buffer size
         let mut out = vec![0u8; CHUNK_SIZE];
 
-        let compressor = OodleLZ_Compressor::Kraken;
-        let level = OodleLZ_CompressionLevel::Optimal2;
-
         let ret = unsafe {
             let compress: Symbol<OodleLZ_Compress> = self.lib.get(b"OodleLZ_Compress\0")?;
 
             compress(
-                compressor,
+                COMPRESSOR,
                 raw.as_ptr() as *const _,
                 raw.len(),
                 out.as_mut_ptr() as *mut _,
-                level,
+                LEVEL,
                 ptr::null_mut(),
                 0,
                 ptr::null_mut(),
@@ -120,11 +119,25 @@ impl Oodle {
         tracing::debug!(compressed_size = ret, "Compressed chunk");
 
         if ret == 0 {
-            eyre::bail!("Failed to compress chunk.");
+            eyre::bail!("Compression failed.");
         }
 
         out.resize(ret as usize, 0);
 
         Ok(out)
+    }
+
+    pub fn get_decode_buffer_size(
+        &self,
+        raw_size: usize,
+        corruption_possible: bool,
+    ) -> Result<usize> {
+        unsafe {
+            let f: Symbol<OodleLZ_GetDecodeBufferSize> =
+                self.lib.get(b"OodleLZ_GetDecodeBufferSize\0")?;
+
+            let size = f(COMPRESSOR, raw_size, corruption_possible);
+            Ok(size)
+        }
     }
 }

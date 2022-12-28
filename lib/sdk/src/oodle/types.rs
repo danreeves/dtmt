@@ -180,6 +180,13 @@ pub type OodleLZ_Compress = extern "C" fn(
 ) -> c_ulonglong;
 
 #[allow(non_camel_case_types)]
+pub type OodleLZ_GetDecodeBufferSize = extern "C" fn(
+    compressor: OodleLZ_Compressor,
+    raw_size: c_size_t,
+    corruption_possible: bool,
+) -> c_size_t;
+
+#[allow(non_camel_case_types)]
 pub type OodleCore_Plugins_SetPrintf =
     extern "C" fn(f: t_fp_OodleCore_Plugin_Printf) -> t_fp_OodleCore_Plugin_Printf;
 
