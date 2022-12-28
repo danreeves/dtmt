@@ -1,13 +1,13 @@
 [package]
 name = "dtmt"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
 clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "unicode"] }
 color-eyre = "0.6.2"
 csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
-sdk = { path = "../../lib/sdk", version = "0.1.0" }
+sdk = { path = "../../lib/sdk", version = "0.2.0" }
 futures = "0.3.25"
 futures-util = "0.3.24"
 glob = "0.3.0"
