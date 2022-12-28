@@ -11,6 +11,7 @@ use super::{murmurhash64, Murmur32, Murmur64, SEED};
 pub enum HashGroup {
     Filename,
     Filetype,
+    Strings,
     Other,
 }
 
@@ -25,6 +26,7 @@ impl std::fmt::Display for HashGroup {
         match self {
             HashGroup::Filename => write!(f, "filename"),
             HashGroup::Filetype => write!(f, "filetype"),
+            HashGroup::Strings => write!(f, "strings"),
             HashGroup::Other => write!(f, "other"),
         }
     }

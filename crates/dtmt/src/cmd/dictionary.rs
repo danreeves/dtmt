@@ -14,6 +14,7 @@ use tokio_stream::StreamExt;
 pub enum HashGroup {
     Filename,
     Filetype,
+    Strings,
     Other,
 }
 
@@ -22,6 +23,7 @@ impl From<HashGroup> for sdk::murmur::HashGroup {
         match value {
             HashGroup::Filename => sdk::murmur::HashGroup::Filename,
             HashGroup::Filetype => sdk::murmur::HashGroup::Filetype,
+            HashGroup::Strings => sdk::murmur::HashGroup::Strings,
             HashGroup::Other => sdk::murmur::HashGroup::Other,
         }
     }

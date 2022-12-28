@@ -359,6 +359,10 @@ impl BundleFileVariant {
         self.header.size
     }
 
+    pub fn kind(&self) -> u32 {
+        self.header.variant
+    }
+
     pub fn data(&self) -> &[u8] {
         &self.data
     }
@@ -541,6 +545,11 @@ impl BundleFile {
                 variants = self.variants.len(),
                 "Attempting to decompile"
             );
+        }
+
+        if file_type == BundleFileType::Strings {
+            let ctx = ctx.read().await;
+            return strings::decompile(&ctx, &self.variants);
         }
 
         let tasks = self.variants.iter().map(|variant| {

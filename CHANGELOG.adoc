@@ -1,0 +1,7 @@
+= Changelog
+
+== Unreleased
+
+=== Added
+
+- implement decompilation for `.strings` files
