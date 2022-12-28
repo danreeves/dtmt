@@ -371,7 +371,7 @@ where
                     .wrap_err("Failed to decompile")
                     .with_section(|| name.header("File"));
 
-                tracing::error!("{:#}", err);
+                tracing::error!("{:?}", err);
             }
         };
     }
