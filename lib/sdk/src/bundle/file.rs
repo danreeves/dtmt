@@ -325,6 +325,7 @@ impl From<BundleFileType> for Murmur64 {
 struct BundleFileHeader {
     variant: u32,
     size: usize,
+    len_data_file_name: usize,
 }
 
 impl BundleFileHeader {
@@ -335,26 +336,22 @@ impl BundleFileHeader {
     {
         let variant = read_u32(r).await?;
         skip_u8(r, 0).await?;
-        let size_1 = read_u32(r).await? as usize;
+        let size = read_u32(r).await? as usize;
         skip_u8(r, 1).await?;
-        let size_2 = read_u32(r).await? as usize;
+        let len_data_file_name = read_u32(r).await? as usize;
 
-        tracing::debug!(size_1, size_2);
-
-        // NOTE: Very weird. There must be something affecting this.
-        let size = if size_2 == 30 {
-            size_1 + size_2
-        } else {
-            size_1
-        };
-
-        Ok(Self { size, variant })
+        Ok(Self {
+            size,
+            variant,
+            len_data_file_name,
+        })
     }
 }
 
 pub struct BundleFileVariant {
     header: BundleFileHeader,
     data: Vec<u8>,
+    data_file_name: String,
 }
 
 impl BundleFileVariant {
@@ -410,7 +407,18 @@ impl BundleFile {
             let mut data = vec![0; header.size];
             r.read_exact(&mut data).await?;
 
-            let variant = BundleFileVariant { header, data };
+            let data_file_name = {
+                let mut buf = vec![0; header.len_data_file_name];
+                r.read_exact(&mut buf).await?;
+
+                String::from_utf8(buf)?
+            };
+
+            let variant = BundleFileVariant {
+                header,
+                data,
+                data_file_name,
+            };
 
             variants.push(variant);
         }
@@ -446,11 +454,12 @@ impl BundleFile {
             write_u8(w, 1).await?;
             // TODO: The previous size value and this one are somehow connected,
             // but so far it is unknown how
-            write_u32(w, 0).await?;
+            write_u32(w, variant.data_file_name.len() as u32).await?;
         }
 
         for variant in self.variants.iter() {
             w.write_all(&variant.data).await?;
+            w.write_all(variant.data_file_name.as_bytes()).await?;
         }
 
         Ok(())

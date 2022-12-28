@@ -22,7 +22,8 @@ pub use file::BundleFile;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum BundleFormat {
-    Darktide,
+    F7,
+    F8,
 }
 
 impl TryFrom<u32> for BundleFormat {
@@ -30,7 +31,8 @@ impl TryFrom<u32> for BundleFormat {
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         match value {
-            0xF0000007 => Ok(Self::Darktide),
+            0xF0000007 => Ok(Self::F7),
+            0xF0000008 => Ok(Self::F8),
             _ => Err(eyre::eyre!("Unknown bundle format '{:08X}'", value)),
         }
     }
@@ -39,7 +41,8 @@ impl TryFrom<u32> for BundleFormat {
 impl From<BundleFormat> for u32 {
     fn from(value: BundleFormat) -> Self {
         match value {
-            BundleFormat::Darktide => 0xF0000007,
+            BundleFormat::F7 => 0xF0000007,
+            BundleFormat::F8 => 0xF0000008,
         }
     }
 }
@@ -135,7 +138,7 @@ impl Bundle {
             .wrap_err("failed to read from file")
             .and_then(BundleFormat::try_from)?;
 
-        if format != BundleFormat::Darktide {
+        if !matches!(format, BundleFormat::F7 | BundleFormat::F8) {
             return Err(eyre::eyre!("Unknown bundle format: {:?}", format));
         }
 
@@ -349,7 +352,7 @@ where
 {
     let format = read_u32(&mut r).await.and_then(BundleFormat::try_from)?;
 
-    if format != BundleFormat::Darktide {
+    if !matches!(format, BundleFormat::F7 | BundleFormat::F8) {
         eyre::bail!("Unknown bundle format: {:?}", format);
     }
 
