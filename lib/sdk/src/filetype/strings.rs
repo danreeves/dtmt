@@ -21,7 +21,7 @@ impl Language {
     where
         S: serde::Serializer,
     {
-        ser.serialize_str(&format!("lang_{}", field))
+        ser.serialize_str(&format!("lang_{field}"))
     }
 }
 
