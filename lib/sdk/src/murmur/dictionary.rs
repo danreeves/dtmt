@@ -48,7 +48,7 @@ struct Row {
     group: HashGroup,
 }
 
-struct Entry {
+pub struct Entry {
     value: String,
     long: Murmur64,
     short: Murmur32,
@@ -143,6 +143,12 @@ impl Dictionary {
         self.entries.push(entry);
     }
 
+    pub fn find(&mut self, value: &String, group: HashGroup) -> Option<&Entry> {
+        self.entries
+            .iter()
+            .find(|e| e.value == *value && e.group == group)
+    }
+
     pub fn lookup(&self, hash: Murmur64, group: HashGroup) -> Option<&String> {
         self.entries
             .iter()
@@ -157,5 +163,13 @@ impl Dictionary {
             .filter(|e| e.group == group)
             .find(|e| e.short == hash)
             .map(|e| &e.value)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }

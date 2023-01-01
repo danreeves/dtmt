@@ -2,6 +2,10 @@
 
 == [Unreleased]
 
+=== Added
+
+- show status after adding dictionary entries
+
 == [v0.2.0] - 2022-12-28
 
 === Added

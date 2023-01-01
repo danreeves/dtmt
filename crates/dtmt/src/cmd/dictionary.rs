@@ -112,13 +112,24 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 BufReader::new(Box::new(f))
             };
 
+            let mut added = 0;
+            let mut skipped = 0;
+
             let lines: Vec<_> = LinesStream::new(r.lines()).collect().await;
-            {
+            let total = {
                 let mut ctx = ctx.write().await;
                 for line in lines.into_iter() {
-                    ctx.lookup.add(line?, (*group).into());
+                    let value = line?;
+                    if ctx.lookup.find(&value, (*group).into()).is_some() {
+                        skipped += 1;
+                    } else {
+                        ctx.lookup.add(value, (*group).into());
+                        added += 1;
+                    }
                 }
-            }
+
+                ctx.lookup.len()
+            };
 
             let out_path = matches
                 .get_one::<PathBuf>("dictionary")
@@ -139,7 +150,15 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 .lookup
                 .to_csv(f)
                 .await
-                .wrap_err("Failed to write dictionary to disk")
+                .wrap_err("Failed to write dictionary to disk")?;
+
+            tracing::info!(
+                "Added {} entries, skipped {} duplicates. Total now {}.",
+                added,
+                skipped,
+                total
+            );
+            Ok(())
         }
         Some(("save", _)) => {
             let out_path = matches
