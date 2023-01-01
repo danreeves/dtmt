@@ -15,8 +15,8 @@ A set of tools to develop mods for the newest generation of the Bitsquid game en
 == Quickstart
 
 1. Download the latest https://git.sclu1034.dev/bitsquid_dt/dtmt/releases/[release] for your platform.
-2. Download the `dictionary.csv` and place it next to the binary.
-3. Open a command prompt, nagivate to the downloaded binary and run `dtmt.exe help`.
+2. Place the binary for your system and `dictionary.csv` next to each other.
+3. Open a command prompt, navigate to the downloaded binary and run `dtmt.exe help`.
 4. Use the `help` command (it works for subcommands, too) and the https://git.sclu1034.dev/bitsquid_dt/dtmt/wiki/CLI-Reference[CLI Reference].
 
 == Runtime dependencies
