@@ -11,3 +11,22 @@
 :warning-caption: :warning:
 
 A set of tools to develop mods for the newest generation of the Bitsquid game engine that powers the game _Warhammer 40.000: Darktide_.
+
+== Quickstart
+
+1. Download the latest https://git.sclu1034.dev/bitsquid_dt/dtmt/releases/[release] for your platform.
+2. Download the `dictionary.csv` and place it next to the binary.
+3. Open a command prompt, nagivate to the downloaded binary and run `dtmt.exe help`.
+4. Use the `help` command (it works for subcommands, too) and the https://git.sclu1034.dev/bitsquid_dt/dtmt/wiki/CLI-Reference[CLI Reference].
+
+== Runtime dependencies
+
+The LuaJit decompiler (short "ljd") is used to decompile Lua files. A version tailored specifically to Bitsquid may be found here: https://github.com/Aussiemon/ljd.
+
+A custom executable location may be passed via the `--ljd` flag during extraction, otherwise decompilation expects `ljd` to be found via the `PATH` environmental variable.
+
+== Building
+
+1. Install Rust from https://www.rust-lang.org/learn/get-started[rust-lang.org] or via the preferred means for your system.
+2. Download or clone this source code. Make sure to include the submodules in `lib/`.
+3. Run `cargo build`.
