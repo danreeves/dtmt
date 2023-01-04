@@ -1,12 +1,11 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use clap::{value_parser, Arg, ArgMatches, Command};
-use color_eyre::{
-    eyre::{self, Context, Result},
-    Help,
-};
+use color_eyre::eyre::{self, Context, Result};
+use color_eyre::Help;
 use sdk::Bundle;
-use tokio::{fs::File, io::AsyncReadExt, sync::RwLock};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("inject")
@@ -42,7 +41,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     let bundle_path = matches
         .get_one::<PathBuf>("bundle")
         .expect("required parameter not found");
@@ -53,7 +52,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
 
     tracing::trace!(bundle_path = %bundle_path.display(), file_path = %file_path.display());
 
-    let mut bundle = Bundle::open(ctx.clone(), bundle_path)
+    let mut bundle = Bundle::open(&ctx, bundle_path)
         .await
         .wrap_err("Failed to open bundle file")?;
 
@@ -66,8 +65,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
             .files_mut()
             .filter(|file| file.matches_name(_name))
             // TODO: Handle file variants
-            .filter_map(|file| file.variants_mut().next())
-            .next()
+            .find_map(|file| file.variants_mut().next())
         {
             let mut data = Vec::new();
             file.read_to_end(&mut data)
@@ -101,7 +99,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
             .await
             .wrap_err_with(|| format!("failed to open output file {}", out_path.display()))?;
         bundle
-            .write(ctx.clone(), &mut out_file)
+            .write(&ctx, &mut out_file)
             .await
             .wrap_err("failed to write changed bundle to output")?;
 

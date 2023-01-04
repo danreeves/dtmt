@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
-use tokio::sync::RwLock;
 
 pub(crate) fn _command_definition() -> Command {
     Command::new("new")
@@ -17,6 +14,6 @@ pub(crate) fn _command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, _matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(_ctx: sdk::Context, _matches: &ArgMatches) -> Result<()> {
     unimplemented!()
 }

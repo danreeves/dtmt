@@ -1,14 +1,11 @@
 use std::io::Cursor;
-use std::sync::Arc;
 
 use color_eyre::{Help, Result, SectionExt};
 use futures::future::join_all;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
-use tokio::sync::RwLock;
 
 use crate::binary::*;
-use crate::context::lookup_hash;
 use crate::filetype::*;
 use crate::murmur::{HashGroup, Murmur64};
 
@@ -382,13 +379,13 @@ pub struct BundleFile {
 
 impl BundleFile {
     #[tracing::instrument(name = "File::read", skip_all)]
-    pub async fn read<R>(ctx: Arc<RwLock<crate::Context>>, r: &mut R) -> Result<Self>
+    pub async fn read<R>(ctx: &crate::Context, r: &mut R) -> Result<Self>
     where
         R: AsyncRead + AsyncSeek + std::marker::Unpin,
     {
         let file_type = BundleFileType::from(read_u64(r).await?);
         let hash = Murmur64::from(read_u64(r).await?);
-        let name = lookup_hash(ctx, hash, HashGroup::Filename).await;
+        let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
         let header_count = read_u32(r)
             .await
@@ -436,7 +433,7 @@ impl BundleFile {
     }
 
     #[tracing::instrument(name = "File::write", skip_all)]
-    pub async fn write<W>(&self, _ctx: Arc<RwLock<crate::Context>>, w: &mut W) -> Result<()>
+    pub async fn write<W>(&self, w: &mut W) -> Result<()>
     where
         W: AsyncWrite + AsyncSeek + std::marker::Unpin,
     {
@@ -536,7 +533,7 @@ impl BundleFile {
     }
 
     #[tracing::instrument(name = "File::decompiled", skip_all)]
-    pub async fn decompiled(&self, ctx: Arc<RwLock<crate::Context>>) -> Result<Vec<UserFile>> {
+    pub async fn decompiled(&self, ctx: &crate::Context) -> Result<Vec<UserFile>> {
         let file_type = self.file_type();
 
         if tracing::enabled!(tracing::Level::DEBUG) {
@@ -548,42 +545,37 @@ impl BundleFile {
         }
 
         if file_type == BundleFileType::Strings {
-            let ctx = ctx.read().await;
-            return strings::decompile(&ctx, &self.variants);
+            return strings::decompile(ctx, &self.variants);
         }
 
-        let tasks = self.variants.iter().map(|variant| {
-            let ctx = ctx.clone();
+        let tasks = self.variants.iter().map(|variant| async move {
+            let data = variant.data();
+            let name = if self.variants.len() > 1 {
+                self.name(true, Some(variant.header.variant))
+            } else {
+                self.name(true, None)
+            };
 
-            async move {
-                let data = variant.data();
-                let name = if self.variants.len() > 1 {
-                    self.name(true, Some(variant.header.variant))
-                } else {
-                    self.name(true, None)
-                };
+            let res = match file_type {
+                BundleFileType::Lua => lua::decompile(ctx, data).await,
+                BundleFileType::Package => {
+                    let mut c = Cursor::new(data);
+                    package::decompile(ctx, &mut c).await
+                }
+                _ => {
+                    tracing::debug!("Can't decompile, unknown file type");
+                    Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])
+                }
+            };
 
-                let res = match file_type {
-                    BundleFileType::Lua => lua::decompile(ctx, data).await,
-                    BundleFileType::Package => {
-                        let mut c = Cursor::new(data);
-                        package::decompile(ctx, &mut c).await
-                    }
-                    _ => {
-                        tracing::debug!("Can't decompile, unknown file type");
-                        Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])
-                    }
-                };
-
-                match res {
-                    Ok(files) => files,
-                    Err(err) => {
-                        let err = err
-                            .wrap_err("failed to decompile file")
-                            .with_section(|| name.header("File:"));
-                        tracing::error!("{:?}", err);
-                        vec![]
-                    }
+            match res {
+                Ok(files) => files,
+                Err(err) => {
+                    let err = err
+                        .wrap_err("failed to decompile file")
+                        .with_section(|| name.header("File:"));
+                    tracing::error!("{:?}", err);
+                    vec![]
                 }
             }
         });

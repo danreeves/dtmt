@@ -7,6 +7,7 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::value_parser;
 use clap::{command, Arg};
+use color_eyre::eyre;
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
@@ -71,6 +72,7 @@ async fn main() -> Result<()> {
             .init();
     }
 
+    // TODO: Move this into a `Context::init` method?
     let ctx = sdk::Context::new();
     let ctx = Arc::new(RwLock::new(ctx));
 
@@ -83,7 +85,6 @@ async fn main() -> Result<()> {
         let ctx = ctx.clone();
 
         tokio::spawn(async move {
-            let mut ctx = ctx.write().await;
             let res = File::open(&path)
                 .await
                 .wrap_err_with(|| format!("failed to open dictionary file: {}", path.display()));
@@ -101,6 +102,7 @@ async fn main() -> Result<()> {
             };
 
             let r = BufReader::new(f);
+            let mut ctx = ctx.write().await;
             if let Err(err) = ctx.lookup.from_csv(r).await {
                 tracing::error!("{:#}", err);
             }
@@ -128,6 +130,11 @@ async fn main() -> Result<()> {
     };
 
     tokio::try_join!(dicitonary_task, global_config_task)?;
+
+    let ctx = match Arc::try_unwrap(ctx).map(|ctx| ctx.into_inner()) {
+        Ok(ctx) => ctx,
+        Err(_) => eyre::bail!("failed to unwrap context"),
+    };
 
     match matches.subcommand() {
         Some(("bundle", sub_matches)) => cmd::bundle::run(ctx, sub_matches).await?,

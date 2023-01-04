@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
@@ -8,7 +7,7 @@ use futures::future::try_join_all;
 use futures::{StreamExt, TryFutureExt};
 use glob::Pattern;
 use sdk::{Bundle, BundleFile};
-use tokio::{fs, sync::RwLock};
+use tokio::fs;
 
 use crate::cmd::util::resolve_bundle_paths;
 
@@ -116,7 +115,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     {
         let ljd_bin = matches
             .get_one::<String>("ljd")
@@ -128,7 +127,6 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
             .get_one::<String>("ww2ogg")
             .expect("no default value for 'ww2ogg' parameter");
 
-        let mut ctx = ctx.write().await;
         ctx.ljd = Some(ljd_bin.clone());
         ctx.revorb = Some(revorb_bin.clone());
         ctx.ww2ogg = Some(ww2ogg_bin.clone());
@@ -181,10 +179,10 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
     // TODO: Find a way to do this with `for_each_concurrent`. The first attempt
     // just kept head-butting into a "use of moved value" wall.
     while let Some(path) = paths.next().await {
-        let res = Bundle::open(ctx.clone(), &path)
+        let res = Bundle::open(&ctx, &path)
             .and_then(|bundle| {
                 extract_bundle(
-                    ctx.clone(),
+                    &ctx,
                     bundle,
                     &dest,
                     ExtractOptions {
@@ -220,7 +218,7 @@ struct ExtractOptions<'a> {
     fields(decompile = options.decompile, flatten = options.flatten, dry_run = options.dry_run)
 )]
 async fn extract_bundle<P>(
-    ctx: Arc<RwLock<sdk::Context>>,
+    ctx: &sdk::Context,
     bundle: Bundle,
     dest: P,
     options: ExtractOptions<'_>,
@@ -277,7 +275,7 @@ where
     for file in files {
         let name = file.name(options.decompile, None);
         let data = if options.decompile {
-            file.decompiled(ctx.clone()).await
+            file.decompiled(ctx).await
         } else {
             file.raw()
         };

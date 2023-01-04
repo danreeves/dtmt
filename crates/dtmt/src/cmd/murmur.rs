@@ -1,9 +1,6 @@
-use std::sync::Arc;
-
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::Result;
 use sdk::murmur::{Murmur32, Murmur64};
-use tokio::sync::RwLock;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("murmur")
@@ -28,7 +25,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("hash", sub_matches)) => {
             let s = sub_matches

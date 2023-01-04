@@ -1,16 +1,13 @@
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
 
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use serde::Serialize;
 use tokio::io::{AsyncRead, AsyncSeek};
-use tokio::sync::RwLock;
 
 use crate::binary::*;
 use crate::bundle::file::{BundleFileType, UserFile};
-use crate::context::lookup_hash;
 use crate::murmur::{HashGroup, Murmur64};
 
 #[derive(Serialize)]
@@ -37,7 +34,7 @@ impl Package {
 }
 
 #[tracing::instrument(skip_all)]
-pub async fn decompile<R>(ctx: Arc<RwLock<crate::Context>>, data: &mut R) -> Result<Vec<UserFile>>
+pub async fn decompile<R>(ctx: &crate::Context, data: &mut R) -> Result<Vec<UserFile>>
 where
     R: AsyncRead + AsyncSeek + std::marker::Unpin,
 {
@@ -53,7 +50,7 @@ where
     for i in 0..file_count {
         let t = BundleFileType::from(read_u64(data).await?);
         let hash = Murmur64::from(read_u64(data).await?);
-        let name = lookup_hash(ctx.clone(), hash, HashGroup::Filename).await;
+        let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
         tracing::trace!(index = i, r"type" = ?t, %hash, name, "Package entry");
 

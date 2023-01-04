@@ -1,6 +1,5 @@
 use std::io::{Cursor, SeekFrom};
 use std::path::Path;
-use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
@@ -8,7 +7,6 @@ use tokio::fs;
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
-use tokio::sync::RwLock;
 use tracing::Instrument;
 
 use crate::binary::*;
@@ -107,7 +105,7 @@ pub struct Bundle {
 
 impl Bundle {
     #[tracing::instrument(name = "Bundle::open", skip(ctx))]
-    pub async fn open<P>(ctx: Arc<RwLock<crate::Context>>, path: P) -> Result<Self>
+    pub async fn open<P>(ctx: &crate::Context, path: P) -> Result<Self>
     where
         P: AsRef<Path> + std::fmt::Debug,
     {
@@ -117,7 +115,7 @@ impl Bundle {
         let path = path.as_ref();
         let bundle_name = if let Some(name) = path.file_name() {
             match Murmur64::try_from(name.to_string_lossy().as_ref()) {
-                Ok(hash) => ctx.read().await.lookup_hash(hash, HashGroup::Filename),
+                Ok(hash) => ctx.lookup_hash(hash, HashGroup::Filename),
                 Err(err) => {
                     tracing::debug!("failed to turn bundle name into hash: {}", err);
                     name.to_string_lossy().to_string()
@@ -202,7 +200,6 @@ impl Bundle {
                     decompressed.append(&mut compressed_buffer);
                 } else {
                     // TODO: Optimize to not reallocate?
-                    let ctx = ctx.read().await;
                     let oodle_lib = ctx.oodle.as_ref().unwrap();
                     let mut raw_buffer = oodle_lib
                         .decompress(
@@ -240,9 +237,7 @@ impl Bundle {
         let mut files = Vec::with_capacity(num_entries);
         for i in 0..num_entries {
             let span = tracing::trace_span!("", file_index = i);
-            let file = BundleFile::read(ctx.clone(), &mut r)
-                .instrument(span)
-                .await?;
+            let file = BundleFile::read(ctx, &mut r).instrument(span).await?;
             files.push(file);
         }
 
@@ -257,7 +252,7 @@ impl Bundle {
     }
 
     #[tracing::instrument(name = "Bundle::write", skip_all)]
-    pub async fn write<W>(&self, ctx: Arc<RwLock<crate::Context>>, w: &mut W) -> Result<()>
+    pub async fn write<W>(&self, ctx: &crate::Context, w: &mut W) -> Result<()>
     where
         W: AsyncWrite + AsyncSeek + std::marker::Unpin,
     {
@@ -279,7 +274,7 @@ impl Bundle {
 
             async {
                 for file in self.files.iter() {
-                    file.write(ctx.clone(), &mut c).await?;
+                    file.write(&mut c).await?;
                 }
 
                 Ok::<(), Report>(())
@@ -309,7 +304,6 @@ impl Bundle {
 
         let chunks = unpacked_data.chunks(CHUNK_SIZE);
 
-        let ctx = ctx.read().await;
         let oodle_lib = ctx.oodle.as_ref().unwrap();
         let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
@@ -351,7 +345,7 @@ impl Bundle {
 /// This is mainly useful for debugging purposes or
 /// to manullay inspect the raw data.
 #[tracing::instrument(skip_all)]
-pub async fn decompress<R, W>(ctx: Arc<RwLock<crate::Context>>, mut r: R, mut w: W) -> Result<()>
+pub async fn decompress<R, W>(ctx: &crate::Context, mut r: R, mut w: W) -> Result<()>
 where
     R: AsyncRead + AsyncSeek + std::marker::Unpin,
     W: AsyncWrite + std::marker::Unpin,
@@ -417,7 +411,6 @@ where
             let mut compressed_buffer = vec![0u8; chunk_size];
             r.read_exact(&mut compressed_buffer).await?;
 
-            let ctx = ctx.read().await;
             let oodle_lib = ctx.oodle.as_ref().unwrap();
             // TODO: Optimize to not reallocate?
             let mut raw_buffer = oodle_lib.decompress(

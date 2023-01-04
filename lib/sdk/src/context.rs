@@ -1,7 +1,4 @@
 use std::path::PathBuf;
-use std::sync::Arc;
-
-use tokio::sync::RwLock;
 
 use crate::murmur::{Dictionary, HashGroup, Murmur32, Murmur64};
 use crate::oodle::Oodle;
@@ -59,19 +56,5 @@ impl Context {
 impl Default for Context {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-pub async fn lookup_hash<M>(ctx: Arc<RwLock<Context>>, hash: M, group: HashGroup) -> String
-where
-    M: Into<Murmur64>,
-{
-    let hash = hash.into();
-    if let Some(s) = ctx.read().await.lookup.lookup(hash, group) {
-        tracing::debug!(%hash, string = s, "Murmur64 lookup successful");
-        s.to_owned()
-    } else {
-        tracing::debug!(%hash, "Murmur64 lookup failed");
-        format!("{hash:016X}")
     }
 }

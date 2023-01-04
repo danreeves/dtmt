@@ -6,7 +6,6 @@ use color_eyre::eyre::{self, Result};
 use color_eyre::{Help, SectionExt};
 use futures::StreamExt;
 use sdk::Bundle;
-use tokio::sync::RwLock;
 use tracing::Instrument;
 
 use crate::cmd::util::resolve_bundle_paths;
@@ -64,7 +63,7 @@ fn print_bundle_list(bundle: Bundle, fmt: OutputFormat) {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     let bundles = matches
         .get_many::<PathBuf>("bundle")
         .unwrap_or_default()
@@ -78,13 +77,15 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
         OutputFormat::Text
     };
 
+    let ctx = Arc::new(ctx);
+
     paths
         .for_each_concurrent(10, |p| async {
             let span = tracing::info_span!("list bundle");
             let ctx = ctx.clone();
             async move {
                 let span = tracing::info_span!("open bundle");
-                if let Err(err) = Bundle::open(ctx, &p)
+                if let Err(err) = Bundle::open(&ctx, &p)
                     .instrument(span)
                     .await
                     .map(|bundle| print_bundle_list(bundle, fmt))

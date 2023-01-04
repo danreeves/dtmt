@@ -1,9 +1,5 @@
-use std::sync::Arc;
-
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
-use tokio::sync::RwLock;
-
 use sdk::Oodle;
 
 mod decompress;
@@ -39,10 +35,9 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     if let Some(name) = matches.get_one::<String>("oodle") {
         let oodle = Oodle::new(name)?;
-        let mut ctx = ctx.write().await;
         ctx.oodle = Some(oodle);
     }
 

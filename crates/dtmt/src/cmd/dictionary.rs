@@ -1,12 +1,10 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueEnum};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::RwLock;
 use tokio_stream::wrappers::LinesStream;
 use tokio_stream::StreamExt;
 
@@ -77,7 +75,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("lookup", sub_matches)) => {
             let hash = sub_matches
@@ -88,7 +86,6 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 .get_many::<HashGroup>("group")
                 .unwrap_or_default();
 
-            let ctx = ctx.read().await;
             for group in groups {
                 let value = ctx.lookup_hash(*hash, (*group).into());
                 println!("{value}");
@@ -112,18 +109,19 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 BufReader::new(Box::new(f))
             };
 
+            let group = sdk::murmur::HashGroup::from(*group);
+
             let mut added = 0;
             let mut skipped = 0;
 
             let lines: Vec<_> = LinesStream::new(r.lines()).collect().await;
             let total = {
-                let mut ctx = ctx.write().await;
                 for line in lines.into_iter() {
                     let value = line?;
-                    if ctx.lookup.find(&value, (*group).into()).is_some() {
+                    if ctx.lookup.find(&value, group).is_some() {
                         skipped += 1;
                     } else {
-                        ctx.lookup.add(value, (*group).into());
+                        ctx.lookup.add(value, group);
                         added += 1;
                     }
                 }
@@ -145,9 +143,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 })
                 .with_section(|| out_path.display().to_string().header("Path:"))?;
 
-            ctx.read()
-                .await
-                .lookup
+            ctx.lookup
                 .to_csv(f)
                 .await
                 .wrap_err("Failed to write dictionary to disk")?;
@@ -175,9 +171,7 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
                 })
                 .with_section(|| out_path.display().to_string().header("Path:"))?;
 
-            ctx.read()
-                .await
-                .lookup
+            ctx.lookup
                 .to_csv(f)
                 .await
                 .wrap_err("Failed to write dictionary to disk")

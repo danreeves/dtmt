@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::Result;
@@ -7,7 +6,6 @@ use color_eyre::eyre::Result;
 use sdk::decompress;
 use tokio::fs::{self, File};
 use tokio::io::BufReader;
-use tokio::sync::RwLock;
 
 pub(crate) fn command_definition() -> Command {
     Command::new("decompress")
@@ -37,11 +35,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[tracing::instrument(skip(ctx))]
-async fn decompress_bundle<P1, P2>(
-    ctx: Arc<RwLock<sdk::Context>>,
-    bundle: P1,
-    destination: P2,
-) -> Result<()>
+async fn decompress_bundle<P1, P2>(ctx: &sdk::Context, bundle: P1, destination: P2) -> Result<()>
 where
     P1: AsRef<Path> + std::fmt::Debug,
     P2: AsRef<Path> + std::fmt::Debug,
@@ -54,7 +48,7 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) -> Result<()> {
+pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     let bundle = matches
         .get_one::<PathBuf>("bundle")
         .expect("required argument 'bundle' is missing");
@@ -70,8 +64,8 @@ pub(crate) async fn run(ctx: Arc<RwLock<sdk::Context>>, matches: &ArgMatches) ->
     let name = bundle.file_name();
 
     if is_dir && name.is_some() {
-        decompress_bundle(ctx, bundle, out_path.join(name.unwrap())).await
+        decompress_bundle(&ctx, bundle, out_path.join(name.unwrap())).await
     } else {
-        decompress_bundle(ctx, bundle, out_path).await
+        decompress_bundle(&ctx, bundle, out_path).await
     }
 }
