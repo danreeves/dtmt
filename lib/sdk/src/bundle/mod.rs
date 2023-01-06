@@ -88,11 +88,11 @@ impl EntryHeader {
 
 pub struct Bundle {
     format: BundleFormat,
+    properties: Vec<Murmur64>,
     _headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
     name: String,
     unknown_1: u32,
-    unknown_header: [u8; 256],
 }
 
 impl Bundle {
@@ -133,8 +133,10 @@ impl Bundle {
 
         let num_entries = r.read_u32()? as usize;
 
-        let mut unknown_header = [0; 256];
-        r.read_exact(&mut unknown_header)?;
+        let mut properties = Vec::with_capacity(32);
+        for prop in properties.iter_mut().take(32) {
+            *prop = Murmur64::from(r.read_u64()?);
+        }
 
         let mut meta = Vec::with_capacity(num_entries);
         for _ in 0..num_entries {
@@ -223,7 +225,7 @@ impl Bundle {
             _headers: meta,
             files,
             unknown_1,
-            unknown_header,
+            properties,
         })
     }
 
@@ -233,7 +235,10 @@ impl Bundle {
         w.write_u32(self.format.into())?;
         w.write_u32(self.unknown_1)?;
         w.write_u32(self.files.len() as u32)?;
-        w.write_all(&self.unknown_header)?;
+
+        for prop in self.properties.iter() {
+            w.write_u64(**prop)?;
+        }
 
         for meta in self._headers.iter() {
             meta.to_writer(&mut w)?;
