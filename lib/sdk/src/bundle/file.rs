@@ -414,7 +414,9 @@ impl BundleFile {
 
         let mut variants = Vec::with_capacity(header_count);
         for (i, header) in headers.into_iter().enumerate() {
-            let _span = tracing::trace_span!("Read file header {}", i, size = header.size);
+            let span = tracing::info_span!("Read file header {}", i, size = header.size);
+            let _enter = span.enter();
+
             let mut data = vec![0; header.size];
             r.read_exact(&mut data)
                 .wrap_err_with(|| format!("failed to read header {i}"))?;

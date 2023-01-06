@@ -160,7 +160,8 @@ impl Bundle {
         let mut unpacked_size_tracked = unpacked_size;
 
         for (chunk_index, chunk_size) in chunk_sizes.into_iter().enumerate() {
-            let _span = tracing::debug_span!("Decompressing chunk", chunk_index, chunk_size);
+            let span = tracing::debug_span!("Decompressing chunk", chunk_index, chunk_size);
+            let _enter = span.enter();
 
             let inner_chunk_size = r.read_u32()? as usize;
 
@@ -239,7 +240,8 @@ impl Bundle {
         }
 
         let unpacked_data = {
-            let _span = tracing::trace_span!("Write bundle files");
+            let span = tracing::trace_span!("Write bundle files");
+            let _enter = span.enter();
             tracing::trace!(num_files = self.files.len());
 
             self.files
@@ -352,7 +354,8 @@ where
 
     // Pipe the header into the output
     {
-        let _span = tracing::debug_span!("Pipe file header", chunks_start);
+        let span = tracing::debug_span!("Pipe file header", chunks_start);
+        let _enter = span.enter();
         r.rewind()?;
 
         let mut buf = vec![0; chunks_start as usize];
@@ -363,7 +366,8 @@ where
     }
 
     for chunk_index in 0..num_chunks {
-        let _span = tracing::debug_span!("Decompressing chunk", chunk_index);
+        let span = tracing::debug_span!("Decompressing chunk", chunk_index);
+        let _enter = span.enter();
         let chunk_size = r.read_u32()? as usize;
 
         tracing::trace!(chunk_size);
