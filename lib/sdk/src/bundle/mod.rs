@@ -92,7 +92,6 @@ pub struct Bundle {
     _headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
     name: String,
-    unknown_1: u32,
 }
 
 impl Bundle {
@@ -122,14 +121,7 @@ impl Bundle {
             return Err(eyre::eyre!("Unknown bundle format: {:?}", format));
         }
 
-        let unknown_1 = r.read_u32()?;
-        if unknown_1 != 0x3 {
-            tracing::warn!(
-                "Unexpected value for unknown header. Expected {:#08X}, got {:#08X}",
-                0x3,
-                unknown_1
-            );
-        }
+        r.skip_u32(0x3)?;
 
         let num_entries = r.read_u32()? as usize;
 
@@ -224,7 +216,6 @@ impl Bundle {
             format,
             _headers: meta,
             files,
-            unknown_1,
             properties,
         })
     }
@@ -233,7 +224,8 @@ impl Bundle {
     pub fn to_binary(&self, ctx: &crate::Context) -> Result<Vec<u8>> {
         let mut w = Cursor::new(Vec::new());
         w.write_u32(self.format.into())?;
-        w.write_u32(self.unknown_1)?;
+        // TODO: Find out what this is.
+        w.write_u32(0x3)?;
         w.write_u32(self.files.len() as u32)?;
 
         for prop in self.properties.iter() {
@@ -331,7 +323,7 @@ where
     }
 
     // Skip unknown 4 bytes
-    r.seek(SeekFrom::Current(4))?;
+    r.skip_u32(0x3)?;
 
     let num_entries = r.read_u32()? as i64;
     tracing::debug!(num_entries);
