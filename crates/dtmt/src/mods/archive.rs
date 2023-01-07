@@ -51,29 +51,28 @@ impl Archive {
 
         zip.add_directory(&self.name, Default::default())?;
 
+        let base_path = PathBuf::from(&self.name);
+
         {
-            let mut name = path.as_ref().join(&self.name);
+            let mut name = base_path.join(&self.name);
             name.set_extension("mod");
             zip.start_file(name.to_string_lossy(), Default::default())?;
             zip.write_all(mod_file)?;
         }
 
-        let path = PathBuf::from(&self.name);
         let mut file_map = HashMap::new();
 
         for bundle in self.bundles.iter() {
             let bundle_name = bundle.name().clone();
-            let bundle_path = PathBuf::from(&bundle_name);
 
             let map_entry: &mut HashSet<_> = file_map.entry(bundle_name).or_default();
 
             for file in bundle.files() {
-                let bundle_path = bundle_path.join(file.base_name());
-                map_entry.insert(bundle_path.to_string_lossy().to_string());
+                map_entry.insert(file.name(false, None));
             }
 
             let name = Murmur64::hash(bundle.name().as_bytes());
-            let path = path.join(name.to_string());
+            let path = base_path.join(name.to_string().to_ascii_lowercase());
 
             zip.start_file(path.to_string_lossy(), Default::default())?;
 
@@ -84,7 +83,7 @@ impl Archive {
         {
             let data = serde_sjson::to_string(&file_map)?;
             zip.start_file(
-                path.join("files.sjson").to_string_lossy(),
+                base_path.join("files.sjson").to_string_lossy(),
                 Default::default(),
             )?;
             zip.write_all(data.as_bytes())?;

@@ -5,6 +5,7 @@
 === Added
 
 - show status after adding dictionary entries
+- implement building mod bundles
 
 == [v0.2.0] - 2022-12-28
 

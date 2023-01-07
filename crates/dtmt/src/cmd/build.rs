@@ -14,6 +14,8 @@ use tokio::io::AsyncReadExt;
 
 use crate::mods::archive::Archive;
 
+const PROJECT_CONFIG_NAME: &str = "dtmt.cfg";
+
 pub(crate) fn command_definition() -> Command {
     Command::new("build")
         .about("Build a project")
@@ -50,7 +52,7 @@ struct ProjectConfig {
 #[tracing::instrument]
 async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
     let (path, mut file) = if let Some(path) = dir {
-        let file = File::open(&path.join("dtmt.toml"))
+        let file = File::open(&path.join(PROJECT_CONFIG_NAME))
             .await
             .wrap_err_with(|| format!("failed to open file: {}", path.display()))
             .with_suggestion(|| {
@@ -63,9 +65,9 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
     } else {
         let mut dir = std::env::current_dir()?;
         loop {
-            let path = dir.join("dtmt.toml");
+            let path = dir.join(PROJECT_CONFIG_NAME);
             match File::open(&path).await {
-                Ok(file) => break (path, file),
+                Ok(file) => break (dir, file),
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                     if let Some(parent) = dir.parent() {
                         // TODO: Re-write with recursion to avoid allocating the `PathBuf`.
@@ -83,10 +85,10 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
         }
     };
 
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf).await?;
+    let mut buf = String::new();
+    file.read_to_string(&mut buf).await?;
 
-    let mut cfg: ProjectConfig = toml::from_slice(&buf)?;
+    let mut cfg: ProjectConfig = serde_sjson::from_str(&buf)?;
     cfg.dir = path;
     Ok(cfg)
 }
@@ -113,7 +115,17 @@ where
         })
         .map(|(file_type, path, root)| async move {
             let sjson = fs::read_to_string(&path).await?;
-            BundleFile::from_sjson(file_type, sjson, root.as_ref()).await
+
+            let mut path = path.clone();
+            path.set_extension("");
+
+            BundleFile::from_sjson(
+                path.to_string_lossy().to_string(),
+                file_type,
+                sjson,
+                root.as_ref(),
+            )
+            .await
         });
 
     let results = futures::stream::iter(tasks)
@@ -188,6 +200,13 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
         .iter()
         .map(|path| (path, cfg.clone()))
         .map(|(path, cfg)| async move {
+            if path.extension().is_some() {
+                eyre::bail!(
+                    "Package name must be specified without file extension: {}",
+                    path.display()
+                );
+            }
+
             build_package(path, &cfg.dir).await.wrap_err_with(|| {
                 format!(
                     "failed to build package {} in {}",

@@ -181,9 +181,9 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
 
     resolve_bundle_paths(bundles)
         .for_each_concurrent(10, |p| async {
-            let ctx = ctx.clone();
             let includes = includes.clone();
             let excludes = excludes.clone();
+            let ctx = ctx.clone();
 
             let options = ExtractOptions {
                 includes,
@@ -196,7 +196,7 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
             async move {
                 match extract_bundle(ctx, &p, &dest, options).await {
                     Ok(_) => {}
-                    Err(err) => tracing::error!("{err:#}"),
+                    Err(err) => tracing::error!("{err:?}"),
                 }
             }
             .await

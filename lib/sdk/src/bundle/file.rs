@@ -409,9 +409,47 @@ struct BundleFileHeader {
     len_data_file_name: usize,
 }
 
-impl BundleFileHeader {
-    #[tracing::instrument(name = "FileHeader::from_reader", skip_all)]
-    fn from_reader<R>(r: &mut R) -> Result<Self>
+pub struct BundleFileVariant {
+    property: u32,
+    data: Vec<u8>,
+    data_file_name: Option<String>,
+}
+
+impl BundleFileVariant {
+    // We will need a parameter for `property` eventually, so the `Default` impl would need to go
+    // eventually anyways.
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        Self {
+            // TODO: Hard coded for, as long as we don't support bundle properties
+            property: 0,
+            data: Vec::new(),
+            data_file_name: None,
+        }
+    }
+
+    pub fn set_data(&mut self, data: Vec<u8>) {
+        self.data = data;
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn property(&self) -> u32 {
+        self.property
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn data_file_name(&self) -> Option<&String> {
+        self.data_file_name.as_ref()
+    }
+
+    #[tracing::instrument(skip_all)]
+    fn read_header<R>(r: &mut R) -> Result<BundleFileHeader>
     where
         R: Read + Seek,
     {
@@ -421,61 +459,49 @@ impl BundleFileHeader {
         r.skip_u8(1)?;
         let len_data_file_name = r.read_u32()? as usize;
 
-        Ok(Self {
+        Ok(BundleFileHeader {
             size,
             variant,
             len_data_file_name,
         })
     }
 
-    #[tracing::instrument(name = "FileHeader::to_writer", skip_all)]
-    fn to_writer<W>(&self, w: &mut W) -> Result<()>
+    #[tracing::instrument(skip_all)]
+    fn write_header<W>(&self, w: &mut W) -> Result<()>
     where
         W: Write + Seek,
     {
-        w.write_u32(self.variant)?;
+        w.write_u32(self.property)?;
         w.write_u8(0)?;
-        w.write_u32(self.size as u32)?;
+        w.write_u32(self.data.len() as u32)?;
         w.write_u8(1)?;
-        w.write_u32(self.len_data_file_name as u32)?;
+
+        let len_data_file_name = self.data_file_name.as_ref().map(|s| s.len()).unwrap_or(0);
+        w.write_u32(len_data_file_name as u32)?;
 
         Ok(())
     }
 }
 
-pub struct BundleFileVariant {
-    header: BundleFileHeader,
-    data: Vec<u8>,
-    data_file_name: String,
-}
-
-impl BundleFileVariant {
-    pub fn size(&self) -> usize {
-        self.header.size
-    }
-
-    pub fn kind(&self) -> u32 {
-        self.header.variant
-    }
-
-    pub fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    pub fn set_data(&mut self, data: Vec<u8>) {
-        self.header.size = data.len();
-        self.data = data;
-    }
-}
-
 pub struct BundleFile {
     file_type: BundleFileType,
-    hash: Murmur64,
     name: String,
     variants: Vec<BundleFileVariant>,
 }
 
 impl BundleFile {
+    pub fn new(name: String, file_type: BundleFileType) -> Self {
+        Self {
+            file_type,
+            name,
+            variants: Vec::new(),
+        }
+    }
+
+    pub fn add_variant(&mut self, variant: BundleFileVariant) {
+        self.variants.push(variant)
+    }
+
     #[tracing::instrument(
         name = "File::read",
         skip_all,
@@ -494,7 +520,7 @@ impl BundleFile {
         r.skip_u32(0)?;
 
         for _ in 0..header_count {
-            let header = BundleFileHeader::from_reader(r)?;
+            let header = BundleFileVariant::read_header(r)?;
             headers.push(header);
         }
 
@@ -507,12 +533,17 @@ impl BundleFile {
             r.read_exact(&mut data)
                 .wrap_err_with(|| format!("failed to read header {i}"))?;
 
-            let data_file_name = r
-                .read_string_len(header.len_data_file_name)
-                .wrap_err("failed to read data file name")?;
+            let data_file_name = if header.len_data_file_name > 0 {
+                let s = r
+                    .read_string_len(header.len_data_file_name)
+                    .wrap_err("failed to read data file name")?;
+                Some(s)
+            } else {
+                None
+            };
 
             let variant = BundleFileVariant {
-                header,
+                property: header.variant,
                 data,
                 data_file_name,
             };
@@ -523,7 +554,6 @@ impl BundleFile {
         Ok(Self {
             variants,
             file_type,
-            hash,
             name,
         })
     }
@@ -533,13 +563,20 @@ impl BundleFile {
         let mut w = Cursor::new(Vec::new());
 
         w.write_u64(*self.file_type.hash())?;
-        w.write_u64(*self.hash)?;
+        w.write_u64(*Murmur64::hash(self.name.as_bytes()))?;
+        w.write_u32(self.variants.len() as u32)?;
 
-        let header_count = self.variants.len();
-        w.write_u8(header_count as u8)?;
+        // TODO: Figure out what this is
+        w.write_u32(0x0)?;
 
         for variant in self.variants.iter() {
-            variant.header.to_writer(&mut w)?;
+            w.write_u32(variant.property())?;
+            w.write_u8(0)?;
+            w.write_u32(variant.size() as u32)?;
+            w.write_u8(1)?;
+
+            let len_data_file_name = variant.data_file_name().map(|s| s.len()).unwrap_or(0);
+            w.write_u32(len_data_file_name as u32)?;
         }
 
         for variant in self.variants.iter() {
@@ -549,13 +586,29 @@ impl BundleFile {
         Ok(w.into_inner())
     }
 
-    #[tracing::instrument(name = "File::from_sjson", skip(_sjson))]
-    pub async fn from_sjson<P, S>(_file_type: BundleFileType, _sjson: S, _root: P) -> Result<Self>
+    #[tracing::instrument(name = "File::from_sjson", skip(sjson))]
+    pub async fn from_sjson<P, S>(
+        name: String,
+        file_type: BundleFileType,
+        sjson: S,
+        root: P,
+    ) -> Result<Self>
     where
         P: AsRef<Path> + std::fmt::Debug,
         S: AsRef<str>,
     {
-        todo!();
+        match file_type {
+            BundleFileType::Lua => lua::compile(name, sjson).await,
+            BundleFileType::Unknown(_) => {
+                eyre::bail!("Unknown file type. Cannot compile from SJSON");
+            }
+            _ => {
+                eyre::bail!(
+                    "Compiling file type {} is not yet supported",
+                    file_type.ext_name()
+                )
+            }
+        }
     }
 
     pub fn base_name(&self) -> &String {
@@ -588,10 +641,6 @@ impl BundleFile {
         self.name == name || self.name(false, None) == name || self.name(true, None) == name
     }
 
-    pub fn hash(&self) -> Murmur64 {
-        self.hash
-    }
-
     pub fn file_type(&self) -> BundleFileType {
         self.file_type
     }
@@ -610,7 +659,7 @@ impl BundleFile {
             .iter()
             .map(|variant| {
                 let name = if self.variants.len() > 1 {
-                    self.name(false, Some(variant.header.variant))
+                    self.name(false, Some(variant.property()))
                 } else {
                     self.name(false, None)
                 };
@@ -643,7 +692,7 @@ impl BundleFile {
         let tasks = self.variants.iter().map(|variant| async move {
             let data = variant.data();
             let name = if self.variants.len() > 1 {
-                self.name(true, Some(variant.header.variant))
+                self.name(true, Some(variant.property()))
             } else {
                 self.name(true, None)
             };

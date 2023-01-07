@@ -118,9 +118,11 @@ impl Bundle {
     }
 
     pub fn add_file(&mut self, file: BundleFile) {
+        tracing::trace!("Adding file {}", file.name(false, None));
         let header = EntryHeader {
             extension_hash: file.file_type().into(),
             name_hash: Murmur64::hash(file.base_name().as_bytes()),
+            // TODO: Hard coded until we know what this is
             flags: 0x0,
         };
 

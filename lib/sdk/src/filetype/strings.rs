@@ -62,7 +62,7 @@ impl Strings {
 
                 map.entry(name)
                     .or_default()
-                    .insert(Language::Unnamed(variant.kind()), s);
+                    .insert(Language::Unnamed(variant.property()), s);
             }
         }
 

@@ -6,19 +6,21 @@ use std::str::FromStr;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
+use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
 use crate::bundle::file::{BundleFileType, UserFile};
 use crate::murmur::{HashGroup, Murmur64};
 
-#[tracing::instrument(skip(_ctx))]
-async fn resolve_wildcard<P>(
-    _ctx: &crate::Context,
-    wildcard: P,
+#[tracing::instrument]
+async fn resolve_wildcard<P1, P2>(
+    wildcard: P1,
+    root: P2,
     t: Option<BundleFileType>,
 ) -> Result<Vec<PathBuf>>
 where
-    P: AsRef<Path> + std::fmt::Debug,
+    P1: AsRef<Path> + std::fmt::Debug,
+    P2: AsRef<Path> + std::fmt::Debug,
 {
     let wildcard = wildcard.as_ref();
 
@@ -33,22 +35,48 @@ where
         let mut path = wildcard.to_path_buf();
 
         if let Some(t) = t {
-            path.push(t.ext_name());
+            path.set_extension(t.ext_name());
         }
 
         return Ok(vec![path]);
     }
 
-    // let parent = wildcard.parent().unwrap_or(&ctx.project_dir);
+    let path = root.as_ref().join(wildcard);
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre::eyre!("could not determine parent for wildcard"))?;
 
-    // let paths = Vec::new();
-    // let dir = fs::read_dir(parent).await?;
+    let mut paths = Vec::new();
+    let mut dir = fs::read_dir(&parent).await?;
 
-    // while let Some(file) = dir.next_entry().await? {
-    //     if let Some(ext) = file.file_name()
-    // }
+    while let Some(entry) = dir.next_entry().await? {
+        let file_path = {
+            let path = entry.path();
+            let path = path.strip_prefix(root.as_ref())?;
+            path.to_path_buf()
+        };
 
-    todo!();
+        // Skip file if there is a desired extension `t`, but the file's
+        // extension name doesn't match
+        if t.is_some() {
+            let ext = file_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .and_then(|ext| BundleFileType::from_str(ext).ok());
+
+            if ext != t {
+                tracing::debug!(
+                    "Skipping wildcard result with invalid extension: {}",
+                    file_path.display(),
+                );
+                continue;
+            }
+        }
+
+        paths.push(file_path);
+    }
+
+    Ok(paths)
 }
 
 type PackageType = HashMap<BundleFileType, HashSet<PathBuf>>;
@@ -75,37 +103,9 @@ impl DerefMut for Package {
     }
 }
 
-#[tracing::instrument]
-async fn glob_stream<PB, P>(pattern: PB, root: P) -> Result<(PathBuf, tokio::fs::ReadDir)>
-where
-    PB: Into<PathBuf> + std::fmt::Debug,
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let pattern: PathBuf = pattern.into();
-    if pattern.is_absolute() {
-        eyre::bail!(
-            "Path in package definition must not be absolute. Got '{}'",
-            pattern.display()
-        )
-    }
-
-    let _is_pattern = pattern.ends_with("*");
-    let _dir = pattern.parent().unwrap_or(root.as_ref());
-    todo!();
-    // let stream = fs::read_dir(dir).await?;
-    // Ok((dir.to_path_buf(), stream))
-}
-
 impl Package {
     fn len(&self) -> usize {
         self.values().fold(0, |total, files| total + files.len())
-    }
-
-    fn add_file<P>(&mut self, t: BundleFileType, path: P)
-    where
-        P: Into<PathBuf>,
-    {
-        self.entry(t).or_default().insert(path.into());
     }
 
     #[tracing::instrument("Package::from_sjson", skip(sjson), fields(sjson_len = sjson.as_ref().len()))]
@@ -119,67 +119,38 @@ impl Package {
         let mut inner: PackageType = Default::default();
 
         for (ty, patterns) in definition.iter() {
-            if ty == "*" {
-                for pattern in patterns.iter() {
-                    let (dir, mut stream) = glob_stream(pattern, root).await?;
-
-                    while let Some(entry) = stream.next_entry().await? {
-                        let name = PathBuf::from(entry.file_name());
-                        let ext = if let Some(ext) = name.extension().and_then(|ext| ext.to_str()) {
-                            match BundleFileType::from_str(ext) {
-                                Ok(t) => t,
-                                Err(_) => {
-                                    tracing::debug!(
-                                        "Skipping file with invalid extension: {}",
-                                        dir.join(name).display()
-                                    );
-                                    continue;
-                                }
-                            }
-                        } else {
-                            tracing::debug!(
-                                "Skipping file without extension: {}",
-                                dir.join(name).display()
-                            );
-                            continue;
-                        };
-
-                        inner.entry(ext).or_default().insert(dir.join(name));
-                    }
-                }
-            } else if let Ok(t) = BundleFileType::from_str(ty) {
-                for pattern in patterns.iter() {
-                    let (dir, mut stream) = glob_stream(pattern, root).await?;
-
-                    while let Some(entry) = stream.next_entry().await? {
-                        let name = PathBuf::from(entry.file_name());
-                        let ext = if let Some(ext) = name.extension().and_then(|ext| ext.to_str()) {
-                            match BundleFileType::from_str(ext) {
-                                Ok(t) => t,
-                                Err(_) => {
-                                    tracing::debug!(
-                                        "Skipping file with invalid extension: {}",
-                                        dir.join(name).display()
-                                    );
-                                    continue;
-                                }
-                            }
-                        } else {
-                            tracing::debug!(
-                                "Skipping file without extension: {}",
-                                dir.join(name).display()
-                            );
-                            continue;
-                        };
-
-                        if t == ext {
-                            inner.entry(ext).or_default().insert(dir.join(name));
-                        }
-                    }
-                }
+            let ext = if ty == "*" {
+                None
             } else {
-                eyre::bail!("Unknown file type '{}'", ty);
+                let t = BundleFileType::from_str(ty)
+                    .wrap_err("invalid file type in package definition")?;
+                Some(t)
             };
+
+            for pattern in patterns.iter() {
+                let paths = resolve_wildcard(pattern, root, ext).await?;
+                for path in paths {
+                    let ext = if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                        ext
+                    } else {
+                        tracing::warn!("Skipping file without extension: {}", path.display());
+                        continue;
+                    };
+
+                    let t = if let Ok(t) = BundleFileType::from_str(ext) {
+                        t
+                    } else {
+                        tracing::warn!(
+                            "Skipping file with unknown extension '{}': {}",
+                            ext,
+                            path.display()
+                        );
+                        continue;
+                    };
+
+                    inner.entry(t).or_default().insert(path);
+                }
+            }
         }
 
         let pkg = Self {
@@ -277,8 +248,11 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
+
     use crate::BundleFileType;
 
+    use super::resolve_wildcard;
     use super::Package;
 
     #[test]
@@ -333,5 +307,29 @@ mod test {
             Package::from_sjson(sjson, name, root).await.unwrap().inner,
             Default::default()
         );
+    }
+
+    #[tokio::test]
+    async fn absolute_wildcard() {
+        let path = PathBuf::from("/tmp/test");
+        let root = PathBuf::from("/tmp");
+
+        let res = resolve_wildcard(path, &root, None).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn wildcard_without_glob() {
+        let mut path = PathBuf::from("test");
+        let root = PathBuf::from("/tmp");
+
+        let paths = resolve_wildcard(&path, &root, None).await.unwrap();
+        assert_eq!(paths, vec![path.clone()]);
+
+        let paths = resolve_wildcard(&path, &root, Some(BundleFileType::Texture))
+            .await
+            .unwrap();
+        path.set_extension("texture");
+        assert_eq!(paths, vec![path]);
     }
 }
