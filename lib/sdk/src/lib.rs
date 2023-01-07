@@ -3,11 +3,11 @@
 mod binary;
 mod bundle;
 mod context;
-mod filetype;
+pub mod filetype;
 pub mod murmur;
 mod oodle;
 
 pub use bundle::decompress;
-pub use bundle::{Bundle, BundleFile};
+pub use bundle::{Bundle, BundleFile, BundleFileType};
 pub use context::Context;
 pub use oodle::Oodle;

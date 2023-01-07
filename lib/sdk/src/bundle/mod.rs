@@ -40,9 +40,9 @@ impl From<BundleFormat> for u32 {
     }
 }
 
-struct EntryHeader {
-    name_hash: u64,
-    extension_hash: u64,
+pub struct EntryHeader {
+    name_hash: Murmur64,
+    extension_hash: Murmur64,
     flags: u32,
 }
 
@@ -52,8 +52,8 @@ impl EntryHeader {
     where
         R: Read + Seek,
     {
-        let extension_hash = r.read_u64()?;
-        let name_hash = r.read_u64()?;
+        let extension_hash = Murmur64::from(r.read_u64()?);
+        let name_hash = Murmur64::from(r.read_u64()?);
         let flags = r.read_u32()?;
 
         // NOTE: Known values so far:
@@ -79,8 +79,8 @@ impl EntryHeader {
     where
         W: Write + Seek,
     {
-        w.write_u64(self.extension_hash)?;
-        w.write_u64(self.name_hash)?;
+        w.write_u64(*self.extension_hash)?;
+        w.write_u64(*self.name_hash)?;
         w.write_u32(self.flags)?;
         Ok(())
     }
@@ -89,12 +89,22 @@ impl EntryHeader {
 pub struct Bundle {
     format: BundleFormat,
     properties: [Murmur64; 32],
-    _headers: Vec<EntryHeader>,
+    headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
     name: String,
 }
 
 impl Bundle {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            format: BundleFormat::F8,
+            properties: [0.into(); 32],
+            headers: Vec::new(),
+            files: Vec::new(),
+        }
+    }
+
     pub fn get_name_from_path<P>(ctx: &crate::Context, path: P) -> String
     where
         P: AsRef<Path>,
@@ -107,6 +117,17 @@ impl Bundle {
             .unwrap_or_else(|| path.display().to_string())
     }
 
+    pub fn add_file(&mut self, file: BundleFile) {
+        let header = EntryHeader {
+            extension_hash: file.file_type().into(),
+            name_hash: Murmur64::hash(file.base_name().as_bytes()),
+            flags: 0x0,
+        };
+
+        self.files.push(file);
+        self.headers.push(header);
+    }
+
     #[tracing::instrument(skip(ctx, binary), fields(len_binary = binary.as_ref().len()))]
     pub fn from_binary<B>(ctx: &crate::Context, name: String, binary: B) -> Result<Self>
     where
@@ -116,6 +137,7 @@ impl Bundle {
         let mut r = BufReader::new(Cursor::new(binary));
 
         let format = r.read_u32().and_then(BundleFormat::try_from)?;
+        tracing::debug!(?format);
 
         if !matches!(format, BundleFormat::F7 | BundleFormat::F8) {
             return Err(eyre::eyre!("Unknown bundle format: {:?}", format));
@@ -130,9 +152,9 @@ impl Bundle {
             *prop = Murmur64::from(r.read_u64()?);
         }
 
-        let mut meta = Vec::with_capacity(num_entries);
+        let mut headers = Vec::with_capacity(num_entries);
         for _ in 0..num_entries {
-            meta.push(EntryHeader::from_reader(&mut r)?);
+            headers.push(EntryHeader::from_reader(&mut r)?);
         }
 
         let num_chunks = r.read_u32()? as usize;
@@ -206,7 +228,8 @@ impl Bundle {
         let mut r = Cursor::new(decompressed);
         let mut files = Vec::with_capacity(num_entries);
         for i in 0..num_entries {
-            let file = BundleFile::from_reader(ctx, &mut r)
+            let meta = headers.get(i).unwrap();
+            let file = BundleFile::from_reader(ctx, &mut r, meta)
                 .wrap_err_with(|| format!("failed to read file {i}"))?;
             files.push(file);
         }
@@ -214,7 +237,7 @@ impl Bundle {
         Ok(Self {
             name: bundle_name,
             format,
-            _headers: meta,
+            headers,
             files,
             properties,
         })
@@ -232,7 +255,7 @@ impl Bundle {
             w.write_u64(**prop)?;
         }
 
-        for meta in self._headers.iter() {
+        for meta in self.headers.iter() {
             meta.to_writer(&mut w)?;
         }
 
@@ -269,7 +292,7 @@ impl Bundle {
 
         let chunks = unpacked_data.chunks(CHUNK_SIZE);
 
-        let oodle_lib = ctx.oodle.as_ref().unwrap();
+        let oodle_lib = ctx.oodle.as_ref().expect("oodle library not defined");
         let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
         for chunk in chunks {

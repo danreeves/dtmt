@@ -1,13 +1,16 @@
 use std::io::{Cursor, Read, Seek, Write};
+use std::path::Path;
 
 use color_eyre::eyre::Context;
-use color_eyre::{Help, Result, SectionExt};
+use color_eyre::{eyre, Result};
 use futures::future::join_all;
 use serde::Serialize;
 
 use crate::binary::sync::*;
 use crate::filetype::*;
 use crate::murmur::{HashGroup, Murmur64};
+
+use super::EntryHeader;
 
 #[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum BundleFileType {
@@ -158,6 +161,80 @@ impl BundleFileType {
 
     pub fn hash(&self) -> Murmur64 {
         Murmur64::from(*self)
+    }
+}
+
+impl std::str::FromStr for BundleFileType {
+    type Err = color_eyre::Report;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let val = match s {
+            "animation_curves" => BundleFileType::AnimationCurves,
+            "animation" => BundleFileType::Animation,
+            "apb" => BundleFileType::Apb,
+            "baked_lighting" => BundleFileType::BakedLighting,
+            "bik" => BundleFileType::Bik,
+            "blend_set" => BundleFileType::BlendSet,
+            "bones" => BundleFileType::Bones,
+            "chroma" => BundleFileType::Chroma,
+            "common_package" => BundleFileType::CommonPackage,
+            "config" => BundleFileType::Config,
+            "crypto" => BundleFileType::Crypto,
+            "data" => BundleFileType::Data,
+            "entity" => BundleFileType::Entity,
+            "flow" => BundleFileType::Flow,
+            "font" => BundleFileType::Font,
+            "ies" => BundleFileType::Ies,
+            "ini" => BundleFileType::Ini,
+            "input" => BundleFileType::Input,
+            "ivf" => BundleFileType::Ivf,
+            "keys" => BundleFileType::Keys,
+            "level" => BundleFileType::Level,
+            "lua" => BundleFileType::Lua,
+            "material" => BundleFileType::Material,
+            "mod" => BundleFileType::Mod,
+            "mouse_cursor" => BundleFileType::MouseCursor,
+            "nav_data" => BundleFileType::NavData,
+            "network_config" => BundleFileType::NetworkConfig,
+            "oodle_net" => BundleFileType::OddleNet,
+            "package" => BundleFileType::Package,
+            "particles" => BundleFileType::Particles,
+            "physics_properties" => BundleFileType::PhysicsProperties,
+            "render_config" => BundleFileType::RenderConfig,
+            "rt_pipeline" => BundleFileType::RtPipeline,
+            "scene" => BundleFileType::Scene,
+            "shader_library_group" => BundleFileType::ShaderLibraryGroup,
+            "shader_library" => BundleFileType::ShaderLibrary,
+            "shader" => BundleFileType::Shader,
+            "shading_environment_mapping" => BundleFileType::ShadingEnvionmentMapping,
+            "shading_environment" => BundleFileType::ShadingEnvironment,
+            "slug_album" => BundleFileType::SlugAlbum,
+            "slug" => BundleFileType::Slug,
+            "sound_environment" => BundleFileType::SoundEnvironment,
+            "spu_job" => BundleFileType::SpuJob,
+            "state_machine" => BundleFileType::StateMachine,
+            "static_pvs" => BundleFileType::StaticPVS,
+            "strings" => BundleFileType::Strings,
+            "surface_properties" => BundleFileType::SurfaceProperties,
+            "texture" => BundleFileType::Texture,
+            "timpani_bank" => BundleFileType::TimpaniBank,
+            "timpani_master" => BundleFileType::TimpaniMaster,
+            "tome" => BundleFileType::Tome,
+            "ugg" => BundleFileType::Ugg,
+            "unit" => BundleFileType::Unit,
+            "upb" => BundleFileType::Upb,
+            "vector_field" => BundleFileType::VectorField,
+            "wav" => BundleFileType::Wav,
+            "wwise_bank" => BundleFileType::WwiseBank,
+            "wwise_dep" => BundleFileType::WwiseDep,
+            "wwise_event" => BundleFileType::WwiseEvent,
+            "wwise_metadata" => BundleFileType::WwiseMetadata,
+            "wwise_stream" => BundleFileType::WwiseStream,
+            "xml" => BundleFileType::Xml,
+            s => eyre::bail!("Unknown type string '{}'", s),
+        };
+
+        Ok(val)
     }
 }
 
@@ -319,6 +396,13 @@ impl From<BundleFileType> for Murmur64 {
     }
 }
 
+impl std::fmt::Display for BundleFileType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.ext_name())
+    }
+}
+
+#[derive(Debug)]
 struct BundleFileHeader {
     variant: u32,
     size: usize,
@@ -392,16 +476,18 @@ pub struct BundleFile {
 }
 
 impl BundleFile {
-    #[tracing::instrument(name = "File::read", skip_all)]
-    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R) -> Result<Self>
+    #[tracing::instrument(
+        name = "File::read",
+        skip_all,
+        fields(name = %meta.name_hash, ext = %meta.extension_hash, flags = meta.flags)
+    )]
+    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R, meta: &EntryHeader) -> Result<Self>
     where
         R: Read + Seek,
     {
         let file_type = BundleFileType::from(r.read_u64()?);
         let hash = Murmur64::from(r.read_u64()?);
         let name = ctx.lookup_hash(hash, HashGroup::Filename);
-
-        tracing::trace!(name, ?file_type);
 
         let header_count = r.read_u32()? as usize;
         let mut headers = Vec::with_capacity(header_count);
@@ -461,6 +547,15 @@ impl BundleFile {
         }
 
         Ok(w.into_inner())
+    }
+
+    #[tracing::instrument(name = "File::from_sjson", skip(_sjson))]
+    pub async fn from_sjson<P, S>(_file_type: BundleFileType, _sjson: S, _root: P) -> Result<Self>
+    where
+        P: AsRef<Path> + std::fmt::Debug,
+        S: AsRef<str>,
+    {
+        todo!();
     }
 
     pub fn base_name(&self) -> &String {
@@ -555,19 +650,17 @@ impl BundleFile {
 
             let res = match file_type {
                 BundleFileType::Lua => lua::decompile(ctx, data).await,
-                BundleFileType::Package => package::decompile(ctx, data),
+                BundleFileType::Package => package::decompile(ctx, name.clone(), data),
                 _ => {
                     tracing::debug!("Can't decompile, unknown file type");
                     Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])
                 }
             };
 
+            let res = res.wrap_err_with(|| format!("failed to decompile file {name}"));
             match res {
                 Ok(files) => files,
                 Err(err) => {
-                    let err = err
-                        .wrap_err("failed to decompile file")
-                        .with_section(|| name.header("File:"));
                     tracing::error!("{:?}", err);
                     vec![]
                 }

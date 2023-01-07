@@ -7,12 +7,6 @@ mod extract;
 mod inject;
 mod list;
 
-#[cfg(target_os = "windows")]
-const OODLE_LIB_NAME: &str = "oo2core_8_win64";
-
-#[cfg(target_os = "linux")]
-const OODLE_LIB_NAME: &str = "liboo2corelinux64.so";
-
 pub(crate) fn command_definition() -> Command {
     Command::new("bundle")
         .subcommand_required(true)
@@ -20,7 +14,7 @@ pub(crate) fn command_definition() -> Command {
         .arg(
             Arg::new("oodle")
                 .long("oodle")
-                .default_value(OODLE_LIB_NAME)
+                .default_value(super::OODLE_LIB_NAME)
                 .help(
                     "The oodle library to load. This may either be:\n\
                         - A library name that will be searched for in the system's default paths.\n\

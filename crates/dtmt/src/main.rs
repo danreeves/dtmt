@@ -18,6 +18,12 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 mod cmd {
+    #[cfg(target_os = "windows")]
+    const OODLE_LIB_NAME: &str = "oo2core_8_win64";
+
+    #[cfg(target_os = "linux")]
+    const OODLE_LIB_NAME: &str = "liboo2corelinux64.so";
+
     pub mod build;
     pub mod bundle;
     pub mod dictionary;
@@ -25,6 +31,10 @@ mod cmd {
     pub mod new;
     mod util;
     pub mod watch;
+}
+
+mod mods {
+    pub mod archive;
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -50,7 +60,7 @@ async fn main() -> Result<()> {
                 .global(true)
                 .value_parser(value_parser!(PathBuf)),
         )
-        // .subcommand(cmd::build::command_definition())
+        .subcommand(cmd::build::command_definition())
         .subcommand(cmd::bundle::command_definition())
         .subcommand(cmd::dictionary::command_definition())
         .subcommand(cmd::murmur::command_definition())
