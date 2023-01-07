@@ -6,6 +6,7 @@
 
 - show status after adding dictionary entries
 - implement building mod bundles
+- implement command to create mod project from template
 
 == [v0.2.0] - 2022-12-28
 

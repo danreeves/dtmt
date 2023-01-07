@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
         .subcommand(cmd::bundle::command_definition())
         .subcommand(cmd::dictionary::command_definition())
         .subcommand(cmd::murmur::command_definition())
-        // .subcommand(cmd::new::command_definition())
+        .subcommand(cmd::new::command_definition())
         // .subcommand(cmd::watch::command_definition())
         .get_matches();
 
