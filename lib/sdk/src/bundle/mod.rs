@@ -88,7 +88,7 @@ impl EntryHeader {
 
 pub struct Bundle {
     format: BundleFormat,
-    properties: Vec<Murmur64>,
+    properties: [Murmur64; 32],
     _headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
     name: String,
@@ -125,7 +125,7 @@ impl Bundle {
 
         let num_entries = r.read_u32()? as usize;
 
-        let mut properties = Vec::with_capacity(32);
+        let mut properties = [0.into(); 32];
         for prop in properties.iter_mut().take(32) {
             *prop = Murmur64::from(r.read_u64()?);
         }
