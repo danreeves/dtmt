@@ -248,15 +248,15 @@ impl Serialize for BundleFileType {
     }
 }
 
-impl From<u64> for BundleFileType {
-    fn from(value: u64) -> Self {
-        Self::from(Murmur64::from(value))
+impl From<Murmur64> for BundleFileType {
+    fn from(value: Murmur64) -> Self {
+        Self::from(Into::<u64>::into(value))
     }
 }
 
-impl From<Murmur64> for BundleFileType {
-    fn from(hash: Murmur64) -> BundleFileType {
-        match *hash {
+impl From<u64> for BundleFileType {
+    fn from(hash: u64) -> BundleFileType {
+        match hash {
             0x931e336d7646cc26 => BundleFileType::Animation,
             0xdcfb9e18fff13984 => BundleFileType::AnimationCurves,
             0x3eed05ba83af5090 => BundleFileType::Apb,
@@ -320,79 +320,84 @@ impl From<Murmur64> for BundleFileType {
             0x504b55235d21440e => BundleFileType::WwiseStream,
             0x76015845a6003765 => BundleFileType::Xml,
 
-            _ => BundleFileType::Unknown(hash),
+            _ => BundleFileType::Unknown(Murmur64::from(hash)),
         }
     }
 }
 
+impl From<BundleFileType> for u64 {
+    fn from(t: BundleFileType) -> u64 {
+        match t {
+            BundleFileType::Animation => 0x931e336d7646cc26,
+            BundleFileType::AnimationCurves => 0xdcfb9e18fff13984,
+            BundleFileType::Apb => 0x3eed05ba83af5090,
+            BundleFileType::BakedLighting => 0x7ffdb779b04e4ed1,
+            BundleFileType::Bik => 0xaa5965f03029fa18,
+            BundleFileType::BlendSet => 0xe301e8af94e3b5a3,
+            BundleFileType::Bones => 0x18dead01056b72e9,
+            BundleFileType::Chroma => 0xb7893adf7567506a,
+            BundleFileType::CommonPackage => 0xfe9754bd19814a47,
+            BundleFileType::Config => 0x82645835e6b73232,
+            BundleFileType::Crypto => 0x69108ded1e3e634b,
+            BundleFileType::Data => 0x8fd0d44d20650b68,
+            BundleFileType::Entity => 0x9831ca893b0d087d,
+            BundleFileType::Flow => 0x92d3ee038eeb610d,
+            BundleFileType::Font => 0x9efe0a916aae7880,
+            BundleFileType::Ies => 0x8f7d5a2c0f967655,
+            BundleFileType::Ini => 0xd526a27da14f1dc5,
+            BundleFileType::Input => 0x2bbcabe5074ade9e,
+            BundleFileType::Ivf => 0xfa4a8e091a91201e,
+            BundleFileType::Keys => 0xa62f9297dc969e85,
+            BundleFileType::Level => 0x2a690fd348fe9ac5,
+            BundleFileType::Lua => 0xa14e8dfa2cd117e2,
+            BundleFileType::Material => 0xeac0b497876adedf,
+            BundleFileType::Mod => 0x3fcdd69156a46417,
+            BundleFileType::MouseCursor => 0xb277b11fe4a61d37,
+            BundleFileType::NavData => 0x169de9566953d264,
+            BundleFileType::NetworkConfig => 0x3b1fa9e8f6bac374,
+            BundleFileType::OddleNet => 0xb0f2c12eb107f4d8,
+            BundleFileType::Package => 0xad9c6d9ed1e5e77a,
+            BundleFileType::Particles => 0xa8193123526fad64,
+            BundleFileType::PhysicsProperties => 0xbf21403a3ab0bbb1,
+            BundleFileType::RenderConfig => 0x27862fe24795319c,
+            BundleFileType::RtPipeline => 0x9ca183c2d0e76dee,
+            BundleFileType::Scene => 0x9d0a795bfe818d19,
+            BundleFileType::Shader => 0xcce8d5b5f5ae333f,
+            BundleFileType::ShaderLibrary => 0xe5ee32a477239a93,
+            BundleFileType::ShaderLibraryGroup => 0x9e5c3cc74575aeb5,
+            BundleFileType::ShadingEnvionmentMapping => 0x250e0a11ac8e26f8,
+            BundleFileType::ShadingEnvironment => 0xfe73c7dcff8a7ca5,
+            BundleFileType::Slug => 0xa27b4d04a9ba6f9e,
+            BundleFileType::SlugAlbum => 0xe9fc9ea7042e5ec0,
+            BundleFileType::SoundEnvironment => 0xd8b27864a97ffdd7,
+            BundleFileType::SpuJob => 0xf97af9983c05b950,
+            BundleFileType::StateMachine => 0xa486d4045106165c,
+            BundleFileType::StaticPVS => 0xe3f0baa17d620321,
+            BundleFileType::Strings => 0x0d972bab10b40fd3,
+            BundleFileType::SurfaceProperties => 0xad2d3fa30d9ab394,
+            BundleFileType::Texture => 0xcd4238c6a0c69e32,
+            BundleFileType::TimpaniBank => 0x99736be1fff739a4,
+            BundleFileType::TimpaniMaster => 0x00a3e6c59a2b9c6c,
+            BundleFileType::Tome => 0x19c792357c99f49b,
+            BundleFileType::Ugg => 0x712d6e3dd1024c9c,
+            BundleFileType::Unit => 0xe0a48d0be9a7453f,
+            BundleFileType::Upb => 0xa99510c6e86dd3c2,
+            BundleFileType::VectorField => 0xf7505933166d6755,
+            BundleFileType::Wav => 0x786f65c00a816b19,
+            BundleFileType::WwiseBank => 0x535a7bd3e650d799,
+            BundleFileType::WwiseDep => 0xaf32095c82f2b070,
+            BundleFileType::WwiseEvent => 0xaabdd317b58dfc8a,
+            BundleFileType::WwiseMetadata => 0xd50a8b7e1c82b110,
+            BundleFileType::WwiseStream => 0x504b55235d21440e,
+            BundleFileType::Xml => 0x76015845a6003765,
+
+            BundleFileType::Unknown(hash) => hash.into(),
+        }
+    }
+}
 impl From<BundleFileType> for Murmur64 {
     fn from(t: BundleFileType) -> Murmur64 {
-        match t {
-            BundleFileType::Animation => Murmur64::from(0x931e336d7646cc26),
-            BundleFileType::AnimationCurves => Murmur64::from(0xdcfb9e18fff13984),
-            BundleFileType::Apb => Murmur64::from(0x3eed05ba83af5090),
-            BundleFileType::BakedLighting => Murmur64::from(0x7ffdb779b04e4ed1),
-            BundleFileType::Bik => Murmur64::from(0xaa5965f03029fa18),
-            BundleFileType::BlendSet => Murmur64::from(0xe301e8af94e3b5a3),
-            BundleFileType::Bones => Murmur64::from(0x18dead01056b72e9),
-            BundleFileType::Chroma => Murmur64::from(0xb7893adf7567506a),
-            BundleFileType::CommonPackage => Murmur64::from(0xfe9754bd19814a47),
-            BundleFileType::Config => Murmur64::from(0x82645835e6b73232),
-            BundleFileType::Crypto => Murmur64::from(0x69108ded1e3e634b),
-            BundleFileType::Data => Murmur64::from(0x8fd0d44d20650b68),
-            BundleFileType::Entity => Murmur64::from(0x9831ca893b0d087d),
-            BundleFileType::Flow => Murmur64::from(0x92d3ee038eeb610d),
-            BundleFileType::Font => Murmur64::from(0x9efe0a916aae7880),
-            BundleFileType::Ies => Murmur64::from(0x8f7d5a2c0f967655),
-            BundleFileType::Ini => Murmur64::from(0xd526a27da14f1dc5),
-            BundleFileType::Input => Murmur64::from(0x2bbcabe5074ade9e),
-            BundleFileType::Ivf => Murmur64::from(0xfa4a8e091a91201e),
-            BundleFileType::Keys => Murmur64::from(0xa62f9297dc969e85),
-            BundleFileType::Level => Murmur64::from(0x2a690fd348fe9ac5),
-            BundleFileType::Lua => Murmur64::from(0xa14e8dfa2cd117e2),
-            BundleFileType::Material => Murmur64::from(0xeac0b497876adedf),
-            BundleFileType::Mod => Murmur64::from(0x3fcdd69156a46417),
-            BundleFileType::MouseCursor => Murmur64::from(0xb277b11fe4a61d37),
-            BundleFileType::NavData => Murmur64::from(0x169de9566953d264),
-            BundleFileType::NetworkConfig => Murmur64::from(0x3b1fa9e8f6bac374),
-            BundleFileType::OddleNet => Murmur64::from(0xb0f2c12eb107f4d8),
-            BundleFileType::Package => Murmur64::from(0xad9c6d9ed1e5e77a),
-            BundleFileType::Particles => Murmur64::from(0xa8193123526fad64),
-            BundleFileType::PhysicsProperties => Murmur64::from(0xbf21403a3ab0bbb1),
-            BundleFileType::RenderConfig => Murmur64::from(0x27862fe24795319c),
-            BundleFileType::RtPipeline => Murmur64::from(0x9ca183c2d0e76dee),
-            BundleFileType::Scene => Murmur64::from(0x9d0a795bfe818d19),
-            BundleFileType::Shader => Murmur64::from(0xcce8d5b5f5ae333f),
-            BundleFileType::ShaderLibrary => Murmur64::from(0xe5ee32a477239a93),
-            BundleFileType::ShaderLibraryGroup => Murmur64::from(0x9e5c3cc74575aeb5),
-            BundleFileType::ShadingEnvionmentMapping => Murmur64::from(0x250e0a11ac8e26f8),
-            BundleFileType::ShadingEnvironment => Murmur64::from(0xfe73c7dcff8a7ca5),
-            BundleFileType::Slug => Murmur64::from(0xa27b4d04a9ba6f9e),
-            BundleFileType::SlugAlbum => Murmur64::from(0xe9fc9ea7042e5ec0),
-            BundleFileType::SoundEnvironment => Murmur64::from(0xd8b27864a97ffdd7),
-            BundleFileType::SpuJob => Murmur64::from(0xf97af9983c05b950),
-            BundleFileType::StateMachine => Murmur64::from(0xa486d4045106165c),
-            BundleFileType::StaticPVS => Murmur64::from(0xe3f0baa17d620321),
-            BundleFileType::Strings => Murmur64::from(0x0d972bab10b40fd3),
-            BundleFileType::SurfaceProperties => Murmur64::from(0xad2d3fa30d9ab394),
-            BundleFileType::Texture => Murmur64::from(0xcd4238c6a0c69e32),
-            BundleFileType::TimpaniBank => Murmur64::from(0x99736be1fff739a4),
-            BundleFileType::TimpaniMaster => Murmur64::from(0x00a3e6c59a2b9c6c),
-            BundleFileType::Tome => Murmur64::from(0x19c792357c99f49b),
-            BundleFileType::Ugg => Murmur64::from(0x712d6e3dd1024c9c),
-            BundleFileType::Unit => Murmur64::from(0xe0a48d0be9a7453f),
-            BundleFileType::Upb => Murmur64::from(0xa99510c6e86dd3c2),
-            BundleFileType::VectorField => Murmur64::from(0xf7505933166d6755),
-            BundleFileType::Wav => Murmur64::from(0x786f65c00a816b19),
-            BundleFileType::WwiseBank => Murmur64::from(0x535a7bd3e650d799),
-            BundleFileType::WwiseDep => Murmur64::from(0xaf32095c82f2b070),
-            BundleFileType::WwiseEvent => Murmur64::from(0xaabdd317b58dfc8a),
-            BundleFileType::WwiseMetadata => Murmur64::from(0xd50a8b7e1c82b110),
-            BundleFileType::WwiseStream => Murmur64::from(0x504b55235d21440e),
-            BundleFileType::Xml => Murmur64::from(0x76015845a6003765),
-
-            BundleFileType::Unknown(hash) => hash,
-        }
+        t.into()
     }
 }
 
@@ -562,8 +567,8 @@ impl BundleFile {
     pub fn to_binary(&self) -> Result<Vec<u8>> {
         let mut w = Cursor::new(Vec::new());
 
-        w.write_u64(*self.file_type.hash())?;
-        w.write_u64(*Murmur64::hash(self.name.as_bytes()))?;
+        w.write_u64(self.file_type.hash().into())?;
+        w.write_u64(Murmur64::hash(self.name.as_bytes()).into())?;
         w.write_u32(self.variants.len() as u32)?;
 
         // TODO: Figure out what this is

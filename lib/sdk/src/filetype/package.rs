@@ -200,7 +200,7 @@ impl Package {
         for _ in 0..file_count {
             let t = BundleFileType::from(r.read_u64()?);
             let hash = Murmur64::from(r.read_u64()?);
-            let path = ctx.lookup_hash(*hash, HashGroup::Filename);
+            let path = ctx.lookup_hash(hash, HashGroup::Filename);
             inner.entry(t).or_default().insert(PathBuf::from(path));
         }
 
@@ -223,10 +223,10 @@ impl Package {
 
         for (t, paths) in self.iter() {
             for path in paths.iter() {
-                w.write_u64(*t.hash())?;
+                w.write_u64(t.hash().into())?;
 
                 let hash = Murmur64::hash(path.to_string_lossy().as_bytes());
-                w.write_u64(*hash)?;
+                w.write_u64(hash.into())?;
             }
         }
 

@@ -1,5 +1,4 @@
 use std::fmt;
-use std::ops::Deref;
 
 use color_eyre::eyre::Context;
 use color_eyre::Report;
@@ -40,17 +39,15 @@ impl Murmur64 {
     }
 }
 
-impl Deref for Murmur64 {
-    type Target = u64;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 impl From<u64> for Murmur64 {
     fn from(value: u64) -> Self {
         Self(value)
+    }
+}
+
+impl From<Murmur64> for u64 {
+    fn from(value: Murmur64) -> Self {
+        value.0
     }
 }
 
@@ -147,6 +144,12 @@ impl Murmur32 {
 impl From<u32> for Murmur32 {
     fn from(value: u32) -> Self {
         Self(value)
+    }
+}
+
+impl From<Murmur32> for u32 {
+    fn from(value: Murmur32) -> Self {
+        value.0
     }
 }
 
