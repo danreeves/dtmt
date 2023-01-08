@@ -108,6 +108,10 @@ impl Package {
         self.values().fold(0, |total, files| total + files.len())
     }
 
+    pub fn add_file<P: Into<PathBuf>>(&mut self, file_type: BundleFileType, name: P) {
+        self.inner.entry(file_type).or_default().insert(name.into());
+    }
+
     #[tracing::instrument("Package::from_sjson", skip(sjson), fields(sjson_len = sjson.as_ref().len()))]
     pub async fn from_sjson<P, S>(sjson: S, name: String, root: P) -> Result<Self>
     where
