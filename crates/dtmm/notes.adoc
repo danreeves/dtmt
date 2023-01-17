@@ -1,0 +1,49 @@
+= Notes
+
+== Layout
+
+- top bar:
+  - left aligned: a tab bar with "mods", "settings", "about"
+  - right aligned: a button to start the game
+  - in the future: center aligned a dropdown to select profiles, and button to edit them
+- main view:
+  - left side: list view of mods
+  - right side: details pane and buttons
+    - always visible, first mod in list is selected by default
+    - buttons:
+      - add mod
+      - deploy mods
+      - remove selected mod
+      - enable/disable (text changes based on state)
+
+== Mod list
+
+- name
+- description?
+- image?
+- click to get details pane?
+
+== Managing mods
+
+- for each mod in the list, have a checkbox
+- need a button to remove mods
+- need a button to add mods from downloaded files
+- search
+
+== Misc
+
+- settings
+- open mod storage
+
+== Managing the game
+
+- deploy mods
+- 
+
+== Preparing the game
+
+- click "Install mods" to prepare the game files with the enabled mods
+
+== Playing the game
+
+- if overlay file systems are used, the game has to be started through the mod manager
