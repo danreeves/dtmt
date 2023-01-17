@@ -79,8 +79,8 @@ impl EntryHeader {
     where
         W: Write + Seek,
     {
-        w.write_u64(*self.extension_hash)?;
-        w.write_u64(*self.name_hash)?;
+        w.write_u64(self.extension_hash.into())?;
+        w.write_u64(self.name_hash.into())?;
         w.write_u32(self.flags)?;
         Ok(())
     }
@@ -254,7 +254,7 @@ impl Bundle {
         w.write_u32(self.files.len() as u32)?;
 
         for prop in self.properties.iter() {
-            w.write_u64(**prop)?;
+            w.write_u64((*prop).into())?;
         }
 
         for meta in self.headers.iter() {
