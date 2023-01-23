@@ -8,6 +8,7 @@ use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 use crate::binary::sync::*;
 use crate::murmur::{HashGroup, Murmur64};
 
+pub(crate) mod database;
 pub(crate) mod file;
 
 pub use file::{BundleFile, BundleFileType};

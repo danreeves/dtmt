@@ -1,3 +1,47 @@
+use std::io::{Cursor, Read, Seek, Write};
+
+use color_eyre::Result;
+
+use self::sync::{ReadExt, WriteExt};
+
+pub trait FromBinary: Sized {
+    fn from_binary<R: Read + Seek>(r: &mut R) -> Result<Self>;
+}
+
+pub trait ToBinary {
+    fn to_binary(&self) -> Result<Vec<u8>>;
+}
+
+impl<T: ToBinary> ToBinary for Vec<T> {
+    fn to_binary(&self) -> Result<Vec<u8>> {
+        // TODO: Allocations for the vector could be optimized by first
+        // serializing one value, then calculating the size from that.
+        let mut bin = Cursor::new(Vec::new());
+        bin.write_u32(self.len() as u32)?;
+
+        for val in self.iter() {
+            let buf = val.to_binary()?;
+            bin.write_all(&buf)?;
+        }
+
+        Ok(bin.into_inner())
+    }
+}
+
+impl<T: FromBinary> FromBinary for Vec<T> {
+    fn from_binary<R: Read + Seek>(r: &mut R) -> Result<Self> {
+        let size = r.read_u32()? as usize;
+
+        let mut list = Vec::with_capacity(size);
+
+        for _ in 0..size {
+            list.push(T::from_binary(r)?);
+        }
+
+        Ok(list)
+    }
+}
+
 pub mod sync {
     use std::io::{self, Read, Seek, SeekFrom};
 
