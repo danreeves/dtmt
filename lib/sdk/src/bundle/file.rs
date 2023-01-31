@@ -397,7 +397,8 @@ impl From<BundleFileType> for u64 {
 }
 impl From<BundleFileType> for Murmur64 {
     fn from(t: BundleFileType) -> Murmur64 {
-        t.into()
+        let hash: u64 = t.into();
+        Murmur64::from(hash)
     }
 }
 
