@@ -10,14 +10,13 @@ use crate::theme;
 use crate::widget::ExtraWidgetExt;
 
 const TITLE: &str = "Darktide Mod Manager";
-const WINDOW_WIDTH: f64 = 800.0;
-const WINDOW_HEIGHT: f64 = 600.0;
+const WINDOW_SIZE: (f64, f64) = (800.0, 600.0);
 const MOD_DETAILS_MIN_WIDTH: f64 = 325.0;
 
 pub(crate) fn new() -> WindowDesc<State> {
     WindowDesc::new(build_window())
         .title(TITLE)
-        .window_size((WINDOW_WIDTH, WINDOW_HEIGHT))
+        .window_size(WINDOW_SIZE)
 }
 
 fn build_top_bar() -> impl Widget<State> {
