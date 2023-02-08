@@ -15,6 +15,7 @@ libloading = "0.7.4"
 nanorand = "0.7.0"
 pin-project-lite = "0.2.9"
 serde = { version = "1.0.147", features = ["derive"] }
+oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
 tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
 tokio-stream = { version = "0.1.11", features = ["fs", "io-util"] }

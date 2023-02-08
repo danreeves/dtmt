@@ -1,43 +1,52 @@
-use std::ffi::OsStr;
-use std::ops::Deref;
-use std::ptr;
+use std::{ffi::OsStr, ptr};
 
-use color_eyre::eyre;
-use color_eyre::Result;
-use libloading::{Library, Symbol};
+use libloading::Symbol;
 
-pub mod types;
-use types::*;
+use super::Result;
+use crate::{types::*, OodleError};
 
 // Hardcoded chunk size of Bitsquid's bundle compression
 pub const CHUNK_SIZE: usize = 512 * 1024;
 pub const COMPRESSOR: OodleLZ_Compressor = OodleLZ_Compressor::Kraken;
 pub const LEVEL: OodleLZ_CompressionLevel = OodleLZ_CompressionLevel::Optimal2;
 
-pub struct Oodle {
-    lib: Library,
+#[cfg(target_os = "windows")]
+const OODLE_LIB_NAME: &str = "oo2core_8_win64";
+
+#[cfg(target_os = "linux")]
+const OODLE_LIB_NAME: &str = "liboo2corelinux64.so";
+
+pub struct Library {
+    inner: libloading::Library,
 }
 
-impl Oodle {
-    pub fn new<P>(lib: P) -> Result<Self>
-    where
-        P: AsRef<OsStr>,
-    {
-        let lib = unsafe { Library::new(lib)? };
-
-        unsafe {
-            let fun: Symbol<OodleCore_Plugins_SetPrintf> =
-                lib.get(b"OodleCore_Plugins_SetPrintf\0")?;
-            let printf: Symbol<t_fp_OodleCore_Plugin_Printf> =
-                lib.get(b"OodleCore_Plugin_Printf_Verbose\0")?;
-
-            fun(*printf.deref());
-        }
-
-        Ok(Self { lib })
+impl Library {
+    /// Load the Oodle library by its default name.
+    ///
+    /// The default name is platform-specific:
+    /// - Windows: `oo2core_8_win64`
+    /// - Linux: `liboo2corelinux64.so`
+    ///
+    /// # Safety
+    ///
+    /// The safety concerns as described by [`libloading::Library::new`] apply.
+    pub unsafe fn new() -> Result<Self> {
+        Self::with_name(OODLE_LIB_NAME)
     }
 
-    #[tracing::instrument(name = "Oodle::decompress", skip(self, data))]
+    /// Load the Oodle library by the given name or path.
+    ///
+    /// See [`libloading::Library::new`] for how the `name` parameter is handled.
+    ///
+    /// # Safety
+    ///
+    /// The safety concerns as described by [`libloading::Library::new`] apply.
+    pub unsafe fn with_name<P: AsRef<OsStr>>(name: P) -> Result<Self> {
+        let inner = libloading::Library::new(name)?;
+        Ok(Self { inner })
+    }
+
+    #[tracing::instrument(skip(self, data))]
     pub fn decompress<I>(
         &self,
         data: I,
@@ -61,7 +70,7 @@ impl Oodle {
         };
 
         let ret = unsafe {
-            let decompress: Symbol<OodleLZ_Decompress> = self.lib.get(b"OodleLZ_Decompress\0")?;
+            let decompress: Symbol<OodleLZ_Decompress> = self.inner.get(b"OodleLZ_Decompress\0")?;
 
             decompress(
                 data.as_ptr() as *const _,
@@ -82,7 +91,8 @@ impl Oodle {
         };
 
         if ret == 0 {
-            eyre::bail!("Decompression failed.");
+            let err = OodleError::Oodle(String::from("Decompression failed."));
+            return Err(err);
         }
 
         Ok(out)
@@ -100,7 +110,7 @@ impl Oodle {
         let mut out = vec![0u8; CHUNK_SIZE];
 
         let ret = unsafe {
-            let compress: Symbol<OodleLZ_Compress> = self.lib.get(b"OodleLZ_Compress\0")?;
+            let compress: Symbol<OodleLZ_Compress> = self.inner.get(b"OodleLZ_Compress\0")?;
 
             compress(
                 COMPRESSOR,
@@ -119,7 +129,8 @@ impl Oodle {
         tracing::debug!(compressed_size = ret, "Compressed chunk");
 
         if ret == 0 {
-            eyre::bail!("Compression failed.");
+            let err = OodleError::Oodle(String::from("Compression failed."));
+            return Err(err);
         }
 
         out.resize(ret as usize, 0);
@@ -134,7 +145,7 @@ impl Oodle {
     ) -> Result<usize> {
         unsafe {
             let f: Symbol<OodleLZ_GetDecodeBufferSize> =
-                self.lib.get(b"OodleLZ_GetDecodeBufferSize\0")?;
+                self.inner.get(b"OodleLZ_GetDecodeBufferSize\0")?;
 
             let size = f(COMPRESSOR, raw_size, corruption_possible);
             Ok(size)

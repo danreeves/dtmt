@@ -18,12 +18,6 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 mod cmd {
-    #[cfg(target_os = "windows")]
-    const OODLE_LIB_NAME: &str = "oo2core_8_win64";
-
-    #[cfg(target_os = "linux")]
-    const OODLE_LIB_NAME: &str = "liboo2corelinux64.so";
-
     pub mod build;
     pub mod bundle;
     pub mod dictionary;

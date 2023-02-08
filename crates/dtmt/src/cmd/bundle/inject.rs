@@ -98,7 +98,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
         let out_path = matches.get_one::<PathBuf>("output").unwrap_or(bundle_path);
         let data = bundle
-            .to_binary(&ctx)
+            .to_binary()
             .wrap_err("failed to write changed bundle to output")?;
 
         fs::write(out_path, &data)

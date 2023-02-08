@@ -32,7 +32,7 @@ impl Archive {
         self.mod_file = Some(content);
     }
 
-    pub fn write<P>(&self, ctx: &sdk::Context, path: P) -> Result<()>
+    pub fn write<P>(&self, path: P) -> Result<()>
     where
         P: AsRef<Path>,
     {
@@ -76,7 +76,7 @@ impl Archive {
 
             zip.start_file(path.to_string_lossy(), Default::default())?;
 
-            let data = bundle.to_binary(ctx)?;
+            let data = bundle.to_binary()?;
             zip.write_all(&data)?;
         }
 

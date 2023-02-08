@@ -7,7 +7,7 @@ use color_eyre::{Help, Report};
 use futures::future::try_join_all;
 use futures::StreamExt;
 use sdk::filetype::package::Package;
-use sdk::{Bundle, BundleFile, Oodle};
+use sdk::{Bundle, BundleFile};
 use serde::Deserialize;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
@@ -28,17 +28,12 @@ pub(crate) fn command_definition() -> Command {
                 If omitted, dtmt will search from the current working directory upward.",
                 ),
         )
-        .arg(
-            Arg::new("oodle")
-                .long("oodle")
-                .default_value(super::OODLE_LIB_NAME)
-                .help(
-                    "The oodle library to load. This may either be:\n\
-                        - A library name that will be searched for in the system's default paths.\n\
-                        - A file path relative to the current working directory.\n\
-                        - An absolute file path.",
-                ),
-        )
+        .arg(Arg::new("oodle").long("oodle").help(
+            "The oodle library to load. This may either be:\n\
+                - A library name that will be searched for in the system's default paths.\n\
+                - A file path relative to the current working directory.\n\
+                - An absolute file path.",
+        ))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -175,10 +170,9 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    if let Some(name) = matches.get_one::<String>("oodle") {
-        let oodle = Oodle::new(name)?;
-        ctx.oodle = Some(oodle);
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
+    unsafe {
+        oodle_sys::init(matches.get_one::<String>("oodle"));
     }
 
     let cfg = {
@@ -237,7 +231,7 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
             }
 
             archive
-                .write(&ctx, dest.as_ref())
+                .write(dest.as_ref())
                 .wrap_err("failed to write mod archive")
         })
         .await??;

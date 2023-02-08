@@ -3,11 +3,10 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
+use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
 use crate::murmur::{HashGroup, Murmur64};
-use crate::oodle::types::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe};
-use crate::oodle::CHUNK_SIZE;
 
 pub(crate) mod file;
 
@@ -198,14 +197,12 @@ impl Bundle {
                 decompressed.append(&mut compressed_buffer);
             } else {
                 // TODO: Optimize to not reallocate?
-                let oodle_lib = ctx.oodle.as_ref().unwrap();
-                let mut raw_buffer = oodle_lib
-                    .decompress(
-                        &compressed_buffer,
-                        OodleLZ_FuzzSafe::No,
-                        OodleLZ_CheckCRC::No,
-                    )
-                    .wrap_err_with(|| format!("failed to decompress chunk {chunk_index}"))?;
+                let mut raw_buffer = oodle_sys::decompress(
+                    &compressed_buffer,
+                    OodleLZ_FuzzSafe::No,
+                    OodleLZ_CheckCRC::No,
+                )
+                .wrap_err_with(|| format!("failed to decompress chunk {chunk_index}"))?;
 
                 if unpacked_size_tracked < CHUNK_SIZE {
                     raw_buffer.resize(unpacked_size_tracked, 0);
@@ -246,7 +243,7 @@ impl Bundle {
     }
 
     #[tracing::instrument(skip_all)]
-    pub fn to_binary(&self, ctx: &crate::Context) -> Result<Vec<u8>> {
+    pub fn to_binary(&self) -> Result<Vec<u8>> {
         let mut w = Cursor::new(Vec::new());
         w.write_u32(self.format.into())?;
         // TODO: Find out what this is.
@@ -293,12 +290,10 @@ impl Bundle {
         w.write_u32(0)?;
 
         let chunks = unpacked_data.chunks(CHUNK_SIZE);
-
-        let oodle_lib = ctx.oodle.as_ref().expect("oodle library not defined");
         let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
         for chunk in chunks {
-            let compressed = oodle_lib.compress(chunk)?;
+            let compressed = oodle_sys::compress(chunk)?;
             tracing::trace!(
                 raw_chunk_size = chunk.len(),
                 compressed_chunk_size = compressed.len()
@@ -335,7 +330,7 @@ impl Bundle {
 /// This is mainly useful for debugging purposes or
 /// to manullay inspect the raw data.
 #[tracing::instrument(skip_all)]
-pub fn decompress<B>(ctx: &crate::Context, binary: B) -> Result<Vec<u8>>
+pub fn decompress<B>(_ctx: &crate::Context, binary: B) -> Result<Vec<u8>>
 where
     B: AsRef<[u8]>,
 {
@@ -399,9 +394,8 @@ where
         let mut compressed_buffer = vec![0u8; chunk_size];
         r.read_exact(&mut compressed_buffer)?;
 
-        let oodle_lib = ctx.oodle.as_ref().unwrap();
         // TODO: Optimize to not reallocate?
-        let mut raw_buffer = oodle_lib.decompress(
+        let mut raw_buffer = oodle_sys::decompress(
             &compressed_buffer,
             OodleLZ_FuzzSafe::No,
             OodleLZ_CheckCRC::No,

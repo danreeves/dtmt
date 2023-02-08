@@ -84,8 +84,8 @@ type PackageDefinition = HashMap<String, HashSet<String>>;
 
 #[derive(Default)]
 pub struct Package {
-    name: String,
-    root: PathBuf,
+    _name: String,
+    _root: PathBuf,
     inner: PackageType,
 }
 
@@ -159,8 +159,8 @@ impl Package {
 
         let pkg = Self {
             inner,
-            name,
-            root: root.to_path_buf(),
+            _name: name,
+            _root: root.to_path_buf(),
         };
 
         Ok(pkg)
@@ -206,8 +206,8 @@ impl Package {
 
         let pkg = Self {
             inner,
-            name,
-            root: PathBuf::new(),
+            _name: name,
+            _root: PathBuf::new(),
         };
 
         Ok(pkg)
