@@ -1,3 +1,4 @@
+use std::ffi::CString;
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
@@ -660,7 +661,11 @@ impl BundleFile {
         S: AsRef<str>,
     {
         match file_type {
-            BundleFileType::Lua => lua::compile(name, sjson).await,
+            BundleFileType::Lua => {
+                let sjson =
+                    CString::new(sjson.as_ref()).wrap_err("failed to build CString from SJSON")?;
+                lua::compile(name, sjson)
+            }
             BundleFileType::Unknown(_) => {
                 eyre::bail!("Unknown file type. Cannot compile from SJSON");
             }
