@@ -26,6 +26,7 @@ confy = "0.5.1"
 zip = "0.6.3"
 string_template = "0.2.1"
 promptly = "0.3.1"
+cli-table = { version = "0.4.7", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.3.0"

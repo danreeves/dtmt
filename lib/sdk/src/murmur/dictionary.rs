@@ -55,6 +55,24 @@ pub struct Entry {
     group: HashGroup,
 }
 
+impl Entry {
+    pub fn value(&self) -> &String {
+        &self.value
+    }
+
+    pub fn long(&self) -> Murmur64 {
+        self.long
+    }
+
+    pub fn short(&self) -> Murmur32 {
+        self.short
+    }
+
+    pub fn group(&self) -> HashGroup {
+        self.group
+    }
+}
+
 pub struct Dictionary {
     entries: Vec<Entry>,
 }
@@ -171,5 +189,9 @@ impl Dictionary {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn entries(&self) -> &Vec<Entry> {
+        &self.entries
     }
 }

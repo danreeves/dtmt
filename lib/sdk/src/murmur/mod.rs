@@ -13,8 +13,7 @@ mod murmurhash64;
 
 pub const SEED: u32 = 0;
 
-pub use dictionary::Dictionary;
-pub use dictionary::HashGroup;
+pub use dictionary::{Dictionary, Entry, HashGroup};
 pub use murmurhash64::hash;
 pub use murmurhash64::hash32;
 pub use murmurhash64::hash_inverse as inverse;
