@@ -29,6 +29,17 @@ impl From<HashGroup> for sdk::murmur::HashGroup {
     }
 }
 
+impl std::fmt::Display for HashGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HashGroup::Filename => write!(f, "filename"),
+            HashGroup::Filetype => write!(f, "filetype"),
+            HashGroup::Strings => write!(f, "strings"),
+            HashGroup::Other => write!(f, "other"),
+        }
+    }
+}
+
 #[derive(cli_table::Table)]
 struct TableRow {
     #[table(title = "Value")]
@@ -68,7 +79,8 @@ pub(crate) fn command_definition() -> Command {
                         .short('g')
                         .long("group")
                         .action(ArgAction::Append)
-                        .value_parser(value_parser!(HashGroup)),
+                        .value_parser(value_parser!(HashGroup))
+                        .default_values(["other", "filename", "filetype", "strings"]),
                 ),
         )
         .subcommand(
