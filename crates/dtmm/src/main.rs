@@ -21,17 +21,30 @@ async fn main() -> Result<()> {
     let _matches = command!().get_matches();
 
     {
-        let fmt_layer = tracing_subscriber::fmt::layer().pretty();
         let filter_layer =
             EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
 
-        tracing_subscriber::registry()
-            .with(filter_layer)
-            .with(fmt_layer)
-            .with(ErrorLayer::new(
-                tracing_subscriber::fmt::format::Pretty::default(),
-            ))
-            .init();
+        if cfg!(debug_assertions) {
+            let fmt_layer = tracing_subscriber::fmt::layer().pretty();
+
+            tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(fmt_layer)
+                .with(ErrorLayer::new(
+                    tracing_subscriber::fmt::format::Pretty::default(),
+                ))
+                .init();
+        } else {
+            let fmt_layer = tracing_subscriber::fmt::layer().compact();
+
+            tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(fmt_layer)
+                .with(ErrorLayer::new(
+                    tracing_subscriber::fmt::format::Pretty::default(),
+                ))
+                .init();
+        }
     }
 
     let initial_state = State::new();
