@@ -1,6 +1,7 @@
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
+use bitflags::bitflags;
 use color_eyre::eyre::Context;
 use color_eyre::{eyre, Result};
 use futures::future::join_all;
@@ -489,10 +490,18 @@ impl BundleFileVariant {
     }
 }
 
+bitflags! {
+    #[derive(Default)]
+    pub struct Properties: u32 {
+        const DATA = 0b100;
+    }
+}
+
 pub struct BundleFile {
     file_type: BundleFileType,
     name: String,
     variants: Vec<BundleFileVariant>,
+    props: Properties,
 }
 
 impl BundleFile {
@@ -501,6 +510,7 @@ impl BundleFile {
             file_type,
             name,
             variants: Vec::new(),
+            props: Properties::empty(),
         }
     }
 
@@ -508,12 +518,8 @@ impl BundleFile {
         self.variants.push(variant)
     }
 
-    #[tracing::instrument(
-        name = "File::read",
-        skip_all,
-        fields(name = %meta.name_hash, ext = %meta.extension_hash, flags = meta.flags)
-    )]
-    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R, meta: &EntryHeader) -> Result<Self>
+    #[tracing::instrument(name = "File::read", skip(ctx, r))]
+    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R, props: Properties) -> Result<Self>
     where
         R: Read + Seek,
     {
@@ -561,6 +567,7 @@ impl BundleFile {
             variants,
             file_type,
             name,
+            props,
         })
     }
 
@@ -615,6 +622,10 @@ impl BundleFile {
                 )
             }
         }
+    }
+
+    pub fn props(&self) -> Properties {
+        self.props
     }
 
     pub fn base_name(&self) -> &String {

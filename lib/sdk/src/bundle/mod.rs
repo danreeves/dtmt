@@ -1,4 +1,5 @@
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::mem::size_of;
 use std::path::Path;
 
 use color_eyre::eyre::{self, Context, Result};
@@ -6,12 +7,13 @@ use color_eyre::{Help, Report, SectionExt};
 use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
+use crate::bundle::file::Properties;
 use crate::murmur::{HashGroup, Murmur64};
 
 pub(crate) mod database;
 pub(crate) mod file;
 
-pub use file::{BundleFile, BundleFileType};
+pub use file::{BundleFile, BundleFileType, BundleFileVariant};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum BundleFormat {
@@ -40,56 +42,9 @@ impl From<BundleFormat> for u32 {
     }
 }
 
-pub struct EntryHeader {
-    name_hash: Murmur64,
-    extension_hash: Murmur64,
-    flags: u32,
-}
-
-impl EntryHeader {
-    #[tracing::instrument(name = "EntryHeader::from_reader", skip_all)]
-    fn from_reader<R>(r: &mut R) -> Result<Self>
-    where
-        R: Read + Seek,
-    {
-        let extension_hash = Murmur64::from(r.read_u64()?);
-        let name_hash = Murmur64::from(r.read_u64()?);
-        let flags = r.read_u32()?;
-
-        // NOTE: Known values so far:
-        // - 0x0: seems to be the default
-        // - 0x4: seems to be used for files that point to something in `data/`
-        //        seems to correspond to a change in value in the header's 'unknown_3'
-        if flags != 0x0 {
-            tracing::debug!(
-                flags,
-                "Unexpected meta flags for file {name_hash:016X}.{extension_hash:016X}",
-            );
-        }
-
-        Ok(Self {
-            name_hash,
-            extension_hash,
-            flags,
-        })
-    }
-
-    #[tracing::instrument(name = "EntryHeader::to_writer", skip_all)]
-    fn to_writer<W>(&self, w: &mut W) -> Result<()>
-    where
-        W: Write + Seek,
-    {
-        w.write_u64(self.extension_hash.into())?;
-        w.write_u64(self.name_hash.into())?;
-        w.write_u32(self.flags)?;
-        Ok(())
-    }
-}
-
 pub struct Bundle {
     format: BundleFormat,
     properties: [Murmur64; 32],
-    headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
     name: String,
 }
@@ -100,7 +55,6 @@ impl Bundle {
             name,
             format: BundleFormat::F8,
             properties: [0.into(); 32],
-            headers: Vec::new(),
             files: Vec::new(),
         }
     }
@@ -119,15 +73,22 @@ impl Bundle {
 
     pub fn add_file(&mut self, file: BundleFile) {
         tracing::trace!("Adding file {}", file.name(false, None));
-        let header = EntryHeader {
-            extension_hash: file.file_type().into(),
-            name_hash: Murmur64::hash(file.base_name().as_bytes()),
-            // TODO: Hard coded until we know what this is
-            flags: 0x0,
-        };
+        let existing_index = self
+            .files
+            .iter()
+            .enumerate()
+            .find(|(_, f)| **f == file)
+            .map(|val| val.0);
 
         self.files.push(file);
-        self.headers.push(header);
+
+        if let Some(i) = existing_index {
+            self.files.swap_remove(i);
+        }
+    }
+
+    pub fn get_file<S: AsRef<str>>(&self, name: S) -> Option<&BundleFile> {
+        self.files.iter().find(|f| f.base_name().eq(name.as_ref()))
     }
 
     #[tracing::instrument(skip(ctx, binary), fields(len_binary = binary.as_ref().len()))]
@@ -154,9 +115,13 @@ impl Bundle {
             *prop = Murmur64::from(r.read_u64()?);
         }
 
-        let mut headers = Vec::with_capacity(num_entries);
+        let mut file_props = Vec::with_capacity(num_entries);
         for _ in 0..num_entries {
-            headers.push(EntryHeader::from_reader(&mut r)?);
+            // Skip two u64 that contain the extension hash and file name hash.
+            // We don't need them here, since we're reading the whole bundle into memory
+            // anyways.
+            r.seek(SeekFrom::Current((2 * size_of::<u64>()) as i64))?;
+            file_props.push(Properties::from_bits_truncate(r.read_u32()?));
         }
 
         let num_chunks = r.read_u32()? as usize;
@@ -227,9 +192,8 @@ impl Bundle {
 
         let mut r = Cursor::new(decompressed);
         let mut files = Vec::with_capacity(num_entries);
-        for i in 0..num_entries {
-            let meta = headers.get(i).unwrap();
-            let file = BundleFile::from_reader(ctx, &mut r, meta)
+        for (i, props) in file_props.iter().enumerate() {
+            let file = BundleFile::from_reader(ctx, &mut r, *props)
                 .wrap_err_with(|| format!("failed to read file {i}"))?;
             files.push(file);
         }
@@ -237,7 +201,6 @@ impl Bundle {
         Ok(Self {
             name: bundle_name,
             format,
-            headers,
             files,
             properties,
         })
@@ -255,8 +218,10 @@ impl Bundle {
             w.write_u64((*prop).into())?;
         }
 
-        for meta in self.headers.iter() {
-            meta.to_writer(&mut w)?;
+        for file in self.files.iter() {
+            w.write_u64(file.file_type().into())?;
+            w.write_u64(Murmur64::hash(file.base_name().as_bytes()).into())?;
+            w.write_u32(file.props().bits())?;
         }
 
         let unpacked_data = {
