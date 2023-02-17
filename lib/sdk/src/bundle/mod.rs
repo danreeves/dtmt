@@ -180,8 +180,6 @@ impl Bundle {
                     unpacked_size_tracked -= CHUNK_SIZE;
                 }
 
-                tracing::trace!(raw_size = raw_buffer.len());
-
                 decompressed.append(&mut raw_buffer);
             }
         }
@@ -196,7 +194,11 @@ impl Bundle {
 
         let mut r = Cursor::new(decompressed);
         let mut files = Vec::with_capacity(num_entries);
+        tracing::trace!(num_files = num_entries);
         for (i, props) in file_props.iter().enumerate() {
+            let span = tracing::trace_span!("Read file {}", i);
+            let _enter = span.enter();
+
             let file = BundleFile::from_reader(ctx, &mut r, *props)
                 .wrap_err_with(|| format!("failed to read file {i}"))?;
             files.push(file);

@@ -412,6 +412,7 @@ impl std::fmt::Display for BundleFileType {
 #[derive(Debug)]
 struct BundleFileHeader {
     variant: u32,
+    unknown_1: u8,
     size: usize,
     len_data_file_name: usize,
 }
@@ -420,6 +421,8 @@ pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
     data_file_name: Option<String>,
+    // Seems to be related to whether there is a data path.
+    unknown_1: u8,
 }
 
 impl BundleFileVariant {
@@ -432,6 +435,7 @@ impl BundleFileVariant {
             property: 0,
             data: Vec::new(),
             data_file_name: None,
+            unknown_1: 0,
         }
     }
 
@@ -461,30 +465,38 @@ impl BundleFileVariant {
         R: Read + Seek,
     {
         let variant = r.read_u32()?;
-        r.skip_u8(0)?;
+        let unknown_1 = r.read_u8()?;
         let size = r.read_u32()? as usize;
         r.skip_u8(1)?;
         let len_data_file_name = r.read_u32()? as usize;
 
         Ok(BundleFileHeader {
             size,
+            unknown_1,
             variant,
             len_data_file_name,
         })
     }
 
     #[tracing::instrument(skip_all)]
-    fn write_header<W>(&self, w: &mut W) -> Result<()>
+    fn write_header<W>(&self, w: &mut W, props: Properties) -> Result<()>
     where
         W: Write + Seek,
     {
         w.write_u32(self.property)?;
-        w.write_u8(0)?;
-        w.write_u32(self.data.len() as u32)?;
-        w.write_u8(1)?;
+        w.write_u8(self.unknown_1)?;
 
         let len_data_file_name = self.data_file_name.as_ref().map(|s| s.len()).unwrap_or(0);
-        w.write_u32(len_data_file_name as u32)?;
+
+        if props.contains(Properties::DATA) {
+            w.write_u32(len_data_file_name as u32)?;
+            w.write_u8(1)?;
+            w.write_u32(0)?;
+        } else {
+            w.write_u32(self.data.len() as u32)?;
+            w.write_u8(1)?;
+            w.write_u32(len_data_file_name as u32)?;
+        }
 
         Ok(())
     }
@@ -528,36 +540,63 @@ impl BundleFile {
         let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
         let header_count = r.read_u32()? as usize;
+        tracing::trace!(header_count);
         let mut headers = Vec::with_capacity(header_count);
         r.skip_u32(0)?;
 
-        for _ in 0..header_count {
-            let header = BundleFileVariant::read_header(r)?;
+        for i in 0..header_count {
+            let span = tracing::info_span!("Read file header", i);
+            let _enter = span.enter();
+
+            let header = BundleFileVariant::read_header(r)
+                .wrap_err_with(|| format!("failed to read header {i}"))?;
+
+            if props.contains(Properties::DATA) {
+                tracing::debug!("props: {props:?} | unknown_1: {}", header.unknown_1)
+            }
+
             headers.push(header);
         }
 
         let mut variants = Vec::with_capacity(header_count);
         for (i, header) in headers.into_iter().enumerate() {
-            let span = tracing::info_span!("Read file header {}", i, size = header.size);
+            let span = tracing::info_span!(
+                "Read file data {}",
+                i,
+                size = header.size,
+                len_data_file_name = header.len_data_file_name
+            );
             let _enter = span.enter();
 
-            let mut data = vec![0; header.size];
-            r.read_exact(&mut data)
-                .wrap_err_with(|| format!("failed to read header {i}"))?;
-
-            let data_file_name = if header.len_data_file_name > 0 {
+            let (data, data_file_name) = if props.contains(Properties::DATA) {
+                let data = vec![];
                 let s = r
-                    .read_string_len(header.len_data_file_name)
+                    .read_string_len(header.size)
                     .wrap_err("failed to read data file name")?;
-                Some(s)
+
+                (data, Some(s))
             } else {
-                None
+                let mut data = vec![0; header.size];
+                r.read_exact(&mut data)
+                    .wrap_err_with(|| format!("failed to read file {i}"))?;
+
+                let data_file_name = if header.len_data_file_name > 0 {
+                    let s = r
+                        .read_string_len(header.len_data_file_name)
+                        .wrap_err("failed to read data file name")?;
+                    Some(s)
+                } else {
+                    None
+                };
+
+                (data, data_file_name)
             };
 
             let variant = BundleFileVariant {
                 property: header.variant,
                 data,
                 data_file_name,
+                unknown_1: header.unknown_1,
             };
 
             variants.push(variant);
@@ -584,16 +623,26 @@ impl BundleFile {
 
         for variant in self.variants.iter() {
             w.write_u32(variant.property())?;
-            w.write_u8(0)?;
-            w.write_u32(variant.size() as u32)?;
-            w.write_u8(1)?;
+            w.write_u8(variant.unknown_1)?;
 
             let len_data_file_name = variant.data_file_name().map(|s| s.len()).unwrap_or(0);
-            w.write_u32(len_data_file_name as u32)?;
+
+            if self.props.contains(Properties::DATA) {
+                w.write_u32(len_data_file_name as u32)?;
+                w.write_u8(1)?;
+                w.write_u32(0)?;
+            } else {
+                w.write_u32(variant.size() as u32)?;
+                w.write_u8(1)?;
+                w.write_u32(len_data_file_name as u32)?;
+            }
         }
 
         for variant in self.variants.iter() {
             w.write_all(&variant.data)?;
+            if let Some(s) = &variant.data_file_name {
+                w.write_all(s.as_bytes())?;
+            }
         }
 
         Ok(w.into_inner())
