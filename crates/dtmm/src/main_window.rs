@@ -1,11 +1,14 @@
 use druid::im::Vector;
 use druid::widget::{
     Align, Button, CrossAxisAlignment, Flex, Label, List, MainAxisAlignment, Maybe, Scroll, Split,
-    ViewSwitcher,
+    TextBox, ViewSwitcher,
 };
 use druid::{lens, Insets, LensExt, Widget, WidgetExt, WindowDesc};
 
-use crate::state::{ModInfo, State, View};
+use crate::state::{
+    ModInfo, PathBufFormatter, State, StateController, View, ACTION_DELETE_SELECTED_MOD,
+    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
+};
 use crate::theme;
 use crate::widget::ExtraWidgetExt;
 
@@ -67,32 +70,21 @@ fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
         Flex::row()
             .must_fill_main_axis(true)
-            // .with_child(
-            //     Label::dynamic(|enabled, _env| {
-            //         if *enabled {
-            //             "Enabled".into()
-            //         } else {
-            //             "Disabled".into()
-            //         }
-            //     })
-            //     .lens(
-            //         lens::Identity
-            //             .map(
-            //                 |(i, info)| info,
-            //                 |(i, info), new_info| {
-            //                     todo!();
-            //                 },
-            //             )
-            //             .then(ModInfo::enabled),
-            //     ),
-            // )
-            // .with_child(Label::raw().lens(ModInfo::name))
-            .on_click(|_ctx, state, _env| {
-                todo!();
-            })
+            .with_child(
+                Label::dynamic(|enabled, _env| {
+                    if *enabled {
+                        "Enabled".into()
+                    } else {
+                        "Disabled".into()
+                    }
+                })
+                .lens(lens!((usize, ModInfo), 1).then(ModInfo::enabled)),
+            )
+            .with_child(Label::raw().lens(lens!((usize, ModInfo), 1).then(ModInfo::name)))
+            .on_click(|ctx, (i, _info), _env| ctx.submit_notification(ACTION_SELECT_MOD.with(*i)))
     });
 
-    Scroll::new(list)
+    let scroll = Scroll::new(list)
         .vertical()
         .lens(State::mods.map(
             |mods| {
@@ -107,7 +99,12 @@ fn build_mod_list() -> impl Widget<State> {
                 });
             },
         ))
-        .content_must_fill()
+        .content_must_fill();
+
+    Flex::column()
+        .must_fill_main_axis(true)
+        .with_child(Flex::row())
+        .with_flex_child(scroll, 1.0)
 }
 
 fn build_mod_details() -> impl Widget<State> {
@@ -120,23 +117,16 @@ fn build_mod_details() -> impl Widget<State> {
         },
         Flex::column,
     )
+    .padding(Insets::uniform_xy(5.0, 1.0))
     .lens(State::selected_mod);
 
     let button_move_up = Button::new("Move Up")
-        .on_click(|_ctx, index: &mut Option<usize>, _env| {
-            if let Some(i) = index.as_mut() {
-                *i = i.saturating_sub(1)
-            }
-        })
-        .lens(State::selected_mod_index);
+        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_SELECTED_MOD_UP))
+        .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_up());
 
     let button_move_down = Button::new("Move Down")
-        .on_click(|_ctx, index: &mut Option<usize>, _env| {
-            if let Some(i) = index.as_mut() {
-                *i = i.saturating_add(1)
-            }
-        })
-        .lens(State::selected_mod_index);
+        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_SELECTED_MOD_DOWN))
+        .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_down());
 
     let button_toggle_mod = Maybe::new(
         || {
@@ -144,17 +134,18 @@ fn build_mod_details() -> impl Widget<State> {
                 if *enabled {
                     "Disable Mod".into()
                 } else {
-                    "Enabled Mod".into()
+                    "Enable Mod".into()
                 }
             })
-            .on_click(|_ctx, info: &mut bool, _env| {
-                *info = !*info;
+            .on_click(|_ctx, enabled: &mut bool, _env| {
+                *enabled = !(*enabled);
             })
             .lens(ModInfo::enabled)
         },
         // TODO: Gray out
         || Button::new("Enable Mod"),
     )
+    .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
     let button_add_mod = Button::new("Add Mod").on_click(|_ctx, state: &mut State, _env| {
@@ -164,7 +155,9 @@ fn build_mod_details() -> impl Widget<State> {
     });
 
     let button_delete_mod = Button::new("Delete Mod")
-        .on_click(|_ctx, data: &mut State, _env| data.delete_selected_mod());
+        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_DELETE_SELECTED_MOD))
+        .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
+        .lens(State::selected_mod);
 
     let buttons = Flex::column()
         .with_child(
@@ -204,7 +197,29 @@ fn build_view_mods() -> impl Widget<State> {
 }
 
 fn build_view_settings() -> impl Widget<State> {
-    Label::new("Settings")
+    let game_dir_setting = Flex::row()
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Game Directory:"))
+        .with_default_spacer()
+        .with_child(
+            TextBox::new()
+                .with_formatter(PathBufFormatter::new())
+                .lens(State::game_dir),
+        );
+    let data_dir_setting = Flex::row()
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Data Directory:"))
+        .with_default_spacer()
+        .with_child(
+            TextBox::new()
+                .with_formatter(PathBufFormatter::new())
+                .lens(State::data_dir),
+        );
+
+    Flex::column()
+        .with_child(data_dir_setting)
+        .with_child(game_dir_setting)
+        .padding(Insets::uniform(5.0))
 }
 
 fn build_view_about() -> impl Widget<State> {
@@ -233,4 +248,5 @@ fn build_window() -> impl Widget<State> {
         .must_fill_main_axis(true)
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
+        .controller(StateController::new())
 }
