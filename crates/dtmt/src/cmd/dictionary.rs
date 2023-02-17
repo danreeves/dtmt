@@ -104,17 +104,23 @@ pub(crate) fn command_definition() -> Command {
 pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("lookup", sub_matches)) => {
-            let hash = sub_matches
-                .get_one::<u64>("hash")
-                .expect("required argument not found");
+            let hash = {
+                let s = sub_matches
+                    .get_one::<String>("hash")
+                    .expect("required argument not found");
+
+                u64::from_str_radix(s, 16)
+                    .wrap_err("failed to parse argument as hexadecimal string")?
+            };
 
             let groups = sub_matches
                 .get_many::<HashGroup>("group")
                 .unwrap_or_default();
 
             for group in groups {
-                let value = ctx.lookup_hash(*hash, (*group).into());
-                println!("{value}");
+                if let IdString64::String(value) = ctx.lookup_hash(hash, (*group).into()) {
+                    println!("{group}: {value}");
+                }
             }
 
             Ok(())

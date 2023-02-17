@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use crate::binary::sync::*;
 use crate::filetype::*;
-use crate::murmur::{HashGroup, Murmur64};
+use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 use super::EntryHeader;
 
@@ -499,7 +499,7 @@ bitflags! {
 
 pub struct BundleFile {
     file_type: BundleFileType,
-    name: String,
+    name: IdString64,
     variants: Vec<BundleFileVariant>,
     props: Properties,
 }
@@ -508,7 +508,7 @@ impl BundleFile {
     pub fn new(name: String, file_type: BundleFileType) -> Self {
         Self {
             file_type,
-            name,
+            name: name.into(),
             variants: Vec::new(),
             props: Properties::empty(),
         }
@@ -576,7 +576,7 @@ impl BundleFile {
         let mut w = Cursor::new(Vec::new());
 
         w.write_u64(self.file_type.hash().into())?;
-        w.write_u64(Murmur64::hash(self.name.as_bytes()).into())?;
+        w.write_u64(self.name.to_murmur64().into())?;
         w.write_u32(self.variants.len() as u32)?;
 
         // TODO: Figure out what this is
@@ -628,12 +628,12 @@ impl BundleFile {
         self.props
     }
 
-    pub fn base_name(&self) -> &String {
+    pub fn base_name(&self) -> &IdString64 {
         &self.name
     }
 
     pub fn name(&self, decompiled: bool, variant: Option<u32>) -> String {
-        let mut s = self.name.clone();
+        let mut s = self.name.display().to_string();
         s.push('.');
 
         if let Some(variant) = variant {
@@ -652,10 +652,18 @@ impl BundleFile {
 
     pub fn matches_name<S>(&self, name: S) -> bool
     where
-        S: AsRef<str>,
+        S: Into<IdString64>,
     {
-        let name = name.as_ref();
-        self.name == name || self.name(false, None) == name || self.name(true, None) == name
+        let name = name.into();
+        if self.name == name {
+            return true;
+        }
+
+        if let IdString64::String(name) = name {
+            self.name(false, None) == name || self.name(true, None) == name
+        } else {
+            false
+        }
     }
 
     pub fn file_type(&self) -> BundleFileType {

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::murmur::{Dictionary, HashGroup, Murmur32, Murmur64};
+use crate::murmur::{Dictionary, HashGroup, IdString64, Murmur32, Murmur64};
 
 pub struct Context {
     pub lookup: Dictionary,
@@ -21,17 +21,17 @@ impl Context {
         }
     }
 
-    pub fn lookup_hash<M>(&self, hash: M, group: HashGroup) -> String
+    pub fn lookup_hash<M>(&self, hash: M, group: HashGroup) -> IdString64
     where
         M: Into<Murmur64>,
     {
         let hash = hash.into();
         if let Some(s) = self.lookup.lookup(hash, group) {
             tracing::debug!(%hash, string = s, "Murmur64 lookup successful");
-            s.to_owned()
+            s.to_string().into()
         } else {
             tracing::debug!(%hash, "Murmur64 lookup failed");
-            format!("{hash:016X}")
+            hash.into()
         }
     }
 

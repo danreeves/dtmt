@@ -236,3 +236,93 @@ impl<'de> Deserialize<'de> for Murmur32 {
         deserializer.deserialize_any(Self(0))
     }
 }
+
+// This type encodes the fact that when reading in a bundle, we don't always have a dictionary
+// entry for every hash in there. So we do want to have the real string available when needed,
+// but at the same time retain the original hash information for when we don't.
+// This is especially important when wanting to write back the read bundle, as the hashes need to
+// stay the same.
+// The previous system of always turning hashes into strings worked well for the purpose of
+// displaying hashes, but would have made it very hard to turn a stringyfied hash back into
+// an actual hash.
+#[derive(Clone, Debug, Eq)]
+pub enum IdString64 {
+    Hash(Murmur64),
+    String(String),
+}
+
+impl IdString64 {
+    pub fn to_murmur64(&self) -> Murmur64 {
+        match self {
+            Self::Hash(hash) => *hash,
+            Self::String(s) => Murmur64::hash(s.as_bytes()),
+        }
+    }
+
+    pub fn display(&self) -> IdString64Display {
+        let s = match self {
+            IdString64::Hash(hash) => hash.to_string(),
+            IdString64::String(s) => s.clone(),
+        };
+
+        IdString64Display(s)
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            IdString64::Hash(_) => false,
+            IdString64::String(_) => true,
+        }
+    }
+
+    pub fn is_hash(&self) -> bool {
+        match self {
+            IdString64::Hash(_) => true,
+            IdString64::String(_) => false,
+        }
+    }
+}
+
+impl From<String> for IdString64 {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<Murmur64> for IdString64 {
+    fn from(value: Murmur64) -> Self {
+        Self::Hash(value)
+    }
+}
+
+impl From<IdString64> for Murmur64 {
+    fn from(value: IdString64) -> Self {
+        value.to_murmur64()
+    }
+}
+
+impl PartialEq for IdString64 {
+    fn eq(&self, other: &Self) -> bool {
+        self.to_murmur64() == other.to_murmur64()
+    }
+}
+
+pub struct IdString64Display(String);
+
+impl std::fmt::Display for IdString64Display {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::fmt::UpperHex for IdString64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::UpperHex::fmt(&self.to_murmur64(), f)
+    }
+}
+
+impl std::fmt::LowerHex for IdString64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::LowerHex::fmt(&self.to_murmur64(), f)
+    }
+}

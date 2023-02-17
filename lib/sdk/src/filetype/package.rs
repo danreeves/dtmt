@@ -201,7 +201,10 @@ impl Package {
             let t = BundleFileType::from(r.read_u64()?);
             let hash = Murmur64::from(r.read_u64()?);
             let path = ctx.lookup_hash(hash, HashGroup::Filename);
-            inner.entry(t).or_default().insert(PathBuf::from(path));
+            inner
+                .entry(t)
+                .or_default()
+                .insert(PathBuf::from(path.display().to_string()));
         }
 
         let pkg = Self {

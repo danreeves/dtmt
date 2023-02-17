@@ -64,7 +64,7 @@ where
                 let v = &f.variants()[0];
                 println!(
                     "\t{}.{}: {} bytes",
-                    f.base_name(),
+                    f.base_name().display(),
                     f.file_type().ext_name(),
                     v.size()
                 );

@@ -67,7 +67,11 @@ impl Bundle {
         path.file_name()
             .and_then(|name| name.to_str())
             .and_then(|name| Murmur64::try_from(name).ok())
-            .map(|hash| ctx.lookup_hash(hash, HashGroup::Filename))
+            .map(|hash| {
+                ctx.lookup_hash(hash, HashGroup::Filename)
+                    .display()
+                    .to_string()
+            })
             .unwrap_or_else(|| path.display().to_string())
     }
 
@@ -220,7 +224,7 @@ impl Bundle {
 
         for file in self.files.iter() {
             w.write_u64(file.file_type().into())?;
-            w.write_u64(Murmur64::hash(file.base_name().as_bytes()).into())?;
+            w.write_u64(file.base_name().to_murmur64().into())?;
             w.write_u32(file.props().bits())?;
         }
 
