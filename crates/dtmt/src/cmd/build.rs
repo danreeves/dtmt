@@ -218,6 +218,8 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         fs::read(path).await?
     };
 
+    let config_file = fs::read(cfg.dir.join("dtmt.cfg")).await?;
+
     {
         let dest = dest.clone();
         let name = cfg.name.clone();
@@ -225,6 +227,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             let mut archive = Archive::new(name);
 
             archive.add_mod_file(mod_file);
+            archive.add_config(config_file);
 
             for bundle in bundles {
                 archive.add_bundle(bundle);

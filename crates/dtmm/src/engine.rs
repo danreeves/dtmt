@@ -1,11 +1,13 @@
+use std::collections::HashMap;
 use std::ffi::CString;
-use std::io::{Cursor, ErrorKind};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
 use color_eyre::{eyre, Result};
+use druid::FileInfo;
 use futures::stream;
 use futures::StreamExt;
 use sdk::filetype::lua;
@@ -14,11 +16,13 @@ use sdk::murmur::Murmur64;
 use sdk::{
     Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
+use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::{fs, try_join};
 use tracing::Instrument;
+use zip::ZipArchive;
 
-use crate::state::{PackageInfo, State};
+use crate::state::{ModInfo, PackageInfo, State};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
 const BOOT_BUNDLE_NAME: &str = "packages/boot";
@@ -370,4 +374,77 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 
     tracing::info!("Finished deploying mods");
     Ok(())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ModConfig {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
+    let data = fs::read(&info.path)
+        .await
+        .wrap_err_with(|| format!("failed to read file {}", info.path.display()))?;
+    let data = Cursor::new(data);
+
+    let mut archive = ZipArchive::new(data).wrap_err("failed to open ZIP archive")?;
+
+    for f in archive.file_names() {
+        tracing::debug!("{}", f);
+    }
+
+    let dir_name = {
+        let f = archive.by_index(0).wrap_err("archive is empty")?;
+
+        if !f.is_dir() {
+            eyre::bail!("archive does not have a top-level directory");
+        }
+
+        let name = f.name();
+        // The directory name is returned with a trailing slash, which we don't want
+        name[..(name.len().saturating_sub(1))].to_string()
+    };
+
+    let mod_cfg: ModConfig = {
+        let mut f = archive
+            .by_name(&format!("{}/{}", dir_name, "dtmt.cfg"))
+            .wrap_err("failed to read mod config from archive")?;
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut buf)
+            .wrap_err("failed to read mod config from archive")?;
+
+        let data = String::from_utf8(buf).wrap_err("mod config is not valid UTF-8")?;
+
+        serde_sjson::from_str(&data).wrap_err("failed to deserialize mod config")?
+    };
+
+    let files: HashMap<String, Vec<String>> = {
+        let mut f = archive
+            .by_name(&format!("{}/{}", dir_name, "files.sjson"))
+            .wrap_err("failed to read file index from archive")?;
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut buf)
+            .wrap_err("failed to read file index from archive")?;
+
+        let data = String::from_utf8(buf).wrap_err("file index is not valid UTF-8")?;
+
+        serde_sjson::from_str(&data).wrap_err("failed to deserialize file index")?
+    };
+
+    let mod_dir = state.get_game_dir().join(&mod_cfg.name);
+
+    archive
+        .extract(&mod_dir)
+        .wrap_err_with(|| format!("failed to extract archive to {}", mod_dir.display()))?;
+
+    let packages = files
+        .into_iter()
+        .map(|(name, files)| PackageInfo::new(name, files.into_iter().collect()))
+        .collect();
+    let info = ModInfo::new(mod_cfg.name, mod_cfg.description, packages);
+
+    Ok(info)
 }

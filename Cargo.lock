@@ -671,6 +671,7 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]

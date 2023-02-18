@@ -3,18 +3,25 @@ use std::sync::Arc;
 
 use druid::im::Vector;
 use druid::text::Formatter;
-use druid::{AppDelegate, Command, Data, DelegateCtx, Env, Handled, Lens, Selector, Target};
+use druid::{
+    AppDelegate, Command, Data, DelegateCtx, Env, FileInfo, Handled, Lens, Selector, SingleUse,
+    Target,
+};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action.select-mod");
-pub const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
-pub const ACTION_SELECTED_MOD_DOWN: Selector = Selector::new("dtmm.action.selected-mod-down");
-pub const ACTION_DELETE_SELECTED_MOD: Selector = Selector::new("dtmm.action.delete-selected-mod");
+pub(crate) const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action.select-mod");
+pub(crate) const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
+pub(crate) const ACTION_SELECTED_MOD_DOWN: Selector =
+    Selector::new("dtmm.action.selected-mod-down");
+pub(crate) const ACTION_DELETE_SELECTED_MOD: Selector =
+    Selector::new("dtmm.action.delete-selected-mod");
 
-pub const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
-pub const ACTION_FINISH_DEPLOY: Selector = Selector::new("dtmm.action.finish-deploy");
+pub(crate) const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
+pub(crate) const ACTION_FINISH_DEPLOY: Selector = Selector::new("dtmm.action.finish-deploy");
 
-pub const ACTION_ADD_MOD: Selector = Selector::new("dtmm.action.add-mod");
+pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action.add-mod");
+pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<ModInfo>> =
+    Selector::new("dtmm.action.finish-add-mod");
 
 #[derive(Copy, Clone, Data, Debug, PartialEq)]
 pub(crate) enum View {
@@ -36,6 +43,10 @@ pub struct PackageInfo {
 }
 
 impl PackageInfo {
+    pub fn new(name: String, files: Vector<String>) -> Self {
+        Self { name, files }
+    }
+
     pub fn get_name(&self) -> &String {
         &self.name
     }
@@ -55,12 +66,12 @@ pub(crate) struct ModInfo {
 }
 
 impl ModInfo {
-    pub fn new() -> Self {
+    pub fn new(name: String, description: String, packages: Vector<PackageInfo>) -> Self {
         Self {
-            name: format!("Test Mod: {:?}", std::time::SystemTime::now()),
-            description: Arc::new(String::from("A test dummy")),
+            name,
+            description: Arc::new(description),
+            packages,
             enabled: false,
-            packages: Vector::new(),
         }
     }
 
@@ -236,6 +247,7 @@ impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {
 
 pub(crate) enum AsyncAction {
     DeployMods(State),
+    AddMod((State, FileInfo)),
 }
 
 pub(crate) struct Delegate {
@@ -321,13 +333,28 @@ impl AppDelegate<State> for Delegate {
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_ADD_MOD) => {
-                // TODO: Implement properly
-                let info = ModInfo::new();
-                state.add_mod(info);
+                let info = cmd
+                    .get(ACTION_ADD_MOD)
+                    .expect("command type matched but didn't contain the expected value");
+                if let Err(err) = self
+                    .sender
+                    .send(AsyncAction::AddMod((state.clone(), info.clone())))
+                {
+                    tracing::error!("Failed to add mod: {}", err);
+                }
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_ADD_MOD) => {
+                let info = cmd
+                    .get(ACTION_FINISH_ADD_MOD)
+                    .expect("command type matched but didn't contain the expected value");
+                if let Some(info) = info.take() {
+                    state.add_mod(info);
+                }
                 Handled::Yes
             }
             cmd => {
-                tracing::debug!("Unknown command: {:?}", cmd);
+                tracing::warn!("Unknown command: {:?}", cmd);
                 Handled::No
             }
         }

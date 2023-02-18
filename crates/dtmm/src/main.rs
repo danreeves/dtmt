@@ -9,7 +9,10 @@ use color_eyre::Report;
 use color_eyre::Result;
 use druid::AppLauncher;
 use druid::ExtEventSink;
+use druid::SingleUse;
 use druid::Target;
+use engine::import_mod;
+use state::ACTION_FINISH_ADD_MOD;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
@@ -47,6 +50,24 @@ fn work_thread(
                         .await
                         .submit_command(ACTION_FINISH_DEPLOY, (), Target::Auto)
                         .expect("failed to send command");
+                }),
+                AsyncAction::AddMod((state, info)) => tokio::spawn(async move {
+                    match import_mod(state, info).await {
+                        Ok(mod_info) => {
+                            event_sink
+                                .write()
+                                .await
+                                .submit_command(
+                                    ACTION_FINISH_ADD_MOD,
+                                    SingleUse::new(mod_info),
+                                    Target::Auto,
+                                )
+                                .expect("failed to send command");
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to import mod: {:?}", err);
+                        }
+                    }
                 }),
             };
         }

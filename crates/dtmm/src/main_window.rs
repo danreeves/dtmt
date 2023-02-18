@@ -3,7 +3,7 @@ use druid::widget::{
     Align, Button, CrossAxisAlignment, Flex, Label, List, MainAxisAlignment, Maybe, Scroll, Split,
     TextBox, ViewSwitcher,
 };
-use druid::{lens, Insets, LensExt, Widget, WidgetExt, WindowDesc};
+use druid::{lens, FileDialogOptions, FileSpec, Insets, LensExt, Widget, WidgetExt, WindowDesc};
 
 use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_ADD_MOD};
 use crate::state::{
@@ -151,8 +151,16 @@ fn build_mod_details() -> impl Widget<State> {
     .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
-    let button_add_mod = Button::new("Add Mod")
-        .on_click(|ctx, _state: &mut State, _env| ctx.submit_command(ACTION_ADD_MOD));
+    let button_add_mod = Button::new("Add Mod").on_click(|ctx, _state: &mut State, _env| {
+        let zip = FileSpec::new("Zip file", &["zip"]);
+        let opts = FileDialogOptions::new()
+            .allowed_types(vec![zip])
+            .default_type(zip)
+            .name_label("Mod Archive")
+            .title("Choose a mod to add")
+            .accept_command(ACTION_ADD_MOD);
+        ctx.submit_command(druid::commands::SHOW_OPEN_PANEL.with(opts))
+    });
 
     let button_delete_mod = Button::new("Delete Mod")
         .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_DELETE_SELECTED_MOD))
