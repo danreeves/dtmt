@@ -91,10 +91,6 @@ impl Bundle {
         }
     }
 
-    pub fn get_file<S: AsRef<str>>(&self, name: S) -> Option<&BundleFile> {
-        self.files.iter().find(|f| f.base_name().eq(name.as_ref()))
-    }
-
     #[tracing::instrument(skip(ctx, binary), fields(len_binary = binary.as_ref().len()))]
     pub fn from_binary<B>(ctx: &crate::Context, name: String, binary: B) -> Result<Self>
     where

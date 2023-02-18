@@ -66,6 +66,12 @@ impl fmt::UpperHex for Murmur64 {
     }
 }
 
+impl fmt::LowerHex for Murmur64 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
 impl fmt::Display for Murmur64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::UpperHex::fmt(&self.0, f)

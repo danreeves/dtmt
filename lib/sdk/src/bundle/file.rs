@@ -12,8 +12,6 @@ use crate::binary::sync::*;
 use crate::filetype::*;
 use crate::murmur::{HashGroup, IdString64, Murmur64};
 
-use super::EntryHeader;
-
 #[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum BundleFileType {
     Animation,
@@ -798,6 +796,12 @@ impl BundleFile {
         let results = join_all(tasks).await;
 
         Ok(results.into_iter().flatten().collect())
+    }
+}
+
+impl PartialEq for BundleFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.file_type == other.file_type
     }
 }
 

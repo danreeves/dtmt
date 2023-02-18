@@ -104,6 +104,14 @@ impl DerefMut for Package {
 }
 
 impl Package {
+    pub fn new(name: String, root: PathBuf) -> Self {
+        Self {
+            _name: name,
+            _root: root,
+            inner: Default::default(),
+        }
+    }
+
     fn len(&self) -> usize {
         self.values().fold(0, |total, files| total + files.len())
     }

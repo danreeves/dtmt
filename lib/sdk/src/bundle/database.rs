@@ -50,13 +50,14 @@ impl BundleDatabase {
 
         self.stored_files.entry(hash).or_default().push(file);
 
-        // TODO: Resource hashes
-
         for f in bundle.files() {
             let file_name = FileName {
                 extension: f.file_type(),
                 name: Murmur64::hash(f.name(false, None).as_bytes()),
             };
+
+            // TODO: Compute actual resource hash
+            self.resource_hashes.insert(hash, 0);
 
             self.bundle_contents
                 .entry(hash)

@@ -658,12 +658,16 @@ dependencies = [
 name = "dtmm"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "clap",
  "color-eyre",
  "confy",
  "druid",
+ "futures",
+ "oodle-sys",
  "sdk",
  "serde",
+ "serde_sjson",
  "tokio",
  "toml",
  "tracing",

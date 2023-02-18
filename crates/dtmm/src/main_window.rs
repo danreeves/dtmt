@@ -7,7 +7,7 @@ use druid::{lens, Insets, LensExt, Widget, WidgetExt, WindowDesc};
 
 use crate::state::{
     ModInfo, PathBufFormatter, State, StateController, View, ACTION_DELETE_SELECTED_MOD,
-    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
+    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, COMMAND_START_DEPLOY,
 };
 use crate::theme;
 use crate::widget::ExtraWidgetExt;
@@ -48,11 +48,13 @@ fn build_top_bar() -> impl Widget<State> {
         )
         .with_child(
             Flex::row()
-                .with_child(Button::new("Deploy Mods").on_click(
-                    |_ctx, _state: &mut State, _env| {
-                        todo!();
-                    },
-                ))
+                .with_child(
+                    Button::new("Deploy Mods")
+                        .on_click(|ctx, _state: &mut State, _env| {
+                            ctx.submit_command(COMMAND_START_DEPLOY);
+                        })
+                        .disabled_if(|data, _| !data.can_deploy_mods()),
+                )
                 .with_default_spacer()
                 .with_child(
                     Button::new("Run Game").on_click(|_ctx, _state: &mut State, _env| {

@@ -5,7 +5,7 @@ use druid::im::Vector;
 use druid::text::Formatter;
 use druid::widget::Controller;
 use druid::{
-    AppDelegate, Data, DelegateCtx, Env, Event, EventCtx, Handled, Lens, Selector, Target,
+    AppDelegate, Command, Data, DelegateCtx, Env, Event, EventCtx, Handled, Lens, Selector, Target,
     Widget,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -14,6 +14,9 @@ pub const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action..selec
 pub const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
 pub const ACTION_SELECTED_MOD_DOWN: Selector = Selector::new("dtmm.action.selected-mod-down");
 pub const ACTION_DELETE_SELECTED_MOD: Selector = Selector::new("dtmm.action.delete-selected-mod");
+
+pub const COMMAND_FINISH_DEPLOY: Selector = Selector::new("dtmm.command.finish-deploy");
+pub const COMMAND_START_DEPLOY: Selector = Selector::new("dtmm.command.start-deploy");
 
 #[derive(Copy, Clone, Data, Debug, PartialEq)]
 pub(crate) enum View {
@@ -145,6 +148,10 @@ impl State {
 
     pub fn can_move_mod_up(&self) -> bool {
         self.selected_mod_index.map(|i| i > 0).unwrap_or(false)
+    }
+
+    pub fn can_deploy_mods(&self) -> bool {
+        !self.is_deployment_in_progress
     }
 
     pub(crate) fn get_game_dir(&self) -> &PathBuf {
@@ -294,6 +301,52 @@ impl<W: Widget<State>> Controller<State, W> for StateController {
                 state.mods.remove(index);
             }
             _ => child.event(ctx, event, state, env),
+        }
+    }
+}
+
+pub(crate) enum AsyncAction {
+    DeployMods(State),
+}
+
+pub(crate) struct Delegate {
+    sender: UnboundedSender<AsyncAction>,
+}
+
+impl Delegate {
+    pub fn new(sender: UnboundedSender<AsyncAction>) -> Self {
+        Self { sender }
+    }
+}
+
+impl AppDelegate<State> for Delegate {
+    #[tracing::instrument(name = "Delegate", skip_all)]
+    fn command(
+        &mut self,
+        _ctx: &mut DelegateCtx,
+        _target: Target,
+        cmd: &Command,
+        data: &mut State,
+        _env: &Env,
+    ) -> Handled {
+        if cmd.is(COMMAND_START_DEPLOY) {
+            if self
+                .sender
+                .send(AsyncAction::DeployMods(data.clone()))
+                .is_ok()
+            {
+                data.is_deployment_in_progress = true;
+            } else {
+                tracing::error!("Failed to queue action to deploy mods");
+            }
+
+            Handled::Yes
+        } else if cmd.is(COMMAND_FINISH_DEPLOY) {
+            data.is_deployment_in_progress = false;
+            Handled::Yes
+        } else {
+            tracing::debug!("Unknown command: {:?}", cmd);
+            Handled::No
         }
     }
 }
