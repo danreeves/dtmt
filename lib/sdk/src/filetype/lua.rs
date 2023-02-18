@@ -1,10 +1,12 @@
 use std::ffi::CStr;
 use std::io::Cursor;
+use std::io::Write;
 
 use color_eyre::eyre;
 use color_eyre::Result;
 use luajit2_sys as lua;
 
+use crate::binary::sync::WriteExt;
 use crate::bundle::file::{BundleFileVariant, UserFile};
 use crate::{BundleFile, BundleFileType};
 
@@ -83,16 +85,19 @@ where
         }
     };
 
-    // TODO: How are these twelve bytes generated?
-    let mut data = vec![0x0; 12];
-    // Set Fatshark's custom LuaJIT magic bytes
-    data.extend_from_slice(&[0x1b, 0x46, 0x53, 0x82]);
-    data.extend_from_slice(&bytecode[4..]);
+    let mut data = Cursor::new(Vec::with_capacity(bytecode.len() + 12));
+    data.write_u32(bytecode.len() as u32)?;
+    // TODO: Figure out what these two values are
+    data.write_u32(0x2)?;
+    data.write_u32(0x0)?;
+    // Use Fatshark's custom magic bytes
+    data.write_all(&[0x1b, 0x46, 0x53, 0x82])?;
+    data.write_all(&bytecode[4..])?;
 
     let mut file = BundleFile::new(name, BundleFileType::Lua);
     let mut variant = BundleFileVariant::new();
 
-    variant.set_data(data);
+    variant.set_data(data.into_inner());
     file.add_variant(variant);
 
     Ok(file)
