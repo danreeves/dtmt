@@ -18,7 +18,7 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 use crate::engine::deploy_mods;
-use crate::state::{AsyncAction, Delegate, State, COMMAND_FINISH_DEPLOY};
+use crate::state::{AsyncAction, Delegate, State, ACTION_FINISH_DEPLOY};
 
 mod controller;
 mod engine;
@@ -45,7 +45,7 @@ fn work_thread(
                     event_sink
                         .write()
                         .await
-                        .submit_command(COMMAND_FINISH_DEPLOY, (), Target::Auto)
+                        .submit_command(ACTION_FINISH_DEPLOY, (), Target::Auto)
                         .expect("failed to send command");
                 }),
             };

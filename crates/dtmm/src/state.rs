@@ -3,20 +3,18 @@ use std::sync::Arc;
 
 use druid::im::Vector;
 use druid::text::Formatter;
-use druid::widget::Controller;
-use druid::{
-    AppDelegate, Command, Data, DelegateCtx, Env, Event, EventCtx, Handled, Lens, Selector, Target,
-    Widget,
-};
+use druid::{AppDelegate, Command, Data, DelegateCtx, Env, Handled, Lens, Selector, Target};
 use tokio::sync::mpsc::UnboundedSender;
 
-pub const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action..select-mod");
+pub const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action.select-mod");
 pub const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
 pub const ACTION_SELECTED_MOD_DOWN: Selector = Selector::new("dtmm.action.selected-mod-down");
 pub const ACTION_DELETE_SELECTED_MOD: Selector = Selector::new("dtmm.action.delete-selected-mod");
 
-pub const COMMAND_FINISH_DEPLOY: Selector = Selector::new("dtmm.command.finish-deploy");
-pub const COMMAND_START_DEPLOY: Selector = Selector::new("dtmm.command.start-deploy");
+pub const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
+pub const ACTION_FINISH_DEPLOY: Selector = Selector::new("dtmm.action.finish-deploy");
+
+pub const ACTION_ADD_MOD: Selector = Selector::new("dtmm.action.add-mod");
 
 #[derive(Copy, Clone, Data, Debug, PartialEq)]
 pub(crate) enum View {
@@ -236,75 +234,6 @@ impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {
     }
 }
 
-pub struct StateController {}
-
-impl StateController {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-// TODO: Turn notifications into commands on the AppDelegate
-impl<W: Widget<State>> Controller<State, W> for StateController {
-    #[tracing::instrument(name = "StateController::event", skip_all)]
-    fn event(
-        &mut self,
-        child: &mut W,
-        ctx: &mut EventCtx,
-        event: &Event,
-        state: &mut State,
-        env: &Env,
-    ) {
-        match event {
-            Event::Notification(notif) if notif.is(ACTION_SELECT_MOD) => {
-                ctx.set_handled();
-                let index = notif
-                    .get(ACTION_SELECT_MOD)
-                    .expect("notification type didn't match after check");
-
-                state.select_mod(*index);
-            }
-            Event::Notification(notif) if notif.is(ACTION_SELECTED_MOD_UP) => {
-                ctx.set_handled();
-                let Some(i) = state.selected_mod_index else {
-                    return;
-                };
-
-                let len = state.mods.len();
-                if len == 0 || i == 0 {
-                    return;
-                }
-
-                state.mods.swap(i, i - 1);
-                state.selected_mod_index = Some(i - 1);
-            }
-            Event::Notification(notif) if notif.is(ACTION_SELECTED_MOD_DOWN) => {
-                ctx.set_handled();
-                let Some(i) = state.selected_mod_index else {
-                    return;
-                };
-
-                let len = state.mods.len();
-                if len == 0 || i == usize::MAX || i >= len - 1 {
-                    return;
-                }
-
-                state.mods.swap(i, i + 1);
-                state.selected_mod_index = Some(i + 1);
-            }
-            Event::Notification(notif) if notif.is(ACTION_DELETE_SELECTED_MOD) => {
-                ctx.set_handled();
-                let Some(index) = state.selected_mod_index else {
-                    return;
-                };
-
-                state.mods.remove(index);
-            }
-            _ => child.event(ctx, event, state, env),
-        }
-    }
-}
-
 pub(crate) enum AsyncAction {
     DeployMods(State),
 }
@@ -326,27 +255,81 @@ impl AppDelegate<State> for Delegate {
         _ctx: &mut DelegateCtx,
         _target: Target,
         cmd: &Command,
-        data: &mut State,
+        state: &mut State,
         _env: &Env,
     ) -> Handled {
-        if cmd.is(COMMAND_START_DEPLOY) {
-            if self
-                .sender
-                .send(AsyncAction::DeployMods(data.clone()))
-                .is_ok()
-            {
-                data.is_deployment_in_progress = true;
-            } else {
-                tracing::error!("Failed to queue action to deploy mods");
-            }
+        match cmd {
+            cmd if cmd.is(ACTION_START_DEPLOY) => {
+                if self
+                    .sender
+                    .send(AsyncAction::DeployMods(state.clone()))
+                    .is_ok()
+                {
+                    state.is_deployment_in_progress = true;
+                } else {
+                    tracing::error!("Failed to queue action to deploy mods");
+                }
 
-            Handled::Yes
-        } else if cmd.is(COMMAND_FINISH_DEPLOY) {
-            data.is_deployment_in_progress = false;
-            Handled::Yes
-        } else {
-            tracing::debug!("Unknown command: {:?}", cmd);
-            Handled::No
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_START_DEPLOY) => {
+                state.is_deployment_in_progress = false;
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_SELECT_MOD) => {
+                let index = cmd
+                    .get(ACTION_SELECT_MOD)
+                    .expect("command type matched but didn't contain the expected value");
+
+                state.select_mod(*index);
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_SELECTED_MOD_UP) => {
+                let Some(i) = state.selected_mod_index else {
+                    return Handled::No;
+                };
+
+                let len = state.mods.len();
+                if len == 0 || i == 0 {
+                    return Handled::No;
+                }
+
+                state.mods.swap(i, i - 1);
+                state.selected_mod_index = Some(i - 1);
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_SELECTED_MOD_DOWN) => {
+                let Some(i) = state.selected_mod_index else {
+                    return Handled::No;
+                };
+
+                let len = state.mods.len();
+                if len == 0 || i == usize::MAX || i >= len - 1 {
+                    return Handled::No;
+                }
+
+                state.mods.swap(i, i + 1);
+                state.selected_mod_index = Some(i + 1);
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_DELETE_SELECTED_MOD) => {
+                let Some(index) = state.selected_mod_index else {
+                    return Handled::No;
+                };
+
+                state.mods.remove(index);
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_ADD_MOD) => {
+                // TODO: Implement properly
+                let info = ModInfo::new();
+                state.add_mod(info);
+                Handled::Yes
+            }
+            cmd => {
+                tracing::debug!("Unknown command: {:?}", cmd);
+                Handled::No
+            }
         }
     }
 }

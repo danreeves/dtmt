@@ -5,9 +5,10 @@ use druid::widget::{
 };
 use druid::{lens, Insets, LensExt, Widget, WidgetExt, WindowDesc};
 
+use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_ADD_MOD};
 use crate::state::{
-    ModInfo, PathBufFormatter, State, StateController, View, ACTION_DELETE_SELECTED_MOD,
-    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, COMMAND_START_DEPLOY,
+    ACTION_DELETE_SELECTED_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
+    ACTION_SELECT_MOD, ACTION_START_DEPLOY,
 };
 use crate::theme;
 use crate::widget::ExtraWidgetExt;
@@ -51,7 +52,7 @@ fn build_top_bar() -> impl Widget<State> {
                 .with_child(
                     Button::new("Deploy Mods")
                         .on_click(|ctx, _state: &mut State, _env| {
-                            ctx.submit_command(COMMAND_START_DEPLOY);
+                            ctx.submit_command(ACTION_START_DEPLOY);
                         })
                         .disabled_if(|data, _| !data.can_deploy_mods()),
                 )
@@ -83,7 +84,7 @@ fn build_mod_list() -> impl Widget<State> {
                 .lens(lens!((usize, ModInfo), 1).then(ModInfo::enabled)),
             )
             .with_child(Label::raw().lens(lens!((usize, ModInfo), 1).then(ModInfo::name)))
-            .on_click(|ctx, (i, _info), _env| ctx.submit_notification(ACTION_SELECT_MOD.with(*i)))
+            .on_click(|ctx, (i, _info), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))
     });
 
     let scroll = Scroll::new(list)
@@ -123,11 +124,11 @@ fn build_mod_details() -> impl Widget<State> {
     .lens(State::selected_mod);
 
     let button_move_up = Button::new("Move Up")
-        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_SELECTED_MOD_UP))
+        .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_SELECTED_MOD_UP))
         .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_up());
 
     let button_move_down = Button::new("Move Down")
-        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_SELECTED_MOD_DOWN))
+        .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_SELECTED_MOD_DOWN))
         .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_down());
 
     let button_toggle_mod = Maybe::new(
@@ -150,14 +151,11 @@ fn build_mod_details() -> impl Widget<State> {
     .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
-    let button_add_mod = Button::new("Add Mod").on_click(|_ctx, state: &mut State, _env| {
-        // TODO: Implement properly
-        let info = ModInfo::new();
-        state.add_mod(info);
-    });
+    let button_add_mod = Button::new("Add Mod")
+        .on_click(|ctx, _state: &mut State, _env| ctx.submit_command(ACTION_ADD_MOD));
 
     let button_delete_mod = Button::new("Delete Mod")
-        .on_click(|ctx, _state, _env| ctx.submit_notification(ACTION_DELETE_SELECTED_MOD))
+        .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_DELETE_SELECTED_MOD))
         .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
         .lens(State::selected_mod);
 
@@ -250,5 +248,4 @@ fn build_window() -> impl Widget<State> {
         .must_fill_main_axis(true)
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
-        .controller(StateController::new())
 }
