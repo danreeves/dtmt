@@ -284,7 +284,7 @@ impl AppDelegate<State> for Delegate {
 
                 Handled::Yes
             }
-            cmd if cmd.is(ACTION_START_DEPLOY) => {
+            cmd if cmd.is(ACTION_FINISH_DEPLOY) => {
                 state.is_deployment_in_progress = false;
                 Handled::Yes
             }
