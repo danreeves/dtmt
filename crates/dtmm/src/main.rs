@@ -91,7 +91,7 @@ fn work_thread(
 }
 
 #[cfg(not(arget_os = "windows"))]
-fn get_default_config_path() -> String {
+fn get_default_config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| {
             let user = std::env::var("USER").expect("user env variable not set");
@@ -100,17 +100,17 @@ fn get_default_config_path() -> String {
         format!("{home}/.config")
     });
 
-    format!("{config_dir}/dtmm/dtmm.cfg")
+    PathBuf::from(config_dir).join("dtmm").join("dtmm.cfg")
 }
 
 #[cfg(target_os = "windows")]
-fn get_default_config_path() -> String {
+fn get_default_config_path() -> PathBuf {
     let config_dir = std::env::var("APPDATA").expect("appdata env var not set");
-    format!("{config_dir}\\dtmm\\dtmm.cfg")
+    PathBuf::from(config_dir).join("dtmm").join("dtmm.cfg")
 }
 
 #[cfg(not(arget_os = "windows"))]
-fn get_default_data_dir() -> String {
+fn get_default_data_dir() -> PathBuf {
     let data_dir = std::env::var("XDG_DATA_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| {
             let user = std::env::var("USER").expect("user env variable not set");
@@ -119,13 +119,13 @@ fn get_default_data_dir() -> String {
         format!("{home}/.local/share")
     });
 
-    format!("{data_dir}/dtmm")
+    PathBuf::from(data_dir).join("dtmm")
 }
 
 #[cfg(target_os = "windows")]
-fn get_default_data_dir() -> String {
+fn get_default_data_dir() -> PathBuf {
     let data_dir = std::env::var("APPDATA").expect("appdata env var not set");
-    format!("{data_dir}\\dtmm")
+    PathBuf::from(data_dir).join("dtmm")
 }
 
 #[tracing::instrument]
@@ -134,7 +134,7 @@ fn main() -> Result<()> {
 
     let default_config_path = get_default_config_path();
 
-    tracing::trace!(default_config_path);
+    tracing::trace!(default_config_path = %default_config_path.display());
 
     let matches = command!()
         .arg(Arg::new("oodle").long("oodle").help(
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
                 .short('c')
                 .help("Path to the config file")
                 .value_parser(value_parser!(PathBuf))
-                .default_value(&default_config_path),
+                .default_value(default_config_path.to_string_lossy().to_string()),
         )
         .get_matches();
 
@@ -203,8 +203,17 @@ fn main() -> Result<()> {
                     })?;
                 }
 
+                {
+                    let parent = default_config_path
+                        .parent()
+                        .expect("a file path always has a parent directory");
+                    fs::create_dir_all(parent).wrap_err_with(|| {
+                        format!("failed to create directories {}", parent.display())
+                    })?;
+                }
+
                 let config = Config {
-                    data_dir: Some(PathBuf::from(get_default_data_dir())),
+                    data_dir: Some(get_default_data_dir()),
                     game_dir: None,
                 };
 
@@ -212,7 +221,10 @@ fn main() -> Result<()> {
                     let data = serde_sjson::to_string(&config)
                         .wrap_err("failed to serialize default config value")?;
                     fs::write(&default_config_path, data).wrap_err_with(|| {
-                        format!("failed to write default config to {default_config_path}")
+                        format!(
+                            "failed to write default config to {}",
+                            default_config_path.display()
+                        )
                     })?;
                 }
 
