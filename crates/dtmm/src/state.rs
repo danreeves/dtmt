@@ -390,7 +390,9 @@ impl AppDelegate<State> for Delegate {
                 Handled::Yes
             }
             cmd => {
-                tracing::warn!("Unknown command: {:?}", cmd);
+                if cfg!(debug_assertions) {
+                    tracing::warn!("Unknown command: {:?}", cmd);
+                }
                 Handled::No
             }
         }
