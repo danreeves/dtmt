@@ -142,7 +142,13 @@ fn make_package(info: &PackageInfo) -> Result<Package> {
 fn build_mod_data_lua(state: Arc<State>) -> String {
     let mut lua = String::from("return {\n");
 
-    for mod_info in state.get_mods().iter().filter(|m| m.get_enabled()) {
+    // DMF is handled explicitely by the loading procedures, as it actually drives most of that
+    // and should therefore not show up in the load order.
+    for mod_info in state
+        .get_mods()
+        .iter()
+        .filter(|m| m.get_id() != "dmf" && m.get_enabled())
+    {
         lua.push_str("    {\n        name = \"");
         lua.push_str(mod_info.get_name());
 
@@ -150,23 +156,15 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
         lua.push_str(mod_info.get_id());
 
         lua.push_str("\",\n        run = function()\n");
-
-        if mod_info.get_name() == "dmf" {
-            lua.push_str("            return dofile(\"");
-            lua.push_str(mod_info.get_resources().get_init());
-            lua.push_str("\")\n");
-        } else {
-            lua.push_str("            return new_mod(\"");
-            lua.push_str(mod_info.get_name());
-            lua.push_str("\", {\n                init = \"");
-            lua.push_str(mod_info.get_resources().get_init());
-            lua.push_str("\",\n                data = \"");
-            lua.push_str(mod_info.get_resources().get_data());
-            lua.push_str("\",\n                localization = \"");
-            lua.push_str(mod_info.get_resources().get_localization());
-            lua.push_str("\",\n            })\n");
-        }
-
+        lua.push_str("            return new_mod(\"");
+        lua.push_str(mod_info.get_name());
+        lua.push_str("\", {\n                init = \"");
+        lua.push_str(mod_info.get_resources().get_init());
+        lua.push_str("\",\n                data = \"");
+        lua.push_str(mod_info.get_resources().get_data());
+        lua.push_str("\",\n                localization = \"");
+        lua.push_str(mod_info.get_resources().get_localization());
+        lua.push_str("\",\n            })\n");
         lua.push_str("        end,\n        packages = [\n");
 
         for pkg_info in mod_info.get_packages() {
@@ -211,19 +209,6 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         let lua = CString::new(lua).wrap_err("failed to build CString from mod data Lua string")?;
         let file =
             lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("failed to compile mod data Lua file")?;
-
-        bundle.add_file(file);
-    }
-
-    {
-        let span = tracing::debug_span!("Importing mod manager script");
-        let _enter = span.enter();
-
-        let lua = include_str!("../assets/mod_manager.lua");
-        let lua =
-            CString::new(lua).wrap_err("failed to build CString from mod manager Lua string")?;
-        let file = lua::compile(MOD_MANAGER_SCRIPT, &lua)
-            .wrap_err("failed to compile mod manager Lua file")?;
 
         bundle.add_file(file);
     }
@@ -415,6 +400,14 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
 pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     let state = Arc::new(state);
 
+    {
+        let mods = state.get_mods();
+        let first = mods.get(0);
+        if first.is_none() || !(first.unwrap().get_id() == "dmf" && first.unwrap().get_enabled()) {
+            eyre::bail!("'Darktide Mod Framework' needs to be installed, enabled and at the top of the load order");
+        }
+    }
+
     tracing::info!(
         "Deploying {} mods to {}",
         state.get_mods().len(),
@@ -435,9 +428,6 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     patch_game_settings(state.clone())
         .await
         .wrap_err("failed to patch game settings")?;
-
-    // TODO: Build mod order data
-    // TODO: Handle DMF
 
     tracing::info!("Finished deploying mods");
     Ok(())
