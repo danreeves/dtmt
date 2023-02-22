@@ -8,12 +8,18 @@ use futures::{StreamExt, TryStreamExt};
 use string_template::Template;
 use tokio::fs::{self, DirBuilder};
 
-const TEMPLATES: [(&str, &str); 6] = [
+const TEMPLATES: [(&str, &str); 5] = [
     (
         "dtmt.cfg",
         r#"name = "{{name}}"
 description = "An elaborate description of my cool game mod!"
 version = "0.1.0"
+
+resources = {
+    script = "scripts/mods/{{name}}/init"
+    data = "scripts/mods/{{name}}/data"
+    localization = "scripts/mods/{{name}}/locationzation"
+}
 
 packages = [
     "packages/{{name}}"
@@ -25,21 +31,6 @@ depends = [
 "#,
     ),
     (
-        "{{name}}.mod",
-        r#"return {
-	run = function()
-		fassert(rawget(_G, "new_mod"), "`{{title}}` encountered an error loading the Darktide Mod Framework.")
-
-		new_mod("{{name}}", {
-			mod_script       = "scripts/mods/{{name}}/{{name}}",
-			mod_data         = "scripts/mods/{{name}}/{{name}}_data",
-			mod_localization = "scripts/mods/{{name}}/{{name}}_localization",
-		})
-	end,
-	packages = {},
-}"#,
-    ),
-    (
         "packages/{{name}}.package",
         r#"lua = [
     "scripts/mods/{{name}}/*"
@@ -47,7 +38,7 @@ depends = [
 "#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}.lua",
+        "scripts/mods/{{name}}/init.lua",
         r#"local mod = get_mod("{{name}}")
 
 -- Your mod code goes here.
@@ -55,7 +46,7 @@ depends = [
 "#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}_data.lua",
+        "scripts/mods/{{name}}/data.lua",
         r#"local mod = get_mod("{{name}}")
 
 return {
@@ -65,7 +56,7 @@ return {
 }"#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}_localization.lua",
+        "scripts/mods/{{name}}/localization.lua",
         r#"return {
 	mod_description = {
 		en = "An elaborate description of my cool game mod!",
@@ -127,8 +118,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         promptly::prompt_default("The mod identifier name", default)?
     };
 
-    tracing::debug!(root = %root.display());
-    tracing::debug!(title, name);
+    tracing::debug!(root = %root.display(), title, name);
 
     let mut data = HashMap::new();
     data.insert("name", name.as_str());

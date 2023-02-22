@@ -14,9 +14,9 @@ use sdk::filetype::lua;
 use sdk::filetype::package::Package;
 use sdk::murmur::Murmur64;
 use sdk::{
-    Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
+    Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ModConfig,
+    ToBinary,
 };
-use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::{fs, try_join};
 use tracing::Instrument;
@@ -176,7 +176,10 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
 
             bundle.add_file(file);
 
-            let src = mod_dir.join(pkg_info.get_name());
+            let bundle_name = Murmur64::hash(pkg_info.get_name())
+                .to_string()
+                .to_ascii_lowercase();
+            let src = mod_dir.join(&bundle_name);
             let dest = bundle_dir.clone();
             let pkg_name = pkg_info.get_name().clone();
             let mod_name = mod_info.get_name().clone();
@@ -200,7 +203,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
                     dest.display()
                 );
                 fs::hard_link(&src, dest.as_ref()).await.wrap_err_with(|| {
-                    format!("failed to hard link bundle {pkg_name} for mod {mod_name}")
+                    format!("failed to hard link bundle {pkg_name} for mod {mod_name}. src: {}, dest: {}", src.display(), dest.display())
                 })
             }
             .instrument(span);
@@ -376,13 +379,6 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ModConfig {
-    name: String,
-    #[serde(default)]
-    description: String,
-}
-
 #[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
     let data = fs::read(&info.path)
@@ -462,7 +458,7 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
         .into_iter()
         .map(|(name, files)| PackageInfo::new(name, files.into_iter().collect()))
         .collect();
-    let info = ModInfo::new(mod_cfg.name, mod_cfg.description, packages);
+    let info = ModInfo::new(mod_cfg, packages);
 
     Ok(info)
 }

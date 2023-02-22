@@ -12,7 +12,6 @@ use zip::ZipWriter;
 pub struct Archive {
     name: String,
     bundles: Vec<Bundle>,
-    mod_file: Option<Vec<u8>>,
     config_file: Option<Vec<u8>>,
 }
 
@@ -21,17 +20,12 @@ impl Archive {
         Self {
             name,
             bundles: Vec::new(),
-            mod_file: None,
             config_file: None,
         }
     }
 
     pub fn add_bundle(&mut self, bundle: Bundle) {
         self.bundles.push(bundle)
-    }
-
-    pub fn add_mod_file(&mut self, content: Vec<u8>) {
-        self.mod_file = Some(content);
     }
 
     pub fn add_config(&mut self, content: Vec<u8>) {
@@ -42,11 +36,6 @@ impl Archive {
     where
         P: AsRef<Path>,
     {
-        let mod_file = self
-            .mod_file
-            .as_ref()
-            .ok_or_else(|| eyre::eyre!("Mod file is missing in mod archive"))?;
-
         let config_file = self
             .config_file
             .as_ref()
@@ -63,13 +52,6 @@ impl Archive {
         zip.add_directory(&self.name, Default::default())?;
 
         let base_path = PathBuf::from(&self.name);
-
-        {
-            let mut name = base_path.join(&self.name);
-            name.set_extension("mod");
-            zip.start_file(name.to_string_lossy(), Default::default())?;
-            zip.write_all(mod_file)?;
-        }
 
         {
             let name = base_path.join("dtmt.cfg");

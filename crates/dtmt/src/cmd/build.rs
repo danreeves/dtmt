@@ -7,8 +7,7 @@ use color_eyre::{Help, Report};
 use futures::future::try_join_all;
 use futures::StreamExt;
 use sdk::filetype::package::Package;
-use sdk::{Bundle, BundleFile};
-use serde::Deserialize;
+use sdk::{Bundle, BundleFile, ModConfig};
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 
@@ -36,16 +35,8 @@ pub(crate) fn command_definition() -> Command {
         ))
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ProjectConfig {
-    #[serde(skip)]
-    dir: PathBuf,
-    name: String,
-    packages: Vec<PathBuf>,
-}
-
 #[tracing::instrument]
-async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
+async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let (path, mut file) = if let Some(path) = dir {
         let file = File::open(&path.join(PROJECT_CONFIG_NAME))
             .await
@@ -83,7 +74,7 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
     let mut buf = String::new();
     file.read_to_string(&mut buf).await?;
 
-    let mut cfg: ProjectConfig = serde_sjson::from_str(&buf)?;
+    let mut cfg: ModConfig = serde_sjson::from_str(&buf)?;
     cfg.dir = path;
     Ok(cfg)
 }
@@ -210,15 +201,16 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             })
         });
 
-    let bundles = try_join_all(tasks).await?;
+    let bundles = try_join_all(tasks)
+        .await
+        .wrap_err("failed to build mod bundles")?;
 
-    let mod_file = {
-        let mut path = cfg.dir.join(&cfg.name);
-        path.set_extension("mod");
-        fs::read(path).await?
+    let config_file = {
+        let path = cfg.dir.join("dtmt.cfg");
+        fs::read(&path)
+            .await
+            .wrap_err_with(|| format!("failed to read mod config at {}", path.display()))?
     };
-
-    let config_file = fs::read(cfg.dir.join("dtmt.cfg")).await?;
 
     {
         let dest = dest.clone();
@@ -226,7 +218,6 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         tokio::task::spawn_blocking(move || {
             let mut archive = Archive::new(name);
 
-            archive.add_mod_file(mod_file);
             archive.add_config(config_file);
 
             for bundle in bundles {

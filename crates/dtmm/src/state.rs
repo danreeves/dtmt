@@ -7,6 +7,7 @@ use druid::{
     AppDelegate, Command, Data, DelegateCtx, Env, FileInfo, Handled, Lens, Selector, SingleUse,
     Target,
 };
+use sdk::ModConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::Config;
@@ -58,6 +59,27 @@ impl PackageInfo {
     }
 }
 
+#[derive(Clone, Data, Debug)]
+pub(crate) struct ModResourceInfo {
+    init: String,
+    data: String,
+    localization: String,
+}
+
+impl ModResourceInfo {
+    pub(crate) fn get_init(&self) -> &String {
+        &self.init
+    }
+
+    pub(crate) fn get_data(&self) -> &String {
+        &self.data
+    }
+
+    pub(crate) fn get_localization(&self) -> &String {
+        &self.localization
+    }
+}
+
 #[derive(Clone, Data, Debug, Lens)]
 pub(crate) struct ModInfo {
     name: String,
@@ -65,15 +87,22 @@ pub(crate) struct ModInfo {
     enabled: bool,
     #[lens(ignore)]
     packages: Vector<PackageInfo>,
+    #[lens(ignore)]
+    resources: ModResourceInfo,
 }
 
 impl ModInfo {
-    pub fn new(name: String, description: String, packages: Vector<PackageInfo>) -> Self {
+    pub fn new(cfg: ModConfig, packages: Vector<PackageInfo>) -> Self {
         Self {
-            name,
-            description: Arc::new(description),
-            packages,
+            name: cfg.name,
+            description: Arc::new(cfg.description),
             enabled: false,
+            packages,
+            resources: ModResourceInfo {
+                init: cfg.resources.init,
+                data: cfg.resources.data,
+                localization: cfg.resources.localization,
+            },
         }
     }
 
@@ -83,6 +112,14 @@ impl ModInfo {
 
     pub(crate) fn get_name(&self) -> &String {
         &self.name
+    }
+
+    pub(crate) fn get_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub(crate) fn get_resources(&self) -> &ModResourceInfo {
+        &self.resources
     }
 }
 
