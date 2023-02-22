@@ -20,15 +20,19 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-pub fn compile<S>(name: String, code: S) -> Result<BundleFile>
+pub fn compile<S, C>(name: S, code: C) -> Result<BundleFile>
 where
-    S: AsRef<CStr>,
+    S: ToString,
+    C: AsRef<CStr>,
 {
+    let name = name.to_string();
+    let code = code.as_ref();
+
     let bytecode = unsafe {
         let state = lua::luaL_newstate();
         lua::luaL_openlibs(state);
 
-        lua::lua_pushstring(state, code.as_ref().as_ptr() as _);
+        lua::lua_pushstring(state, code.as_ptr() as _);
         lua::lua_setglobal(state, b"code\0".as_ptr() as _);
 
         lua::lua_pushstring(state, name.as_ptr() as _);
