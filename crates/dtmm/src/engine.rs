@@ -181,7 +181,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
             lua.push_str("\")");
         }
 
-        lua.push_str("        end,\n        packages = [\n");
+        lua.push_str("        end,\n        packages = {\n");
 
         for pkg_info in mod_info.get_packages() {
             lua.push_str("            \"");
@@ -189,7 +189,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
             lua.push_str("\",\n");
         }
 
-        lua.push_str("        ]\n    }\n");
+        lua.push_str("        }\n    }\n");
     }
 
     lua.push('}');
