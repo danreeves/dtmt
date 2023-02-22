@@ -156,7 +156,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         db
     };
 
-    for mod_info in state.get_mods() {
+    for mod_info in state.get_mods().iter().filter(|m| m.get_enabled()) {
         let span = tracing::trace_span!("building mod packages", name = mod_info.get_name());
         let _enter = span.enter();
 
