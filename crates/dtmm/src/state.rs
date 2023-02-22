@@ -9,6 +9,8 @@ use druid::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::Config;
+
 pub(crate) const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action.select-mod");
 pub(crate) const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
 pub(crate) const ACTION_SELECTED_MOD_DOWN: Selector =
@@ -105,17 +107,8 @@ impl State {
     #[allow(non_upper_case_globals)]
     pub const selected_mod: SelectedModLens = SelectedModLens;
 
-    pub fn new() -> Self {
+    pub fn new(config: Config) -> Self {
         let ctx = sdk::Context::new();
-
-        let (game_dir, data_dir) = if cfg!(debug_assertions) {
-            (
-                std::env::current_dir().expect("PWD is borked").join("data"),
-                PathBuf::from("/tmp/dtmm"),
-            )
-        } else {
-            (PathBuf::new(), PathBuf::new())
-        };
 
         Self {
             ctx: Arc::new(ctx),
@@ -123,8 +116,8 @@ impl State {
             mods: Vector::new(),
             selected_mod_index: None,
             is_deployment_in_progress: false,
-            game_dir: Arc::new(game_dir),
-            data_dir: Arc::new(data_dir),
+            game_dir: Arc::new(config.game_dir.unwrap_or_default()),
+            data_dir: Arc::new(config.data_dir.unwrap_or_default()),
         }
     }
 

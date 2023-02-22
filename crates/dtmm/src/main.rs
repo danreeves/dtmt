@@ -1,10 +1,16 @@
 #![recursion_limit = "256"]
 #![feature(let_chains)]
 
+use std::fs;
+use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::command;
+use clap::parser::ValueSource;
+use clap::value_parser;
 use clap::Arg;
+use color_eyre::eyre::Context;
 use color_eyre::Report;
 use color_eyre::Result;
 use druid::AppLauncher;
@@ -12,6 +18,8 @@ use druid::ExtEventSink;
 use druid::SingleUse;
 use druid::Target;
 use engine::import_mod;
+use serde::Deserialize;
+use serde::Serialize;
 use state::ACTION_FINISH_ADD_MOD;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -29,6 +37,12 @@ mod main_window;
 mod state;
 mod theme;
 mod widget;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Config {
+    data_dir: Option<PathBuf>,
+    game_dir: Option<PathBuf>,
+}
 
 fn work_thread(
     event_sink: Arc<RwLock<ExtEventSink>>,
@@ -76,10 +90,51 @@ fn work_thread(
     Ok(())
 }
 
+#[cfg(not(arget_os = "windows"))]
+fn get_default_config_path() -> String {
+    let config_dir = std::env::var("XDG_CONFIG_DIR").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| {
+            let user = std::env::var("USER").expect("user env variable not set");
+            format!("/home/{user}")
+        });
+        format!("{home}/.config")
+    });
+
+    format!("{config_dir}/dtmm/dtmm.cfg")
+}
+
+#[cfg(target_os = "windows")]
+fn get_default_config_path() -> String {
+    let config_dir = std::env::var("APPDATA").expect("appdata env var not set");
+    format!("{config_dir}\\dtmm\\dtmm.cfg")
+}
+
+#[cfg(not(arget_os = "windows"))]
+fn get_default_data_dir() -> String {
+    let data_dir = std::env::var("XDG_DATA_DIR").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").unwrap_or_else(|_| {
+            let user = std::env::var("USER").expect("user env variable not set");
+            format!("/home/{user}")
+        });
+        format!("{home}/.local/share")
+    });
+
+    format!("{data_dir}/dtmm")
+}
+
+#[cfg(target_os = "windows")]
+fn get_default_data_dir() -> String {
+    let data_dir = std::env::var("APPDATA").expect("appdata env var not set");
+    format!("{data_dir}\\dtmm")
+}
+
 #[tracing::instrument]
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     color_eyre::install()?;
+
+    let default_config_path = get_default_config_path();
+
+    tracing::trace!(default_config_path);
 
     let matches = command!()
         .arg(Arg::new("oodle").long("oodle").help(
@@ -88,6 +143,14 @@ async fn main() -> Result<()> {
                         - A file path relative to the current working directory.\n\
                         - An absolute file path.",
         ))
+        .arg(
+            Arg::new("config")
+                .long("config")
+                .short('c')
+                .help("Path to the config file")
+                .value_parser(value_parser!(PathBuf))
+                .default_value(&default_config_path),
+        )
         .get_matches();
 
     {
@@ -121,7 +184,48 @@ async fn main() -> Result<()> {
         oodle_sys::init(matches.get_one::<String>("oodle"));
     }
 
-    let initial_state = State::new();
+    let config: Config = {
+        let path = matches
+            .get_one::<PathBuf>("config")
+            .expect("argument missing despite default");
+        match fs::read(path) {
+            Ok(data) => {
+                let data = String::from_utf8(data).wrap_err_with(|| {
+                    format!("config file {} contains invalid UTF-8", path.display())
+                })?;
+                serde_sjson::from_str(&data)
+                    .wrap_err_with(|| format!("invalid config file {}", path.display()))?
+            }
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                if matches.value_source("config") != Some(ValueSource::DefaultValue) {
+                    return Err(err).wrap_err_with(|| {
+                        format!("failed to read config file {}", path.display())
+                    })?;
+                }
+
+                let config = Config {
+                    data_dir: Some(PathBuf::from(get_default_data_dir())),
+                    game_dir: None,
+                };
+
+                {
+                    let data = serde_sjson::to_string(&config)
+                        .wrap_err("failed to serialize default config value")?;
+                    fs::write(&default_config_path, data).wrap_err_with(|| {
+                        format!("failed to write default config to {default_config_path}")
+                    })?;
+                }
+
+                config
+            }
+            Err(err) => {
+                return Err(err)
+                    .wrap_err_with(|| format!("failed to read config file {}", path.display()))?;
+            }
+        }
+    };
+
+    let initial_state = State::new(config);
 
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let delegate = Delegate::new(sender);
