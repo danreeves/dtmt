@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use async_recursion::async_recursion;
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
 use tokio::fs;
@@ -13,14 +14,15 @@ use crate::bundle::file::{BundleFileType, UserFile};
 use crate::murmur::{HashGroup, Murmur64};
 
 #[tracing::instrument]
+#[async_recursion]
 async fn resolve_wildcard<P1, P2>(
     wildcard: P1,
     root: P2,
     t: Option<BundleFileType>,
 ) -> Result<Vec<PathBuf>>
 where
-    P1: AsRef<Path> + std::fmt::Debug,
-    P2: AsRef<Path> + std::fmt::Debug,
+    P1: AsRef<Path> + std::fmt::Debug + std::marker::Send,
+    P2: AsRef<Path> + std::fmt::Debug + std::marker::Send + std::marker::Copy,
 {
     let wildcard = wildcard.as_ref();
 
@@ -56,24 +58,32 @@ where
             path.to_path_buf()
         };
 
-        // Skip file if there is a desired extension `t`, but the file's
-        // extension name doesn't match
-        if t.is_some() {
-            let ext = file_path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .and_then(|ext| BundleFileType::from_str(ext).ok());
+        let meta = entry.metadata().await?;
+        if meta.is_dir() {
+            let wildcard = file_path.join("*");
+            let inner_paths = resolve_wildcard(wildcard, root, t).await?;
+            paths.extend_from_slice(&inner_paths);
+        } else {
+            // Skip file if there is a desired extension `t`, but the file's
+            // extension name doesn't match
+            if t.is_some() {
+                let ext = file_path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .and_then(|ext| BundleFileType::from_str(ext).ok());
 
-            if ext != t {
-                tracing::debug!(
-                    "Skipping wildcard result with invalid extension: {}",
-                    file_path.display(),
-                );
-                continue;
+                if ext != t {
+                    tracing::warn!(
+                        "Skipping wildcard result with invalid extension: {}",
+                        file_path.display(),
+                    );
+                    continue;
+                }
             }
-        }
 
-        paths.push(file_path);
+            tracing::debug!("Found file {}", file_path.display());
+            paths.push(file_path);
+        }
     }
 
     Ok(paths)
