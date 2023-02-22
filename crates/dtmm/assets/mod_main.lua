@@ -1,7 +1,15 @@
 -- Keep a backup of certain system libraries before
 -- Fatshark's code scrubs them.
 -- The loader can then decide to pass them on to mods, or ignore them
-local libs = { io = io, debug = debug, ffi = ffi, os = os }
+local libs = {
+    io = io,
+    debug = debug,
+    ffi = ffi,
+    os = os,
+    load = load,
+    loadfile = loadfile,
+    loadstring = loadstring,
+}
 
 require("scripts/game_states/boot/state_boot_sub_state_base")
 local StateBootLoadMods = class("StateBootLoadMods", "StateBootSubStateBase")
