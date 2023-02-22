@@ -434,8 +434,16 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
         serde_sjson::from_str(&data).wrap_err("failed to deserialize file index")?
     };
 
-    let mod_dir = state.get_game_dir().join(&mod_cfg.name);
+    tracing::trace!(?files);
 
+    let mod_dir = state.get_mod_dir();
+
+    tracing::trace!("Creating mods directory {}", mod_dir.display());
+    fs::create_dir_all(&mod_dir)
+        .await
+        .wrap_err_with(|| format!("failed to create data directory {}", mod_dir.display()))?;
+
+    tracing::trace!("Extracting mod archive to {}", mod_dir.display());
     archive
         .extract(&mod_dir)
         .wrap_err_with(|| format!("failed to extract archive to {}", mod_dir.display()))?;
