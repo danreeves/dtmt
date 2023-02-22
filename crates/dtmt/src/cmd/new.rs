@@ -13,7 +13,7 @@ const TEMPLATES: [(&str, &str); 5] = [
         "dtmt.cfg",
         r#"id = "{{id}}"
 name = "{{name}}"
-description = "An elaborate description of my cool game mod!"
+description = "This is my new mod '{{name}}'!"
 version = "0.1.0"
 
 resources = {
@@ -60,7 +60,7 @@ return {
         "scripts/mods/{{id}}/localization.lua",
         r#"return {
 	mod_description = {
-		en = "An elaborate description of my cool game mod!",
+		en = "This is my new mod '{{name}}'!",
 	},
 }"#,
     ),
@@ -102,7 +102,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     let name = if let Some(name) = matches.get_one::<String>("name") {
         name.clone()
     } else {
-        promptly::prompt("The unique mod ID")?
+        promptly::prompt("The display name")?
     };
 
     let id = {
