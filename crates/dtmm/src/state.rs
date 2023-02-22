@@ -62,8 +62,8 @@ impl PackageInfo {
 #[derive(Clone, Data, Debug)]
 pub(crate) struct ModResourceInfo {
     init: String,
-    data: String,
-    localization: String,
+    data: Option<String>,
+    localization: Option<String>,
 }
 
 impl ModResourceInfo {
@@ -71,12 +71,12 @@ impl ModResourceInfo {
         &self.init
     }
 
-    pub(crate) fn get_data(&self) -> &String {
-        &self.data
+    pub(crate) fn get_data(&self) -> Option<&String> {
+        self.data.as_ref()
     }
 
-    pub(crate) fn get_localization(&self) -> &String {
-        &self.localization
+    pub(crate) fn get_localization(&self) -> Option<&String> {
+        self.localization.as_ref()
     }
 }
 

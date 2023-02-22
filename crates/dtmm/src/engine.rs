@@ -156,15 +156,31 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
         lua.push_str(mod_info.get_id());
 
         lua.push_str("\",\n        run = function()\n");
-        lua.push_str("            return new_mod(\"");
-        lua.push_str(mod_info.get_name());
-        lua.push_str("\", {\n                init = \"");
-        lua.push_str(mod_info.get_resources().get_init());
-        lua.push_str("\",\n                data = \"");
-        lua.push_str(mod_info.get_resources().get_data());
-        lua.push_str("\",\n                localization = \"");
-        lua.push_str(mod_info.get_resources().get_localization());
-        lua.push_str("\",\n            })\n");
+
+        let resources = mod_info.get_resources();
+        if resources.get_data().is_some() || resources.get_localization().is_some() {
+            lua.push_str("            new_mod(\"");
+            lua.push_str(mod_info.get_id());
+            lua.push_str("\", {\n                init = \"");
+            lua.push_str(resources.get_init());
+
+            if let Some(data) = resources.get_data() {
+                lua.push_str("\",\n                data = \"");
+                lua.push_str(data);
+            }
+
+            if let Some(localization) = resources.get_localization() {
+                lua.push_str("\",\n                localization = \"");
+                lua.push_str(localization);
+            }
+
+            lua.push_str("\",\n            })\n");
+        } else {
+            lua.push_str("            return dofile(\"");
+            lua.push_str(resources.get_init());
+            lua.push_str("\")");
+        }
+
         lua.push_str("        end,\n        packages = [\n");
 
         for pkg_info in mod_info.get_packages() {

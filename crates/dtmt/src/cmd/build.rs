@@ -72,9 +72,12 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     };
 
     let mut buf = String::new();
-    file.read_to_string(&mut buf).await?;
+    file.read_to_string(&mut buf)
+        .await
+        .wrap_err("invalid UTF-8")?;
 
-    let mut cfg: ModConfig = serde_sjson::from_str(&buf)?;
+    let mut cfg: ModConfig =
+        serde_sjson::from_str(&buf).wrap_err("failed to deserialize mod config")?;
     cfg.dir = path;
     Ok(cfg)
 }

@@ -13,8 +13,10 @@ pub use context::Context;
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct ModConfigResources {
     pub init: String,
-    pub data: String,
-    pub localization: String,
+    #[serde(default)]
+    pub data: Option<String>,
+    #[serde(default)]
+    pub localization: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
