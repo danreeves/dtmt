@@ -275,6 +275,13 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
                     src.display(),
                     dest.display()
                 );
+                // We attempt to remove any previous file, so that the hard link can be created.
+                // We can reasonably ignore errors here, as a 'NotFound' is actually fine, the link
+                // may be possible anyways, or the error will be reported by it anyways.
+                // TODO: There is a chance that we delete an actual game bundle, but with 64bit
+                // hashes, it's low enough for now, and the set up required to detect
+                // "game bundle vs mod bundle" is non-trivial.
+                let _ = fs::remove_file(dest.as_ref()).await;
                 fs::hard_link(&src, dest.as_ref()).await.wrap_err_with(|| {
                     format!("failed to hard link bundle {pkg_name} for mod {mod_name}. src: {}, dest: {}", src.display(), dest.display())
                 })
