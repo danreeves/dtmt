@@ -233,7 +233,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         let span = tracing::trace_span!("building mod packages", name = mod_info.get_name());
         let _enter = span.enter();
 
-        let mod_dir = state.get_mod_dir().join(mod_info.get_name());
+        let mod_dir = state.get_mod_dir().join(mod_info.get_id());
         for pkg_info in mod_info.get_packages() {
             let span = tracing::trace_span!("building package", name = pkg_info.get_name());
             let _enter = span.enter();
