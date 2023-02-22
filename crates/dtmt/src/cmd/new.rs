@@ -17,7 +17,7 @@ description = "This is my new mod '{{name}}'!"
 version = "0.1.0"
 
 resources = {
-    script = "scripts/mods/{{id}}/init"
+    init = "scripts/mods/{{id}}/init"
     data = "scripts/mods/{{id}}/data"
     localization = "scripts/mods/{{id}}/localization"
 }
