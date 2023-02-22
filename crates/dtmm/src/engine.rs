@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
-use color_eyre::{eyre, Result};
+use color_eyre::{eyre, Help, Result};
 use druid::FileInfo;
 use futures::stream;
 use futures::StreamExt;
@@ -28,6 +28,7 @@ const MOD_BUNDLE_NAME: &str = "packages/mods";
 const BOOT_BUNDLE_NAME: &str = "packages/boot";
 const BUNDLE_DATABASE_NAME: &str = "bundle_database.data";
 const MOD_BOOT_SCRIPT: &str = "scripts/mod_main";
+const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
 
 #[tracing::instrument]
 async fn read_file_with_backup<P>(path: P) -> Result<Vec<u8>>
@@ -138,6 +139,52 @@ fn make_package(info: &PackageInfo) -> Result<Package> {
     Ok(pkg)
 }
 
+fn build_mod_data_lua(state: Arc<State>) -> String {
+    let mut lua = String::from("return {\n");
+
+    for mod_info in state.get_mods().iter().filter(|m| m.get_enabled()) {
+        lua.push_str("    {\n        name = \"");
+        lua.push_str(mod_info.get_name());
+
+        lua.push_str("\",\n        id = \"");
+        lua.push_str(mod_info.get_id());
+
+        lua.push_str("\",\n        run = function()\n");
+
+        if mod_info.get_name() == "dmf" {
+            lua.push_str("            return dofile(\"");
+            lua.push_str(mod_info.get_resources().get_init());
+            lua.push_str("\")\n");
+        } else {
+            lua.push_str("            return new_mod(\"");
+            lua.push_str(mod_info.get_name());
+            lua.push_str("\", {\n                init = \"");
+            lua.push_str(mod_info.get_resources().get_init());
+            lua.push_str("\",\n                data = \"");
+            lua.push_str(mod_info.get_resources().get_data());
+            lua.push_str("\",\n                localization = \"");
+            lua.push_str(mod_info.get_resources().get_localization());
+            lua.push_str("\",\n            })\n");
+        }
+
+        lua.push_str("        end,\n        packages = [\n");
+
+        for pkg_info in mod_info.get_packages() {
+            lua.push_str("            \"");
+            lua.push_str(pkg_info.get_name());
+            lua.push_str("\",\n");
+        }
+
+        lua.push_str("        ]\n    }\n");
+    }
+
+    lua.push('}');
+
+    tracing::debug!("mod_data_lua:\n{}", lua);
+
+    lua
+}
+
 #[tracing::instrument(skip_all)]
 async fn build_bundles(state: Arc<State>) -> Result<()> {
     let mut bundle = Bundle::new(MOD_BUNDLE_NAME.into());
@@ -155,6 +202,31 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         tracing::trace!("Finished parsing bundle database");
         db
     };
+
+    {
+        let span = tracing::debug_span!("Building mod data script");
+        let _enter = span.enter();
+
+        let lua = build_mod_data_lua(state.clone());
+        let lua = CString::new(lua).wrap_err("failed to build CString from mod data Lua string")?;
+        let file =
+            lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("failed to compile mod data Lua file")?;
+
+        bundle.add_file(file);
+    }
+
+    {
+        let span = tracing::debug_span!("Importing mod manager script");
+        let _enter = span.enter();
+
+        let lua = include_str!("../assets/mod_manager.lua");
+        let lua =
+            CString::new(lua).wrap_err("failed to build CString from mod manager Lua string")?;
+        let file = lua::compile(MOD_MANAGER_SCRIPT, &lua)
+            .wrap_err("failed to compile mod manager Lua file")?;
+
+        bundle.add_file(file);
+    }
 
     for mod_info in state.get_mods().iter().filter(|m| m.get_enabled()) {
         let span = tracing::trace_span!("building mod packages", name = mod_info.get_name());
@@ -296,23 +368,15 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
     }
 
     {
-        tracing::trace!("Adding main mod Lua file to boot bundle");
-        let span = tracing::trace_span!("create mod boot script file");
+        let span = tracing::debug_span!("Importing mod main script");
         let _enter = span.enter();
 
-        // TODO: Build actual boot script
-        let lua = CString::new(
-            r#"
-print("dtmm says hello!")
-require("scripts/main")
-"#,
-        )
-        .expect("invalid C string");
-        let f = lua::compile(MOD_BOOT_SCRIPT.to_string(), &lua)
-            .wrap_err("failed to compile mod boot script")?;
+        let lua = include_str!("../assets/mod_main.lua");
+        let lua = CString::new(lua).wrap_err("failed to build CString from mod main Lua string")?;
+        let file =
+            lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("failed to compile mod main Lua file")?;
 
-        // TODO:
-        bundle.add_file(f);
+        bundle.add_file(file);
     }
 
     db.add_bundle(&bundle);
