@@ -26,6 +26,7 @@ use crate::state::{ModInfo, PackageInfo, State};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
 const BOOT_BUNDLE_NAME: &str = "packages/boot";
+const DML_BUNDLE_NAME: &str = "packages/dml";
 const BUNDLE_DATABASE_NAME: &str = "bundle_database.data";
 const MOD_BOOT_SCRIPT: &str = "scripts/mod_main";
 const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
@@ -229,7 +230,11 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         bundle.add_file(file);
     }
 
-    for mod_info in state.get_mods().iter().filter(|m| m.get_enabled()) {
+    for mod_info in state
+        .get_mods()
+        .iter()
+        .filter(|m| m.get_id() != "dml" && m.get_enabled())
+    {
         let span = tracing::trace_span!("building mod packages", name = mod_info.get_name());
         let _enter = span.enter();
 
@@ -371,9 +376,34 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
             }
         }
 
+        pkg.add_file(BundleFileType::Lua, MOD_DATA_SCRIPT);
+
         let mut variant = BundleFileVariant::new();
         variant.set_data(pkg.to_binary()?);
         let mut f = BundleFile::new(MOD_BUNDLE_NAME.to_string(), BundleFileType::Package);
+        f.add_variant(variant);
+
+        bundle.add_file(f);
+    }
+
+    {
+        tracing::trace!("Adding dml package file to boot bundle");
+        let span = tracing::trace_span!("create dml package file");
+        let _enter = span.enter();
+
+        let mut variant = BundleFileVariant::new();
+
+        let mods = state.get_mods();
+        let pkg_info = mods
+            .iter()
+            .find(|m| m.get_id() == "dml")
+            .and_then(|info| info.get_packages().get(0));
+        if let Some(pkg_info) = &pkg_info {
+            let pkg = make_package(pkg_info).wrap_err("failed to create package file for dml")?;
+            variant.set_data(pkg.to_binary()?);
+        }
+
+        let mut f = BundleFile::new(DML_BUNDLE_NAME.to_string(), BundleFileType::Package);
         f.add_variant(variant);
 
         bundle.add_file(f);
@@ -442,10 +472,10 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
         state.get_game_dir().join("bundle").display()
     );
 
-    tracing::info!("Build mod bundles");
-    build_bundles(state.clone())
-        .await
-        .wrap_err("failed to build mod bundles")?;
+    // tracing::info!("Build mod bundles");
+    // build_bundles(state.clone())
+    //     .await
+    //     .wrap_err("failed to build mod bundles")?;
 
     tracing::info!("Patch boot bundle");
     patch_boot_bundle(state.clone())
