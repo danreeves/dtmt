@@ -21,6 +21,7 @@ pub struct ModConfigResources {
 pub struct ModConfig {
     #[serde(skip)]
     pub dir: std::path::PathBuf,
+    pub id: String,
     pub name: String,
     pub description: String,
     pub version: String,

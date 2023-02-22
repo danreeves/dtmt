@@ -82,6 +82,7 @@ impl ModResourceInfo {
 
 #[derive(Clone, Data, Debug, Lens)]
 pub(crate) struct ModInfo {
+    id: String,
     name: String,
     description: Arc<String>,
     enabled: bool,
@@ -94,6 +95,7 @@ pub(crate) struct ModInfo {
 impl ModInfo {
     pub fn new(cfg: ModConfig, packages: Vector<PackageInfo>) -> Self {
         Self {
+            id: cfg.id,
             name: cfg.name,
             description: Arc::new(cfg.description),
             enabled: false,
@@ -112,6 +114,10 @@ impl ModInfo {
 
     pub(crate) fn get_name(&self) -> &String {
         &self.name
+    }
+
+    pub(crate) fn get_id(&self) -> &String {
+        &self.id
     }
 
     pub(crate) fn get_enabled(&self) -> bool {

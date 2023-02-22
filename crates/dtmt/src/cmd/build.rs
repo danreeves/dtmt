@@ -24,7 +24,7 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help(
                     "The path to the project to build. \
-                If omitted, dtmt will search from the current working directory upward.",
+                        If omitted, dtmt will search from the current working directory upward.",
                 ),
         )
         .arg(Arg::new("oodle").long("oodle").help(
@@ -172,7 +172,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     };
 
     let dest = {
-        let mut path = PathBuf::from(&cfg.name);
+        let mut path = PathBuf::from(&cfg.id);
         path.set_extension("zip");
         Arc::new(path)
     };
@@ -214,9 +214,9 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     {
         let dest = dest.clone();
-        let name = cfg.name.clone();
+        let id = cfg.id.clone();
         tokio::task::spawn_blocking(move || {
-            let mut archive = Archive::new(name);
+            let mut archive = Archive::new(id);
 
             archive.add_config(config_file);
 
