@@ -1,11 +1,7 @@
-Mods = {
-    -- Keep a backup of certain system libraries before
-    -- Fatshark's code scrubs them.
-    -- The metatable setup prevents mods from overwriting them.
-    lua = setmetatable({}, {
-        __index = { io = io, debug = debug, ffi = ffi, os = os },
-    }),
-}
+-- Keep a backup of certain system libraries before
+-- Fatshark's code scrubs them.
+-- The loader can then decide to pass them on to mods, or ignore them
+local libs = { io = io, debug = debug, ffi = ffi, os = os }
 
 require("scripts/game_states/boot/state_boot_sub_state_base")
 local StateBootLoadMods = class("StateBootLoadMods", "StateBootSubStateBase")
@@ -18,7 +14,7 @@ StateBootLoadMods.on_enter = function (self, parent, params)
     self._package_manager = package_manager
     self._package_handles = {
         ["packages/mods"] = package_manager:load("packages/mods", "StateBootLoadMods", nil),
-        ["packages/dmf"] = package_manager:load("packages/dmf", "StateBootLoadMods", nil),
+        ["packages/dml"] = package_manager:load("packages/dml", "StateBootLoadMods", nil),
     }
 end
 
@@ -28,12 +24,12 @@ StateBootLoadMods._state_update = function (self, dt)
 
     if state == "load_package" and package_manager:update() then
         self._state = "load_mods"
-        local dmf_loader = require("scripts/mods/dmf/dmf_loader")
-        self._dmf_loader = dmf_loader
+        local mod_loader = require("scripts/mods/dml/init")
+        self._mod_loader = mod_loader
 
         local mod_data = require("scripts/mods/mod_data")
-        dmf_loader:init(self._parent.gui, mod_data)
-    elseif state == "load_mods" and self._dmf_loader:update(dt) then
+        mod_loader:init(mod_data, libs, self._parent.gui)
+    elseif state == "load_mods" and self._mod_loader:update(dt) then
         return true, false
     end
 

@@ -147,7 +147,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
     for mod_info in state
         .get_mods()
         .iter()
-        .filter(|m| m.get_id() != "dmf" && m.get_enabled())
+        .filter(|m| m.get_id() != "dml" && m.get_enabled())
     {
         lua.push_str("    {\n        name = \"");
         lua.push_str(mod_info.get_name());
@@ -419,8 +419,9 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     {
         let mods = state.get_mods();
         let first = mods.get(0);
-        if first.is_none() || !(first.unwrap().get_id() == "dmf" && first.unwrap().get_enabled()) {
-            eyre::bail!("'Darktide Mod Framework' needs to be installed, enabled and at the top of the load order");
+        if first.is_none() || !(first.unwrap().get_id() == "dml" && first.unwrap().get_enabled()) {
+            // TODO: Add a suggestion where to get it, once that's published
+            eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
         }
     }
 
