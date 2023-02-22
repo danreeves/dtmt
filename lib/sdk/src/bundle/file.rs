@@ -544,22 +544,23 @@ impl BundleFile {
         r.skip_u32(0)?;
 
         for i in 0..header_count {
-            let span = tracing::info_span!("Read file header", i);
+            let span = tracing::debug_span!("Read file header", i);
             let _enter = span.enter();
 
             let header = BundleFileVariant::read_header(r)
                 .wrap_err_with(|| format!("failed to read header {i}"))?;
 
-            if props.contains(Properties::DATA) {
-                tracing::debug!("props: {props:?} | unknown_1: {}", header.unknown_1)
-            }
+            // TODO: Figure out how `header.unknown_1` correlates to `properties::DATA`
+            // if props.contains(Properties::DATA) {
+            //     tracing::debug!("props: {props:?} | unknown_1: {}", header.unknown_1)
+            // }
 
             headers.push(header);
         }
 
         let mut variants = Vec::with_capacity(header_count);
         for (i, header) in headers.into_iter().enumerate() {
-            let span = tracing::info_span!(
+            let span = tracing::debug_span!(
                 "Read file data {}",
                 i,
                 size = header.size,

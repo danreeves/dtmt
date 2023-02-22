@@ -392,21 +392,29 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
     let mut archive = ZipArchive::new(data).wrap_err("failed to open ZIP archive")?;
 
-    for f in archive.file_names() {
-        tracing::debug!("{}", f);
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let names = archive.file_names().fold(String::new(), |mut s, name| {
+            s.push('\n');
+            s.push_str(name);
+            s
+        });
+        tracing::debug!("Archive contents:{}", names);
     }
 
     let dir_name = {
         let f = archive.by_index(0).wrap_err("archive is empty")?;
 
         if !f.is_dir() {
-            eyre::bail!("archive does not have a top-level directory");
+            let err = eyre::eyre!("archive does not have a top-level directory");
+            return Err(err).with_suggestion(|| "Use 'dtmt build' to create the mod archive.");
         }
 
         let name = f.name();
         // The directory name is returned with a trailing slash, which we don't want
         name[..(name.len().saturating_sub(1))].to_string()
     };
+
+    tracing::info!("Importing mod {}", dir_name);
 
     let mod_cfg: ModConfig = {
         let mut f = archive
@@ -420,6 +428,8 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
         serde_sjson::from_str(&data).wrap_err("failed to deserialize mod config")?
     };
+
+    tracing::debug!(?mod_cfg);
 
     let files: HashMap<String, Vec<String>> = {
         let mut f = archive

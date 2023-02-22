@@ -192,7 +192,7 @@ impl Bundle {
         let mut files = Vec::with_capacity(num_entries);
         tracing::trace!(num_files = num_entries);
         for (i, props) in file_props.iter().enumerate() {
-            let span = tracing::trace_span!("Read file {}", i);
+            let span = tracing::debug_span!("Read file {}", i);
             let _enter = span.enter();
 
             let file = BundleFile::from_reader(ctx, &mut r, *props)
