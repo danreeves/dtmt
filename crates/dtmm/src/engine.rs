@@ -544,3 +544,13 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
     Ok(info)
 }
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
+    let mod_dir = state.get_mod_dir().join(info.get_id());
+    fs::remove_dir_all(&mod_dir)
+        .await
+        .wrap_err_with(|| format!("failed to remove directory {}", mod_dir.display()))?;
+
+    Ok(())
+}

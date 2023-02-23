@@ -17,10 +17,12 @@ use druid::AppLauncher;
 use druid::ExtEventSink;
 use druid::SingleUse;
 use druid::Target;
+use engine::delete_mod;
 use engine::import_mod;
 use serde::Deserialize;
 use serde::Serialize;
 use state::ACTION_FINISH_ADD_MOD;
+use state::ACTION_FINISH_DELETE_SELECTED_MOD;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
@@ -82,6 +84,26 @@ fn work_thread(
                             tracing::error!("Failed to import mod: {:?}", err);
                         }
                     }
+                }),
+                AsyncAction::DeleteMod((state, info)) => tokio::spawn(async move {
+                    if let Err(err) = delete_mod(state, &info).await {
+                        tracing::error!(
+                            "Failed to delete mod files. \
+                                You might want to clean up the data directory manually. \
+                                Reason: {:?}",
+                            err
+                        );
+                    }
+
+                    event_sink
+                        .write()
+                        .await
+                        .submit_command(
+                            ACTION_FINISH_DELETE_SELECTED_MOD,
+                            SingleUse::new(info),
+                            Target::Auto,
+                        )
+                        .expect("failed to send command");
                 }),
             };
         }

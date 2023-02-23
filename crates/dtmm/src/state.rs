@@ -16,8 +16,10 @@ pub(crate) const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action
 pub(crate) const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
 pub(crate) const ACTION_SELECTED_MOD_DOWN: Selector =
     Selector::new("dtmm.action.selected-mod-down");
-pub(crate) const ACTION_DELETE_SELECTED_MOD: Selector =
-    Selector::new("dtmm.action.delete-selected-mod");
+pub(crate) const ACTION_START_DELETE_SELECTED_MOD: Selector<SingleUse<ModInfo>> =
+    Selector::new("dtmm.action.srart-delete-selected-mod");
+pub(crate) const ACTION_FINISH_DELETE_SELECTED_MOD: Selector<SingleUse<ModInfo>> =
+    Selector::new("dtmm.action.finish-delete-selected-mod");
 
 pub(crate) const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
 pub(crate) const ACTION_FINISH_DEPLOY: Selector = Selector::new("dtmm.action.finish-deploy");
@@ -284,6 +286,7 @@ impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {
 pub(crate) enum AsyncAction {
     DeployMods(State),
     AddMod((State, FileInfo)),
+    DeleteMod((State, ModInfo)),
 }
 
 pub(crate) struct Delegate {
@@ -360,8 +363,34 @@ impl AppDelegate<State> for Delegate {
                 state.selected_mod_index = Some(i + 1);
                 Handled::Yes
             }
-            cmd if cmd.is(ACTION_DELETE_SELECTED_MOD) => {
-                let Some(index) = state.selected_mod_index else {
+            cmd if cmd.is(ACTION_START_DELETE_SELECTED_MOD) => {
+                let info = cmd
+                    .get(ACTION_FINISH_DELETE_SELECTED_MOD)
+                    .and_then(|info| info.take())
+                    .expect("command type matched but didn't contain the expected value");
+                if self
+                    .sender
+                    .send(AsyncAction::DeleteMod((state.clone(), info)))
+                    .is_ok()
+                {
+                    state.is_deployment_in_progress = true;
+                } else {
+                    tracing::error!("Failed to queue action to deploy mods");
+                }
+
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_DELETE_SELECTED_MOD) => {
+                let info = cmd
+                    .get(ACTION_FINISH_DELETE_SELECTED_MOD)
+                    .and_then(|info| info.take())
+                    .expect("command type matched but didn't contain the expected value");
+                let mods = state.get_mods();
+                let found = mods
+                    .iter()
+                    .enumerate()
+                    .find(|(_, i)| i.get_id() == info.get_id());
+                let Some((index, _)) = found else {
                     return Handled::No;
                 };
 

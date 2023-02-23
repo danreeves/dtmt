@@ -3,12 +3,14 @@ use druid::widget::{
     Align, Button, CrossAxisAlignment, Flex, Label, List, MainAxisAlignment, Maybe, Scroll, Split,
     TextBox, ViewSwitcher,
 };
-use druid::{lens, FileDialogOptions, FileSpec, Insets, LensExt, Widget, WidgetExt, WindowDesc};
+use druid::{
+    lens, FileDialogOptions, FileSpec, Insets, LensExt, SingleUse, Widget, WidgetExt, WindowDesc,
+};
 
-use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_ADD_MOD};
+use crate::state::{ModInfo, PathBufFormatter, State, View};
 use crate::state::{
-    ACTION_DELETE_SELECTED_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
-    ACTION_SELECT_MOD, ACTION_START_DEPLOY,
+    ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
+    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
 };
 use crate::theme;
 use crate::widget::ExtraWidgetExt;
@@ -163,7 +165,13 @@ fn build_mod_details() -> impl Widget<State> {
     });
 
     let button_delete_mod = Button::new("Delete Mod")
-        .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_DELETE_SELECTED_MOD))
+        .on_click(|ctx, data: &mut Option<ModInfo>, _env| {
+            if let Some(info) = data {
+                ctx.submit_command(
+                    ACTION_START_DELETE_SELECTED_MOD.with(SingleUse::new(info.clone())),
+                );
+            }
+        })
         .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
         .lens(State::selected_mod);
 
