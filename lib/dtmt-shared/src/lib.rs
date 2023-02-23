@@ -1,3 +1,7 @@
+mod log;
+
+pub use log::*;
+
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct ModConfigResources {
     pub init: String,

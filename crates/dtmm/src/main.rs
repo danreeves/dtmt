@@ -26,9 +26,6 @@ use state::ACTION_FINISH_DELETE_SELECTED_MOD;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
-use tracing_error::ErrorLayer;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 
 use crate::engine::deploy_mods;
 use crate::state::{AsyncAction, Delegate, State, ACTION_FINISH_DEPLOY};
@@ -175,32 +172,7 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    {
-        let filter_layer =
-            EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
-
-        if cfg!(debug_assertions) {
-            let fmt_layer = tracing_subscriber::fmt::layer().pretty();
-
-            tracing_subscriber::registry()
-                .with(filter_layer)
-                .with(fmt_layer)
-                .with(ErrorLayer::new(
-                    tracing_subscriber::fmt::format::Pretty::default(),
-                ))
-                .init();
-        } else {
-            let fmt_layer = tracing_subscriber::fmt::layer().compact();
-
-            tracing_subscriber::registry()
-                .with(filter_layer)
-                .with(fmt_layer)
-                .with(ErrorLayer::new(
-                    tracing_subscriber::fmt::format::Pretty::default(),
-                ))
-                .init();
-        }
-    }
+    dtmt_shared::create_tracing_subscriber();
 
     unsafe {
         oodle_sys::init(matches.get_one::<String>("oodle"));
