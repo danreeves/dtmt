@@ -8,14 +8,14 @@ use std::sync::Arc;
 use color_eyre::eyre::Context;
 use color_eyre::{eyre, Help, Result};
 use druid::FileInfo;
+use dtmt_shared::ModConfig;
 use futures::stream;
 use futures::StreamExt;
 use sdk::filetype::lua;
 use sdk::filetype::package::Package;
 use sdk::murmur::Murmur64;
 use sdk::{
-    Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ModConfig,
-    ToBinary,
+    Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::{fs, try_join};

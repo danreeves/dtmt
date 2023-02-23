@@ -7,7 +7,7 @@ use druid::{
     AppDelegate, Command, Data, DelegateCtx, Env, FileInfo, Handled, Lens, Selector, SingleUse,
     Target,
 };
-use sdk::ModConfig;
+use dtmt_shared::ModConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::Config;

@@ -673,6 +673,7 @@ dependencies = [
  "color-eyre",
  "confy",
  "druid",
+ "dtmt-shared",
  "futures",
  "oodle-sys",
  "sdk",
@@ -694,6 +695,7 @@ dependencies = [
  "color-eyre",
  "confy",
  "csv-async",
+ "dtmt-shared",
  "futures",
  "futures-util",
  "glob",
@@ -713,6 +715,13 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "zip",
+]
+
+[[package]]
+name = "dtmt-shared"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

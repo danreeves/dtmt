@@ -4,10 +4,11 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report};
+use dtmt_shared::ModConfig;
 use futures::future::try_join_all;
 use futures::StreamExt;
 use sdk::filetype::package::Package;
-use sdk::{Bundle, BundleFile, ModConfig};
+use sdk::{Bundle, BundleFile};
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 

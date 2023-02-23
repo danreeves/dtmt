@@ -5,28 +5,29 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "unicode"] }
+cli-table = { version = "0.4.7", default-features = false, features = ["derive"] }
 color-eyre = "0.6.2"
+confy = "0.5.1"
 csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
-sdk = { path = "../../lib/sdk", version = "0.2.0" }
+dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
 futures = "0.3.25"
 futures-util = "0.3.24"
 glob = "0.3.0"
 libloading = "0.7.4"
 nanorand = "0.7.0"
-pin-project-lite = "0.2.9"
-serde = { version = "1.0.147", features = ["derive"] }
 oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
+pin-project-lite = "0.2.9"
+promptly = "0.3.1"
+sdk = { path = "../../lib/sdk", version = "0.2.0" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
-tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
+serde = { version = "1.0.147", features = ["derive"] }
+string_template = "0.2.1"
 tokio-stream = { version = "0.1.11", features = ["fs", "io-util"] }
-tracing = { version = "0.1.37", features = ["async-await"] }
+tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-confy = "0.5.1"
+tracing = { version = "0.1.37", features = ["async-await"] }
 zip = "0.6.3"
-string_template = "0.2.1"
-promptly = "0.3.1"
-cli-table = { version = "0.4.7", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3.3.0"
