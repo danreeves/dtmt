@@ -1,8 +1,10 @@
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::io::Cursor;
 use std::io::Write;
 
 use color_eyre::eyre;
+use color_eyre::eyre::Context;
 use color_eyre::Result;
 use luajit2_sys as lua;
 
@@ -22,10 +24,10 @@ where
 #[tracing::instrument(skip_all)]
 pub fn compile<S, C>(name: S, code: C) -> Result<BundleFile>
 where
-    S: ToString,
+    S: Into<String>,
     C: AsRef<CStr>,
 {
-    let name = name.to_string();
+    let name = name.into();
     let code = code.as_ref();
 
     let bytecode = unsafe {
@@ -35,6 +37,8 @@ where
         lua::lua_pushstring(state, code.as_ptr() as _);
         lua::lua_setglobal(state, b"code\0".as_ptr() as _);
 
+        let name = CString::new(name.as_bytes())
+            .wrap_err_with(|| format!("cannot convert name into CString: {}", name))?;
         lua::lua_pushstring(state, name.as_ptr() as _);
         lua::lua_setglobal(state, b"name\0".as_ptr() as _);
 
