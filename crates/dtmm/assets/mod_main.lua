@@ -15,7 +15,31 @@ local libs = {
 require("scripts/main")
 print("[mod_main] 'scripts/main' loaded")
 
-require("scripts/game_states/boot/state_boot_sub_state_base")
+local StateBootSubStateBase = require("scripts/game_states/boot/state_boot_sub_state_base")
+
+-- A necessary override.
+-- The original does not proxy `dt` to `_state_update`, but we need that.
+StateBootSubStateBase.update = function (self, dt)
+    local done, error = self:_state_update(dt)
+    local params = self._params
+
+    if error then
+        return StateError, {
+            error
+        }
+    elseif done then
+        local next_index = params.sub_state_index + 1
+        params.sub_state_index = next_index
+        local next_state_data = params.states[next_index]
+
+        if next_state_data then
+            return next_state_data[1], self._params
+        else
+            self._parent:sub_states_done()
+        end
+    end
+end
+
 local StateBootLoadMods = class("StateBootLoadMods", "StateBootSubStateBase")
 
 StateBootLoadMods.on_enter = function (self, parent, params)
