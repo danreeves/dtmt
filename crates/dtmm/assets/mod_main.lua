@@ -68,7 +68,7 @@ StateBootLoadMods._state_update = function (self, dt)
         self._mod_loader = mod_loader
 
         local mod_data = require("scripts/mods/mod_data")
-        mod_loader:init(mod_data, libs, self._parent.gui)
+        mod_loader:init(mod_data, libs, self._parent:gui())
     elseif state == "load_mods" and self._mod_loader:update(dt) then
         print("[mod_main][StateBootLoadMods] Mods loaded, exiting")
         return true, false
