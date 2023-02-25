@@ -129,6 +129,10 @@ impl FromBinary for BundleDatabase {
                 let mut buffer = [0; 20];
                 r.read_exact(&mut buffer)?;
 
+                if cfg!(debug_assertions) && buffer.iter().any(|b| *b != 0) {
+                    tracing::warn!("Unknown value in 20-byte buffer: {:?}", buffer);
+                }
+
                 let file_time = r.read_u64()?;
 
                 let file = BundleFile {
