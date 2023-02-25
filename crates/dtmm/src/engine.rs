@@ -189,7 +189,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
             lua.push_str("\",\n");
         }
 
-        lua.push_str("        }\n    }\n");
+        lua.push_str("        },\n    },\n");
     }
 
     lua.push('}');
