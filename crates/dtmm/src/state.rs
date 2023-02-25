@@ -185,8 +185,13 @@ impl State {
     }
 
     pub fn add_mod(&mut self, info: ModInfo) {
-        self.mods.push_back(info);
-        self.selected_mod_index = Some(self.mods.len() - 1);
+        if let Some(pos) = self.mods.index_of(&info) {
+            self.mods.set(pos, info);
+            self.selected_mod_index = Some(pos);
+        } else {
+            self.mods.push_back(info);
+            self.selected_mod_index = Some(self.mods.len() - 1);
+        }
     }
 
     pub fn can_move_mod_down(&self) -> bool {
