@@ -17,8 +17,8 @@ use sdk::murmur::Murmur64;
 use sdk::{
     Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
+use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use tokio::{fs, try_join};
 use tracing::Instrument;
 use zip::ZipArchive;
 
@@ -118,7 +118,6 @@ async fn patch_game_settings(state: Arc<State>) -> Result<()> {
 
     f.write_all(settings[(i + j)..].as_bytes()).await?;
 
-    tracing::info!("Patched game settings");
     Ok(())
 }
 
@@ -179,7 +178,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
         } else {
             lua.push_str("            return dofile(\"");
             lua.push_str(&resources.get_init().to_string_lossy());
-            lua.push_str("\")");
+            lua.push_str("\")\n");
         }
 
         lua.push_str("        end,\n        packages = {\n");
@@ -201,22 +200,13 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 }
 
 #[tracing::instrument(skip_all)]
-async fn build_bundles(state: Arc<State>) -> Result<()> {
-    let mut bundle = Bundle::new(MOD_BUNDLE_NAME);
+async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
+    let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME);
     let mut tasks = Vec::new();
 
     let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
-    let database_path = bundle_dir.join(BUNDLE_DATABASE_NAME);
 
-    let mut db = {
-        let bin = read_file_with_backup(&database_path)
-            .await
-            .wrap_err("failed to read bundle database")?;
-        let mut r = Cursor::new(bin);
-        let db = BundleDatabase::from_binary(&mut r).wrap_err("failed to parse bundle database")?;
-        tracing::trace!("Finished parsing bundle database");
-        db
-    };
+    let mut bundles = Vec::new();
 
     {
         let span = tracing::debug_span!("Building mod data script");
@@ -227,7 +217,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
         let file =
             lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("failed to compile mod data Lua file")?;
 
-        bundle.add_file(file);
+        mod_bundle.add_file(file);
     }
 
     for mod_info in state
@@ -252,7 +242,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
             let mut file = BundleFile::new(pkg_info.get_name().clone(), BundleFileType::Package);
             file.add_variant(variant);
 
-            bundle.add_file(file);
+            mod_bundle.add_file(file);
 
             let bundle_name = Murmur64::hash(pkg_info.get_name())
                 .to_string()
@@ -262,23 +252,28 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
             let pkg_name = pkg_info.get_name().clone();
             let mod_name = mod_info.get_name().clone();
 
-            tracing::trace!(
-                "Adding package {} for mod {} to bundle database",
-                pkg_info.get_name(),
-                mod_info.get_name()
-            );
-
             // Explicitely drop the guard, so that we can move the span
             // into the async operation
             drop(_enter);
 
+            let ctx = state.get_ctx().clone();
+
             let task = async move {
+                let bundle = {
+                    let bin = fs::read(&src).await.wrap_err_with(|| {
+                        format!("failed to read bundle file '{}'", src.display())
+                    })?;
+                    let name = Bundle::get_name_from_path(&ctx, &src);
+                    Bundle::from_binary(&ctx, name, bin)
+                        .wrap_err_with(|| format!("failed to parse bundle '{}'", src.display()))?
+                };
+
                 tracing::debug!(
-                    "Copying bundle {} for mod {}: {} -> {}",
+                    src = %src.display(),
+                    dest = %dest.display(),
+                    "Copying bundle '{}' for mod '{}'",
                     pkg_name,
                     mod_name,
-                    src.display(),
-                    dest.display()
                 );
                 // We attempt to remove any previous file, so that the hard link can be created.
                 // We can reasonably ignore errors here, as a 'NotFound' is actually fine, the copy
@@ -293,7 +288,9 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
                         src.display(),
                         dest.display()
                     )
-                })
+                })?;
+
+                Ok::<Bundle, color_eyre::Report>(bundle)
             }
             .instrument(span);
 
@@ -306,62 +303,41 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
     let mut tasks = stream::iter(tasks).buffer_unordered(10);
 
     while let Some(res) = tasks.next().await {
-        res?;
+        let bundle = res?;
+        bundles.push(bundle);
     }
 
-    db.add_bundle(&bundle);
-
     {
-        let path = bundle_dir.join(format!("{:x}", bundle.name().to_murmur64()));
+        let path = bundle_dir.join(format!("{:x}", mod_bundle.name().to_murmur64()));
         tracing::trace!("Writing mod bundle to '{}'", path.display());
-        fs::write(&path, bundle.to_binary()?)
+        fs::write(&path, mod_bundle.to_binary()?)
             .await
             .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
     }
 
-    {
-        tracing::trace!("Writing bundle database to '{}'", database_path.display());
-        let bin = db
-            .to_binary()
-            .wrap_err("failed to serialize bundle database")?;
-        fs::write(&database_path, bin).await.wrap_err_with(|| {
-            format!(
-                "failed to write bundle database to '{}'",
-                database_path.display()
-            )
-        })?;
-    }
+    bundles.push(mod_bundle);
 
-    Ok(())
+    Ok(bundles)
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
+async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
     let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
-
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
-    let database_path = bundle_dir.join(BUNDLE_DATABASE_NAME);
 
-    let (mut db, mut bundle) = try_join!(
-        async {
-            let bin = read_file_with_backup(&database_path)
-                .await
-                .wrap_err("failed to read bundle database")?;
-            let mut r = Cursor::new(bin);
+    let mut bundles = Vec::with_capacity(2);
 
-            BundleDatabase::from_binary(&mut r).wrap_err("failed to parse bundle database")
-        }
-        .instrument(tracing::trace_span!("read bundle database")),
-        async {
-            let bin = read_file_with_backup(&bundle_path)
-                .await
-                .wrap_err("failed to read boot bundle")?;
+    let mut boot_bundle = async {
+        let bin = read_file_with_backup(&bundle_path)
+            .await
+            .wrap_err("failed to read boot bundle")?;
 
-            Bundle::from_binary(&state.get_ctx(), BOOT_BUNDLE_NAME.to_string(), bin)
-                .wrap_err("failed to parse boot bundle")
-        }
-        .instrument(tracing::trace_span!("read boot bundle"))
-    )?;
+        Bundle::from_binary(&state.get_ctx(), BOOT_BUNDLE_NAME.to_string(), bin)
+            .wrap_err("failed to parse boot bundle")
+    }
+    .instrument(tracing::trace_span!("read boot bundle"))
+    .await
+    .wrap_err_with(|| format!("failed to read bundle '{}'", BOOT_BUNDLE_NAME))?;
 
     {
         tracing::trace!("Adding mod package file to boot bundle");
@@ -383,30 +359,82 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
         let mut f = BundleFile::new(MOD_BUNDLE_NAME.to_string(), BundleFileType::Package);
         f.add_variant(variant);
 
-        bundle.add_file(f);
+        boot_bundle.add_file(f);
     }
 
     {
-        tracing::trace!("Adding dml package file to boot bundle");
-        let span = tracing::trace_span!("create dml package file");
+        tracing::trace!("Handling DML packages and bundle");
+        let span = tracing::trace_span!("handle DML");
         let _enter = span.enter();
 
         let mut variant = BundleFileVariant::new();
 
         let mods = state.get_mods();
-        let pkg_info = mods
+        let mod_info = mods
             .iter()
             .find(|m| m.get_id() == "dml")
-            .and_then(|info| info.get_packages().get(0));
-        if let Some(pkg_info) = &pkg_info {
-            let pkg = make_package(pkg_info).wrap_err("failed to create package file for dml")?;
-            variant.set_data(pkg.to_binary()?);
+            .ok_or_else(|| eyre::eyre!("DML not found in mod list"))?;
+        let pkg_info = mod_info
+            .get_packages()
+            .get(0)
+            .ok_or_else(|| eyre::eyre!("invalid mod package for DML"))
+            .with_suggestion(|| "Re-download and import the newest version.".to_string())?;
+        let bundle_name = Murmur64::hash(pkg_info.get_name())
+            .to_string()
+            .to_ascii_lowercase();
+        let src = state
+            .get_mod_dir()
+            .join(mod_info.get_id())
+            .join(&bundle_name);
+
+        {
+            let ctx = state.get_ctx();
+            let bin = fs::read(&src)
+                .await
+                .wrap_err_with(|| format!("failed to read bundle file '{}'", src.display()))?;
+            let name = Bundle::get_name_from_path(&ctx, &src);
+
+            let dml_bundle = Bundle::from_binary(&ctx, name, bin)
+                .wrap_err_with(|| format!("failed to parse bundle '{}'", src.display()))?;
+
+            bundles.push(dml_bundle);
+        };
+
+        {
+            let dest = bundle_dir.join(&bundle_name);
+            let pkg_name = pkg_info.get_name().clone();
+            let mod_name = mod_info.get_name().clone();
+
+            tracing::debug!(
+                "Copying bundle {} for mod {}: {} -> {}",
+                pkg_name,
+                mod_name,
+                src.display(),
+                dest.display()
+            );
+            // We attempt to remove any previous file, so that the hard link can be created.
+            // We can reasonably ignore errors here, as a 'NotFound' is actually fine, the copy
+            // may be possible despite an error here, or the error will be reported by it anyways.
+            // TODO: There is a chance that we delete an actual game bundle, but with 64bit
+            // hashes, it's low enough for now, and the setup required to detect
+            // "game bundle vs mod bundle" is non-trivial.
+            let _ = fs::remove_file(&dest).await;
+            fs::copy(&src, &dest).await.wrap_err_with(|| {
+                format!(
+                    "failed to copy bundle {pkg_name} for mod {mod_name}. src: {}, dest: {}",
+                    src.display(),
+                    dest.display()
+                )
+            })?;
         }
+
+        let pkg = make_package(pkg_info).wrap_err("failed to create package file for dml")?;
+        variant.set_data(pkg.to_binary()?);
 
         let mut f = BundleFile::new(DML_BUNDLE_NAME.to_string(), BundleFileType::Package);
         f.add_variant(variant);
 
-        bundle.add_file(f);
+        boot_bundle.add_file(f);
     }
 
     {
@@ -418,34 +446,56 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<()> {
         let file =
             lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("failed to compile mod main Lua file")?;
 
-        bundle.add_file(file);
+        boot_bundle.add_file(file);
     }
 
-    db.add_bundle(&bundle);
+    async {
+        let bin = boot_bundle
+            .to_binary()
+            .wrap_err("failed to serialize boot bundle")?;
+        fs::write(&bundle_path, bin)
+            .await
+            .wrap_err_with(|| format!("failed to write main bundle: {}", bundle_path.display()))
+    }
+    .instrument(tracing::trace_span!("write boot bundle"))
+    .await?;
 
-    try_join!(
-        async {
-            let bin = bundle
-                .to_binary()
-                .wrap_err("failed to serialize boot bundle")?;
-            fs::write(&bundle_path, bin)
-                .await
-                .wrap_err_with(|| format!("failed to write main bundle: {}", bundle_path.display()))
-        }
-        .instrument(tracing::trace_span!("write boot bundle")),
-        async {
-            let bin = db
-                .to_binary()
-                .wrap_err("failed to serialize bundle database")?;
-            fs::write(&database_path, bin).await.wrap_err_with(|| {
-                format!(
-                    "failed to write bundle database to '{}'",
-                    database_path.display()
-                )
-            })
-        }
-        .instrument(tracing::trace_span!("write bundle database"))
-    )?;
+    bundles.push(boot_bundle);
+
+    Ok(bundles)
+}
+
+#[tracing::instrument(skip_all, fields(bundles = bundles.len()))]
+async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Result<()> {
+    let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
+    let database_path = bundle_dir.join(BUNDLE_DATABASE_NAME);
+
+    let mut db = {
+        let bin = read_file_with_backup(&database_path)
+            .await
+            .wrap_err("failed to read bundle database")?;
+        let mut r = Cursor::new(bin);
+        let db = BundleDatabase::from_binary(&mut r).wrap_err("failed to parse bundle database")?;
+        tracing::trace!("Finished parsing bundle database");
+        db
+    };
+
+    for bundle in bundles {
+        tracing::trace!("Adding '{}' to bundle database", bundle.name().display());
+        db.add_bundle(&bundle);
+    }
+
+    {
+        let bin = db
+            .to_binary()
+            .wrap_err("failed to serialize bundle database")?;
+        fs::write(&database_path, bin).await.wrap_err_with(|| {
+            format!(
+                "failed to write bundle database to '{}'",
+                database_path.display()
+            )
+        })?;
+    }
 
     Ok(())
 }
@@ -472,20 +522,26 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
         state.get_game_dir().join("bundle").display()
     );
 
-    // tracing::info!("Build mod bundles");
-    // build_bundles(state.clone())
-    //     .await
-    //     .wrap_err("failed to build mod bundles")?;
+    tracing::info!("Build mod bundles");
+    let mut bundles = build_bundles(state.clone())
+        .await
+        .wrap_err("failed to build mod bundles")?;
 
     tracing::info!("Patch boot bundle");
-    patch_boot_bundle(state.clone())
+    let mut more_bundles = patch_boot_bundle(state.clone())
         .await
         .wrap_err("failed to patch boot bundle")?;
+    bundles.append(&mut more_bundles);
 
     tracing::info!("Patch game settings");
     patch_game_settings(state.clone())
         .await
         .wrap_err("failed to patch game settings")?;
+
+    tracing::info!("Patching bundle database");
+    patch_bundle_database(state.clone(), bundles)
+        .await
+        .wrap_err("failed to patch bundle database")?;
 
     tracing::info!("Finished deploying mods");
     Ok(())

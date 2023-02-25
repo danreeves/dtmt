@@ -42,6 +42,14 @@ impl BundleDatabase {
         let name = hash.to_string();
         let stream = format!("{}.stream", &name);
 
+        tracing::trace!(
+            "Adding bundle '{} ({:?} | {:016X})' to database. Hash exists: {}",
+            bundle.name().display(),
+            bundle.name(),
+            hash,
+            self.stored_files.contains_key(&hash)
+        );
+
         {
             let entry = self.stored_files.entry(hash).or_default();
             let existing = entry.iter().position(|f| f.name == name);
@@ -56,6 +64,7 @@ impl BundleDatabase {
             entry.push(file);
 
             if let Some(pos) = existing {
+                tracing::debug!("Found bundle '{}' at {}. Replacing.", hash.to_string(), pos);
                 entry.swap_remove(pos);
             }
         }
@@ -63,7 +72,7 @@ impl BundleDatabase {
         for f in bundle.files() {
             let file_name = FileName {
                 extension: f.file_type(),
-                name: Murmur64::hash(f.name(false, None).as_bytes()),
+                name: f.base_name().to_murmur64(),
             };
 
             // TODO: Compute actual resource hash
