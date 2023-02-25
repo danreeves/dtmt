@@ -50,13 +50,13 @@ where
 
     match fmt {
         OutputFormat::Text => {
-            println!("Bundle: {}", bundle.name());
+            println!("Bundle: {}", bundle.name().display());
 
             for f in bundle.files().iter() {
                 if f.variants().len() != 1 {
                     let err = eyre::eyre!("Expected exactly one version for this file.")
                         .with_section(|| f.variants().len().to_string().header("Bundle:"))
-                        .with_section(|| bundle.name().clone().header("Bundle:"));
+                        .with_section(|| bundle.name().display().header("Bundle:"));
 
                     tracing::error!("{:#}", err);
                 }

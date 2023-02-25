@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
-use sdk::murmur::Murmur64;
 use sdk::Bundle;
 use zip::ZipWriter;
 
@@ -70,7 +69,7 @@ impl Archive {
                 map_entry.insert(file.name(false, None));
             }
 
-            let name = Murmur64::hash(bundle.name().as_bytes());
+            let name = bundle.name().to_murmur64();
             let path = base_path.join(name.to_string().to_ascii_lowercase());
 
             zip.start_file(path.to_string_lossy(), Default::default())?;

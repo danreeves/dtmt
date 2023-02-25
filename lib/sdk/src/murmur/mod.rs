@@ -289,9 +289,9 @@ impl IdString64 {
     }
 }
 
-impl From<String> for IdString64 {
-    fn from(value: String) -> Self {
-        Self::String(value)
+impl<S: Into<String>> From<S> for IdString64 {
+    fn from(value: S) -> Self {
+        Self::String(value.into())
     }
 }
 
@@ -310,6 +310,61 @@ impl From<IdString64> for Murmur64 {
 impl PartialEq for IdString64 {
     fn eq(&self, other: &Self) -> bool {
         self.to_murmur64() == other.to_murmur64()
+    }
+}
+
+impl std::hash::Hash for IdString64 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.to_murmur64().into());
+    }
+}
+
+impl serde::Serialize for IdString64 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(self.to_murmur64().into())
+    }
+}
+
+struct IdString64Visitor;
+
+impl<'de> serde::de::Visitor<'de> for IdString64Visitor {
+    type Value = IdString64;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("an u64 or a string")
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(IdString64::Hash(value.into()))
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(IdString64::String(v.to_string()))
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(IdString64::String(v))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for IdString64 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_u64(IdString64Visitor)
     }
 }
 

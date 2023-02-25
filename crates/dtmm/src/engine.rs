@@ -202,7 +202,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 
 #[tracing::instrument(skip_all)]
 async fn build_bundles(state: Arc<State>) -> Result<()> {
-    let mut bundle = Bundle::new(MOD_BUNDLE_NAME.into());
+    let mut bundle = Bundle::new(MOD_BUNDLE_NAME);
     let mut tasks = Vec::new();
 
     let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
@@ -312,7 +312,7 @@ async fn build_bundles(state: Arc<State>) -> Result<()> {
     db.add_bundle(&bundle);
 
     {
-        let path = bundle_dir.join(format!("{:x}", Murmur64::hash(bundle.name())));
+        let path = bundle_dir.join(format!("{:x}", bundle.name().to_murmur64()));
         tracing::trace!("Writing mod bundle to '{}'", path.display());
         fs::write(&path, bundle.to_binary()?)
             .await

@@ -8,7 +8,7 @@ use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
 use crate::bundle::file::Properties;
-use crate::murmur::{HashGroup, Murmur64};
+use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 pub(crate) mod database;
 pub(crate) mod file;
@@ -46,13 +46,13 @@ pub struct Bundle {
     format: BundleFormat,
     properties: [Murmur64; 32],
     files: Vec<BundleFile>,
-    name: String,
+    name: IdString64,
 }
 
 impl Bundle {
-    pub fn new(name: String) -> Self {
+    pub fn new<S: Into<IdString64>>(name: S) -> Self {
         Self {
-            name,
+            name: name.into(),
             format: BundleFormat::F8,
             properties: [0.into(); 32],
             files: Vec::new(),
@@ -201,7 +201,7 @@ impl Bundle {
         }
 
         Ok(Self {
-            name: bundle_name,
+            name: bundle_name.into(),
             format,
             files,
             properties,
@@ -281,7 +281,7 @@ impl Bundle {
         Ok(w.into_inner())
     }
 
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &IdString64 {
         &self.name
     }
 

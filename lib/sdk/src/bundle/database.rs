@@ -38,17 +38,27 @@ pub struct BundleDatabase {
 
 impl BundleDatabase {
     pub fn add_bundle(&mut self, bundle: &Bundle) {
-        let hash = Murmur64::hash(bundle.name().as_bytes());
+        let hash = bundle.name().to_murmur64();
         let name = hash.to_string();
         let stream = format!("{}.stream", &name);
-        let file = BundleFile {
-            name,
-            stream,
-            file_time: 0,
-            platform_specific: false,
-        };
 
-        self.stored_files.entry(hash).or_default().push(file);
+        {
+            let entry = self.stored_files.entry(hash).or_default();
+            let existing = entry.iter().position(|f| f.name == name);
+
+            let file = BundleFile {
+                name,
+                stream,
+                file_time: 0,
+                platform_specific: false,
+            };
+
+            entry.push(file);
+
+            if let Some(pos) = existing {
+                entry.swap_remove(pos);
+            }
+        }
 
         for f in bundle.files() {
             let file_name = FileName {
