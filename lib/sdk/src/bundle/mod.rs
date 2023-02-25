@@ -59,7 +59,7 @@ impl Bundle {
         }
     }
 
-    pub fn get_name_from_path<P>(ctx: &crate::Context, path: P) -> String
+    pub fn get_name_from_path<P>(ctx: &crate::Context, path: P) -> IdString64
     where
         P: AsRef<Path>,
     {
@@ -67,12 +67,8 @@ impl Bundle {
         path.file_name()
             .and_then(|name| name.to_str())
             .and_then(|name| Murmur64::try_from(name).ok())
-            .map(|hash| {
-                ctx.lookup_hash(hash, HashGroup::Filename)
-                    .display()
-                    .to_string()
-            })
-            .unwrap_or_else(|| path.display().to_string())
+            .map(|hash| ctx.lookup_hash(hash, HashGroup::Filename))
+            .unwrap_or_else(|| path.display().to_string().into())
     }
 
     pub fn add_file(&mut self, file: BundleFile) {
@@ -92,11 +88,11 @@ impl Bundle {
     }
 
     #[tracing::instrument(skip(ctx, binary), fields(len_binary = binary.as_ref().len()))]
-    pub fn from_binary<B>(ctx: &crate::Context, name: String, binary: B) -> Result<Self>
+    pub fn from_binary<B, S>(ctx: &crate::Context, name: S, binary: B) -> Result<Self>
     where
         B: AsRef<[u8]>,
+        S: Into<IdString64> + std::fmt::Debug,
     {
-        let bundle_name = name;
         let mut r = BufReader::new(Cursor::new(binary));
 
         let format = r.read_u32().and_then(BundleFormat::try_from)?;
@@ -201,7 +197,7 @@ impl Bundle {
         }
 
         Ok(Self {
-            name: bundle_name.into(),
+            name: name.into(),
             format,
             files,
             properties,
