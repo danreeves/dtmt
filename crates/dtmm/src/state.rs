@@ -61,23 +61,23 @@ impl PackageInfo {
     }
 }
 
-#[derive(Clone, Data, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ModResourceInfo {
-    init: String,
-    data: Option<String>,
-    localization: Option<String>,
+    init: PathBuf,
+    data: Option<PathBuf>,
+    localization: Option<PathBuf>,
 }
 
 impl ModResourceInfo {
-    pub(crate) fn get_init(&self) -> &String {
+    pub(crate) fn get_init(&self) -> &PathBuf {
         &self.init
     }
 
-    pub(crate) fn get_data(&self) -> Option<&String> {
+    pub(crate) fn get_data(&self) -> Option<&PathBuf> {
         self.data.as_ref()
     }
 
-    pub(crate) fn get_localization(&self) -> Option<&String> {
+    pub(crate) fn get_localization(&self) -> Option<&PathBuf> {
         self.localization.as_ref()
     }
 }
@@ -89,8 +89,10 @@ pub(crate) struct ModInfo {
     description: Arc<String>,
     enabled: bool,
     #[lens(ignore)]
+    #[data(ignore)]
     packages: Vector<PackageInfo>,
     #[lens(ignore)]
+    #[data(ignore)]
     resources: ModResourceInfo,
 }
 

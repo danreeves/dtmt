@@ -163,22 +163,22 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
             lua.push_str("            new_mod(\"");
             lua.push_str(mod_info.get_id());
             lua.push_str("\", {\n                init = \"");
-            lua.push_str(resources.get_init());
+            lua.push_str(&resources.get_init().to_string_lossy());
 
             if let Some(data) = resources.get_data() {
                 lua.push_str("\",\n                data = \"");
-                lua.push_str(data);
+                lua.push_str(&data.to_string_lossy());
             }
 
             if let Some(localization) = resources.get_localization() {
                 lua.push_str("\",\n                localization = \"");
-                lua.push_str(localization);
+                lua.push_str(&localization.to_string_lossy());
             }
 
             lua.push_str("\",\n            })\n");
         } else {
             lua.push_str("            return dofile(\"");
-            lua.push_str(resources.get_init());
+            lua.push_str(&resources.get_init().to_string_lossy());
             lua.push_str("\")");
         }
 

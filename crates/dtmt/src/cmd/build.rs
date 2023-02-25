@@ -164,6 +164,23 @@ where
         .wrap_err("failed to build bundle")
 }
 
+fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
+    let path = path.as_ref();
+
+    if path.is_absolute() || path.has_root() {
+        let err = eyre::eyre!("path is absolute: {}", path.display());
+        return Err(err).with_suggestion(|| "Specify a relative file path.".to_string());
+    }
+
+    let path = path_clean::clean(path);
+
+    if path.starts_with("..") {
+        eyre::bail!("path starts with a parent component: {}", path.display());
+    }
+
+    Ok(path)
+}
+
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     unsafe {
@@ -172,7 +189,54 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     let cfg = {
         let dir = matches.get_one::<PathBuf>("directory").cloned();
-        find_project_config(dir).await?
+        let mut cfg = find_project_config(dir).await?;
+
+        cfg.resources.init = normalize_file_path(cfg.resources.init)
+            .wrap_err("invalid config field 'resources.init'")
+            .with_suggestion(|| {
+                "Specify a file path relative to and child path of the \
+                    directory where 'dtmt.cfg' is."
+                    .to_string()
+            })
+            .with_suggestion(|| {
+                "Use 'dtmt new' in a separate directory to generate \
+                    a valid mod template."
+                    .to_string()
+            })?;
+
+        if let Some(path) = cfg.resources.data {
+            let path = normalize_file_path(path)
+                .wrap_err("invalid config field 'resources.data'")
+                .with_suggestion(|| {
+                    "Specify a file path relative to and child path of the \
+                            directory where 'dtmt.cfg' is."
+                        .to_string()
+                })
+                .with_suggestion(|| {
+                    "Use 'dtmt new' in a separate directory to generate \
+                            a valid mod template."
+                        .to_string()
+                })?;
+            cfg.resources.data = Some(path);
+        }
+
+        if let Some(path) = cfg.resources.localization {
+            let path = normalize_file_path(path)
+                .wrap_err("invalid config field 'resources.localization'")
+                .with_suggestion(|| {
+                    "Specify a file path relative to and child path of the \
+                        directory where 'dtmt.cfg' is."
+                        .to_string()
+                })
+                .with_suggestion(|| {
+                    "Use 'dtmt new' in a separate directory to generate \
+                        a valid mod template."
+                        .to_string()
+                })?;
+            cfg.resources.localization = Some(path);
+        }
+
+        cfg
     };
 
     let dest = {

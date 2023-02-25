@@ -1,14 +1,16 @@
 mod log;
 
+use std::path::PathBuf;
+
 pub use log::*;
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct ModConfigResources {
-    pub init: String,
+    pub init: PathBuf,
     #[serde(default)]
-    pub data: Option<String>,
+    pub data: Option<PathBuf>,
     #[serde(default)]
-    pub localization: Option<String>,
+    pub localization: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
