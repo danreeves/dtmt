@@ -24,6 +24,8 @@ StateBootLoadMods.on_enter = function (self, parent, params)
 
     local state_params = self:_state_params()
     local package_manager = state_params.package_manager
+
+    self._state = "load_package"
     self._package_manager = package_manager
     self._package_handles = {
         ["packages/mods"] = package_manager:load("packages/mods", "StateBootLoadMods", nil),
