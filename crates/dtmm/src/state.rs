@@ -367,7 +367,7 @@ impl AppDelegate<State> for Delegate {
             }
             cmd if cmd.is(ACTION_START_DELETE_SELECTED_MOD) => {
                 let info = cmd
-                    .get(ACTION_FINISH_DELETE_SELECTED_MOD)
+                    .get(ACTION_START_DELETE_SELECTED_MOD)
                     .and_then(|info| info.take())
                     .expect("command type matched but didn't contain the expected value");
                 if self
