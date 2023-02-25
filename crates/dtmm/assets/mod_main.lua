@@ -1,4 +1,13 @@
-print("[mod_main] Initializing mods...")
+local log = function(category, format, ...)
+    local Log = rawget(_G, "Log")
+    if Log then
+        Log.info(category, format, ...)
+    else
+        print(string.format("[%s] %s", category or "", string.format(format or "", ...)))
+    end
+end
+
+log("mod_main", " Initializing mods...")
 -- Keep a backup of certain system libraries before
 -- Fatshark's code scrubs them.
 -- The loader can then decide to pass them on to mods, or ignore them
@@ -13,7 +22,7 @@ local libs = {
 }
 
 require("scripts/main")
-print("[mod_main] 'scripts/main' loaded")
+log("mod_main", "'scripts/main' loaded")
 
 local StateBootSubStateBase = require("scripts/game_states/boot/state_boot_sub_state_base")
 
@@ -24,9 +33,7 @@ StateBootSubStateBase.update = function (self, dt)
     local params = self._params
 
     if error then
-        return StateError, {
-            error
-        }
+        return StateError, { error }
     elseif done then
         local next_index = params.sub_state_index + 1
         params.sub_state_index = next_index
@@ -43,7 +50,7 @@ end
 local StateBootLoadMods = class("StateBootLoadMods", "StateBootSubStateBase")
 
 StateBootLoadMods.on_enter = function (self, parent, params)
-    print("[mod_main][StateBootLoadMods] Entered")
+    log("StateBootLoadMods", "Entered")
     StateBootLoadMods.super.on_enter(self, parent, params)
 
     local state_params = self:_state_params()
@@ -62,7 +69,7 @@ StateBootLoadMods._state_update = function (self, dt)
     local package_manager = self._package_manager
 
     if state == "load_package" and package_manager:update() then
-        print("[mod_main][StateBootLoadMods] Packages loaded, loading mods")
+        log("StateBootLoadMods", "Packages loaded, loading mods")
         self._state = "load_mods"
         local mod_loader = require("scripts/mods/dml/init")
         self._mod_loader = mod_loader
@@ -70,7 +77,7 @@ StateBootLoadMods._state_update = function (self, dt)
         local mod_data = require("scripts/mods/mod_data")
         mod_loader:init(mod_data, libs, self._parent:gui())
     elseif state == "load_mods" and self._mod_loader:update(dt) then
-        print("[mod_main][StateBootLoadMods] Mods loaded, exiting")
+        log("StateBootLoadMods", "Mods loaded, exiting")
         return true, false
     end
 
@@ -80,7 +87,7 @@ end
 -- Patch `GameStateMachine.init` to add our own state for loading mods.
 -- In the future, Fatshark might provide us with a dedicated way to do this.
 local function patch_mod_loading_state()
-    print("[mod_main] Adding mod loading state")
+    log("mod_main", "Adding mod loading state")
     local GameStateMachine = require("scripts/foundation/utilities/game_state_machine")
 
     local patched = false
@@ -105,7 +112,7 @@ local function patch_mod_loading_state()
 
         GameStateMachine_init(self, parent, start_state, params, ...)
     end
-    print("[mod_main] Mod patching complete")
+    log("mod_main", "Mod patching complete")
 end
 
 function init()
