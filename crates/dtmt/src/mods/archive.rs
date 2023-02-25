@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
+use sdk::murmur::IdString64;
 use sdk::Bundle;
 use zip::ZipWriter;
 
@@ -61,7 +62,10 @@ impl Archive {
         let mut file_map = HashMap::new();
 
         for bundle in self.bundles.iter() {
-            let bundle_name = bundle.name().clone();
+            let bundle_name = match bundle.name() {
+                IdString64::Hash(_) => eyre::bail!("bundle name must be known as string. got hash"),
+                IdString64::String(s) => s,
+            };
 
             let map_entry: &mut HashSet<_> = file_map.entry(bundle_name).or_default();
 
