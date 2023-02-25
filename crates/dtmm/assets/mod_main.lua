@@ -85,6 +85,9 @@ local function patch_mod_loading_state()
 end
 
 function init()
+    local StateRequireScripts = require("scripts/game_states/boot/state_require_scripts")
+    StateRequireScripts._get_is_modded = function() return true end
+
     patch_mod_loading_state()
     Main:init()
 end
