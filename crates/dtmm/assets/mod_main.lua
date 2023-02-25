@@ -56,28 +56,32 @@ end
 -- Patch `GameStateMachine.init` to add our own state for loading mods.
 -- In the future, Fatshark might provide us with a dedicated way to do this.
 local function patch_mod_loading_state()
-print("[mod_main] Adding mod loading state")
+    print("[mod_main] Adding mod loading state")
     local GameStateMachine = require("scripts/foundation/utilities/game_state_machine")
+
+    local patched = false
 
     local GameStateMachine_init = GameStateMachine.init
     GameStateMachine.init = function(self, parent, start_state, params, ...)
-        -- Hardcoded position after `StateRequireScripts`.
-        -- We do want to wait until then, so that most of the game's core
-        -- systems are at least loaded and can be hooked, even if they aren't
-        -- running, yet.
-        local pos = 4
-        table.insert(params.states, pos, {
-            StateBootLoadMods,
-            {
-                package_manager = params.package_manager,
-            },
-        })
+        if not patched then
+            patched = true
 
-        -- Clean up after us
-        GameStateMachine.init = GameStateMachine_init
+            -- Hardcoded position after `StateRequireScripts`.
+            -- We do want to wait until then, so that most of the game's core
+            -- systems are at least loaded and can be hooked, even if they aren't
+            -- running, yet.
+            local pos = 4
+            table.insert(params.states, pos, {
+                StateBootLoadMods,
+                {
+                    package_manager = params.package_manager,
+                },
+            })
+        end
 
-        return GameStateMachine_init(self, parent, start_state, params, ...)
+        GameStateMachine_init(self, parent, start_state, params, ...)
     end
+    print("[mod_main] Mod patching complete")
 end
 
 function init()
