@@ -10,7 +10,7 @@ use druid::{
 use dtmt_shared::ModConfig;
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::Config;
+use crate::util::Config;
 
 pub(crate) const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action.select-mod");
 pub(crate) const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
@@ -32,6 +32,8 @@ pub(crate) const ACTION_FINISH_RESET_DEPLOYMENT: Selector =
 pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action.add-mod");
 pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<ModInfo>> =
     Selector::new("dtmm.action.finish-add-mod");
+
+pub(crate) const ACTION_LOG: Selector<SingleUse<String>> = Selector::new("dtmm.action.log");
 
 #[derive(Copy, Clone, Data, Debug, PartialEq)]
 pub(crate) enum View {
@@ -154,6 +156,7 @@ pub(crate) struct State {
     game_dir: Arc<PathBuf>,
     data_dir: Arc<PathBuf>,
     ctx: Arc<sdk::Context>,
+    log: Arc<String>,
 }
 
 impl State {
@@ -170,8 +173,9 @@ impl State {
             selected_mod_index: None,
             is_deployment_in_progress: false,
             is_reset_in_progress: false,
-            game_dir: Arc::new(config.game_dir.unwrap_or_default()),
-            data_dir: Arc::new(config.data_dir.unwrap_or_default()),
+            game_dir: Arc::new(config.game_dir().cloned().unwrap_or_default()),
+            data_dir: Arc::new(config.data_dir().cloned().unwrap_or_default()),
+            log: Arc::new(String::new()),
         }
     }
 
@@ -229,6 +233,11 @@ impl State {
 
     pub(crate) fn get_ctx(&self) -> Arc<sdk::Context> {
         self.ctx.clone()
+    }
+
+    pub(crate) fn add_log_line(&mut self, line: String) {
+        let log = Arc::make_mut(&mut self.log);
+        log.push_str(&line);
     }
 }
 
@@ -451,6 +460,15 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(info) = info.take() {
                     state.add_mod(info);
+                }
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_LOG) => {
+                let line = cmd
+                    .get(ACTION_LOG)
+                    .expect("command type matched but didn't contain the expected value");
+                if let Some(line) = line.take() {
+                    state.add_log_line(line);
                 }
                 Handled::Yes
             }

@@ -1,10 +1,11 @@
 use druid::im::Vector;
 use druid::widget::{
-    Align, Button, CrossAxisAlignment, Flex, Label, List, MainAxisAlignment, Maybe, Scroll, Split,
-    TextBox, ViewSwitcher,
+    Align, Button, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment, Maybe,
+    Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
 use druid::{
-    lens, FileDialogOptions, FileSpec, Insets, LensExt, SingleUse, Widget, WidgetExt, WindowDesc,
+    lens, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, LensExt, SingleUse,
+    Widget, WidgetExt, WindowDesc,
 };
 
 use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
@@ -261,9 +262,25 @@ fn build_main() -> impl Widget<State> {
     )
 }
 
+fn build_log_view() -> impl Widget<State> {
+    let font = FontDescriptor::new(FontFamily::MONOSPACE);
+    let label = Label::raw()
+        .with_font(font)
+        .with_line_break_mode(LineBreaking::WordWrap)
+        .lens(State::log);
+
+    SizedBox::new(label)
+        .expand_width()
+        .height(128.0)
+        .scroll()
+        .vertical()
+}
+
 fn build_window() -> impl Widget<State> {
+    // TODO: Add  borders between the sections
     Flex::column()
         .must_fill_main_axis(true)
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
+        .with_child(build_log_view())
 }
