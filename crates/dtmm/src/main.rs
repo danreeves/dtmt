@@ -19,10 +19,12 @@ use druid::SingleUse;
 use druid::Target;
 use engine::delete_mod;
 use engine::import_mod;
+use engine::reset_mod_deployment;
 use serde::Deserialize;
 use serde::Serialize;
 use state::ACTION_FINISH_ADD_MOD;
 use state::ACTION_FINISH_DELETE_SELECTED_MOD;
+use state::ACTION_FINISH_RESET_DEPLOYMENT;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
@@ -100,6 +102,17 @@ fn work_thread(
                             SingleUse::new(info),
                             Target::Auto,
                         )
+                        .expect("failed to send command");
+                }),
+                AsyncAction::ResetDeployment(state) => tokio::spawn(async move {
+                    if let Err(err) = reset_mod_deployment(state).await {
+                        tracing::error!("Failed to reset mod deployment: {:?}", err);
+                    }
+
+                    event_sink
+                        .write()
+                        .await
+                        .submit_command(ACTION_FINISH_RESET_DEPLOYMENT, (), Target::Auto)
                         .expect("failed to send command");
                 }),
             };

@@ -7,7 +7,7 @@ use druid::{
     lens, FileDialogOptions, FileSpec, Insets, LensExt, SingleUse, Widget, WidgetExt, WindowDesc,
 };
 
-use crate::state::{ModInfo, PathBufFormatter, State, View};
+use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
 use crate::state::{
     ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
@@ -60,9 +60,11 @@ fn build_top_bar() -> impl Widget<State> {
                 )
                 .with_default_spacer()
                 .with_child(
-                    Button::new("Run Game").on_click(|_ctx, _state: &mut State, _env| {
-                        todo!();
-                    }),
+                    Button::new("Reset Mods")
+                        .on_click(|ctx, _state: &mut State, _env| {
+                            ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
+                        })
+                        .disabled_if(|data, _| !data.can_reset_deployment()),
                 ),
         )
         .padding(theme::TOP_BAR_INSETS)

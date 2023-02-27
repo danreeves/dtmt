@@ -548,6 +548,37 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 }
 
 #[tracing::instrument(skip(state))]
+pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
+    let paths = [BUNDLE_DATABASE_NAME, BOOT_BUNDLE_NAME];
+    let bundle_dir = state.get_game_dir().join("bundle");
+
+    tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
+
+    for p in paths {
+        let path = bundle_dir.join(p);
+        let backup = bundle_dir.join(&format!("{}.bak", p));
+
+        tracing::debug!(
+            "Copying from backup: {} -> {}",
+            backup.display(),
+            path.display()
+        );
+
+        fs::copy(&backup, &path)
+            .await
+            .wrap_err_with(|| format!("failed to '{}' restore from backup", p))?;
+
+        tracing::debug!("Deleting backup: {}", backup.display(),);
+
+        fs::remove_file(&backup)
+            .await
+            .wrap_err_with(|| format!("failed to remove  backup '{}'", p))?;
+    }
+
+    Ok(())
+}
+
+#[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
     let data = fs::read(&info.path)
         .await

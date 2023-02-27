@@ -24,6 +24,11 @@ pub(crate) const ACTION_FINISH_DELETE_SELECTED_MOD: Selector<SingleUse<ModInfo>>
 pub(crate) const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
 pub(crate) const ACTION_FINISH_DEPLOY: Selector = Selector::new("dtmm.action.finish-deploy");
 
+pub(crate) const ACTION_START_RESET_DEPLOYMENT: Selector =
+    Selector::new("dtmm.action.start-reset-deployment");
+pub(crate) const ACTION_FINISH_RESET_DEPLOYMENT: Selector =
+    Selector::new("dtmm.action.finish-reset-deployment");
+
 pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action.add-mod");
 pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<ModInfo>> =
     Selector::new("dtmm.action.finish-add-mod");
@@ -145,6 +150,7 @@ pub(crate) struct State {
     mods: Vector<ModInfo>,
     selected_mod_index: Option<usize>,
     is_deployment_in_progress: bool,
+    is_reset_in_progress: bool,
     game_dir: Arc<PathBuf>,
     data_dir: Arc<PathBuf>,
     ctx: Arc<sdk::Context>,
@@ -163,6 +169,7 @@ impl State {
             mods: Vector::new(),
             selected_mod_index: None,
             is_deployment_in_progress: false,
+            is_reset_in_progress: false,
             game_dir: Arc::new(config.game_dir.unwrap_or_default()),
             data_dir: Arc::new(config.data_dir.unwrap_or_default()),
         }
@@ -206,6 +213,10 @@ impl State {
 
     pub fn can_deploy_mods(&self) -> bool {
         !self.is_deployment_in_progress
+    }
+
+    pub fn can_reset_deployment(&self) -> bool {
+        !self.is_reset_in_progress
     }
 
     pub(crate) fn get_game_dir(&self) -> &PathBuf {
@@ -292,6 +303,7 @@ impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {
 
 pub(crate) enum AsyncAction {
     DeployMods(State),
+    ResetDeployment(State),
     AddMod((State, FileInfo)),
     DeleteMod((State, ModInfo)),
 }
@@ -332,6 +344,23 @@ impl AppDelegate<State> for Delegate {
             }
             cmd if cmd.is(ACTION_FINISH_DEPLOY) => {
                 state.is_deployment_in_progress = false;
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_START_RESET_DEPLOYMENT) => {
+                if self
+                    .sender
+                    .send(AsyncAction::ResetDeployment(state.clone()))
+                    .is_ok()
+                {
+                    state.is_reset_in_progress = true;
+                } else {
+                    tracing::error!("Failed to queue action to reset mod deployment");
+                }
+
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_RESET_DEPLOYMENT) => {
+                state.is_reset_in_progress = false;
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_SELECT_MOD) => {
