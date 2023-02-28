@@ -5,7 +5,7 @@ use druid::widget::{
 };
 use druid::{
     lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, Key, LensExt,
-    SingleUse, Widget, WidgetExt, WindowDesc,
+    SingleUse, TextAlignment, Widget, WidgetExt, WindowDesc,
 };
 
 use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
@@ -18,8 +18,8 @@ use crate::ui::widget::controller::AutoScrollController;
 use crate::ui::widget::ExtraWidgetExt;
 
 const TITLE: &str = "Darktide Mod Manager";
-const WINDOW_SIZE: (f64, f64) = (800.0, 600.0);
-const MOD_DETAILS_MIN_WIDTH: f64 = 325.0;
+const WINDOW_SIZE: (f64, f64) = (1080., 720.);
+const MOD_DETAILS_MIN_WIDTH: f64 = 325.;
 
 const KEY_MOD_LIST_ITEM_BG_COLOR: Key<Color> = Key::new("dtmm.mod-list.item.background-color");
 
@@ -124,19 +124,7 @@ fn build_mod_list() -> impl Widget<State> {
         .with_flex_child(scroll, 1.0)
 }
 
-fn build_mod_details() -> impl Widget<State> {
-    let details_container = Maybe::new(
-        || {
-            Flex::column()
-                .cross_axis_alignment(CrossAxisAlignment::Start)
-                .with_child(Label::raw().lens(ModInfo::name))
-                .with_flex_child(Label::raw().lens(ModInfo::description), 1.0)
-        },
-        Flex::column,
-    )
-    .padding(Insets::uniform_xy(5.0, 1.0))
-    .lens(State::selected_mod);
-
+fn build_mod_details_buttons() -> impl Widget<State> {
     let button_move_up = Button::new("Move Up")
         .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_SELECTED_MOD_UP))
         .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_up());
@@ -187,15 +175,16 @@ fn build_mod_details() -> impl Widget<State> {
         .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
         .lens(State::selected_mod);
 
-    let buttons = Flex::column()
+    Flex::column()
+        .cross_axis_alignment(CrossAxisAlignment::Center)
         .with_child(
             Flex::row()
                 .main_axis_alignment(MainAxisAlignment::End)
                 .with_child(button_move_up)
                 .with_default_spacer()
-                .with_child(button_move_down)
-                .padding(Insets::uniform_xy(5.0, 2.0)),
+                .with_child(button_move_down),
         )
+        .with_default_spacer()
         .with_child(
             Flex::row()
                 .main_axis_alignment(MainAxisAlignment::End)
@@ -203,16 +192,45 @@ fn build_mod_details() -> impl Widget<State> {
                 .with_default_spacer()
                 .with_child(button_add_mod)
                 .with_default_spacer()
-                .with_child(button_delete_mod)
-                .padding(Insets::uniform_xy(5.0, 2.0)),
+                .with_child(button_delete_mod),
         )
-        .with_default_spacer();
+        .expand_width()
+}
 
+fn build_mod_details_info() -> impl Widget<State> {
+    Maybe::new(
+        || {
+            let name = Label::raw()
+                .with_text_alignment(TextAlignment::Center)
+                .with_text_size(24.)
+                // Force the label to take up the entire details' pane width,
+                // so that we can center-align it.
+                .expand_width()
+                .lens(ModInfo::name);
+            let description = Label::raw()
+                .with_line_break_mode(LineBreaking::WordWrap)
+                .lens(ModInfo::description);
+
+            Flex::column()
+                .cross_axis_alignment(CrossAxisAlignment::Start)
+                .main_axis_alignment(MainAxisAlignment::Start)
+                .with_child(name)
+                .with_spacer(4.)
+                .with_child(description)
+        },
+        Flex::column,
+    )
+    .padding((4., 4.))
+    .lens(State::selected_mod)
+}
+
+fn build_mod_details() -> impl Widget<State> {
     Flex::column()
         .must_fill_main_axis(true)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .with_flex_child(details_container, 1.0)
-        .with_child(buttons)
+        .with_flex_child(build_mod_details_info(), 1.0)
+        .with_child(build_mod_details_buttons().padding(4.))
 }
 
 fn build_view_mods() -> impl Widget<State> {
