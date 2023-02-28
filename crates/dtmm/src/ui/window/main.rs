@@ -295,6 +295,7 @@ fn build_log_view() -> impl Widget<State> {
         .with_font(font)
         .with_line_break_mode(LineBreaking::WordWrap)
         .lens(State::log)
+        .padding(4.)
         .scroll()
         .vertical()
         .controller(AutoScrollController);
