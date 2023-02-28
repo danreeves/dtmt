@@ -93,7 +93,7 @@ where
 #[tracing::instrument(skip_all)]
 async fn patch_game_settings(state: Arc<State>) -> Result<()> {
     let settings_path = state
-        .get_game_dir()
+        .game_dir
         .join("bundle/application_settings/settings_common.ini");
 
     let settings = read_file_with_backup(&settings_path)
@@ -121,11 +121,11 @@ async fn patch_game_settings(state: Arc<State>) -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument(skip_all, fields(package = info.get_name()))]
+#[tracing::instrument(skip_all, fields(package = info.name))]
 fn make_package(info: &PackageInfo) -> Result<Package> {
-    let mut pkg = Package::new(info.get_name().clone(), PathBuf::new());
+    let mut pkg = Package::new(info.name.clone(), PathBuf::new());
 
-    for f in info.get_files().iter() {
+    for f in &info.files {
         let mut it = f.rsplit('.');
         let file_type = it
             .next()
@@ -144,32 +144,28 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 
     // DMF is handled explicitely by the loading procedures, as it actually drives most of that
     // and should therefore not show up in the load order.
-    for mod_info in state
-        .get_mods()
-        .iter()
-        .filter(|m| m.get_id() != "dml" && m.get_enabled())
-    {
+    for mod_info in state.mods.iter().filter(|m| m.id != "dml" && m.enabled) {
         lua.push_str("    {\n        name = \"");
-        lua.push_str(mod_info.get_name());
+        lua.push_str(&mod_info.name);
 
         lua.push_str("\",\n        id = \"");
-        lua.push_str(mod_info.get_id());
+        lua.push_str(&mod_info.id);
 
         lua.push_str("\",\n        run = function()\n");
 
-        let resources = mod_info.get_resources();
-        if resources.get_data().is_some() || resources.get_localization().is_some() {
+        let resources = &mod_info.resources;
+        if resources.data.is_some() || resources.localization.is_some() {
             lua.push_str("            new_mod(\"");
-            lua.push_str(mod_info.get_id());
+            lua.push_str(&mod_info.id);
             lua.push_str("\", {\n                init = \"");
-            lua.push_str(&resources.get_init().to_string_lossy());
+            lua.push_str(&resources.init.to_string_lossy());
 
-            if let Some(data) = resources.get_data() {
+            if let Some(data) = resources.data.as_ref() {
                 lua.push_str("\",\n                data = \"");
                 lua.push_str(&data.to_string_lossy());
             }
 
-            if let Some(localization) = resources.get_localization() {
+            if let Some(localization) = &resources.localization {
                 lua.push_str("\",\n                localization = \"");
                 lua.push_str(&localization.to_string_lossy());
             }
@@ -177,15 +173,15 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
             lua.push_str("\",\n            })\n");
         } else {
             lua.push_str("            return dofile(\"");
-            lua.push_str(&resources.get_init().to_string_lossy());
+            lua.push_str(&resources.init.to_string_lossy());
             lua.push_str("\")\n");
         }
 
         lua.push_str("        end,\n        packages = {\n");
 
-        for pkg_info in mod_info.get_packages() {
+        for pkg_info in &mod_info.packages {
             lua.push_str("            \"");
-            lua.push_str(pkg_info.get_name());
+            lua.push_str(&pkg_info.name);
             lua.push_str("\",\n");
         }
 
@@ -201,10 +197,10 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 
 #[tracing::instrument(skip_all)]
 async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
-    let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME);
+    let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME.to_string());
     let mut tasks = Vec::new();
 
-    let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
+    let bundle_dir = Arc::new(state.game_dir.join("bundle"));
 
     let mut bundles = Vec::new();
 
@@ -220,17 +216,13 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
         mod_bundle.add_file(file);
     }
 
-    for mod_info in state
-        .get_mods()
-        .iter()
-        .filter(|m| m.get_id() != "dml" && m.get_enabled())
-    {
-        let span = tracing::trace_span!("building mod packages", name = mod_info.get_name());
+    for mod_info in state.mods.iter().filter(|m| m.id != "dml" && m.enabled) {
+        let span = tracing::trace_span!("building mod packages", name = mod_info.name);
         let _enter = span.enter();
 
-        let mod_dir = state.get_mod_dir().join(mod_info.get_id());
-        for pkg_info in mod_info.get_packages() {
-            let span = tracing::trace_span!("building package", name = pkg_info.get_name());
+        let mod_dir = state.get_mod_dir().join(&mod_info.id);
+        for pkg_info in &mod_info.packages {
+            let span = tracing::trace_span!("building package", name = pkg_info.name);
             let _enter = span.enter();
 
             let pkg = make_package(pkg_info).wrap_err("failed to make package")?;
@@ -239,24 +231,24 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
                 .to_binary()
                 .wrap_err("failed to serialize package to binary")?;
             variant.set_data(bin);
-            let mut file = BundleFile::new(pkg_info.get_name().clone(), BundleFileType::Package);
+            let mut file = BundleFile::new(pkg_info.name.clone(), BundleFileType::Package);
             file.add_variant(variant);
 
             mod_bundle.add_file(file);
 
-            let bundle_name = Murmur64::hash(pkg_info.get_name())
+            let bundle_name = Murmur64::hash(&pkg_info.name)
                 .to_string()
                 .to_ascii_lowercase();
             let src = mod_dir.join(&bundle_name);
             let dest = bundle_dir.join(&bundle_name);
-            let pkg_name = pkg_info.get_name().clone();
-            let mod_name = mod_info.get_name().clone();
+            let pkg_name = pkg_info.name.clone();
+            let mod_name = mod_info.name.clone();
 
             // Explicitely drop the guard, so that we can move the span
             // into the async operation
             drop(_enter);
 
-            let ctx = state.get_ctx().clone();
+            let ctx = state.ctx.clone();
 
             let task = async move {
                 let bundle = {
@@ -322,7 +314,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
 
 #[tracing::instrument(skip_all)]
 async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
-    let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
+    let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
     let mut bundles = Vec::with_capacity(2);
@@ -332,7 +324,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
             .await
             .wrap_err("failed to read boot bundle")?;
 
-        Bundle::from_binary(&state.get_ctx(), BOOT_BUNDLE_NAME.to_string(), bin)
+        Bundle::from_binary(&state.ctx, BOOT_BUNDLE_NAME.to_string(), bin)
             .wrap_err("failed to parse boot bundle")
     }
     .instrument(tracing::trace_span!("read boot bundle"))
@@ -346,9 +338,9 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 
         let mut pkg = Package::new(MOD_BUNDLE_NAME.to_string(), PathBuf::new());
 
-        for mod_info in state.get_mods() {
-            for pkg_info in mod_info.get_packages() {
-                pkg.add_file(BundleFileType::Package, pkg_info.get_name());
+        for mod_info in &state.mods {
+            for pkg_info in &mod_info.packages {
+                pkg.add_file(BundleFileType::Package, &pkg_info.name);
             }
         }
 
@@ -369,32 +361,28 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 
         let mut variant = BundleFileVariant::new();
 
-        let mods = state.get_mods();
-        let mod_info = mods
+        let mod_info = state
+            .mods
             .iter()
-            .find(|m| m.get_id() == "dml")
+            .find(|m| m.id == "dml")
             .ok_or_else(|| eyre::eyre!("DML not found in mod list"))?;
         let pkg_info = mod_info
-            .get_packages()
+            .packages
             .get(0)
             .ok_or_else(|| eyre::eyre!("invalid mod package for DML"))
             .with_suggestion(|| "Re-download and import the newest version.".to_string())?;
-        let bundle_name = Murmur64::hash(pkg_info.get_name())
+        let bundle_name = Murmur64::hash(&pkg_info.name)
             .to_string()
             .to_ascii_lowercase();
-        let src = state
-            .get_mod_dir()
-            .join(mod_info.get_id())
-            .join(&bundle_name);
+        let src = state.get_mod_dir().join(&mod_info.id).join(&bundle_name);
 
         {
-            let ctx = state.get_ctx();
             let bin = fs::read(&src)
                 .await
                 .wrap_err_with(|| format!("failed to read bundle file '{}'", src.display()))?;
-            let name = Bundle::get_name_from_path(&ctx, &src);
+            let name = Bundle::get_name_from_path(&state.ctx, &src);
 
-            let dml_bundle = Bundle::from_binary(&ctx, name, bin)
+            let dml_bundle = Bundle::from_binary(&state.ctx, name, bin)
                 .wrap_err_with(|| format!("failed to parse bundle '{}'", src.display()))?;
 
             bundles.push(dml_bundle);
@@ -402,8 +390,8 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 
         {
             let dest = bundle_dir.join(&bundle_name);
-            let pkg_name = pkg_info.get_name().clone();
-            let mod_name = mod_info.get_name().clone();
+            let pkg_name = pkg_info.name.clone();
+            let mod_name = mod_info.name.clone();
 
             tracing::debug!(
                 "Copying bundle {} for mod {}: {} -> {}",
@@ -441,7 +429,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
         let span = tracing::debug_span!("Importing mod main script");
         let _enter = span.enter();
 
-        let lua = include_str!("../assets/mod_main.lua");
+        let lua = include_str!("../../assets/mod_main.lua");
         let lua = CString::new(lua).wrap_err("failed to build CString from mod main Lua string")?;
         let file =
             lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("failed to compile mod main Lua file")?;
@@ -467,7 +455,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.len()))]
 async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Result<()> {
-    let bundle_dir = Arc::new(state.get_game_dir().join("bundle"));
+    let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let database_path = bundle_dir.join(BUNDLE_DATABASE_NAME);
 
     let mut db = {
@@ -501,16 +489,15 @@ async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Resul
 }
 
 #[tracing::instrument(skip_all, fields(
-    game_dir = %state.get_game_dir().display(),
-    mods = state.get_mods().len()
+    game_dir = %state.game_dir.display(),
+    mods = state.mods.len()
 ))]
 pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     let state = Arc::new(state);
 
     {
-        let mods = state.get_mods();
-        let first = mods.get(0);
-        if first.is_none() || !(first.unwrap().get_id() == "dml" && first.unwrap().get_enabled()) {
+        let first = state.mods.get(0);
+        if first.is_none() || !(first.unwrap().id == "dml" && first.unwrap().enabled) {
             // TODO: Add a suggestion where to get it, once that's published
             eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
         }
@@ -518,8 +505,8 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 
     tracing::info!(
         "Deploying {} mods to {}",
-        state.get_mods().len(),
-        state.get_game_dir().join("bundle").display()
+        state.mods.len(),
+        state.game_dir.join("bundle").display()
     );
 
     tracing::info!("Build mod bundles");
@@ -550,7 +537,7 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 #[tracing::instrument(skip(state))]
 pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
     let paths = [BUNDLE_DATABASE_NAME, BOOT_BUNDLE_NAME];
-    let bundle_dir = state.get_game_dir().join("bundle");
+    let bundle_dir = state.game_dir.join("bundle");
 
     tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
 
@@ -664,7 +651,7 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
-    let mod_dir = state.get_mod_dir().join(info.get_id());
+    let mod_dir = state.get_mod_dir().join(&info.id);
     fs::remove_dir_all(&mod_dir)
         .await
         .wrap_err_with(|| format!("failed to remove directory {}", mod_dir.display()))?;

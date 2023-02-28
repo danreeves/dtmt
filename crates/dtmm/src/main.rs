@@ -12,24 +12,25 @@ use color_eyre::{Report, Result};
 use druid::AppLauncher;
 use tokio::sync::RwLock;
 
+use crate::controller::worker::work_thread;
 use crate::state::{Delegate, State};
-use crate::worker::work_thread;
 
-mod controller;
-mod engine;
-mod log;
-mod main_window;
+mod controller {
+    pub mod engine;
+    pub mod worker;
+}
 mod state;
-mod theme;
-mod util;
-mod widget;
-mod worker;
+mod util {
+    pub mod config;
+    pub mod log;
+}
+mod ui;
 
 #[tracing::instrument]
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let default_config_path = util::get_default_config_path();
+    let default_config_path = util::config::get_default_config_path();
 
     tracing::trace!(default_config_path = %default_config_path.display());
 
@@ -51,21 +52,21 @@ fn main() -> Result<()> {
         .get_matches();
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    log::create_tracing_subscriber(log_tx);
+    util::log::create_tracing_subscriber(log_tx);
 
     unsafe {
         oodle_sys::init(matches.get_one::<String>("oodle"));
     }
 
-    let config =
-        util::read_config(&default_config_path, &matches).wrap_err("failed to read config file")?;
+    let config = util::config::read_config(&default_config_path, &matches)
+        .wrap_err("failed to read config file")?;
 
     let initial_state = State::new(config);
 
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
     let delegate = Delegate::new(action_tx);
 
-    let launcher = AppLauncher::with_window(main_window::new()).delegate(delegate);
+    let launcher = AppLauncher::with_window(ui::window::main::new()).delegate(delegate);
 
     let event_sink = launcher.get_external_handle();
     std::thread::spawn(move || {

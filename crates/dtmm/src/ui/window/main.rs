@@ -13,8 +13,8 @@ use crate::state::{
     ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
 };
-use crate::theme;
-use crate::widget::ExtraWidgetExt;
+use crate::ui::theme;
+use crate::ui::widget::ExtraWidgetExt;
 
 const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (800.0, 600.0);
@@ -33,21 +33,19 @@ fn build_top_bar() -> impl Widget<State> {
         .with_child(
             Flex::row()
                 .with_child(
-                    Button::new("Mods").on_click(|_ctx, state: &mut State, _env| {
-                        state.set_current_view(View::Mods)
-                    }),
+                    Button::new("Mods")
+                        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods),
                 )
                 .with_default_spacer()
                 .with_child(
                     Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
-                        state.set_current_view(View::Settings)
+                        state.current_view = View::Settings;
                     }),
                 )
                 .with_default_spacer()
                 .with_child(
-                    Button::new("About").on_click(|_ctx, state: &mut State, _env| {
-                        state.set_current_view(View::About)
-                    }),
+                    Button::new("About")
+                        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::About),
                 ),
         )
         .with_child(
@@ -57,7 +55,7 @@ fn build_top_bar() -> impl Widget<State> {
                         .on_click(|ctx, _state: &mut State, _env| {
                             ctx.submit_command(ACTION_START_DEPLOY);
                         })
-                        .disabled_if(|data, _| !data.can_deploy_mods()),
+                        .disabled_if(|data, _| !data.is_deployment_in_progress),
                 )
                 .with_default_spacer()
                 .with_child(
@@ -65,7 +63,7 @@ fn build_top_bar() -> impl Widget<State> {
                         .on_click(|ctx, _state: &mut State, _env| {
                             ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
                         })
-                        .disabled_if(|data, _| !data.can_reset_deployment()),
+                        .disabled_if(|data, _| !data.is_reset_in_progress),
                 ),
         )
         .padding(theme::TOP_BAR_INSETS)
@@ -253,7 +251,7 @@ fn build_view_about() -> impl Widget<State> {
 
 fn build_main() -> impl Widget<State> {
     ViewSwitcher::new(
-        |state: &State, _env| state.get_current_view(),
+        |state: &State, _env| state.current_view,
         |selector, _state, _env| match selector {
             View::Mods => Box::new(build_view_mods()),
             View::Settings => Box::new(build_view_settings()),
