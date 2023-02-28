@@ -58,7 +58,9 @@ fn build_top_bar() -> impl Widget<State> {
                         .on_click(|ctx, _state: &mut State, _env| {
                             ctx.submit_command(ACTION_START_DEPLOY);
                         })
-                        .disabled_if(|data, _| !data.is_deployment_in_progress),
+                        .disabled_if(|data, _| {
+                            data.is_deployment_in_progress || data.is_reset_in_progress
+                        }),
                 )
                 .with_default_spacer()
                 .with_child(
@@ -66,7 +68,9 @@ fn build_top_bar() -> impl Widget<State> {
                         .on_click(|ctx, _state: &mut State, _env| {
                             ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
                         })
-                        .disabled_if(|data, _| !data.is_reset_in_progress),
+                        .disabled_if(|data, _| {
+                            data.is_deployment_in_progress || data.is_reset_in_progress
+                        }),
                 ),
         )
         .padding(theme::TOP_BAR_INSETS)
