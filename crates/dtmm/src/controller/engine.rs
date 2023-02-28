@@ -536,7 +536,8 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
-    let paths = [BUNDLE_DATABASE_NAME, BOOT_BUNDLE_NAME];
+    let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
+    let paths = [BUNDLE_DATABASE_NAME, &boot_bundle_path];
     let bundle_dir = state.game_dir.join("bundle");
 
     tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
@@ -545,22 +546,35 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
         let path = bundle_dir.join(p);
         let backup = bundle_dir.join(&format!("{}.bak", p));
 
-        tracing::debug!(
-            "Copying from backup: {} -> {}",
-            backup.display(),
-            path.display()
-        );
+        let res = async {
+            tracing::debug!(
+                "Copying from backup: {} -> {}",
+                backup.display(),
+                path.display()
+            );
 
-        fs::copy(&backup, &path)
-            .await
-            .wrap_err_with(|| format!("failed to '{}' restore from backup", p))?;
+            fs::copy(&backup, &path)
+                .await
+                .wrap_err_with(|| format!("failed to copy from '{}'", backup.display()))?;
 
-        tracing::debug!("Deleting backup: {}", backup.display(),);
+            tracing::debug!("Deleting backup: {}", backup.display());
 
-        fs::remove_file(&backup)
-            .await
-            .wrap_err_with(|| format!("failed to remove  backup '{}'", p))?;
+            fs::remove_file(&backup)
+                .await
+                .wrap_err_with(|| format!("failed to remove '{}'", backup.display()))
+        }
+        .await;
+
+        if let Err(err) = res {
+            tracing::error!(
+                "Failed to restore '{}' from backup. You may need to verify game files. Error: {:?}",
+                &p,
+                err
+            );
+        }
     }
+
+    tracing::info!("Reset finished");
 
     Ok(())
 }
