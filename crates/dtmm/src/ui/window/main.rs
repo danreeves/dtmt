@@ -265,13 +265,11 @@ fn build_log_view() -> impl Widget<State> {
     let label = Label::raw()
         .with_font(font)
         .with_line_break_mode(LineBreaking::WordWrap)
-        .lens(State::log);
-
-    SizedBox::new(label)
-        .expand_width()
-        .height(128.0)
+        .lens(State::log)
         .scroll()
-        .vertical()
+        .vertical();
+
+    SizedBox::new(label).expand_width().height(128.0)
 }
 
 fn build_window() -> impl Widget<State> {
