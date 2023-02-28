@@ -156,16 +156,16 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
         if resources.data.is_some() || resources.localization.is_some() {
             lua.push_str("            new_mod(\"");
             lua.push_str(&mod_info.id);
-            lua.push_str("\", {\n                init = \"");
+            lua.push_str("\", {\n                mod_script = \"");
             lua.push_str(&resources.init.to_string_lossy());
 
             if let Some(data) = resources.data.as_ref() {
-                lua.push_str("\",\n                data = \"");
+                lua.push_str("\",\n                mod_data = \"");
                 lua.push_str(&data.to_string_lossy());
             }
 
             if let Some(localization) = &resources.localization {
-                lua.push_str("\",\n                localization = \"");
+                lua.push_str("\",\n                mod_localization = \"");
                 lua.push_str(&localization.to_string_lossy());
             }
 
