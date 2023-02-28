@@ -4,8 +4,8 @@ use druid::widget::{
     Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
 use druid::{
-    lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, Key, LensExt,
-    SingleUse, TextAlignment, Widget, WidgetExt, WindowDesc,
+    lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
+    TextAlignment, Widget, WidgetExt, WindowDesc,
 };
 
 use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
@@ -15,7 +15,6 @@ use crate::state::{
 };
 use crate::ui::theme;
 use crate::ui::widget::controller::AutoScrollController;
-use crate::ui::widget::ExtraWidgetExt;
 
 const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (1080., 720.);
@@ -98,24 +97,21 @@ fn build_mod_list() -> impl Widget<State> {
             })
     });
 
-    let scroll = Scroll::new(list)
-        .vertical()
-        .lens(lens::Identity.map(
-            |state: &State| {
-                state
-                    .mods
-                    .iter()
-                    .enumerate()
-                    .map(|(i, val)| (i, val.clone(), Some(i) == state.selected_mod_index))
-                    .collect::<Vector<_>>()
-            },
-            |state, infos| {
-                infos.into_iter().for_each(|(i, info, _)| {
-                    state.mods.set(i, info);
-                });
-            },
-        ))
-        .content_must_fill();
+    let scroll = Scroll::new(list).vertical().lens(lens::Identity.map(
+        |state: &State| {
+            state
+                .mods
+                .iter()
+                .enumerate()
+                .map(|(i, val)| (i, val.clone(), Some(i) == state.selected_mod_index))
+                .collect::<Vector<_>>()
+        },
+        |state, infos| {
+            infos.into_iter().for_each(|(i, info, _)| {
+                state.mods.set(i, info);
+            });
+        },
+    ));
 
     Flex::column()
         .must_fill_main_axis(true)
@@ -242,29 +238,45 @@ fn build_view_mods() -> impl Widget<State> {
 }
 
 fn build_view_settings() -> impl Widget<State> {
-    let game_dir_setting = Flex::row()
-        .main_axis_alignment(MainAxisAlignment::Start)
-        .with_child(Label::new("Game Directory:"))
-        .with_default_spacer()
-        .with_child(
-            TextBox::new()
-                .with_formatter(PathBufFormatter::new())
-                .lens(State::game_dir),
-        );
     let data_dir_setting = Flex::row()
+        .must_fill_main_axis(true)
         .main_axis_alignment(MainAxisAlignment::Start)
         .with_child(Label::new("Data Directory:"))
         .with_default_spacer()
-        .with_child(
+        .with_flex_child(
             TextBox::new()
                 .with_formatter(PathBufFormatter::new())
+                .expand_width()
                 .lens(State::data_dir),
-        );
+            1.,
+        )
+        .expand_width();
 
-    Flex::column()
+    let game_dir_setting = Flex::row()
+        .must_fill_main_axis(true)
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Game Directory:"))
+        .with_default_spacer()
+        .with_flex_child(
+            TextBox::new()
+                .with_formatter(PathBufFormatter::new())
+                .expand_width()
+                .lens(State::game_dir),
+            1.,
+        )
+        .expand_width();
+
+    let content = Flex::column()
+        .must_fill_main_axis(true)
+        .cross_axis_alignment(CrossAxisAlignment::Start)
         .with_child(data_dir_setting)
-        .with_child(game_dir_setting)
-        .padding(Insets::uniform(5.0))
+        .with_default_spacer()
+        .with_child(game_dir_setting);
+
+    SizedBox::new(content)
+        .width(800.)
+        .expand_height()
+        .padding(5.)
 }
 
 fn build_main() -> impl Widget<State> {
