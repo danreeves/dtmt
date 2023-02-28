@@ -1,11 +1,11 @@
 use druid::im::Vector;
 use druid::widget::{
-    Align, Button, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment, Maybe,
-    Scroll, SizedBox, Split, TextBox, ViewSwitcher,
+    Align, Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List,
+    MainAxisAlignment, Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
 use druid::{
-    lens, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, LensExt, SingleUse,
-    Widget, WidgetExt, WindowDesc,
+    lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, Key, LensExt,
+    SingleUse, Widget, WidgetExt, WindowDesc,
 };
 
 use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
@@ -20,6 +20,8 @@ use crate::ui::widget::ExtraWidgetExt;
 const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (800.0, 600.0);
 const MOD_DETAILS_MIN_WIDTH: f64 = 325.0;
+
+const KEY_MOD_LIST_ITEM_BG_COLOR: Key<Color> = Key::new("dtmm.mod-list.item.background-color");
 
 pub(crate) fn new() -> WindowDesc<State> {
     WindowDesc::new(build_window())
@@ -75,34 +77,42 @@ fn build_top_bar() -> impl Widget<State> {
 
 fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
+        let checkbox =
+            Checkbox::new("").lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::enabled));
+        let name = Label::raw().lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::name));
+
         Flex::row()
             .must_fill_main_axis(true)
-            .with_child(
-                Label::dynamic(|enabled, _env| {
-                    if *enabled {
-                        "Enabled".into()
-                    } else {
-                        "Disabled".into()
-                    }
-                })
-                .lens(lens!((usize, ModInfo), 1).then(ModInfo::enabled)),
-            )
-            .with_child(Label::raw().lens(lens!((usize, ModInfo), 1).then(ModInfo::name)))
-            .on_click(|ctx, (i, _info), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))
+            .with_child(checkbox)
+            .with_child(name)
+            .padding((5.0, 4.0))
+            .background(KEY_MOD_LIST_ITEM_BG_COLOR)
+            .on_click(|ctx, (i, _, _), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))
+            .env_scope(|env, (i, _, selected)| {
+                if *selected {
+                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::NAVY);
+                } else if (i % 2) == 1 {
+                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::WHITE.with_alpha(0.05));
+                } else {
+                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::TRANSPARENT);
+                }
+            })
     });
 
     let scroll = Scroll::new(list)
         .vertical()
-        .lens(State::mods.map(
-            |mods| {
-                mods.iter()
+        .lens(lens::Identity.map(
+            |state: &State| {
+                state
+                    .mods
+                    .iter()
                     .enumerate()
-                    .map(|(i, val)| (i, val.clone()))
+                    .map(|(i, val)| (i, val.clone(), Some(i) == state.selected_mod_index))
                     .collect::<Vector<_>>()
             },
-            |mods, infos| {
-                infos.into_iter().for_each(|(i, info)| {
-                    mods.set(i, info);
+            |state, infos| {
+                infos.into_iter().for_each(|(i, info, _)| {
+                    state.mods.set(i, info);
                 });
             },
         ))
