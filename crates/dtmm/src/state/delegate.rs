@@ -134,10 +134,8 @@ impl AppDelegate<State> for Delegate {
                 if self
                     .sender
                     .send(AsyncAction::DeleteMod((state.clone(), info)))
-                    .is_ok()
+                    .is_err()
                 {
-                    state.is_deployment_in_progress = true;
-                } else {
                     tracing::error!("Failed to queue action to deploy mods");
                 }
 
@@ -160,11 +158,12 @@ impl AppDelegate<State> for Delegate {
                 let info = cmd
                     .get(ACTION_ADD_MOD)
                     .expect("command type matched but didn't contain the expected value");
-                if let Err(err) = self
+                if self
                     .sender
                     .send(AsyncAction::AddMod((state.clone(), info.clone())))
+                    .is_err()
                 {
-                    tracing::error!("Failed to add mod: {}", err);
+                    tracing::error!("Failed to queue action to add mod");
                 }
                 Handled::Yes
             }
