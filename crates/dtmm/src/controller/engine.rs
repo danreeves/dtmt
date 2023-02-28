@@ -30,6 +30,7 @@ const DML_BUNDLE_NAME: &str = "packages/dml";
 const BUNDLE_DATABASE_NAME: &str = "bundle_database.data";
 const MOD_BOOT_SCRIPT: &str = "scripts/mod_main";
 const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
+const SETTINGS_FILE_PATH: &str = "application_settings/settings_common.ini";
 
 #[tracing::instrument]
 async fn read_file_with_backup<P>(path: P) -> Result<Vec<u8>>
@@ -92,9 +93,7 @@ where
 
 #[tracing::instrument(skip_all)]
 async fn patch_game_settings(state: Arc<State>) -> Result<()> {
-    let settings_path = state
-        .game_dir
-        .join("bundle/application_settings/settings_common.ini");
+    let settings_path = state.game_dir.join("bundle").join(SETTINGS_FILE_PATH);
 
     let settings = read_file_with_backup(&settings_path)
         .await
@@ -537,7 +536,7 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 #[tracing::instrument(skip(state))]
 pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
     let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
-    let paths = [BUNDLE_DATABASE_NAME, &boot_bundle_path];
+    let paths = [BUNDLE_DATABASE_NAME, &boot_bundle_path, SETTINGS_FILE_PATH];
     let bundle_dir = state.game_dir.join("bundle");
 
     tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
