@@ -14,6 +14,7 @@ use crate::state::{
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
 };
 use crate::ui::theme;
+use crate::ui::widget::controller::AutoScrollController;
 use crate::ui::widget::ExtraWidgetExt;
 
 const TITLE: &str = "Darktide Mod Manager";
@@ -267,7 +268,8 @@ fn build_log_view() -> impl Widget<State> {
         .with_line_break_mode(LineBreaking::WordWrap)
         .lens(State::log)
         .scroll()
-        .vertical();
+        .vertical()
+        .controller(AutoScrollController);
 
     SizedBox::new(label).expand_width().height(128.0)
 }
