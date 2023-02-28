@@ -1,7 +1,7 @@
 use druid::im::Vector;
 use druid::widget::{
-    Align, Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List,
-    MainAxisAlignment, Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
+    Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment,
+    Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
 use druid::{
     lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Insets, Key, LensExt,
@@ -44,11 +44,6 @@ fn build_top_bar() -> impl Widget<State> {
                     Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
                         state.current_view = View::Settings;
                     }),
-                )
-                .with_default_spacer()
-                .with_child(
-                    Button::new("About")
-                        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::About),
                 ),
         )
         .with_child(
@@ -272,23 +267,12 @@ fn build_view_settings() -> impl Widget<State> {
         .padding(Insets::uniform(5.0))
 }
 
-fn build_view_about() -> impl Widget<State> {
-    Align::centered(
-        Flex::column()
-            .with_child(Label::new("Darktide Mod Manager"))
-            .with_child(Label::new(
-                "Website: https://git.sclu1034.dev/bitsquid_dt/dtmt",
-            )),
-    )
-}
-
 fn build_main() -> impl Widget<State> {
     ViewSwitcher::new(
-        |state: &State, _env| state.current_view,
-        |selector, _state, _env| match selector {
+        |state: &State, _| state.current_view,
+        |selector, _, _| match selector {
             View::Mods => Box::new(build_view_mods()),
             View::Settings => Box::new(build_view_settings()),
-            View::About => Box::new(build_view_about()),
         },
     )
 }

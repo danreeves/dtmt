@@ -11,7 +11,6 @@ use super::SelectedModLens;
 pub(crate) enum View {
     Mods,
     Settings,
-    About,
 }
 
 impl Default for View {
