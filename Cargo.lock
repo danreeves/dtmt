@@ -2097,7 +2097,7 @@ dependencies = [
 
 [[package]]
 name = "serde_sjson"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "nom",
  "nom_locate",
