@@ -97,6 +97,7 @@ pub struct Package {
     _name: String,
     _root: PathBuf,
     inner: PackageType,
+    flags: u8,
 }
 
 impl Deref for Package {
@@ -114,6 +115,15 @@ impl DerefMut for Package {
 }
 
 impl Package {
+    pub fn new(name: String, root: PathBuf) -> Self {
+        Self {
+            _name: name,
+            _root: root,
+            inner: Default::default(),
+            flags: 1,
+        }
+    }
+
     fn len(&self) -> usize {
         self.values().fold(0, |total, files| total + files.len())
     }
@@ -171,6 +181,7 @@ impl Package {
             inner,
             _name: name,
             _root: root.to_path_buf(),
+            flags: 1,
         };
 
         Ok(pkg)
@@ -211,13 +222,25 @@ impl Package {
             let t = BundleFileType::from(r.read_u64()?);
             let hash = Murmur64::from(r.read_u64()?);
             let path = ctx.lookup_hash(hash, HashGroup::Filename);
-            inner.entry(t).or_default().insert(PathBuf::from(path));
+            inner
+                .entry(t)
+                .or_default()
+                .insert(PathBuf::from(path.display().to_string()));
+        }
+
+        let flags = r.read_u8()?;
+
+        if cfg!(debug_assertions) && flags != 1 {
+            tracing::warn!("Unexpected value for package flags: {:0x}", flags);
+        } else if (flags & 0xFE) >= 2 {
+            tracing::warn!("Resource Package has common packages. Ignoring.");
         }
 
         let pkg = Self {
             inner,
             _name: name,
             _root: PathBuf::new(),
+            flags,
         };
 
         Ok(pkg)
@@ -239,6 +262,8 @@ impl Package {
                 w.write_u64(hash.into())?;
             }
         }
+
+        w.write_u8(self.flags)?;
 
         Ok(w.into_inner())
     }

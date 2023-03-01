@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueEnum};
+use cli_table::{print_stdout, WithTitle};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
+use sdk::murmur::{IdString64, Murmur32, Murmur64};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio_stream::wrappers::LinesStream;
@@ -27,6 +29,40 @@ impl From<HashGroup> for sdk::murmur::HashGroup {
     }
 }
 
+impl std::fmt::Display for HashGroup {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HashGroup::Filename => write!(f, "filename"),
+            HashGroup::Filetype => write!(f, "filetype"),
+            HashGroup::Strings => write!(f, "strings"),
+            HashGroup::Other => write!(f, "other"),
+        }
+    }
+}
+
+#[derive(cli_table::Table)]
+struct TableRow {
+    #[table(title = "Value")]
+    value: String,
+    #[table(title = "Murmur64")]
+    long: Murmur64,
+    #[table(title = "Murmur32")]
+    short: Murmur32,
+    #[table(title = "Group")]
+    group: sdk::murmur::HashGroup,
+}
+
+impl From<&sdk::murmur::Entry> for TableRow {
+    fn from(entry: &sdk::murmur::Entry) -> Self {
+        Self {
+            value: entry.value().clone(),
+            long: entry.long(),
+            short: entry.short(),
+            group: entry.group(),
+        }
+    }
+}
+
 pub(crate) fn command_definition() -> Command {
     Command::new("dictionary")
         .about("Manipulate a hash dictionary file.")
@@ -43,7 +79,8 @@ pub(crate) fn command_definition() -> Command {
                         .short('g')
                         .long("group")
                         .action(ArgAction::Append)
-                        .value_parser(value_parser!(HashGroup)),
+                        .value_parser(value_parser!(HashGroup))
+                        .default_values(["other", "filename", "filetype", "strings"]),
                 ),
         )
         .subcommand(
@@ -67,6 +104,7 @@ pub(crate) fn command_definition() -> Command {
                         .value_parser(value_parser!(PathBuf)),
                 ),
         )
+        .subcommand(Command::new("show").about("Show the contents of the dictionary"))
         .subcommand(Command::new("save").about(
             "Save back the currently loaded dictionary, with hashes pre-computed. \
                 Pre-computing hashes speeds up loading large dictionaries, as they would \
@@ -78,17 +116,23 @@ pub(crate) fn command_definition() -> Command {
 pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     match matches.subcommand() {
         Some(("lookup", sub_matches)) => {
-            let hash = sub_matches
-                .get_one::<u64>("hash")
-                .expect("required argument not found");
+            let hash = {
+                let s = sub_matches
+                    .get_one::<String>("hash")
+                    .expect("required argument not found");
+
+                u64::from_str_radix(s, 16)
+                    .wrap_err("failed to parse argument as hexadecimal string")?
+            };
 
             let groups = sub_matches
                 .get_many::<HashGroup>("group")
                 .unwrap_or_default();
 
             for group in groups {
-                let value = ctx.lookup_hash(*hash, (*group).into());
-                println!("{value}");
+                if let IdString64::String(value) = ctx.lookup_hash(hash, (*group).into()) {
+                    println!("{group}: {value}");
+                }
             }
 
             Ok(())
@@ -175,6 +219,14 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
                 .to_csv(f)
                 .await
                 .wrap_err("Failed to write dictionary to disk")
+        }
+        Some(("show", _)) => {
+            let lookup = &ctx.lookup;
+            let rows: Vec<_> = lookup.entries().iter().map(TableRow::from).collect();
+
+            print_stdout(rows.with_title())?;
+
+            Ok(())
         }
         _ => unreachable!(
             "clap is configured to require a subcommand, and they're all handled above"

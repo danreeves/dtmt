@@ -13,9 +13,6 @@ use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::sync::RwLock;
-use tracing_error::ErrorLayer;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 
 mod cmd {
     pub mod build;
@@ -62,19 +59,7 @@ async fn main() -> Result<()> {
         // .subcommand(cmd::watch::command_definition())
         .get_matches();
 
-    {
-        let fmt_layer = tracing_subscriber::fmt::layer().pretty();
-        let filter_layer =
-            EnvFilter::try_from_default_env().or_else(|_| EnvFilter::try_new("info"))?;
-
-        tracing_subscriber::registry()
-            .with(filter_layer)
-            .with(fmt_layer)
-            .with(ErrorLayer::new(
-                tracing_subscriber::fmt::format::Pretty::default(),
-            ))
-            .init();
-    }
+    dtmt_shared::create_tracing_subscriber();
 
     // TODO: Move this into a `Context::init` method?
     let ctx = sdk::Context::new();

@@ -4,11 +4,11 @@ use std::sync::Arc;
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report};
+use dtmt_shared::ModConfig;
 use futures::future::try_join_all;
 use futures::StreamExt;
 use sdk::filetype::package::Package;
 use sdk::{Bundle, BundleFile};
-use serde::Deserialize;
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 
@@ -25,7 +25,7 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help(
                     "The path to the project to build. \
-                If omitted, dtmt will search from the current working directory upward.",
+                        If omitted, dtmt will search from the current working directory upward.",
                 ),
         )
         .arg(Arg::new("oodle").long("oodle").help(
@@ -36,16 +36,8 @@ pub(crate) fn command_definition() -> Command {
         ))
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct ProjectConfig {
-    #[serde(skip)]
-    dir: PathBuf,
-    name: String,
-    packages: Vec<PathBuf>,
-}
-
 #[tracing::instrument]
-async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
+async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let (path, mut file) = if let Some(path) = dir {
         let file = File::open(&path.join(PROJECT_CONFIG_NAME))
             .await
@@ -81,9 +73,12 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ProjectConfig> {
     };
 
     let mut buf = String::new();
-    file.read_to_string(&mut buf).await?;
+    file.read_to_string(&mut buf)
+        .await
+        .wrap_err("invalid UTF-8")?;
 
-    let mut cfg: ProjectConfig = serde_sjson::from_str(&buf)?;
+    let mut cfg: ModConfig =
+        serde_sjson::from_str(&buf).wrap_err("failed to deserialize mod config")?;
     cfg.dir = path;
     Ok(cfg)
 }
@@ -169,19 +164,79 @@ where
         .wrap_err("failed to build bundle")
 }
 
-#[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    unsafe {
-        oodle_sys::init(matches.get_one::<String>("oodle"));
+fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
+    let path = path.as_ref();
+
+    if path.is_absolute() || path.has_root() {
+        let err = eyre::eyre!("path is absolute: {}", path.display());
+        return Err(err).with_suggestion(|| "Specify a relative file path.".to_string());
     }
 
+    let path = path_clean::clean(path);
+
+    if path.starts_with("..") {
+        eyre::bail!("path starts with a parent component: {}", path.display());
+    }
+
+    Ok(path)
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     let cfg = {
         let dir = matches.get_one::<PathBuf>("directory").cloned();
-        find_project_config(dir).await?
+        let mut cfg = find_project_config(dir).await?;
+
+        cfg.resources.init = normalize_file_path(cfg.resources.init)
+            .wrap_err("invalid config field 'resources.init'")
+            .with_suggestion(|| {
+                "Specify a file path relative to and child path of the \
+                    directory where 'dtmt.cfg' is."
+                    .to_string()
+            })
+            .with_suggestion(|| {
+                "Use 'dtmt new' in a separate directory to generate \
+                    a valid mod template."
+                    .to_string()
+            })?;
+
+        if let Some(path) = cfg.resources.data {
+            let path = normalize_file_path(path)
+                .wrap_err("invalid config field 'resources.data'")
+                .with_suggestion(|| {
+                    "Specify a file path relative to and child path of the \
+                            directory where 'dtmt.cfg' is."
+                        .to_string()
+                })
+                .with_suggestion(|| {
+                    "Use 'dtmt new' in a separate directory to generate \
+                            a valid mod template."
+                        .to_string()
+                })?;
+            cfg.resources.data = Some(path);
+        }
+
+        if let Some(path) = cfg.resources.localization {
+            let path = normalize_file_path(path)
+                .wrap_err("invalid config field 'resources.localization'")
+                .with_suggestion(|| {
+                    "Specify a file path relative to and child path of the \
+                        directory where 'dtmt.cfg' is."
+                        .to_string()
+                })
+                .with_suggestion(|| {
+                    "Use 'dtmt new' in a separate directory to generate \
+                        a valid mod template."
+                        .to_string()
+                })?;
+            cfg.resources.localization = Some(path);
+        }
+
+        cfg
     };
 
     let dest = {
-        let mut path = PathBuf::from(&cfg.name);
+        let mut path = PathBuf::from(&cfg.id);
         path.set_extension("zip");
         Arc::new(path)
     };
@@ -210,21 +265,24 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             })
         });
 
-    let bundles = try_join_all(tasks).await?;
+    let bundles = try_join_all(tasks)
+        .await
+        .wrap_err("failed to build mod bundles")?;
 
-    let mod_file = {
-        let mut path = cfg.dir.join(&cfg.name);
-        path.set_extension("mod");
-        fs::read(path).await?
+    let config_file = {
+        let path = cfg.dir.join("dtmt.cfg");
+        fs::read(&path)
+            .await
+            .wrap_err_with(|| format!("failed to read mod config at {}", path.display()))?
     };
 
     {
         let dest = dest.clone();
-        let name = cfg.name.clone();
+        let id = cfg.id.clone();
         tokio::task::spawn_blocking(move || {
-            let mut archive = Archive::new(name);
+            let mut archive = Archive::new(id);
 
-            archive.add_mod_file(mod_file);
+            archive.add_config(config_file);
 
             for bundle in bundles {
                 archive.add_bundle(bundle);

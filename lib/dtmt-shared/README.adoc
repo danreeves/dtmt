@@ -1,0 +1,13 @@
+= dtmt-shared
+:idprefix:
+:idseparator:
+:toc: macro
+:toclevels: 1
+:!toc-title:
+:caution-caption: :fire:
+:important-caption: :exclamtion:
+:note-caption: :paperclip:
+:tip-caption: :bulb:
+:warning-caption: :warning:
+
+A set of types and functions shared between multiple crates within _Darktide Mod Tools_ that don't fit into the engine SDK.

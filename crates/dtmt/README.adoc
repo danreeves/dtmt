@@ -1,0 +1,32 @@
+= Darktide Mod Tools (DTMT)
+:idprefix:
+:idseparator:
+:toc: macro
+:toclevels: 1
+:!toc-title:
+:caution-caption: :fire:
+:important-caption: :exclamtion:
+:note-caption: :paperclip:
+:tip-caption: :bulb:
+:warning-caption: :warning:
+
+A set of tools to develop mods for the newest generation of the Bitsquid game engine that powers the game _Warhammer 40.000: Darktide_.
+
+== Quickstart
+
+1. Head to the latest https://git.sclu1034.dev/bitsquid_dt/dtmt/releases/[release] and download the `dtmt` binary for your platform.
+2. Place the binary and `dictionary.csv` next to each other.
+3. Open a command prompt, navigate to the downloaded binary and run `dtmt.exe help`.
+4. Use the `help` command (it works for subcommands, too) and the https://git.sclu1034.dev/bitsquid_dt/dtmt/wiki/CLI-Reference[CLI Reference].
+
+== Runtime dependencies
+
+The LuaJit decompiler (short "ljd") is used to decompile Lua files. A version tailored specifically to Bitsquid may be found here: https://github.com/Aussiemon/ljd.
+
+A custom executable location may be passed via the `--ljd` flag during extraction, otherwise decompilation expects `ljd` to be found via the `PATH` environmental variable.
+
+== Building
+
+1. Install Rust from https://www.rust-lang.org/learn/get-started[rust-lang.org] or via the preferred means for your system.
+2. Download or clone this source code. Make sure to include the submodules in `lib/`.
+3. Run `cargo build`.

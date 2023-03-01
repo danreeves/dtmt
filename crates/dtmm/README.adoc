@@ -1,0 +1,16 @@
+= Darktide Mod Manager (DTMM)
+:idprefix:
+:idseparator:
+:toc: macro
+:toclevels: 1
+:!toc-title:
+:caution-caption: :fire:
+:important-caption: :exclamtion:
+:note-caption: :paperclip:
+:tip-caption: :bulb:
+:warning-caption: :warning:
+
+DTMM is a GUI application to install and manage mods for the game.
+
+![dtmm main view](../../docs/screenshots/dtmm.png)
+

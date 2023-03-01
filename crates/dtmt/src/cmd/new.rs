@@ -8,15 +8,22 @@ use futures::{StreamExt, TryStreamExt};
 use string_template::Template;
 use tokio::fs::{self, DirBuilder};
 
-const TEMPLATES: [(&str, &str); 6] = [
+const TEMPLATES: [(&str, &str); 5] = [
     (
         "dtmt.cfg",
-        r#"name = "{{name}}"
-description = "An elaborate description of my cool game mod!"
+        r#"id = "{{id}}"
+name = "{{name}}"
+description = "This is my new mod '{{name}}'!"
 version = "0.1.0"
 
+resources = {
+    init = "scripts/mods/{{id}}/init"
+    data = "scripts/mods/{{id}}/data"
+    localization = "scripts/mods/{{id}}/localization"
+}
+
 packages = [
-    "packages/{{name}}"
+    "packages/{{id}}"
 ]
 
 depends = [
@@ -25,50 +32,35 @@ depends = [
 "#,
     ),
     (
-        "{{name}}.mod",
-        r#"return {
-	run = function()
-		fassert(rawget(_G, "new_mod"), "`{{title}}` encountered an error loading the Darktide Mod Framework.")
-
-		new_mod("{{name}}", {
-			mod_script       = "scripts/mods/{{name}}/{{name}}",
-			mod_data         = "scripts/mods/{{name}}/{{name}}_data",
-			mod_localization = "scripts/mods/{{name}}/{{name}}_localization",
-		})
-	end,
-	packages = {},
-}"#,
-    ),
-    (
-        "packages/{{name}}.package",
+        "packages/{{id}}.package",
         r#"lua = [
-    "scripts/mods/{{name}}/*"
+    "scripts/mods/{{id}}/*"
 ]
 "#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}.lua",
-        r#"local mod = get_mod("{{name}}")
+        "scripts/mods/{{id}}/init.lua",
+        r#"local mod = get_mod("{{id}}")
 
 -- Your mod code goes here.
 -- https://vmf-docs.verminti.de
 "#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}_data.lua",
-        r#"local mod = get_mod("{{name}}")
+        "scripts/mods/{{id}}/data.lua",
+        r#"local mod = get_mod("{{id}}")
 
 return {
-	name = "{{title}}",
+	name = "{{name}}",
 	description = mod:localize("mod_description"),
 	is_togglable = true,
 }"#,
     ),
     (
-        "scripts/mods/{{name}}/{{name}}_localization.lua",
+        "scripts/mods/{{id}}/localization.lua",
         r#"return {
 	mod_description = {
-		en = "An elaborate description of my cool game mod!",
+		en = "This is my new mod '{{name}}'!",
 	},
 }"#,
     ),
@@ -78,8 +70,8 @@ pub(crate) fn command_definition() -> Command {
     Command::new("new")
         .about("Create a new project")
         .arg(
-            Arg::new("title")
-                .long("title")
+            Arg::new("name")
+                .long("name")
                 .help("The display name of the new mod."),
         )
         .arg(Arg::new("root").help(
@@ -107,14 +99,14 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         }
     };
 
-    let title = if let Some(title) = matches.get_one::<String>("title") {
-        title.clone()
+    let name = if let Some(name) = matches.get_one::<String>("name") {
+        name.clone()
     } else {
-        promptly::prompt("The mod display name")?
+        promptly::prompt("The display name")?
     };
 
-    let name = {
-        let default = title
+    let id = {
+        let default = name
             .chars()
             .map(|c| {
                 if c.is_ascii_alphanumeric() {
@@ -124,15 +116,14 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 }
             })
             .collect::<String>();
-        promptly::prompt_default("The mod identifier name", default)?
+        promptly::prompt_default("The unique mod ID", default)?
     };
 
-    tracing::debug!(root = %root.display());
-    tracing::debug!(title, name);
+    tracing::debug!(root = %root.display(), name, id);
 
     let mut data = HashMap::new();
     data.insert("name", name.as_str());
-    data.insert("title", title.as_str());
+    data.insert("id", id.as_str());
 
     let templates = TEMPLATES
         .iter()
@@ -168,7 +159,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     tracing::info!(
         "Created {} files for mod '{}' in '{}'.",
         TEMPLATES.len(),
-        title,
+        name,
         root.display()
     );
 

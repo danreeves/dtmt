@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
-use sdk::murmur::Murmur64;
+use sdk::murmur::IdString64;
 use sdk::Bundle;
 use zip::ZipWriter;
 
 pub struct Archive {
     name: String,
     bundles: Vec<Bundle>,
-    mod_file: Option<Vec<u8>>,
+    config_file: Option<Vec<u8>>,
 }
 
 impl Archive {
@@ -20,7 +20,7 @@ impl Archive {
         Self {
             name,
             bundles: Vec::new(),
-            mod_file: None,
+            config_file: None,
         }
     }
 
@@ -28,18 +28,18 @@ impl Archive {
         self.bundles.push(bundle)
     }
 
-    pub fn add_mod_file(&mut self, content: Vec<u8>) {
-        self.mod_file = Some(content);
+    pub fn add_config(&mut self, content: Vec<u8>) {
+        self.config_file = Some(content);
     }
 
     pub fn write<P>(&self, path: P) -> Result<()>
     where
         P: AsRef<Path>,
     {
-        let mod_file = self
-            .mod_file
+        let config_file = self
+            .config_file
             .as_ref()
-            .ok_or_else(|| eyre::eyre!("Mod file is missing from mod archive"))?;
+            .ok_or_else(|| eyre::eyre!("Config file is missing in mod archive"))?;
 
         let f = File::create(path.as_ref()).wrap_err_with(|| {
             format!(
@@ -54,16 +54,18 @@ impl Archive {
         let base_path = PathBuf::from(&self.name);
 
         {
-            let mut name = base_path.join(&self.name);
-            name.set_extension("mod");
+            let name = base_path.join("dtmt.cfg");
             zip.start_file(name.to_string_lossy(), Default::default())?;
-            zip.write_all(mod_file)?;
+            zip.write_all(config_file)?;
         }
 
         let mut file_map = HashMap::new();
 
         for bundle in self.bundles.iter() {
-            let bundle_name = bundle.name().clone();
+            let bundle_name = match bundle.name() {
+                IdString64::Hash(_) => eyre::bail!("bundle name must be known as string. got hash"),
+                IdString64::String(s) => s,
+            };
 
             let map_entry: &mut HashSet<_> = file_map.entry(bundle_name).or_default();
 
@@ -71,7 +73,7 @@ impl Archive {
                 map_entry.insert(file.name(false, None));
             }
 
-            let name = Murmur64::hash(bundle.name().as_bytes());
+            let name = bundle.name().to_murmur64();
             let path = base_path.join(name.to_string().to_ascii_lowercase());
 
             zip.start_file(path.to_string_lossy(), Default::default())?;

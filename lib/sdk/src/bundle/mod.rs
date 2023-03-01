@@ -1,16 +1,19 @@
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::mem::size_of;
 use std::path::Path;
 
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
-use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
+use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
-use crate::murmur::{HashGroup, Murmur64};
+use crate::bundle::file::Properties;
+use crate::murmur::{HashGroup, IdString64, Murmur64};
 
+pub(crate) mod database;
 pub(crate) mod file;
 
-pub use file::{BundleFile, BundleFileType};
+pub use file::{BundleFile, BundleFileType, BundleFileVariant};
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum BundleFormat {
@@ -39,72 +42,24 @@ impl From<BundleFormat> for u32 {
     }
 }
 
-pub struct EntryHeader {
-    name_hash: Murmur64,
-    extension_hash: Murmur64,
-    flags: u32,
-}
-
-impl EntryHeader {
-    #[tracing::instrument(name = "EntryHeader::from_reader", skip_all)]
-    fn from_reader<R>(r: &mut R) -> Result<Self>
-    where
-        R: Read + Seek,
-    {
-        let extension_hash = Murmur64::from(r.read_u64()?);
-        let name_hash = Murmur64::from(r.read_u64()?);
-        let flags = r.read_u32()?;
-
-        // NOTE: Known values so far:
-        // - 0x0: seems to be the default
-        // - 0x4: seems to be used for files that point to something in `data/`
-        //        seems to correspond to a change in value in the header's 'unknown_3'
-        if flags != 0x0 {
-            tracing::debug!(
-                flags,
-                "Unexpected meta flags for file {name_hash:016X}.{extension_hash:016X}",
-            );
-        }
-
-        Ok(Self {
-            name_hash,
-            extension_hash,
-            flags,
-        })
-    }
-
-    #[tracing::instrument(name = "EntryHeader::to_writer", skip_all)]
-    fn to_writer<W>(&self, w: &mut W) -> Result<()>
-    where
-        W: Write + Seek,
-    {
-        w.write_u64(self.extension_hash.into())?;
-        w.write_u64(self.name_hash.into())?;
-        w.write_u32(self.flags)?;
-        Ok(())
-    }
-}
-
 pub struct Bundle {
     format: BundleFormat,
     properties: [Murmur64; 32],
-    headers: Vec<EntryHeader>,
     files: Vec<BundleFile>,
-    name: String,
+    name: IdString64,
 }
 
 impl Bundle {
-    pub fn new(name: String) -> Self {
+    pub fn new<S: Into<IdString64>>(name: S) -> Self {
         Self {
-            name,
+            name: name.into(),
             format: BundleFormat::F8,
             properties: [0.into(); 32],
-            headers: Vec::new(),
             files: Vec::new(),
         }
     }
 
-    pub fn get_name_from_path<P>(ctx: &crate::Context, path: P) -> String
+    pub fn get_name_from_path<P>(ctx: &crate::Context, path: P) -> IdString64
     where
         P: AsRef<Path>,
     {
@@ -113,28 +68,31 @@ impl Bundle {
             .and_then(|name| name.to_str())
             .and_then(|name| Murmur64::try_from(name).ok())
             .map(|hash| ctx.lookup_hash(hash, HashGroup::Filename))
-            .unwrap_or_else(|| path.display().to_string())
+            .unwrap_or_else(|| path.display().to_string().into())
     }
 
     pub fn add_file(&mut self, file: BundleFile) {
         tracing::trace!("Adding file {}", file.name(false, None));
-        let header = EntryHeader {
-            extension_hash: file.file_type().into(),
-            name_hash: Murmur64::hash(file.base_name().as_bytes()),
-            // TODO: Hard coded until we know what this is
-            flags: 0x0,
-        };
+        let existing_index = self
+            .files
+            .iter()
+            .enumerate()
+            .find(|(_, f)| **f == file)
+            .map(|val| val.0);
 
         self.files.push(file);
-        self.headers.push(header);
+
+        if let Some(i) = existing_index {
+            self.files.swap_remove(i);
+        }
     }
 
     #[tracing::instrument(skip(ctx, binary), fields(len_binary = binary.as_ref().len()))]
-    pub fn from_binary<B>(ctx: &crate::Context, name: String, binary: B) -> Result<Self>
+    pub fn from_binary<B, S>(ctx: &crate::Context, name: S, binary: B) -> Result<Self>
     where
         B: AsRef<[u8]>,
+        S: Into<IdString64> + std::fmt::Debug,
     {
-        let bundle_name = name;
         let mut r = BufReader::new(Cursor::new(binary));
 
         let format = r.read_u32().and_then(BundleFormat::try_from)?;
@@ -153,9 +111,13 @@ impl Bundle {
             *prop = Murmur64::from(r.read_u64()?);
         }
 
-        let mut headers = Vec::with_capacity(num_entries);
+        let mut file_props = Vec::with_capacity(num_entries);
         for _ in 0..num_entries {
-            headers.push(EntryHeader::from_reader(&mut r)?);
+            // Skip two u64 that contain the extension hash and file name hash.
+            // We don't need them here, since we're reading the whole bundle into memory
+            // anyways.
+            r.seek(SeekFrom::Current((2 * size_of::<u64>()) as i64))?;
+            file_props.push(Properties::from_bits_truncate(r.read_u32()?));
         }
 
         let num_chunks = r.read_u32()? as usize;
@@ -197,7 +159,7 @@ impl Bundle {
                 decompressed.append(&mut compressed_buffer);
             } else {
                 // TODO: Optimize to not reallocate?
-                let mut raw_buffer = oodle_sys::decompress(
+                let mut raw_buffer = oodle::decompress(
                     &compressed_buffer,
                     OodleLZ_FuzzSafe::No,
                     OodleLZ_CheckCRC::No,
@@ -209,8 +171,6 @@ impl Bundle {
                 } else {
                     unpacked_size_tracked -= CHUNK_SIZE;
                 }
-
-                tracing::trace!(raw_size = raw_buffer.len());
 
                 decompressed.append(&mut raw_buffer);
             }
@@ -226,17 +186,19 @@ impl Bundle {
 
         let mut r = Cursor::new(decompressed);
         let mut files = Vec::with_capacity(num_entries);
-        for i in 0..num_entries {
-            let meta = headers.get(i).unwrap();
-            let file = BundleFile::from_reader(ctx, &mut r, meta)
+        tracing::trace!(num_files = num_entries);
+        for (i, props) in file_props.iter().enumerate() {
+            let span = tracing::debug_span!("Read file {}", i);
+            let _enter = span.enter();
+
+            let file = BundleFile::from_reader(ctx, &mut r, *props)
                 .wrap_err_with(|| format!("failed to read file {i}"))?;
             files.push(file);
         }
 
         Ok(Self {
-            name: bundle_name,
+            name: name.into(),
             format,
-            headers,
             files,
             properties,
         })
@@ -254,8 +216,10 @@ impl Bundle {
             w.write_u64((*prop).into())?;
         }
 
-        for meta in self.headers.iter() {
-            meta.to_writer(&mut w)?;
+        for file in self.files.iter() {
+            w.write_u64(file.file_type().into())?;
+            w.write_u64(file.base_name().to_murmur64().into())?;
+            w.write_u32(file.props().bits())?;
         }
 
         let unpacked_data = {
@@ -293,7 +257,7 @@ impl Bundle {
         let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
         for chunk in chunks {
-            let compressed = oodle_sys::compress(chunk)?;
+            let compressed = oodle::compress(chunk)?;
             tracing::trace!(
                 raw_chunk_size = chunk.len(),
                 compressed_chunk_size = compressed.len()
@@ -313,7 +277,7 @@ impl Bundle {
         Ok(w.into_inner())
     }
 
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &IdString64 {
         &self.name
     }
 
@@ -395,7 +359,7 @@ where
         r.read_exact(&mut compressed_buffer)?;
 
         // TODO: Optimize to not reallocate?
-        let mut raw_buffer = oodle_sys::decompress(
+        let mut raw_buffer = oodle::decompress(
             &compressed_buffer,
             OodleLZ_FuzzSafe::No,
             OodleLZ_CheckCRC::No,

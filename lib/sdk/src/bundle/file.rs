@@ -1,6 +1,8 @@
+use std::ffi::CString;
 use std::io::{Cursor, Read, Seek, Write};
 use std::path::Path;
 
+use bitflags::bitflags;
 use color_eyre::eyre::Context;
 use color_eyre::{eyre, Result};
 use futures::future::join_all;
@@ -8,9 +10,7 @@ use serde::Serialize;
 
 use crate::binary::sync::*;
 use crate::filetype::*;
-use crate::murmur::{HashGroup, Murmur64};
-
-use super::EntryHeader;
+use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 #[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum BundleFileType {
@@ -397,7 +397,8 @@ impl From<BundleFileType> for u64 {
 }
 impl From<BundleFileType> for Murmur64 {
     fn from(t: BundleFileType) -> Murmur64 {
-        t.into()
+        let hash: u64 = t.into();
+        Murmur64::from(hash)
     }
 }
 
@@ -410,6 +411,7 @@ impl std::fmt::Display for BundleFileType {
 #[derive(Debug)]
 struct BundleFileHeader {
     variant: u32,
+    unknown_1: u8,
     size: usize,
     len_data_file_name: usize,
 }
@@ -418,6 +420,8 @@ pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
     data_file_name: Option<String>,
+    // Seems to be related to whether there is a data path.
+    unknown_1: u8,
 }
 
 impl BundleFileVariant {
@@ -430,6 +434,7 @@ impl BundleFileVariant {
             property: 0,
             data: Vec::new(),
             data_file_name: None,
+            unknown_1: 0,
         }
     }
 
@@ -459,47 +464,64 @@ impl BundleFileVariant {
         R: Read + Seek,
     {
         let variant = r.read_u32()?;
-        r.skip_u8(0)?;
+        let unknown_1 = r.read_u8()?;
         let size = r.read_u32()? as usize;
         r.skip_u8(1)?;
         let len_data_file_name = r.read_u32()? as usize;
 
         Ok(BundleFileHeader {
             size,
+            unknown_1,
             variant,
             len_data_file_name,
         })
     }
 
     #[tracing::instrument(skip_all)]
-    fn write_header<W>(&self, w: &mut W) -> Result<()>
+    fn write_header<W>(&self, w: &mut W, props: Properties) -> Result<()>
     where
         W: Write + Seek,
     {
         w.write_u32(self.property)?;
-        w.write_u8(0)?;
-        w.write_u32(self.data.len() as u32)?;
-        w.write_u8(1)?;
+        w.write_u8(self.unknown_1)?;
 
         let len_data_file_name = self.data_file_name.as_ref().map(|s| s.len()).unwrap_or(0);
-        w.write_u32(len_data_file_name as u32)?;
+
+        if props.contains(Properties::DATA) {
+            w.write_u32(len_data_file_name as u32)?;
+            w.write_u8(1)?;
+            w.write_u32(0)?;
+        } else {
+            w.write_u32(self.data.len() as u32)?;
+            w.write_u8(1)?;
+            w.write_u32(len_data_file_name as u32)?;
+        }
 
         Ok(())
     }
 }
 
+bitflags! {
+    #[derive(Default)]
+    pub struct Properties: u32 {
+        const DATA = 0b100;
+    }
+}
+
 pub struct BundleFile {
     file_type: BundleFileType,
-    name: String,
+    name: IdString64,
     variants: Vec<BundleFileVariant>,
+    props: Properties,
 }
 
 impl BundleFile {
     pub fn new(name: String, file_type: BundleFileType) -> Self {
         Self {
             file_type,
-            name,
+            name: name.into(),
             variants: Vec::new(),
+            props: Properties::empty(),
         }
     }
 
@@ -507,12 +529,8 @@ impl BundleFile {
         self.variants.push(variant)
     }
 
-    #[tracing::instrument(
-        name = "File::read",
-        skip_all,
-        fields(name = %meta.name_hash, ext = %meta.extension_hash, flags = meta.flags)
-    )]
-    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R, meta: &EntryHeader) -> Result<Self>
+    #[tracing::instrument(name = "File::read", skip(ctx, r))]
+    pub fn from_reader<R>(ctx: &crate::Context, r: &mut R, props: Properties) -> Result<Self>
     where
         R: Read + Seek,
     {
@@ -521,36 +539,64 @@ impl BundleFile {
         let name = ctx.lookup_hash(hash, HashGroup::Filename);
 
         let header_count = r.read_u32()? as usize;
+        tracing::trace!(header_count);
         let mut headers = Vec::with_capacity(header_count);
         r.skip_u32(0)?;
 
-        for _ in 0..header_count {
-            let header = BundleFileVariant::read_header(r)?;
+        for i in 0..header_count {
+            let span = tracing::debug_span!("Read file header", i);
+            let _enter = span.enter();
+
+            let header = BundleFileVariant::read_header(r)
+                .wrap_err_with(|| format!("failed to read header {i}"))?;
+
+            // TODO: Figure out how `header.unknown_1` correlates to `properties::DATA`
+            // if props.contains(Properties::DATA) {
+            //     tracing::debug!("props: {props:?} | unknown_1: {}", header.unknown_1)
+            // }
+
             headers.push(header);
         }
 
         let mut variants = Vec::with_capacity(header_count);
         for (i, header) in headers.into_iter().enumerate() {
-            let span = tracing::info_span!("Read file header {}", i, size = header.size);
+            let span = tracing::debug_span!(
+                "Read file data {}",
+                i,
+                size = header.size,
+                len_data_file_name = header.len_data_file_name
+            );
             let _enter = span.enter();
 
-            let mut data = vec![0; header.size];
-            r.read_exact(&mut data)
-                .wrap_err_with(|| format!("failed to read header {i}"))?;
-
-            let data_file_name = if header.len_data_file_name > 0 {
+            let (data, data_file_name) = if props.contains(Properties::DATA) {
+                let data = vec![];
                 let s = r
-                    .read_string_len(header.len_data_file_name)
+                    .read_string_len(header.size)
                     .wrap_err("failed to read data file name")?;
-                Some(s)
+
+                (data, Some(s))
             } else {
-                None
+                let mut data = vec![0; header.size];
+                r.read_exact(&mut data)
+                    .wrap_err_with(|| format!("failed to read file {i}"))?;
+
+                let data_file_name = if header.len_data_file_name > 0 {
+                    let s = r
+                        .read_string_len(header.len_data_file_name)
+                        .wrap_err("failed to read data file name")?;
+                    Some(s)
+                } else {
+                    None
+                };
+
+                (data, data_file_name)
             };
 
             let variant = BundleFileVariant {
                 property: header.variant,
                 data,
                 data_file_name,
+                unknown_1: header.unknown_1,
             };
 
             variants.push(variant);
@@ -560,6 +606,7 @@ impl BundleFile {
             variants,
             file_type,
             name,
+            props,
         })
     }
 
@@ -568,7 +615,7 @@ impl BundleFile {
         let mut w = Cursor::new(Vec::new());
 
         w.write_u64(self.file_type.hash().into())?;
-        w.write_u64(Murmur64::hash(self.name.as_bytes()).into())?;
+        w.write_u64(self.name.to_murmur64().into())?;
         w.write_u32(self.variants.len() as u32)?;
 
         // TODO: Figure out what this is
@@ -576,16 +623,26 @@ impl BundleFile {
 
         for variant in self.variants.iter() {
             w.write_u32(variant.property())?;
-            w.write_u8(0)?;
-            w.write_u32(variant.size() as u32)?;
-            w.write_u8(1)?;
+            w.write_u8(variant.unknown_1)?;
 
             let len_data_file_name = variant.data_file_name().map(|s| s.len()).unwrap_or(0);
-            w.write_u32(len_data_file_name as u32)?;
+
+            if self.props.contains(Properties::DATA) {
+                w.write_u32(len_data_file_name as u32)?;
+                w.write_u8(1)?;
+                w.write_u32(0)?;
+            } else {
+                w.write_u32(variant.size() as u32)?;
+                w.write_u8(1)?;
+                w.write_u32(len_data_file_name as u32)?;
+            }
         }
 
         for variant in self.variants.iter() {
             w.write_all(&variant.data)?;
+            if let Some(s) = &variant.data_file_name {
+                w.write_all(s.as_bytes())?;
+            }
         }
 
         Ok(w.into_inner())
@@ -603,7 +660,11 @@ impl BundleFile {
         S: AsRef<str>,
     {
         match file_type {
-            BundleFileType::Lua => lua::compile(name, sjson).await,
+            BundleFileType::Lua => {
+                let sjson =
+                    CString::new(sjson.as_ref()).wrap_err("failed to build CString from SJSON")?;
+                lua::compile(name, sjson)
+            }
             BundleFileType::Unknown(_) => {
                 eyre::bail!("Unknown file type. Cannot compile from SJSON");
             }
@@ -616,12 +677,16 @@ impl BundleFile {
         }
     }
 
-    pub fn base_name(&self) -> &String {
+    pub fn props(&self) -> Properties {
+        self.props
+    }
+
+    pub fn base_name(&self) -> &IdString64 {
         &self.name
     }
 
     pub fn name(&self, decompiled: bool, variant: Option<u32>) -> String {
-        let mut s = self.name.clone();
+        let mut s = self.name.display().to_string();
         s.push('.');
 
         if let Some(variant) = variant {
@@ -640,10 +705,18 @@ impl BundleFile {
 
     pub fn matches_name<S>(&self, name: S) -> bool
     where
-        S: AsRef<str>,
+        S: Into<IdString64>,
     {
-        let name = name.as_ref();
-        self.name == name || self.name(false, None) == name || self.name(true, None) == name
+        let name = name.into();
+        if self.name == name {
+            return true;
+        }
+
+        if let IdString64::String(name) = name {
+            self.name(false, None) == name || self.name(true, None) == name
+        } else {
+            false
+        }
     }
 
     pub fn file_type(&self) -> BundleFileType {
@@ -724,6 +797,12 @@ impl BundleFile {
         let results = join_all(tasks).await;
 
         Ok(results.into_iter().flatten().collect())
+    }
+}
+
+impl PartialEq for BundleFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.file_type == other.file_type
     }
 }
 

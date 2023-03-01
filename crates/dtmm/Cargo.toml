@@ -1,0 +1,25 @@
+[package]
+name = "dtmm"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitflags = "1.3.2"
+clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "string", "unicode"] }
+color-eyre = "0.6.2"
+confy = "0.5.1"
+druid = { git = "https://github.com/linebender/druid.git", features = ["im", "serde"] }
+dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
+futures = "0.3.25"
+oodle = { path = "../../lib/oodle", version = "*" }
+sdk = { path = "../../lib/sdk", version = "0.2.0" }
+serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
+serde = { version = "1.0.152", features = ["derive", "rc"] }
+tokio = { version = "1.23.0", features = ["rt", "fs", "tracing", "sync"] }
+tracing = "0.1.37"
+tracing-error = "0.2.0"
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
+zip = "0.6.4"
+tokio-stream = { version = "0.1.12", features = ["fs"] }

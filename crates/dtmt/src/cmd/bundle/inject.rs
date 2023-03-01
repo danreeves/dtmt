@@ -58,14 +58,14 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
         Bundle::from_binary(&ctx, name, binary).wrap_err("Failed to open bundle file")?
     };
 
-    if let Some(_name) = matches.get_one::<String>("replace") {
+    if let Some(name) = matches.get_one::<String>("replace") {
         let mut file = File::open(&file_path)
             .await
             .wrap_err_with(|| format!("failed to open '{}'", file_path.display()))?;
 
         if let Some(variant) = bundle
             .files_mut()
-            .filter(|file| file.matches_name(_name))
+            .filter(|file| file.matches_name(name.clone()))
             // TODO: Handle file variants
             .find_map(|file| file.variants_mut().next())
         {
@@ -75,7 +75,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                 .wrap_err("failed to read input file")?;
             variant.set_data(data);
         } else {
-            let err = eyre::eyre!("No file '{}' in this bundle.", _name)
+            let err = eyre::eyre!("No file '{}' in this bundle.", name)
                 .with_suggestion(|| {
                     format!(
                         "Run '{} bundle list {}' to list the files in this bundle.",
@@ -87,7 +87,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                     format!(
                         "Use '{} bundle inject --add {} {} {}' to add it as a new file",
                         clap::crate_name!(),
-                        _name,
+                        name,
                         bundle_path.display(),
                         file_path.display()
                     )
