@@ -2,11 +2,17 @@
 
 == [Unreleased]
 
+== 2023-03-01
+
 === Added
 
-- show status after adding dictionary entries
-- implement building mod bundles
-- implement command to create mod project from template
+- dtmm: build MVP mod manager GUI and mod loading facilities
+- dtmt: show status after adding dictionary entries
+- dtmt: implement building mod bundles
+- dtmt: implement command to create mod project from template
+- sdk: statically link Oodle
+- sdk: implement bundle database handling
+- sdk: statically link LuaJIT
 
 == [v0.2.0] - 2022-12-28
 
