@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::path::Path;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Help, Result};
@@ -9,7 +10,6 @@ use tokio::fs;
 use zip::ZipArchive;
 
 use crate::state::{ModInfo, PackageInfo, State};
-use crate::util::config::Config;
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
@@ -105,22 +105,36 @@ pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, serde::Serialize)]
+struct Config<'a> {
+    game_dir: &'a Path,
+    data_dir: &'a Path,
+}
+
+impl<'a> From<&'a State> for Config<'a> {
+    fn from(value: &'a State) -> Self {
+        Self {
+            game_dir: &value.game_dir,
+            data_dir: &value.data_dir,
+        }
+    }
+}
+
 #[tracing::instrument(skip(state))]
 pub(crate) async fn save_settings(state: State) -> Result<()> {
-    // TODO: Avoid allocations, especially once the config grows, by
-    // creating a separate struct with only borrowed data to serialize from.
-    let cfg = Config {
-        path: state.config_path.as_ref().clone(),
-        game_dir: Some(state.game_dir.as_ref().clone()),
-        data_dir: Some(state.data_dir.as_ref().clone()),
-    };
+    let cfg = Config::from(&state);
 
     tracing::info!("Saving settings to '{}'", state.config_path.display());
     tracing::debug!(?cfg);
 
     let data = serde_sjson::to_string(&cfg).wrap_err("failed to serialize config")?;
 
-    fs::write(&cfg.path, &data)
+    fs::write(state.config_path.as_ref(), &data)
         .await
-        .wrap_err_with(|| format!("failed to write config to '{}'", cfg.path.display()))
+        .wrap_err_with(|| {
+            format!(
+                "failed to write config to '{}'",
+                state.config_path.display()
+            )
+        })
 }
