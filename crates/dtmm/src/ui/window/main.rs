@@ -10,13 +10,13 @@ use druid::{
 };
 
 use crate::state::{
-    ModInfo, PathBufFormatter, State, TextBoxOnChanged, View, ACTION_ADD_MOD,
-    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
-    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
-    ACTION_START_SAVE_SETTINGS,
+    ModInfo, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
+    ACTION_SELECT_MOD, ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
+    ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme;
-use crate::ui::widget::controller::AutoScrollController;
+use crate::ui::widget::controller::{AutoScrollController, SaveSettingsController};
+use crate::ui::widget::PathBufFormatter;
 
 const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (1080., 720.);
@@ -248,9 +248,6 @@ fn build_view_settings() -> impl Widget<State> {
         .with_flex_child(
             TextBox::new()
                 .with_formatter(PathBufFormatter::new())
-                .delegate(TextBoxOnChanged::new(|ctx, _| {
-                    ctx.submit_command(ACTION_START_SAVE_SETTINGS)
-                }))
                 .expand_width()
                 .lens(State::data_dir),
             1.,
@@ -265,9 +262,6 @@ fn build_view_settings() -> impl Widget<State> {
         .with_flex_child(
             TextBox::new()
                 .with_formatter(PathBufFormatter::new())
-                .delegate(TextBoxOnChanged::new(|ctx, _| {
-                    ctx.submit_command(ACTION_START_SAVE_SETTINGS)
-                }))
                 .expand_width()
                 .lens(State::game_dir),
             1.,
@@ -318,4 +312,5 @@ fn build_window() -> impl Widget<State> {
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
         .with_child(build_log_view())
+        .controller(SaveSettingsController)
 }

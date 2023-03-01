@@ -106,6 +106,7 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
 
                 state.select_mod(*index);
+                // ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_SELECTED_MOD_UP) => {
@@ -120,6 +121,7 @@ impl AppDelegate<State> for Delegate {
 
                 state.mods.swap(i, i - 1);
                 state.selected_mod_index = Some(i - 1);
+                // ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_SELECTED_MOD_DOWN) => {
@@ -134,6 +136,7 @@ impl AppDelegate<State> for Delegate {
 
                 state.mods.swap(i, i + 1);
                 state.selected_mod_index = Some(i + 1);
+                // ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_START_DELETE_SELECTED_MOD) => {
@@ -162,7 +165,7 @@ impl AppDelegate<State> for Delegate {
                 };
 
                 state.mods.remove(index);
-                ctx.submit_command(ACTION_START_SAVE_SETTINGS);
+                // ctx.submit_command(ACTION_START_SAVE_SETTINGS);
 
                 Handled::Yes
             }
@@ -185,7 +188,7 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(info) = info.take() {
                     state.add_mod(info);
-                    ctx.submit_command(ACTION_START_SAVE_SETTINGS);
+                    //     ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 }
                 Handled::Yes
             }

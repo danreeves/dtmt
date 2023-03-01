@@ -1,10 +1,54 @@
-use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::{fs, path::Path};
 
 use clap::{parser::ValueSource, ArgMatches};
 use color_eyre::{eyre::Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::state::{ModInfo, State};
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct LoadOrderEntrySerialize<'a> {
+    pub id: &'a String,
+    pub enabled: bool,
+}
+
+impl<'a> From<&'a ModInfo> for LoadOrderEntrySerialize<'a> {
+    fn from(info: &'a ModInfo) -> Self {
+        Self {
+            id: &info.id,
+            enabled: info.enabled,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ConfigSerialize<'a> {
+    game_dir: &'a Path,
+    data_dir: &'a Path,
+    mod_order: Vec<LoadOrderEntrySerialize<'a>>,
+}
+
+impl<'a> From<&'a State> for ConfigSerialize<'a> {
+    fn from(state: &'a State) -> Self {
+        Self {
+            game_dir: &state.game_dir,
+            data_dir: &state.data_dir,
+            mod_order: state
+                .mods
+                .iter()
+                .map(LoadOrderEntrySerialize::from)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct LoadOrderEntry {
+    pub id: String,
+    pub enabled: bool,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Config {
@@ -12,6 +56,8 @@ pub(crate) struct Config {
     pub path: PathBuf,
     pub data_dir: Option<PathBuf>,
     pub game_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub mod_order: Vec<LoadOrderEntry>,
 }
 
 #[cfg(not(arget_os = "windows"))]
@@ -92,6 +138,7 @@ where
                 path: default_path,
                 data_dir: Some(get_default_data_dir()),
                 game_dir: None,
+                mod_order: Vec::new(),
             };
 
             {

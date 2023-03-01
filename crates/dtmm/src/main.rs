@@ -12,6 +12,7 @@ use color_eyre::{Report, Result};
 use druid::AppLauncher;
 use tokio::sync::RwLock;
 
+use crate::controller::app::load_mods;
 use crate::controller::worker::work_thread;
 use crate::state::{Delegate, State};
 
@@ -62,7 +63,16 @@ fn main() -> Result<()> {
     let config = util::config::read_config(&default_config_path, &matches)
         .wrap_err("failed to read config file")?;
 
-    let initial_state = State::new(config);
+    let initial_state = {
+        let mut state = State::new(
+            config.path,
+            config.game_dir.unwrap_or_default(),
+            config.data_dir.unwrap_or_default(),
+        );
+        state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
+            .wrap_err("failed to load mods")?;
+        state
+    };
 
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
     let delegate = Delegate::new(action_tx);

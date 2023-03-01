@@ -3,8 +3,6 @@ use std::{path::PathBuf, sync::Arc};
 use druid::{im::Vector, Data, Lens};
 use dtmt_shared::ModConfig;
 
-use crate::util::config::Config;
-
 use super::SelectedModLens;
 
 #[derive(Copy, Clone, Data, Debug, PartialEq)]
@@ -100,7 +98,7 @@ impl State {
     #[allow(non_upper_case_globals)]
     pub const selected_mod: SelectedModLens = SelectedModLens;
 
-    pub fn new(config: Config) -> Self {
+    pub fn new(config_path: PathBuf, game_dir: PathBuf, data_dir: PathBuf) -> Self {
         let ctx = sdk::Context::new();
 
         Self {
@@ -112,9 +110,9 @@ impl State {
             is_reset_in_progress: false,
             is_save_in_progress: false,
             is_next_save_pending: false,
-            config_path: Arc::new(config.path),
-            game_dir: Arc::new(config.game_dir.unwrap_or_default()),
-            data_dir: Arc::new(config.data_dir.unwrap_or_default()),
+            config_path: Arc::new(config_path),
+            game_dir: Arc::new(game_dir),
+            data_dir: Arc::new(data_dir),
             log: Arc::new(String::new()),
         }
     }

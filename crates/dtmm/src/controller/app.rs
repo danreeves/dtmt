@@ -1,15 +1,21 @@
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Help, Result};
+use druid::im::Vector;
 use druid::FileInfo;
 use dtmt_shared::ModConfig;
-use tokio::fs;
+use serde::Deserialize;
+use tokio::fs::{self, DirEntry};
+use tokio::runtime::Runtime;
+use tokio_stream::wrappers::ReadDirStream;
+use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
 use crate::state::{ModInfo, PackageInfo, State};
+use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
@@ -105,24 +111,9 @@ pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize)]
-struct Config<'a> {
-    game_dir: &'a Path,
-    data_dir: &'a Path,
-}
-
-impl<'a> From<&'a State> for Config<'a> {
-    fn from(value: &'a State) -> Self {
-        Self {
-            game_dir: &value.game_dir,
-            data_dir: &value.data_dir,
-        }
-    }
-}
-
 #[tracing::instrument(skip(state))]
 pub(crate) async fn save_settings(state: State) -> Result<()> {
-    let cfg = Config::from(&state);
+    let cfg = ConfigSerialize::from(&state);
 
     tracing::info!("Saving settings to '{}'", state.config_path.display());
     tracing::debug!(?cfg);
@@ -137,4 +128,86 @@ pub(crate) async fn save_settings(state: State) -> Result<()> {
                 state.config_path.display()
             )
         })
+}
+
+async fn read_sjson_file<P, T>(path: P) -> Result<T>
+where
+    T: for<'a> Deserialize<'a>,
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let buf = fs::read(path).await.wrap_err("failed to read file")?;
+    let data = String::from_utf8(buf).wrap_err("invalid UTF8")?;
+    serde_sjson::from_str(&data).wrap_err("failed to deserialize")
+}
+
+#[tracing::instrument(skip_all,fields(
+    name = ?res.as_ref().map(|entry| entry.file_name())
+))]
+async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
+    let entry = res?;
+    let config_path = entry.path().join("dtmt.cfg");
+    let index_path = entry.path().join("files.sjson");
+
+    let cfg: ModConfig = read_sjson_file(&config_path)
+        .await
+        .wrap_err_with(|| format!("failed to read mod config '{}'", config_path.display()))?;
+
+    let files: HashMap<String, Vec<String>> = read_sjson_file(&index_path)
+        .await
+        .wrap_err_with(|| format!("failed to read file index '{}'", index_path.display()))?;
+
+    let packages = files
+        .into_iter()
+        .map(|(name, files)| PackageInfo::new(name, files.into_iter().collect()))
+        .collect();
+    let info = ModInfo::new(cfg, packages);
+    Ok(info)
+}
+
+#[tracing::instrument(skip(mod_order))]
+pub(crate) fn load_mods<'a, P, S>(mod_dir: P, mod_order: S) -> Result<Vector<ModInfo>>
+where
+    S: Iterator<Item = &'a LoadOrderEntry>,
+    P: AsRef<Path> + std::fmt::Debug,
+{
+    let rt = Runtime::new()?;
+
+    rt.block_on(async move {
+        let mod_dir = mod_dir.as_ref();
+        let read_dir = match fs::read_dir(mod_dir).await {
+            Ok(read_dir) => read_dir,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                return Ok(Vector::new());
+            }
+            Err(err) => {
+                return Err(err)
+                    .wrap_err_with(|| format!("failed to open directory '{}'", mod_dir.display()));
+            }
+        };
+
+        let stream = ReadDirStream::new(read_dir)
+            .map(|res| res.wrap_err("failed to read dir entry"))
+            .then(read_mod_dir_entry);
+        tokio::pin!(stream);
+
+        let mut mods: HashMap<String, ModInfo> = HashMap::new();
+
+        while let Some(res) = stream.next().await {
+            let info = res?;
+            mods.insert(info.id.clone(), info);
+        }
+
+        let mods = mod_order
+            .filter_map(|entry| {
+                if let Some(mut info) = mods.remove(&entry.id) {
+                    info.enabled = entry.enabled;
+                    Some(info)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        Ok::<_, color_eyre::Report>(mods)
+    })
 }
