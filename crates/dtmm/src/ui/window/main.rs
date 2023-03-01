@@ -8,7 +8,10 @@ use druid::{
     TextAlignment, Widget, WidgetExt, WindowDesc,
 };
 
-use crate::state::{ModInfo, PathBufFormatter, State, View, ACTION_START_RESET_DEPLOYMENT};
+use crate::state::{
+    ModInfo, PathBufFormatter, State, TextBoxOnChanged, View, ACTION_START_RESET_DEPLOYMENT,
+    ACTION_START_SAVE_SETTINGS,
+};
 use crate::state::{
     ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
@@ -246,6 +249,9 @@ fn build_view_settings() -> impl Widget<State> {
         .with_flex_child(
             TextBox::new()
                 .with_formatter(PathBufFormatter::new())
+                .delegate(TextBoxOnChanged::new(|ctx, _| {
+                    ctx.submit_command(ACTION_START_SAVE_SETTINGS)
+                }))
                 .expand_width()
                 .lens(State::data_dir),
             1.,
@@ -260,6 +266,9 @@ fn build_view_settings() -> impl Widget<State> {
         .with_flex_child(
             TextBox::new()
                 .with_formatter(PathBufFormatter::new())
+                .delegate(TextBoxOnChanged::new(|ctx, _| {
+                    ctx.submit_command(ACTION_START_SAVE_SETTINGS)
+                }))
                 .expand_width()
                 .lens(State::game_dir),
             1.,

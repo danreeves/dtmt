@@ -9,6 +9,7 @@ use tokio::fs;
 use zip::ZipArchive;
 
 use crate::state::{ModInfo, PackageInfo, State};
+use crate::util::config::Config;
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
@@ -102,4 +103,24 @@ pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
         .wrap_err_with(|| format!("failed to remove directory {}", mod_dir.display()))?;
 
     Ok(())
+}
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn save_settings(state: State) -> Result<()> {
+    // TODO: Avoid allocations, especially once the config grows, by
+    // creating a separate struct with only borrowed data to serialize from.
+    let cfg = Config {
+        path: state.config_path.as_ref().clone(),
+        game_dir: Some(state.game_dir.as_ref().clone()),
+        data_dir: Some(state.data_dir.as_ref().clone()),
+    };
+
+    tracing::info!("Saving settings to '{}'", state.config_path.display());
+    tracing::debug!(?cfg);
+
+    let data = serde_sjson::to_string(&cfg).wrap_err("failed to serialize config")?;
+
+    fs::write(&cfg.path, &data)
+        .await
+        .wrap_err_with(|| format!("failed to write config to '{}'", cfg.path.display()))
 }

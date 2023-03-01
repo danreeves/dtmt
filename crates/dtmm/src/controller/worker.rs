@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use crate::controller::app::*;
 use crate::controller::game::*;
 use crate::state::AsyncAction;
+use crate::state::ACTION_FINISH_SAVE_SETTINGS;
 use crate::state::{
     ACTION_FINISH_ADD_MOD, ACTION_FINISH_DELETE_SELECTED_MOD, ACTION_FINISH_DEPLOY,
     ACTION_FINISH_RESET_DEPLOYMENT, ACTION_LOG,
@@ -79,6 +80,17 @@ async fn handle_action(
                     .write()
                     .await
                     .submit_command(ACTION_FINISH_RESET_DEPLOYMENT, (), Target::Auto)
+                    .expect("failed to send command");
+            }),
+            AsyncAction::SaveSettings(state) => tokio::spawn(async move {
+                if let Err(err) = save_settings(state).await {
+                    tracing::error!("Failed to save settings: {:?}", err);
+                }
+
+                event_sink
+                    .write()
+                    .await
+                    .submit_command(ACTION_FINISH_SAVE_SETTINGS, (), Target::Auto)
                     .expect("failed to send command");
             }),
         };

@@ -28,11 +28,17 @@ pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<ModInfo>> =
 
 pub(crate) const ACTION_LOG: Selector<SingleUse<String>> = Selector::new("dtmm.action.log");
 
+pub(crate) const ACTION_START_SAVE_SETTINGS: Selector =
+    Selector::new("dtmm.action.start-save-settings");
+pub(crate) const ACTION_FINISH_SAVE_SETTINGS: Selector =
+    Selector::new("dtmm.action.finish-save-settings");
+
 pub(crate) enum AsyncAction {
     DeployMods(State),
     ResetDeployment(State),
     AddMod((State, FileInfo)),
     DeleteMod((State, ModInfo)),
+    SaveSettings(State),
 }
 
 pub(crate) struct Delegate {
@@ -49,12 +55,16 @@ impl AppDelegate<State> for Delegate {
     #[tracing::instrument(name = "Delegate", skip_all)]
     fn command(
         &mut self,
-        _ctx: &mut DelegateCtx,
+        ctx: &mut DelegateCtx,
         _target: Target,
         cmd: &Command,
         state: &mut State,
         _env: &Env,
     ) -> Handled {
+        if cfg!(debug_assertions) && !cmd.is(ACTION_LOG) {
+            tracing::trace!(?cmd);
+        }
+
         match cmd {
             cmd if cmd.is(ACTION_START_DEPLOY) => {
                 if self
@@ -152,6 +162,8 @@ impl AppDelegate<State> for Delegate {
                 };
 
                 state.mods.remove(index);
+                ctx.submit_command(ACTION_START_SAVE_SETTINGS);
+
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_ADD_MOD) => {
@@ -173,6 +185,7 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(info) = info.take() {
                     state.add_mod(info);
+                    ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 }
                 Handled::Yes
             }
@@ -183,6 +196,31 @@ impl AppDelegate<State> for Delegate {
                 if let Some(line) = line.take() {
                     state.add_log_line(line);
                 }
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_START_SAVE_SETTINGS) => {
+                if state.is_save_in_progress {
+                    state.is_next_save_pending = true;
+                } else if self
+                    .sender
+                    .send(AsyncAction::SaveSettings(state.clone()))
+                    .is_ok()
+                {
+                    state.is_save_in_progress = true;
+                } else {
+                    tracing::error!("Failed to queue action to save settings");
+                }
+
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_SAVE_SETTINGS) => {
+                state.is_save_in_progress = false;
+
+                if state.is_next_save_pending {
+                    state.is_next_save_pending = false;
+                    ctx.submit_command(ACTION_START_SAVE_SETTINGS);
+                }
+
                 Handled::Yes
             }
             cmd => {

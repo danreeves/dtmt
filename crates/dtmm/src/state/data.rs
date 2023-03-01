@@ -82,10 +82,18 @@ pub(crate) struct State {
     pub selected_mod_index: Option<usize>,
     pub is_deployment_in_progress: bool,
     pub is_reset_in_progress: bool,
+    pub is_save_in_progress: bool,
+    pub is_next_save_pending: bool,
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
-    pub ctx: Arc<sdk::Context>,
     pub log: Arc<String>,
+
+    #[lens(ignore)]
+    #[data(ignore)]
+    pub config_path: Arc<PathBuf>,
+    #[lens(ignore)]
+    #[data(ignore)]
+    pub ctx: Arc<sdk::Context>,
 }
 
 impl State {
@@ -102,8 +110,11 @@ impl State {
             selected_mod_index: None,
             is_deployment_in_progress: false,
             is_reset_in_progress: false,
-            game_dir: Arc::new(config.game_dir().cloned().unwrap_or_default()),
-            data_dir: Arc::new(config.data_dir().cloned().unwrap_or_default()),
+            is_save_in_progress: false,
+            is_next_save_pending: false,
+            config_path: Arc::new(config.path),
+            game_dir: Arc::new(config.game_dir.unwrap_or_default()),
+            data_dir: Arc::new(config.data_dir.unwrap_or_default()),
             log: Arc::new(String::new()),
         }
     }
