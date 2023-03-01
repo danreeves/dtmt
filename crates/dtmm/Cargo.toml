@@ -13,7 +13,7 @@ confy = "0.5.1"
 druid = { git = "https://github.com/linebender/druid.git", features = ["im", "serde"] }
 dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
 futures = "0.3.25"
-oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
+oodle = { path = "../../lib/oodle", version = "*" }
 sdk = { path = "../../lib/sdk", version = "0.2.0" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }

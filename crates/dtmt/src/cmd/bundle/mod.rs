@@ -24,10 +24,6 @@ pub(crate) fn command_definition() -> Command {
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    unsafe {
-        oodle_sys::init(matches.get_one::<String>("oodle"));
-    }
-
     match matches.subcommand() {
         Some(("decompress", sub_matches)) => decompress::run(ctx, sub_matches).await,
         Some(("extract", sub_matches)) => extract::run(ctx, sub_matches).await,

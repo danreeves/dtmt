@@ -183,10 +183,6 @@ fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    unsafe {
-        oodle_sys::init(matches.get_one::<String>("oodle"));
-    }
-
     let cfg = {
         let dir = matches.get_one::<PathBuf>("directory").cloned();
         let mut cfg = find_project_config(dir).await?;
