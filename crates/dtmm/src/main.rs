@@ -16,7 +16,8 @@ use crate::controller::worker::work_thread;
 use crate::state::{Delegate, State};
 
 mod controller {
-    pub mod engine;
+    pub mod app;
+    pub mod game;
     pub mod worker;
 }
 mod state;
