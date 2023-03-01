@@ -7,10 +7,6 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-// I currently cannot find a way to add a parameter to `dtmt_shared::create_tracing_subscriber`
-// that would allow me to pass an extra `Layer` to that function. So, for now,
-// its code has to be duplicated here.
-
 pub struct ChannelWriter {
     tx: UnboundedSender<String>,
 }
@@ -39,42 +35,31 @@ impl std::io::Write for ChannelWriter {
 }
 
 pub fn create_tracing_subscriber(tx: UnboundedSender<String>) {
-    let env_layer =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::try_new("info").unwrap());
-
-    let (dev_stdout_layer, prod_stdout_layer, filter_layer) = if cfg!(debug_assertions) {
-        let fmt_layer = fmt::layer().pretty();
-        (Some(fmt_layer), None, None)
+    let env_layer = if cfg!(debug_assertions) {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     } else {
-        // Creates a layer that
-        // - only prints events that contain a message
-        // - does not print fields
-        // - does not print spans/targets
-        // - only prints time, not date
-        let fmt_layer = fmt::layer()
-            .event_format(dtmt_shared::Formatter)
-            .fmt_fields(debug_fn(dtmt_shared::format_field));
+        EnvFilter::new("error,dtmm=info")
+    };
 
-        (
-            None,
-            Some(fmt_layer),
-            Some(FilterFn::new(dtmt_shared::filter)),
-        )
+    let stdout_layer = if cfg!(debug_assertions) {
+        let layer = fmt::layer().pretty();
+        Some(layer)
+    } else {
+        None
     };
 
     let channel_layer = fmt::layer()
         // TODO: Re-enable and implement a formatter for the Druid widget
         .with_ansi(false)
         .event_format(dtmt_shared::Formatter)
-        .fmt_fields(debug_fn(dtmt_shared::format_field))
-        .with_writer(move || ChannelWriter::new(tx.clone()));
+        .fmt_fields(debug_fn(dtmt_shared::format_fields))
+        .with_writer(move || ChannelWriter::new(tx.clone()))
+        .with_filter(FilterFn::new(dtmt_shared::filter_fields));
 
     tracing_subscriber::registry()
-        .with(channel_layer)
-        .with(filter_layer)
         .with(env_layer)
-        .with(dev_stdout_layer)
-        .with(prod_stdout_layer)
+        .with(channel_layer)
+        .with(stdout_layer)
         .with(ErrorLayer::new(fmt::format::Pretty::default()))
         .init();
 }

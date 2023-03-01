@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 pub const TIME_FORMAT: &[FormatItem] = format_description!("[hour]:[minute]:[second]");
 
-pub fn format_field(w: &mut Writer<'_>, field: &Field, val: &dyn std::fmt::Debug) -> Result {
+pub fn format_fields(w: &mut Writer<'_>, field: &Field, val: &dyn std::fmt::Debug) -> Result {
     if field.name() == "message" {
         write!(w, "{:?}", val)
     } else {
@@ -24,7 +24,7 @@ pub fn format_field(w: &mut Writer<'_>, field: &Field, val: &dyn std::fmt::Debug
     }
 }
 
-pub fn filter(metadata: &Metadata<'_>) -> bool {
+pub fn filter_fields(metadata: &Metadata<'_>) -> bool {
     metadata
         .fields()
         .iter()
@@ -72,9 +72,9 @@ pub fn create_tracing_subscriber() {
         // - only prints time, not date
         let fmt_layer = fmt::layer()
             .event_format(Formatter)
-            .fmt_fields(debug_fn(format_field));
+            .fmt_fields(debug_fn(format_fields));
 
-        (None, Some(fmt_layer), Some(FilterFn::new(filter)))
+        (None, Some(fmt_layer), Some(FilterFn::new(filter_fields)))
     };
 
     tracing_subscriber::registry()
