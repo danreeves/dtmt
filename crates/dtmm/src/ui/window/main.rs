@@ -61,7 +61,7 @@ fn build_top_bar() -> impl Widget<State> {
                 )
                 .with_default_spacer()
                 .with_child(
-                    Button::new("Reset Mods")
+                    Button::new("Reset Game")
                         .on_click(|ctx, _state: &mut State, _env| {
                             ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
                         })
