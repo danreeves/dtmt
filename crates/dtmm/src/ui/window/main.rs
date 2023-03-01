@@ -1,20 +1,19 @@
 use druid::im::Vector;
+use druid::lens;
 use druid::widget::{
     Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment,
     Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
 use druid::{
-    lens, Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
+    Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
     TextAlignment, Widget, WidgetExt, WindowDesc,
 };
 
 use crate::state::{
-    ModInfo, PathBufFormatter, State, TextBoxOnChanged, View, ACTION_START_RESET_DEPLOYMENT,
+    ModInfo, PathBufFormatter, State, TextBoxOnChanged, View, ACTION_ADD_MOD,
+    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
+    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
     ACTION_START_SAVE_SETTINGS,
-};
-use crate::state::{
-    ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD,
-    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
 };
 use crate::ui::theme;
 use crate::ui::widget::controller::AutoScrollController;
