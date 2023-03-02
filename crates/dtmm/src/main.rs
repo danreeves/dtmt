@@ -37,6 +37,12 @@ fn main() -> Result<()> {
     tracing::trace!(default_config_path = %default_config_path.display());
 
     let matches = command!()
+        .arg(Arg::new("oodle").long("oodle").help(
+            "The oodle library to load. This may either be:\n\
+                        - A library name that will be searched for in the system's default paths.\n\
+                        - A file path relative to the current working directory.\n\
+                        - An absolute file path.",
+        ))
         .arg(
             Arg::new("config")
                 .long("config")

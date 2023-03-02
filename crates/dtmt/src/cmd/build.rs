@@ -32,6 +32,12 @@ pub(crate) fn command_definition() -> Command {
                         If omitted, dtmt will search from the current working directory upward.",
                 ),
         )
+        .arg(Arg::new("oodle").long("oodle").help(
+            "The oodle library to load. This may either be:\n\
+                - A library name that will be searched for in the system's default paths.\n\
+                - A file path relative to the current working directory.\n\
+                - An absolute file path.",
+        ))
         .arg(
             Arg::new("out")
                 .long("out")
