@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -8,24 +10,36 @@ use dtmt_shared::ModConfig;
 use futures::future::try_join_all;
 use futures::StreamExt;
 use sdk::filetype::package::Package;
+use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile};
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
-
-use crate::mods::archive::Archive;
+use tokio::sync::Mutex;
 
 const PROJECT_CONFIG_NAME: &str = "dtmt.cfg";
 
+type FileIndexMap = HashMap<String, HashSet<String>>;
+
 pub(crate) fn command_definition() -> Command {
-    Command::new("build").about("Build a project").arg(
-        Arg::new("directory")
-            .required(false)
-            .value_parser(value_parser!(PathBuf))
-            .help(
-                "The path to the project to build. \
+    Command::new("build")
+        .about("Build a project")
+        .arg(
+            Arg::new("directory")
+                .required(false)
+                .value_parser(value_parser!(PathBuf))
+                .help(
+                    "The path to the project to build. \
                         If omitted, dtmt will search from the current working directory upward.",
-            ),
-    )
+                ),
+        )
+        .arg(
+            Arg::new("out")
+                .long("out")
+                .short('o')
+                .default_value("out")
+                .value_parser(value_parser!(PathBuf))
+                .help("The directory to write output files to."),
+        )
 }
 
 #[tracing::instrument]
@@ -173,74 +187,79 @@ fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     Ok(path)
 }
 
-#[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    let cfg = {
-        let dir = matches.get_one::<PathBuf>("directory").cloned();
-        let mut cfg = find_project_config(dir).await?;
+#[tracing::instrument]
+pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
+    let mut cfg = find_project_config(dir).await?;
 
-        cfg.resources.init = normalize_file_path(cfg.resources.init)
-            .wrap_err("invalid config field 'resources.init'")
+    cfg.resources.init = normalize_file_path(cfg.resources.init)
+        .wrap_err("invalid config field 'resources.init'")
+        .with_suggestion(|| {
+            "Specify a file path relative to and child path of the \
+                    directory where 'dtmt.cfg' is."
+                .to_string()
+        })
+        .with_suggestion(|| {
+            "Use 'dtmt new' in a separate directory to generate \
+                    a valid mod template."
+                .to_string()
+        })?;
+
+    if let Some(path) = cfg.resources.data {
+        let path = normalize_file_path(path)
+            .wrap_err("invalid config field 'resources.data'")
             .with_suggestion(|| {
                 "Specify a file path relative to and child path of the \
-                    directory where 'dtmt.cfg' is."
+                            directory where 'dtmt.cfg' is."
                     .to_string()
             })
             .with_suggestion(|| {
                 "Use 'dtmt new' in a separate directory to generate \
-                    a valid mod template."
+                            a valid mod template."
                     .to_string()
             })?;
+        cfg.resources.data = Some(path);
+    }
 
-        if let Some(path) = cfg.resources.data {
-            let path = normalize_file_path(path)
-                .wrap_err("invalid config field 'resources.data'")
-                .with_suggestion(|| {
-                    "Specify a file path relative to and child path of the \
-                            directory where 'dtmt.cfg' is."
-                        .to_string()
-                })
-                .with_suggestion(|| {
-                    "Use 'dtmt new' in a separate directory to generate \
-                            a valid mod template."
-                        .to_string()
-                })?;
-            cfg.resources.data = Some(path);
-        }
-
-        if let Some(path) = cfg.resources.localization {
-            let path = normalize_file_path(path)
-                .wrap_err("invalid config field 'resources.localization'")
-                .with_suggestion(|| {
-                    "Specify a file path relative to and child path of the \
+    if let Some(path) = cfg.resources.localization {
+        let path = normalize_file_path(path)
+            .wrap_err("invalid config field 'resources.localization'")
+            .with_suggestion(|| {
+                "Specify a file path relative to and child path of the \
                         directory where 'dtmt.cfg' is."
-                        .to_string()
-                })
-                .with_suggestion(|| {
-                    "Use 'dtmt new' in a separate directory to generate \
+                    .to_string()
+            })
+            .with_suggestion(|| {
+                "Use 'dtmt new' in a separate directory to generate \
                         a valid mod template."
-                        .to_string()
-                })?;
-            cfg.resources.localization = Some(path);
-        }
+                    .to_string()
+            })?;
+        cfg.resources.localization = Some(path);
+    }
 
-        cfg
-    };
+    Ok(cfg)
+}
 
-    let dest = {
-        let mut path = PathBuf::from(&cfg.id);
-        path.set_extension("zip");
-        Arc::new(path)
-    };
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
+    let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned()).await?;
+    tracing::debug!(?cfg);
     let cfg = Arc::new(cfg);
 
-    tracing::debug!(?cfg);
+    let out_path = matches
+        .get_one::<PathBuf>("out")
+        .expect("parameter should have default value");
+
+    fs::create_dir_all(out_path)
+        .await
+        .wrap_err_with(|| format!("failed to create output directory '{}'", out_path.display()))?;
+
+    let file_map = Arc::new(Mutex::new(FileIndexMap::new()));
 
     let tasks = cfg
         .packages
         .iter()
-        .map(|path| (path, cfg.clone()))
-        .map(|(path, cfg)| async move {
+        .map(|path| (path, cfg.clone(), file_map.clone()))
+        .map(|(path, cfg, file_map)| async move {
             if path.extension().is_some() {
                 eyre::bail!(
                     "Package name must be specified without file extension: {}",
@@ -248,45 +267,53 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 );
             }
 
-            build_package(path, &cfg.dir).await.wrap_err_with(|| {
+            let bundle = build_package(path, &cfg.dir).await.wrap_err_with(|| {
                 format!(
                     "failed to build package {} in {}",
                     path.display(),
                     cfg.dir.display()
                 )
-            })
+            })?;
+
+            let bundle_name = match bundle.name() {
+                IdString64::Hash(_) => {
+                    eyre::bail!("bundle name must be known as string. got hash")
+                }
+                IdString64::String(s) => s.clone(),
+            };
+
+            {
+                let mut file_map = file_map.lock().await;
+                let map_entry = file_map.entry(bundle_name).or_default();
+
+                for file in bundle.files() {
+                    map_entry.insert(file.name(false, None));
+                }
+            }
+
+            let name = bundle.name().to_murmur64();
+            let path = out_path.join(name.to_string().to_ascii_lowercase());
+
+            let data = bundle.to_binary()?;
+            fs::write(&path, data)
+                .await
+                .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))
         });
 
-    let bundles = try_join_all(tasks)
+    try_join_all(tasks)
         .await
         .wrap_err("failed to build mod bundles")?;
 
-    let config_file = {
-        let path = cfg.dir.join("dtmt.cfg");
-        fs::read(&path)
-            .await
-            .wrap_err_with(|| format!("failed to read mod config at {}", path.display()))?
-    };
-
     {
-        let dest = dest.clone();
-        let id = cfg.id.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut archive = Archive::new(id);
-
-            archive.add_config(config_file);
-
-            for bundle in bundles {
-                archive.add_bundle(bundle);
-            }
-
-            archive
-                .write(dest.as_ref())
-                .wrap_err("failed to write mod archive")
-        })
-        .await??;
+        let file_map = file_map.lock().await;
+        let data = serde_sjson::to_string(file_map.deref())?;
+        let path = out_path.join("files.sjson");
+        fs::write(&path, data)
+            .await
+            .wrap_err_with(|| format!("failed to write file index to '{}'", path.display()))?;
     }
 
-    tracing::info!("Mod archive written to {}", dest.display());
+    tracing::info!("Compiled bundles written to '{}'", out_path.display());
+
     Ok(())
 }
