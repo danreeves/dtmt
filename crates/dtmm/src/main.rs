@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 #![feature(let_chains)]
+#![windows_subsystem = "windows"]
 
 use std::path::PathBuf;
 use std::sync::Arc;
