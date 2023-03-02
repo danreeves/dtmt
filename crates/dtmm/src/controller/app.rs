@@ -50,10 +50,18 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
     tracing::info!("Importing mod {}", dir_name);
 
+    let names: Vec<_> = archive.file_names().map(|s| s.to_string()).collect();
+
     let mod_cfg: ModConfig = {
+        let name = names
+            .iter()
+            .find(|name| name.ends_with("dtmt.cfg"))
+            .ok_or_else(|| eyre::eyre!("archive does not contain mod config"))?;
+
         let mut f = archive
-            .by_name(&format!("{}/{}", dir_name, "dtmt.cfg"))
+            .by_name(name)
             .wrap_err("failed to read mod config from archive")?;
+
         let mut buf = Vec::with_capacity(f.size() as usize);
         f.read_to_end(&mut buf)
             .wrap_err("failed to read mod config from archive")?;
@@ -66,8 +74,13 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
     tracing::debug!(?mod_cfg);
 
     let files: HashMap<String, Vec<String>> = {
+        let name = names
+            .iter()
+            .find(|name| name.ends_with("files.sjson"))
+            .ok_or_else(|| eyre::eyre!("archive does not contain file index"))?;
+
         let mut f = archive
-            .by_name(&format!("{}/{}", dir_name, "files.sjson"))
+            .by_name(name)
             .wrap_err("failed to read file index from archive")?;
         let mut buf = Vec::with_capacity(f.size() as usize);
         f.read_to_end(&mut buf)
