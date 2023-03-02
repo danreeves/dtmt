@@ -20,12 +20,9 @@ mod cmd {
     pub mod dictionary;
     pub mod murmur;
     pub mod new;
+    pub mod package;
     mod util;
     pub mod watch;
-}
-
-mod mods {
-    pub mod archive;
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -56,6 +53,7 @@ async fn main() -> Result<()> {
         .subcommand(cmd::dictionary::command_definition())
         .subcommand(cmd::murmur::command_definition())
         .subcommand(cmd::new::command_definition())
+        .subcommand(cmd::package::command_definition())
         // .subcommand(cmd::watch::command_definition())
         .get_matches();
 
@@ -126,12 +124,13 @@ async fn main() -> Result<()> {
     };
 
     match matches.subcommand() {
+        Some(("build", sub_matches)) => cmd::build::run(ctx, sub_matches).await?,
         Some(("bundle", sub_matches)) => cmd::bundle::run(ctx, sub_matches).await?,
+        Some(("dictionary", sub_matches)) => cmd::dictionary::run(ctx, sub_matches).await?,
         Some(("murmur", sub_matches)) => cmd::murmur::run(ctx, sub_matches).await?,
         Some(("new", sub_matches)) => cmd::new::run(ctx, sub_matches).await?,
-        Some(("build", sub_matches)) => cmd::build::run(ctx, sub_matches).await?,
+        Some(("package", sub_matches)) => cmd::package::run(ctx, sub_matches).await?,
         Some(("watch", sub_matches)) => cmd::watch::run(ctx, sub_matches).await?,
-        Some(("dictionary", sub_matches)) => cmd::dictionary::run(ctx, sub_matches).await?,
         _ => unreachable!(
             "clap is configured to require a subcommand, and they're all handled above"
         ),
