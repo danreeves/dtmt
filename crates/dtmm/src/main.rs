@@ -50,6 +50,10 @@ fn main() -> Result<()> {
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
     util::log::create_tracing_subscriber(log_tx);
 
+    unsafe {
+        oodle_sys::init(matches.get_one::<String>("oodle"));
+    }
+
     let config = util::config::read_config(&default_config_path, &matches)
         .wrap_err("failed to read config file")?;
 

@@ -253,6 +253,10 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
+    unsafe {
+        oodle_sys::init(matches.get_one::<String>("oodle"));
+    }
+
     let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned()).await?;
 
     let game_dir = matches
