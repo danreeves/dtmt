@@ -1,5 +1,6 @@
 #![feature(io_error_more)]
 #![feature(let_chains)]
+#![windows_subsystem = "console"]
 
 use std::path::PathBuf;
 use std::sync::Arc;

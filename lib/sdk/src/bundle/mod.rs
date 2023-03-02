@@ -4,7 +4,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
-use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
+use oodle_sys::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
 use crate::bundle::file::Properties;
@@ -159,7 +159,7 @@ impl Bundle {
                 decompressed.append(&mut compressed_buffer);
             } else {
                 // TODO: Optimize to not reallocate?
-                let mut raw_buffer = oodle::decompress(
+                let mut raw_buffer = oodle_sys::decompress(
                     &compressed_buffer,
                     OodleLZ_FuzzSafe::No,
                     OodleLZ_CheckCRC::No,
@@ -257,7 +257,7 @@ impl Bundle {
         let mut chunk_sizes = Vec::with_capacity(num_chunks);
 
         for chunk in chunks {
-            let compressed = oodle::compress(chunk)?;
+            let compressed = oodle_sys::compress(chunk)?;
             tracing::trace!(
                 raw_chunk_size = chunk.len(),
                 compressed_chunk_size = compressed.len()
@@ -359,7 +359,7 @@ where
         r.read_exact(&mut compressed_buffer)?;
 
         // TODO: Optimize to not reallocate?
-        let mut raw_buffer = oodle::decompress(
+        let mut raw_buffer = oodle_sys::decompress(
             &compressed_buffer,
             OodleLZ_FuzzSafe::No,
             OodleLZ_CheckCRC::No,

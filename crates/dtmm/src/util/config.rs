@@ -60,7 +60,7 @@ pub(crate) struct Config {
     pub mod_order: Vec<LoadOrderEntry>,
 }
 
-#[cfg(not(arget_os = "windows"))]
+#[cfg(not(target_os = "windows"))]
 pub fn get_default_config_path() -> PathBuf {
     let config_dir = std::env::var("XDG_CONFIG_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| {
@@ -79,7 +79,7 @@ pub fn get_default_config_path() -> PathBuf {
     PathBuf::from(config_dir).join("dtmm").join("dtmm.cfg")
 }
 
-#[cfg(not(arget_os = "windows"))]
+#[cfg(not(target_os = "windows"))]
 pub fn get_default_data_dir() -> PathBuf {
     let data_dir = std::env::var("XDG_DATA_DIR").unwrap_or_else(|_| {
         let home = std::env::var("HOME").unwrap_or_else(|_| {

@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 #![feature(let_chains)]
+#![windows_subsystem = "windows"]
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -37,6 +38,12 @@ fn main() -> Result<()> {
     tracing::trace!(default_config_path = %default_config_path.display());
 
     let matches = command!()
+        .arg(Arg::new("oodle").long("oodle").help(
+            "The oodle library to load. This may either be:\n\
+                        - A library name that will be searched for in the system's default paths.\n\
+                        - A file path relative to the current working directory.\n\
+                        - An absolute file path.",
+        ))
         .arg(
             Arg::new("config")
                 .long("config")
@@ -49,6 +56,10 @@ fn main() -> Result<()> {
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
     util::log::create_tracing_subscriber(log_tx);
+
+    unsafe {
+        oodle_sys::init(matches.get_one::<String>("oodle"));
+    }
 
     let config = util::config::read_config(&default_config_path, &matches)
         .wrap_err("failed to read config file")?;
