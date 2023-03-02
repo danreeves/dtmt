@@ -40,6 +40,18 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help("The directory to write output files to."),
         )
+        .arg(
+            Arg::new("deploy")
+                .long("deploy")
+                .short('d')
+                .value_parser(value_parser!(PathBuf))
+                .help(
+                    "If the path to the game (without the trailing '/bundle') is specified, \
+                        deploy the newly built bundles. \
+                        This will not adjust the bundle database or package files, so if files are \
+                        added or removed, you will have to import into DTMM and re-deploy there.",
+                ),
+        )
 }
 
 #[tracing::instrument]
@@ -242,12 +254,19 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned()).await?;
-    tracing::debug!(?cfg);
-    let cfg = Arc::new(cfg);
+
+    let game_dir = matches
+        .get_one::<PathBuf>("deploy")
+        .map(|p| p.join("bundle"));
 
     let out_path = matches
         .get_one::<PathBuf>("out")
         .expect("parameter should have default value");
+
+    tracing::debug!(?cfg, ?game_dir, ?out_path);
+
+    let game_dir = Arc::new(game_dir);
+    let cfg = Arc::new(cfg);
 
     fs::create_dir_all(out_path)
         .await
@@ -258,8 +277,11 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     let tasks = cfg
         .packages
         .iter()
-        .map(|path| (path, cfg.clone(), file_map.clone()))
-        .map(|(path, cfg, file_map)| async move {
+        // The closure below would capture the `Arc`s before they could be cloned,
+        // so instead we need to clone them in a non-move block and inject them
+        // via parameters.
+        .map(|path| (path, cfg.clone(), file_map.clone(), game_dir.clone()))
+        .map(|(path, cfg, file_map, game_dir)| async move {
             if path.extension().is_some() {
                 eyre::bail!(
                     "Package name must be specified without file extension: {}",
@@ -291,13 +313,33 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 }
             }
 
-            let name = bundle.name().to_murmur64();
-            let path = out_path.join(name.to_string().to_ascii_lowercase());
-
+            let name = bundle.name().to_murmur64().to_string().to_ascii_lowercase();
+            let path = out_path.join(&name);
             let data = bundle.to_binary()?;
-            fs::write(&path, data)
+
+            tracing::trace!(
+                "Writing bundle {} to '{}'",
+                bundle.name().display(),
+                path.display()
+            );
+            fs::write(&path, &data)
                 .await
-                .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))
+                .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
+
+            if let Some(game_dir) = game_dir.as_ref() {
+                let path = game_dir.join(&name);
+
+                tracing::trace!(
+                    "Deploying bundle {} to '{}'",
+                    bundle.name().display(),
+                    path.display()
+                );
+                fs::write(&path, &data)
+                    .await
+                    .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
+            }
+
+            Ok(())
         });
 
     try_join_all(tasks)
@@ -314,6 +356,10 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     }
 
     tracing::info!("Compiled bundles written to '{}'", out_path.display());
+
+    if let Some(game_dir) = game_dir.as_ref() {
+        tracing::info!("Deployed bundles to '{}'", game_dir.display());
+    }
 
     Ok(())
 }
