@@ -17,23 +17,15 @@ use crate::mods::archive::Archive;
 const PROJECT_CONFIG_NAME: &str = "dtmt.cfg";
 
 pub(crate) fn command_definition() -> Command {
-    Command::new("build")
-        .about("Build a project")
-        .arg(
-            Arg::new("directory")
-                .required(false)
-                .value_parser(value_parser!(PathBuf))
-                .help(
-                    "The path to the project to build. \
+    Command::new("build").about("Build a project").arg(
+        Arg::new("directory")
+            .required(false)
+            .value_parser(value_parser!(PathBuf))
+            .help(
+                "The path to the project to build. \
                         If omitted, dtmt will search from the current working directory upward.",
-                ),
-        )
-        .arg(Arg::new("oodle").long("oodle").help(
-            "The oodle library to load. This may either be:\n\
-                - A library name that will be searched for in the system's default paths.\n\
-                - A file path relative to the current working directory.\n\
-                - An absolute file path.",
-        ))
+            ),
+    )
 }
 
 #[tracing::instrument]
