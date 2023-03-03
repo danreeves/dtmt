@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::Help;
+use path_slash::PathBufExt;
 use tokio::fs::{self, DirEntry};
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
@@ -88,7 +89,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             .await
             .wrap_err_with(|| format!("failed to read mod config at {}", path.display()))?;
 
-        zip.start_file(name.to_string_lossy(), Default::default())?;
+        zip.start_file(name.to_slash_lossy(), Default::default())?;
         zip.write_all(&data)?;
     }
 
@@ -111,7 +112,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             let (name, data) = res?;
 
             let name = base_path.join(name);
-            zip.start_file(name.to_string_lossy(), Default::default())?;
+            zip.start_file(name.to_slash_lossy(), Default::default())?;
             zip.write_all(&data)?;
         }
     };

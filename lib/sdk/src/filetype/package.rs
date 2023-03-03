@@ -7,6 +7,7 @@ use std::str::FromStr;
 use async_recursion::async_recursion;
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
+use path_slash::PathBufExt;
 use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
@@ -258,7 +259,7 @@ impl Package {
             for path in paths.iter() {
                 w.write_u64(t.hash().into())?;
 
-                let hash = Murmur64::hash(path.to_string_lossy().as_bytes());
+                let hash = Murmur64::hash(path.to_slash_lossy().as_bytes());
                 w.write_u64(hash.into())?;
             }
         }
