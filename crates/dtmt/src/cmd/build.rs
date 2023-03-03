@@ -9,6 +9,7 @@ use color_eyre::{Help, Report};
 use dtmt_shared::ModConfig;
 use futures::future::try_join_all;
 use futures::StreamExt;
+use path_slash::PathExt;
 use sdk::filetype::package::Package;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile};
@@ -134,7 +135,7 @@ where
             path.set_extension("");
 
             BundleFile::from_sjson(
-                path.to_string_lossy().to_string(),
+                path.to_slash_lossy().to_string(),
                 file_type,
                 sjson,
                 root.as_ref(),
@@ -176,7 +177,7 @@ where
         .await
         .wrap_err_with(|| format!("failed to read file {}", path.display()))?;
 
-    let pkg_name = package.to_string_lossy().to_string();
+    let pkg_name = package.to_slash_lossy().to_string();
     let pkg = Package::from_sjson(sjson, pkg_name.clone(), root)
         .await
         .wrap_err_with(|| format!("invalid package file {}", &pkg_name))?;

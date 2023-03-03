@@ -7,6 +7,10 @@
 - dtmt: split `build` into `build` and `package`
 - dtmt: implement deploying built bundles
 
+=== Fixed
+
+- all: force unix path separators for engine values
+
 == 2023-03-01
 
 === Added

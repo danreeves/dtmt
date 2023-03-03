@@ -676,6 +676,7 @@ dependencies = [
  "dtmt-shared",
  "futures",
  "oodle-sys",
+ "path-slash",
  "sdk",
  "serde",
  "serde_sjson",
@@ -704,6 +705,7 @@ dependencies = [
  "nanorand",
  "oodle-sys",
  "path-clean",
+ "path-slash",
  "pin-project-lite",
  "promptly",
  "sdk",
@@ -1700,6 +1702,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17359afc20d7ab31fdb42bb844c8b3bb1dabd7dcf7e68428492da7f16966fcef"
 
 [[package]]
+name = "path-slash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e91099d4268b0e11973f036e885d652fb0b21fedcf69738c627f94db6a44f42"
+
+[[package]]
 name = "pbkdf2"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2045,6 +2053,7 @@ dependencies = [
  "luajit2-sys",
  "nanorand",
  "oodle-sys",
+ "path-slash",
  "pin-project-lite",
  "serde",
  "serde_sjson",
