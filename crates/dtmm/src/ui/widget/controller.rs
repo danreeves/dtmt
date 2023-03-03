@@ -1,7 +1,7 @@
 use druid::widget::{Button, Controller, Scroll};
 use druid::{Data, Env, Event, EventCtx, Rect, UpdateCtx, Widget};
 
-use crate::state::{State, ACTION_START_SAVE_SETTINGS};
+use crate::state::{State, ACTION_SET_DIRTY, ACTION_START_SAVE_SETTINGS};
 
 pub struct DisabledButtonController;
 
@@ -57,11 +57,16 @@ impl<T: Data, W: Widget<T>> Controller<T, Scroll<T, W>> for AutoScrollController
     }
 }
 
-/// A controller that submits the command to save settings every time its widget's
-/// data changes.
-pub struct SaveSettingsController;
+macro_rules! compare_state_fields {
+    ($old:ident, $new:ident, $($field:ident),+) => {
+        $($old.$field != $new.$field) || +
+    }
+}
 
-impl<W: Widget<State>> Controller<State, W> for SaveSettingsController {
+/// A controller that tracks state changes for certain fields and submits commands to handle them.
+pub struct DirtyStateController;
+
+impl<W: Widget<State>> Controller<State, W> for DirtyStateController {
     fn update(
         &mut self,
         child: &mut W,
@@ -70,13 +75,14 @@ impl<W: Widget<State>> Controller<State, W> for SaveSettingsController {
         data: &State,
         env: &Env,
     ) {
-        // Only filter for the values that actually go into the settings file.
-        if old_data.mods != data.mods
-            || old_data.game_dir != data.game_dir
-            || old_data.data_dir != data.data_dir
-        {
+        if compare_state_fields!(old_data, data, mods, game_dir, data_dir) {
             ctx.submit_command(ACTION_START_SAVE_SETTINGS);
         }
+
+        if compare_state_fields!(old_data, data, mods, game_dir) {
+            ctx.submit_command(ACTION_SET_DIRTY);
+        }
+
         child.update(ctx, old_data, data, env)
     }
 }

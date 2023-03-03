@@ -15,7 +15,7 @@ use crate::state::{
     ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme;
-use crate::ui::widget::controller::{AutoScrollController, SaveSettingsController};
+use crate::ui::widget::controller::{AutoScrollController, DirtyStateController};
 use crate::ui::widget::PathBufFormatter;
 
 const TITLE: &str = "Darktide Mod Manager";
@@ -38,11 +38,20 @@ fn build_top_bar() -> impl Widget<State> {
         state.current_view = View::Settings;
     });
 
-    let deploy_button = Button::new("Deploy Mods")
+    let deploy_button = {
+        Button::dynamic(|state: &State, _| {
+            let mut s = String::new();
+            if state.dirty {
+                s.push_str("! ");
+            }
+            s.push_str("Deploy Mods");
+            s
+        })
         .on_click(|ctx, _state: &mut State, _env| {
             ctx.submit_command(ACTION_START_DEPLOY);
         })
-        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
+        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress)
+    };
 
     let reset_button = Button::new("Reset Game")
         .on_click(|ctx, _state: &mut State, _env| {
@@ -308,5 +317,5 @@ fn build_window() -> impl Widget<State> {
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
         .with_child(build_log_view())
-        .controller(SaveSettingsController)
+        .controller(DirtyStateController)
 }

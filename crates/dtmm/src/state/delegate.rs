@@ -33,6 +33,8 @@ pub(crate) const ACTION_START_SAVE_SETTINGS: Selector =
 pub(crate) const ACTION_FINISH_SAVE_SETTINGS: Selector =
     Selector::new("dtmm.action.finish-save-settings");
 
+pub(crate) const ACTION_SET_DIRTY: Selector = Selector::new("dtmm.action.set-dirty");
+
 pub(crate) enum AsyncAction {
     DeployMods(State),
     ResetDeployment(State),
@@ -81,6 +83,7 @@ impl AppDelegate<State> for Delegate {
             }
             cmd if cmd.is(ACTION_FINISH_DEPLOY) => {
                 state.is_deployment_in_progress = false;
+                state.dirty = false;
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_START_RESET_DEPLOYMENT) => {
@@ -224,6 +227,10 @@ impl AppDelegate<State> for Delegate {
                     ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 }
 
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_SET_DIRTY) => {
+                state.dirty = true;
                 Handled::Yes
             }
             cmd => {
