@@ -12,8 +12,10 @@ use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 pub(crate) mod database;
 pub(crate) mod file;
+pub(crate) mod filetype;
 
-pub use file::{BundleFile, BundleFileType, BundleFileVariant};
+pub use file::{BundleFile, BundleFileVariant};
+pub use filetype::BundleFileType;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
 enum BundleFormat {

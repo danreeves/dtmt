@@ -11,7 +11,8 @@ use path_slash::PathBufExt;
 use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
-use crate::bundle::file::{BundleFileType, UserFile};
+use crate::bundle::file::UserFile;
+use crate::bundle::filetype::BundleFileType;
 use crate::murmur::{HashGroup, Murmur64};
 
 #[tracing::instrument]
@@ -280,17 +281,11 @@ where
     Ok(vec![UserFile::new(s.into_bytes())])
 }
 
-// #[tracing::instrument(skip_all)]
-// pub fn compile(_ctx: &crate::Context, data: String) -> Result<Vec<u8>> {
-//     let pkg = Package::from_sjson(data)?;
-//     pkg.to_binary()
-// }
-
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
 
-    use crate::BundleFileType;
+    use crate::bundle::filetype::BundleFileType;
 
     use super::resolve_wildcard;
     use super::Package;
