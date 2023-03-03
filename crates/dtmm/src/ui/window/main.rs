@@ -31,43 +31,39 @@ pub(crate) fn new() -> WindowDesc<State> {
 }
 
 fn build_top_bar() -> impl Widget<State> {
+    let mods_button = Button::new("Mods")
+        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods);
+
+    let settings_button = Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
+        state.current_view = View::Settings;
+    });
+
+    let deploy_button = Button::new("Deploy Mods")
+        .on_click(|ctx, _state: &mut State, _env| {
+            ctx.submit_command(ACTION_START_DEPLOY);
+        })
+        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
+
+    let reset_button = Button::new("Reset Game")
+        .on_click(|ctx, _state: &mut State, _env| {
+            ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
+        })
+        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
+
     Flex::row()
         .must_fill_main_axis(true)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_child(
             Flex::row()
-                .with_child(
-                    Button::new("Mods")
-                        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods),
-                )
+                .with_child(mods_button)
                 .with_default_spacer()
-                .with_child(
-                    Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
-                        state.current_view = View::Settings;
-                    }),
-                ),
+                .with_child(settings_button),
         )
         .with_child(
             Flex::row()
-                .with_child(
-                    Button::new("Deploy Mods")
-                        .on_click(|ctx, _state: &mut State, _env| {
-                            ctx.submit_command(ACTION_START_DEPLOY);
-                        })
-                        .disabled_if(|data, _| {
-                            data.is_deployment_in_progress || data.is_reset_in_progress
-                        }),
-                )
+                .with_child(deploy_button)
                 .with_default_spacer()
-                .with_child(
-                    Button::new("Reset Game")
-                        .on_click(|ctx, _state: &mut State, _env| {
-                            ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
-                        })
-                        .disabled_if(|data, _| {
-                            data.is_deployment_in_progress || data.is_reset_in_progress
-                        }),
-                ),
+                .with_child(reset_button),
         )
         .padding(theme::TOP_BAR_INSETS)
         .background(theme::TOP_BAR_BACKGROUND_COLOR)
