@@ -15,6 +15,8 @@ use sdk::murmur::Murmur64;
 use sdk::{
     Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
@@ -28,6 +30,13 @@ const BUNDLE_DATABASE_NAME: &str = "bundle_database.data";
 const MOD_BOOT_SCRIPT: &str = "scripts/mod_main";
 const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
 const SETTINGS_FILE_PATH: &str = "application_settings/settings_common.ini";
+const DEPLOYMENT_DATA_PATH: &str = "dtmm-deployment.sjson";
+
+#[derive(Serialize, Deserialize)]
+struct DeploymentData {
+    bundles: Vec<String>,
+    timestamp: OffsetDateTime,
+}
 
 #[tracing::instrument]
 async fn read_file_with_backup<P>(path: P) -> Result<Vec<u8>>
@@ -449,8 +458,11 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
     Ok(bundles)
 }
 
-#[tracing::instrument(skip_all, fields(bundles = bundles.len()))]
-async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Result<()> {
+#[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
+async fn patch_bundle_database<B>(state: Arc<State>, bundles: B) -> Result<()>
+where
+    B: AsRef<[Bundle]>,
+{
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let database_path = bundle_dir.join(BUNDLE_DATABASE_NAME);
 
@@ -464,9 +476,9 @@ async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Resul
         db
     };
 
-    for bundle in bundles {
+    for bundle in bundles.as_ref() {
         tracing::trace!("Adding '{}' to bundle database", bundle.name().display());
-        db.add_bundle(&bundle);
+        db.add_bundle(bundle);
     }
 
     {
@@ -480,6 +492,29 @@ async fn patch_bundle_database(state: Arc<State>, bundles: Vec<Bundle>) -> Resul
             )
         })?;
     }
+
+    Ok(())
+}
+
+#[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
+async fn write_deployment_data<B>(state: Arc<State>, bundles: B) -> Result<()>
+where
+    B: AsRef<[Bundle]>,
+{
+    let info = DeploymentData {
+        timestamp: OffsetDateTime::now_utc(),
+        bundles: bundles
+            .as_ref()
+            .iter()
+            .map(|bundle| format!("{:x}", bundle.name().to_murmur64()))
+            .collect(),
+    };
+    let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
+    let data = serde_sjson::to_string(&info).wrap_err("failed to serizalie deployment data")?;
+
+    fs::write(&path, &data)
+        .await
+        .wrap_err_with(|| format!("failed to write deployment data to '{}'", path.display()))?;
 
     Ok(())
 }
@@ -522,9 +557,14 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
         .wrap_err("failed to patch game settings")?;
 
     tracing::info!("Patching bundle database");
-    patch_bundle_database(state.clone(), bundles)
+    patch_bundle_database(state.clone(), &bundles)
         .await
         .wrap_err("failed to patch bundle database")?;
+
+    tracing::info!("Writing deployment data");
+    write_deployment_data(state.clone(), &bundles)
+        .await
+        .wrap_err("failed to write deployment data")?;
 
     tracing::info!("Finished deploying mods");
     Ok(())
@@ -537,6 +577,40 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
     let bundle_dir = state.game_dir.join("bundle");
 
     tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
+
+    tracing::debug!("Reading mod deployment");
+
+    let info: DeploymentData = {
+        let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
+        let data = match fs::read(&path).await {
+            Ok(data) => data,
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                tracing::info!("No deployment to reset");
+                return Ok(());
+            }
+            Err(err) => {
+                return Err(err).wrap_err_with(|| {
+                    format!("failed to read deployment info at '{}'", path.display())
+                });
+            }
+        };
+
+        let data = String::from_utf8(data).wrap_err("invalid UTF8 in deployment data")?;
+
+        serde_sjson::from_str(&data).wrap_err("invalid SJSON in deployment data")?
+    };
+
+    for name in info.bundles {
+        let path = bundle_dir.join(name);
+
+        match fs::remove_file(&path).await {
+            Ok(_) => {}
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => {
+                tracing::error!("Failed to remove '{}': {:?}", path.display(), err);
+            }
+        };
+    }
 
     for p in paths {
         let path = bundle_dir.join(p);
@@ -555,9 +629,13 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
 
             tracing::debug!("Deleting backup: {}", backup.display());
 
-            fs::remove_file(&backup)
-                .await
-                .wrap_err_with(|| format!("failed to remove '{}'", backup.display()))
+            match fs::remove_file(&backup).await {
+                Ok(_) => Ok(()),
+                Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+                Err(err) => {
+                    Err(err).wrap_err_with(|| format!("failed to remove '{}'", backup.display()))
+                }
+            }
         }
         .await;
 
@@ -565,6 +643,17 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
             tracing::error!(
                 "Failed to restore '{}' from backup. You may need to verify game files. Error: {:?}",
                 &p,
+                err
+            );
+        }
+    }
+
+    {
+        let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
+        if let Err(err) = fs::remove_file(&path).await {
+            tracing::error!(
+                "Failed to remove deployment data '{}': {:?}",
+                path.display(),
                 err
             );
         }
