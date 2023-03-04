@@ -35,6 +35,7 @@ const DEPLOYMENT_DATA_PATH: &str = "dtmm-deployment.sjson";
 #[derive(Serialize, Deserialize)]
 struct DeploymentData {
     bundles: Vec<String>,
+    #[serde(with = "time::serde::iso8601")]
     timestamp: OffsetDateTime,
 }
 
