@@ -64,10 +64,12 @@ fn main() -> Result<()> {
     let config = util::config::read_config(&default_config_path, &matches)
         .wrap_err("failed to read config file")?;
 
+    let game_info = dtmt_shared::collect_game_info()?;
+
     let initial_state = {
         let mut state = State::new(
             config.path,
-            config.game_dir.unwrap_or_default(),
+            config.game_dir.unwrap_or(game_info.path),
             config.data_dir.unwrap_or_default(),
         );
         state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
