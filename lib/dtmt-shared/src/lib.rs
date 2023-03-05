@@ -34,6 +34,7 @@ pub struct ModConfig {
 
 pub const STEAMAPP_ID: u32 = 1361210;
 
+#[derive(Debug)]
 pub struct GameInfo {
     pub path: PathBuf,
     pub last_updated: OffsetDateTime,

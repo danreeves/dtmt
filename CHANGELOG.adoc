@@ -7,6 +7,7 @@
 - dtmt: split `build` into `build` and `package`
 - dtmt: implement deploying built bundles
 - dtmm: indicate when a deployment is necessary
+- dtmm: check for Steam game update before deployment
 
 === Fixed
 

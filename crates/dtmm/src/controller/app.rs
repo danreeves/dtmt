@@ -8,7 +8,6 @@ use color_eyre::{Help, Result};
 use druid::im::Vector;
 use druid::FileInfo;
 use dtmt_shared::ModConfig;
-use serde::Deserialize;
 use tokio::fs::{self, DirEntry};
 use tokio::runtime::Runtime;
 use tokio_stream::wrappers::ReadDirStream;
@@ -17,6 +16,8 @@ use zip::ZipArchive;
 
 use crate::state::{ModInfo, PackageInfo, State};
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
+
+use super::read_sjson_file;
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
@@ -142,16 +143,6 @@ pub(crate) async fn save_settings(state: State) -> Result<()> {
                 state.config_path.display()
             )
         })
-}
-
-async fn read_sjson_file<P, T>(path: P) -> Result<T>
-where
-    T: for<'a> Deserialize<'a>,
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let buf = fs::read(path).await.wrap_err("failed to read file")?;
-    let data = String::from_utf8(buf).wrap_err("invalid UTF8")?;
-    serde_sjson::from_str(&data).wrap_err("failed to deserialize")
 }
 
 #[tracing::instrument(skip_all,fields(

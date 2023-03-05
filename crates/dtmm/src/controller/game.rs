@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
-use color_eyre::{eyre, Help, Result};
+use color_eyre::{eyre, Help, Report, Result};
 use futures::stream;
 use futures::StreamExt;
 use path_slash::PathBufExt;
@@ -21,6 +21,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
 
+use super::read_sjson_file;
 use crate::state::{PackageInfo, State};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
@@ -32,7 +33,7 @@ const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
 const SETTINGS_FILE_PATH: &str = "application_settings/settings_common.ini";
 const DEPLOYMENT_DATA_PATH: &str = "dtmm-deployment.sjson";
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct DeploymentData {
     bundles: Vec<String>,
     #[serde(with = "time::serde::iso8601")]
@@ -533,6 +534,42 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
             // TODO: Add a suggestion where to get it, once that's published
             eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
         }
+    }
+
+    let (game_info, deployment_info) = tokio::try_join!(
+        async {
+            tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
+                .await
+                .map_err(Report::new)
+        },
+        async {
+            let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
+            match read_sjson_file::<_, DeploymentData>(path)
+                .await
+            {
+                Ok(data) => Ok(Some(data)),
+                Err(err) => {
+                    if let Some(err) = err.downcast_ref::<std::io::Error>() && err.kind() == ErrorKind::NotFound {
+                        Ok(None)
+                    } else {
+                        Err(err).wrap_err("failed to read deployment data")
+                    }
+                }
+            }
+        }
+    )
+    .wrap_err("failed to gather deployment information")?;
+
+    let game_info = game_info.wrap_err("failed to collect Steam info")?;
+
+    tracing::debug!(?game_info, ?deployment_info);
+
+    if deployment_info
+        .as_ref()
+        .map(|i| game_info.last_updated > i.timestamp)
+        .unwrap_or(false)
+    {
+        eyre::bail!("Game was updated since last mod deployment. Please reset first.");
     }
 
     tracing::info!(
