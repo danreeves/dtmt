@@ -589,6 +589,37 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
         .wrap_err("failed to patch boot bundle")?;
     bundles.append(&mut more_bundles);
 
+    if let Some(info) = &deployment_info {
+        let bundle_dir = Arc::new(state.game_dir.join("bundle"));
+        let tasks = info
+            .bundles
+            .iter()
+            .cloned()
+            .map(|v| (v, bundle_dir.clone()))
+            .filter_map(|(file_name, bundle_dir)| {
+                let contains = bundles.iter().any(|b2| {
+                    let name = b2.name().to_murmur64().to_string();
+                    file_name == name
+                });
+
+                if !contains {
+                    let task = async move {
+                        let path = bundle_dir.join(file_name);
+                        if let Err(err) = fs::remove_file(&path).await.wrap_err_with(|| {
+                            format!("failed to remove unused bundle '{}'", path.display())
+                        }) {
+                            tracing::error!("{:?}", err);
+                        }
+                    };
+                    Some(task)
+                } else {
+                    None
+                }
+            });
+
+        futures::future::join_all(tasks).await;
+    }
+
     tracing::info!("Patch game settings");
     patch_game_settings(state.clone())
         .await
