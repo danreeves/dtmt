@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
-use color_eyre::{Help, Report, SectionExt};
+use color_eyre::{Help, Report};
 use futures::future::try_join_all;
 use futures::StreamExt;
 use glob::Pattern;
@@ -33,7 +33,7 @@ pub(crate) fn command_definition() -> Command {
                 .value_parser(value_parser!(PathBuf))
                 .help(
                     "Path to the bundle(s) to read. If this points to a directory instead \
-                            of a file, all files in that directory will be checked.",
+                        of a file, all files in that directory will be checked.",
                 ),
         )
         .arg(
@@ -311,14 +311,25 @@ where
                         path.push(name);
 
                         if options.dry_run {
-                            tracing::info!(path = %path.display(), "Writing file");
+                            tracing::info!("Dry Run: Writing file '{}'", path.display());
                         } else {
-                            tracing::debug!(path = %path.display(), "Writing file");
+                            tracing::info!("Writing file '{}'", path.display());
                             tasks.push(tokio::spawn(async move {
-                                fs::write(&path, file.data())
-                                    .await
-                                    .wrap_err("failed to write extracted file to disc")
-                                    .with_section(|| path.display().to_string().header("Path"))
+                                if let Some(parent) = path.parent() {
+                                    fs::create_dir_all(&parent).await.wrap_err_with(|| {
+                                        format!(
+                                            "failed to create parent directories '{}'",
+                                            parent.display()
+                                        )
+                                    })?;
+                                }
+
+                                fs::write(&path, file.data()).await.wrap_err_with(|| {
+                                    format!(
+                                        "failed to write extracted file to disc: '{}'",
+                                        path.display()
+                                    )
+                                })
                             }));
                         }
                     }
@@ -342,9 +353,9 @@ where
                             path.push(name);
 
                             if options.dry_run {
-                                tracing::info!(path = %path.display(), "Writing file");
+                                tracing::info!("Dry Run: Writing file '{}'", path.display());
                             } else {
-                                tracing::debug!(path = %path.display(), "Writing file");
+                                tracing::info!("Writing file '{}'", path.display());
                                 tasks.push(tokio::spawn(async move {
                                     let parent = match path.parent() {
                                         Some(parent) => parent,
@@ -356,17 +367,19 @@ where
                                         }
                                     };
 
-                                    fs::create_dir_all(parent)
-                                        .await
-                                        .wrap_err("failed to create parent directory")
-                                        .with_section(|| {
-                                            parent.display().to_string().header("Path")
-                                        })?;
+                                    fs::create_dir_all(parent).await.wrap_err_with(|| {
+                                        format!(
+                                            "failed to create parent directory: '{}'",
+                                            parent.display()
+                                        )
+                                    })?;
 
-                                    fs::write(&path, file.data())
-                                        .await
-                                        .wrap_err("failed to write extracted file to disc")
-                                        .with_section(|| path.display().to_string().header("Path"))
+                                    fs::write(&path, file.data()).await.wrap_err_with(|| {
+                                        format!(
+                                            "failed to write extracted file to disc: '{}'",
+                                            path.display()
+                                        )
+                                    })
                                 }));
                             }
                         }
@@ -374,10 +387,7 @@ where
                 }
             }
             Err(err) => {
-                let err = err
-                    .wrap_err("Failed to decompile")
-                    .with_section(|| name.header("File"));
-
+                let err = err.wrap_err(format!("Failed to decompile file {}", name));
                 tracing::error!("{:?}", err);
             }
         };
