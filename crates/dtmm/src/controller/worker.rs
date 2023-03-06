@@ -41,7 +41,7 @@ async fn handle_action(
                             .await
                             .submit_command(
                                 ACTION_FINISH_ADD_MOD,
-                                SingleUse::new(mod_info),
+                                SingleUse::new(Arc::new(mod_info)),
                                 Target::Auto,
                             )
                             .expect("failed to send command");

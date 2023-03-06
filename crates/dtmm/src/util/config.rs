@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{fs, path::Path};
 
 use clap::{parser::ValueSource, ArgMatches};
@@ -38,6 +39,7 @@ impl<'a> From<&'a State> for ConfigSerialize<'a> {
             mod_order: state
                 .mods
                 .iter()
+                .map(Arc::as_ref)
                 .map(LoadOrderEntrySerialize::from)
                 .collect(),
         }

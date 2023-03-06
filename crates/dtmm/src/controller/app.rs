@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Cursor, ErrorKind, Read};
 use std::path::Path;
+use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Help, Result};
@@ -107,7 +108,7 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
     let packages = files
         .into_iter()
-        .map(|(name, files)| PackageInfo::new(name, files.into_iter().collect()))
+        .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
     let info = ModInfo::new(mod_cfg, packages);
 
@@ -171,14 +172,14 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
 
     let packages = files
         .into_iter()
-        .map(|(name, files)| PackageInfo::new(name, files.into_iter().collect()))
+        .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
     let info = ModInfo::new(cfg, packages);
     Ok(info)
 }
 
 #[tracing::instrument(skip(mod_order))]
-pub(crate) fn load_mods<'a, P, S>(mod_dir: P, mod_order: S) -> Result<Vector<ModInfo>>
+pub(crate) fn load_mods<'a, P, S>(mod_dir: P, mod_order: S) -> Result<Vector<Arc<ModInfo>>>
 where
     S: Iterator<Item = &'a LoadOrderEntry>,
     P: AsRef<Path> + std::fmt::Debug,
@@ -214,7 +215,7 @@ where
             .filter_map(|entry| {
                 if let Some(mut info) = mods.remove(&entry.id) {
                     info.enabled = entry.enabled;
-                    Some(info)
+                    Some(Arc::new(info))
                 } else {
                     None
                 }

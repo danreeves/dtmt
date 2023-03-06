@@ -6,6 +6,7 @@
 
 - dtmt: split `build` into `build` and `package`
 - dtmt: implement deploying built bundles
+- dtmm: indicate when a deployment is necessary
 
 === Fixed
 

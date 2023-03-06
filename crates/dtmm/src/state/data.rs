@@ -17,7 +17,7 @@ impl Default for View {
     }
 }
 
-#[derive(Clone, Data, Debug)]
+#[derive(Clone, Data, Debug, PartialEq)]
 pub struct PackageInfo {
     pub name: String,
     pub files: Vector<String>,
@@ -29,14 +29,14 @@ impl PackageInfo {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ModResourceInfo {
     pub init: PathBuf,
     pub data: Option<PathBuf>,
     pub localization: Option<PathBuf>,
 }
 
-#[derive(Clone, Data, Debug, Lens)]
+#[derive(Clone, Data, Debug, Lens, PartialEq)]
 pub(crate) struct ModInfo {
     pub id: String,
     pub name: String,
@@ -44,14 +44,14 @@ pub(crate) struct ModInfo {
     pub enabled: bool,
     #[lens(ignore)]
     #[data(ignore)]
-    pub packages: Vector<PackageInfo>,
+    pub packages: Vector<Arc<PackageInfo>>,
     #[lens(ignore)]
     #[data(ignore)]
     pub resources: ModResourceInfo,
 }
 
 impl ModInfo {
-    pub fn new(cfg: ModConfig, packages: Vector<PackageInfo>) -> Self {
+    pub fn new(cfg: ModConfig, packages: Vector<Arc<PackageInfo>>) -> Self {
         Self {
             id: cfg.id,
             name: cfg.name,
@@ -67,17 +67,12 @@ impl ModInfo {
     }
 }
 
-impl PartialEq for ModInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.name.eq(&other.name)
-    }
-}
-
 #[derive(Clone, Data, Lens)]
 pub(crate) struct State {
     pub current_view: View,
-    pub mods: Vector<ModInfo>,
+    pub mods: Vector<Arc<ModInfo>>,
     pub selected_mod_index: Option<usize>,
+    pub dirty: bool,
     pub is_deployment_in_progress: bool,
     pub is_reset_in_progress: bool,
     pub is_save_in_progress: bool,
@@ -106,6 +101,7 @@ impl State {
             current_view: View::default(),
             mods: Vector::new(),
             selected_mod_index: None,
+            dirty: false,
             is_deployment_in_progress: false,
             is_reset_in_progress: false,
             is_save_in_progress: false,
@@ -121,8 +117,8 @@ impl State {
         self.selected_mod_index = Some(index);
     }
 
-    pub fn add_mod(&mut self, info: ModInfo) {
-        if let Some(pos) = self.mods.index_of(&info) {
+    pub fn add_mod(&mut self, info: Arc<ModInfo>) {
+        if let Some(pos) = self.mods.iter().position(|i| i.id == info.id) {
             self.mods.set(pos, info);
             self.selected_mod_index = Some(pos);
         } else {

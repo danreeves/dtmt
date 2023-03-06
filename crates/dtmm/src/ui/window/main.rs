@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use druid::im::Vector;
 use druid::lens;
 use druid::widget::{
@@ -15,7 +17,7 @@ use crate::state::{
     ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme;
-use crate::ui::widget::controller::{AutoScrollController, SaveSettingsController};
+use crate::ui::widget::controller::{AutoScrollController, DirtyStateController};
 use crate::ui::widget::PathBufFormatter;
 
 const TITLE: &str = "Darktide Mod Manager";
@@ -31,43 +33,48 @@ pub(crate) fn new() -> WindowDesc<State> {
 }
 
 fn build_top_bar() -> impl Widget<State> {
+    let mods_button = Button::new("Mods")
+        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods);
+
+    let settings_button = Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
+        state.current_view = View::Settings;
+    });
+
+    let deploy_button = {
+        Button::dynamic(|state: &State, _| {
+            let mut s = String::new();
+            if state.dirty {
+                s.push_str("! ");
+            }
+            s.push_str("Deploy Mods");
+            s
+        })
+        .on_click(|ctx, _state: &mut State, _env| {
+            ctx.submit_command(ACTION_START_DEPLOY);
+        })
+        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress)
+    };
+
+    let reset_button = Button::new("Reset Game")
+        .on_click(|ctx, _state: &mut State, _env| {
+            ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
+        })
+        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
+
     Flex::row()
         .must_fill_main_axis(true)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_child(
             Flex::row()
-                .with_child(
-                    Button::new("Mods")
-                        .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods),
-                )
+                .with_child(mods_button)
                 .with_default_spacer()
-                .with_child(
-                    Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
-                        state.current_view = View::Settings;
-                    }),
-                ),
+                .with_child(settings_button),
         )
         .with_child(
             Flex::row()
-                .with_child(
-                    Button::new("Deploy Mods")
-                        .on_click(|ctx, _state: &mut State, _env| {
-                            ctx.submit_command(ACTION_START_DEPLOY);
-                        })
-                        .disabled_if(|data, _| {
-                            data.is_deployment_in_progress || data.is_reset_in_progress
-                        }),
-                )
+                .with_child(deploy_button)
                 .with_default_spacer()
-                .with_child(
-                    Button::new("Reset Game")
-                        .on_click(|ctx, _state: &mut State, _env| {
-                            ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
-                        })
-                        .disabled_if(|data, _| {
-                            data.is_deployment_in_progress || data.is_reset_in_progress
-                        }),
-                ),
+                .with_child(reset_button),
         )
         .padding(theme::TOP_BAR_INSETS)
         .background(theme::TOP_BAR_BACKGROUND_COLOR)
@@ -77,9 +84,11 @@ fn build_top_bar() -> impl Widget<State> {
 
 fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
-        let checkbox =
-            Checkbox::new("").lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::enabled));
-        let name = Label::raw().lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::name));
+        let checkbox = Checkbox::new("")
+            .lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::enabled.in_arc()));
+
+        let name =
+            Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
 
         Flex::row()
             .must_fill_main_axis(true)
@@ -109,8 +118,10 @@ fn build_mod_list() -> impl Widget<State> {
                 .collect::<Vector<_>>()
         },
         |state, infos| {
-            infos.into_iter().for_each(|(i, info, _)| {
-                state.mods.set(i, info);
+            infos.into_iter().for_each(|(i, new, _)| {
+                if state.mods.get(i).cloned() != Some(new.clone()) {
+                    state.mods.set(i, new);
+                }
             });
         },
     ));
@@ -142,12 +153,12 @@ fn build_mod_details_buttons() -> impl Widget<State> {
             .on_click(|_ctx, enabled: &mut bool, _env| {
                 *enabled = !(*enabled);
             })
-            .lens(ModInfo::enabled)
+            .lens(ModInfo::enabled.in_arc())
         },
         // TODO: Gray out
         || Button::new("Enable Mod"),
     )
-    .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
+    .disabled_if(|info: &Option<Arc<ModInfo>>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
     let button_add_mod = Button::new("Add Mod").on_click(|ctx, _state: &mut State, _env| {
@@ -162,14 +173,14 @@ fn build_mod_details_buttons() -> impl Widget<State> {
     });
 
     let button_delete_mod = Button::new("Delete Mod")
-        .on_click(|ctx, data: &mut Option<ModInfo>, _env| {
+        .on_click(|ctx, data: &mut Option<Arc<ModInfo>>, _env| {
             if let Some(info) = data {
                 ctx.submit_command(
                     ACTION_START_DELETE_SELECTED_MOD.with(SingleUse::new(info.clone())),
                 );
             }
         })
-        .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
+        .disabled_if(|info: &Option<Arc<ModInfo>>, _env: &druid::Env| info.is_none())
         .lens(State::selected_mod);
 
     Flex::column()
@@ -203,10 +214,10 @@ fn build_mod_details_info() -> impl Widget<State> {
                 // Force the label to take up the entire details' pane width,
                 // so that we can center-align it.
                 .expand_width()
-                .lens(ModInfo::name);
+                .lens(ModInfo::name.in_arc());
             let description = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
-                .lens(ModInfo::description);
+                .lens(ModInfo::description.in_arc());
 
             Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)
@@ -312,5 +323,5 @@ fn build_window() -> impl Widget<State> {
         .with_child(build_top_bar())
         .with_flex_child(build_main(), 1.0)
         .with_child(build_log_view())
-        .controller(SaveSettingsController)
+        .controller(DirtyStateController)
 }
