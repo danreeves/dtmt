@@ -91,6 +91,7 @@ fn main() -> Result<()> {
             config.path,
             game_dir.unwrap_or_default(),
             config.data_dir.unwrap_or_default(),
+            config.nexus_api_key.unwrap_or_default(),
         );
         state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
             .wrap_err("Failed to load mods")?;

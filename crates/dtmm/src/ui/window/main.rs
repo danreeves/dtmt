@@ -359,12 +359,22 @@ fn build_view_settings() -> impl Widget<State> {
         )
         .expand_width();
 
+    let nexus_apy_key_setting = Flex::row()
+        .must_fill_main_axis(true)
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Nexus API Key:"))
+        .with_default_spacer()
+        .with_flex_child(TextBox::new().expand_width().lens(State::nexus_api_key), 1.)
+        .expand_width();
+
     let content = Flex::column()
         .must_fill_main_axis(true)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .with_child(data_dir_setting)
         .with_default_spacer()
-        .with_child(game_dir_setting);
+        .with_child(game_dir_setting)
+        .with_default_spacer()
+        .with_child(nexus_apy_key_setting);
 
     SizedBox::new(content)
         .width(800.)

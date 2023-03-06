@@ -78,7 +78,7 @@ impl<W: Widget<State>> Controller<State, W> for DirtyStateController {
         data: &State,
         env: &Env,
     ) {
-        if compare_state_fields!(old_data, data, mods, game_dir, data_dir) {
+        if compare_state_fields!(old_data, data, mods, game_dir, data_dir, nexus_api_key) {
             ctx.submit_command(ACTION_START_SAVE_SETTINGS);
         }
 

@@ -56,6 +56,7 @@ pub(crate) struct ActionState {
     pub mod_dir: Arc<PathBuf>,
     pub config_path: Arc<PathBuf>,
     pub ctx: Arc<sdk::Context>,
+    pub nexus_api_key: Arc<String>,
 }
 
 impl From<State> for ActionState {
@@ -67,6 +68,7 @@ impl From<State> for ActionState {
             data_dir: state.data_dir,
             config_path: state.config_path,
             ctx: state.ctx,
+            nexus_api_key: state.nexus_api_key,
         }
     }
 }

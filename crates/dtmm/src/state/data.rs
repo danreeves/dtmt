@@ -128,6 +128,7 @@ pub(crate) struct State {
     pub is_next_save_pending: bool,
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
+    pub nexus_api_key: Arc<String>,
     pub log: Arc<String>,
 
     #[lens(ignore)]
@@ -145,7 +146,12 @@ impl State {
     #[allow(non_upper_case_globals)]
     pub const selected_mod: SelectedModLens = SelectedModLens;
 
-    pub fn new(config_path: PathBuf, game_dir: PathBuf, data_dir: PathBuf) -> Self {
+    pub fn new(
+        config_path: PathBuf,
+        game_dir: PathBuf,
+        data_dir: PathBuf,
+        nexus_api_key: String,
+    ) -> Self {
         let ctx = sdk::Context::new();
 
         Self {
@@ -161,6 +167,7 @@ impl State {
             config_path: Arc::new(config_path),
             game_dir: Arc::new(game_dir),
             data_dir: Arc::new(data_dir),
+            nexus_api_key: Arc::new(nexus_api_key),
             log: Arc::new(String::new()),
             windows: HashMap::new(),
         }
