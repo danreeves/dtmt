@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use druid::im::Vector;
 use druid::lens;
 use druid::widget::{
@@ -82,9 +84,11 @@ fn build_top_bar() -> impl Widget<State> {
 
 fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
-        let checkbox =
-            Checkbox::new("").lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::enabled));
-        let name = Label::raw().lens(lens!((usize, ModInfo, bool), 1).then(ModInfo::name));
+        let checkbox = Checkbox::new("")
+            .lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::enabled.in_arc()));
+
+        let name =
+            Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
 
         Flex::row()
             .must_fill_main_axis(true)
@@ -114,8 +118,10 @@ fn build_mod_list() -> impl Widget<State> {
                 .collect::<Vector<_>>()
         },
         |state, infos| {
-            infos.into_iter().for_each(|(i, info, _)| {
-                state.mods.set(i, info);
+            infos.into_iter().for_each(|(i, new, _)| {
+                if state.mods.get(i).cloned() != Some(new.clone()) {
+                    state.mods.set(i, new);
+                }
             });
         },
     ));
@@ -147,12 +153,12 @@ fn build_mod_details_buttons() -> impl Widget<State> {
             .on_click(|_ctx, enabled: &mut bool, _env| {
                 *enabled = !(*enabled);
             })
-            .lens(ModInfo::enabled)
+            .lens(ModInfo::enabled.in_arc())
         },
         // TODO: Gray out
         || Button::new("Enable Mod"),
     )
-    .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
+    .disabled_if(|info: &Option<Arc<ModInfo>>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
     let button_add_mod = Button::new("Add Mod").on_click(|ctx, _state: &mut State, _env| {
@@ -167,14 +173,14 @@ fn build_mod_details_buttons() -> impl Widget<State> {
     });
 
     let button_delete_mod = Button::new("Delete Mod")
-        .on_click(|ctx, data: &mut Option<ModInfo>, _env| {
+        .on_click(|ctx, data: &mut Option<Arc<ModInfo>>, _env| {
             if let Some(info) = data {
                 ctx.submit_command(
                     ACTION_START_DELETE_SELECTED_MOD.with(SingleUse::new(info.clone())),
                 );
             }
         })
-        .disabled_if(|info: &Option<ModInfo>, _env: &druid::Env| info.is_none())
+        .disabled_if(|info: &Option<Arc<ModInfo>>, _env: &druid::Env| info.is_none())
         .lens(State::selected_mod);
 
     Flex::column()
@@ -208,10 +214,10 @@ fn build_mod_details_info() -> impl Widget<State> {
                 // Force the label to take up the entire details' pane width,
                 // so that we can center-align it.
                 .expand_width()
-                .lens(ModInfo::name);
+                .lens(ModInfo::name.in_arc());
             let description = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
-                .lens(ModInfo::description);
+                .lens(ModInfo::description.in_arc());
 
             Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)

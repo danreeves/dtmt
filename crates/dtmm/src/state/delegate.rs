@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use druid::{
     AppDelegate, Command, DelegateCtx, Env, FileInfo, Handled, Selector, SingleUse, Target,
 };
@@ -9,9 +11,9 @@ pub(crate) const ACTION_SELECT_MOD: Selector<usize> = Selector::new("dtmm.action
 pub(crate) const ACTION_SELECTED_MOD_UP: Selector = Selector::new("dtmm.action.selected-mod-up");
 pub(crate) const ACTION_SELECTED_MOD_DOWN: Selector =
     Selector::new("dtmm.action.selected-mod-down");
-pub(crate) const ACTION_START_DELETE_SELECTED_MOD: Selector<SingleUse<ModInfo>> =
+pub(crate) const ACTION_START_DELETE_SELECTED_MOD: Selector<SingleUse<Arc<ModInfo>>> =
     Selector::new("dtmm.action.srart-delete-selected-mod");
-pub(crate) const ACTION_FINISH_DELETE_SELECTED_MOD: Selector<SingleUse<ModInfo>> =
+pub(crate) const ACTION_FINISH_DELETE_SELECTED_MOD: Selector<SingleUse<Arc<ModInfo>>> =
     Selector::new("dtmm.action.finish-delete-selected-mod");
 
 pub(crate) const ACTION_START_DEPLOY: Selector = Selector::new("dtmm.action.start-deploy");
@@ -23,7 +25,7 @@ pub(crate) const ACTION_FINISH_RESET_DEPLOYMENT: Selector =
     Selector::new("dtmm.action.finish-reset-deployment");
 
 pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action.add-mod");
-pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<ModInfo>> =
+pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<Arc<ModInfo>>> =
     Selector::new("dtmm.action.finish-add-mod");
 
 pub(crate) const ACTION_LOG: Selector<SingleUse<String>> = Selector::new("dtmm.action.log");
@@ -39,7 +41,7 @@ pub(crate) enum AsyncAction {
     DeployMods(State),
     ResetDeployment(State),
     AddMod((State, FileInfo)),
-    DeleteMod((State, ModInfo)),
+    DeleteMod((State, Arc<ModInfo>)),
     SaveSettings(State),
 }
 
@@ -168,7 +170,6 @@ impl AppDelegate<State> for Delegate {
                 };
 
                 state.mods.remove(index);
-                // ctx.submit_command(ACTION_START_SAVE_SETTINGS);
 
                 Handled::Yes
             }
@@ -191,7 +192,6 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(info) = info.take() {
                     state.add_mod(info);
-                    //     ctx.submit_command(ACTION_START_SAVE_SETTINGS);
                 }
                 Handled::Yes
             }
