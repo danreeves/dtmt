@@ -574,7 +574,7 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 
     tracing::info!(
         "Deploying {} mods to {}",
-        state.mods.len(),
+        state.mods.iter().filter(|i| i.enabled).count(),
         state.game_dir.join("bundle").display()
     );
 
@@ -604,7 +604,10 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 
                 if !contains {
                     let task = async move {
-                        let path = bundle_dir.join(file_name);
+                        let path = bundle_dir.join(&file_name);
+
+                        tracing::debug!("Removing unused bundle '{}'", file_name);
+
                         if let Err(err) = fs::remove_file(&path).await.wrap_err_with(|| {
                             format!("failed to remove unused bundle '{}'", path.display())
                         }) {
