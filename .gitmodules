@@ -1,3 +1,6 @@
 [submodule "lib/serde_sjson"]
 	path = lib/serde_sjson
 	url = git@git.sclu1034.dev:lucas/serde_sjson.git
+[submodule "lib/steamlocate-rs"]
+	path = lib/steamlocate-rs
+	url = git@github.com:sclu1034/steamlocate-rs.git

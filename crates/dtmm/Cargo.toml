@@ -24,3 +24,4 @@ tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 zip = "0.6.4"
 tokio-stream = { version = "0.1.12", features = ["fs"] }
 path-slash = "0.2.1"
+time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-offset"] }
