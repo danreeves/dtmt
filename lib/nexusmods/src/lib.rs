@@ -2,15 +2,15 @@ use std::convert::Infallible;
 
 use lazy_static::lazy_static;
 use reqwest::header::{HeaderMap, HeaderValue, InvalidHeaderValue};
-use reqwest::{Client, Url};
-use serde::ser::SerializeTuple;
-use serde::{Deserialize, Serialize};
+use reqwest::{Client, RequestBuilder, Url};
+use serde::Deserialize;
 use thiserror::Error;
-use time::OffsetDateTime;
+
+mod types;
+pub use types::*;
 
 // TODO: Add OS information
 const USER_AGENT: &str = concat!("DTMM/", env!("CARGO_PKG_VERSION"));
-const GAME_ID: &str = "warhammer40kdarktide";
 
 lazy_static! {
     static ref BASE_URL: Url = Url::parse("https://api.nexusmods.com/v1/").unwrap();
@@ -37,44 +37,6 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Debug, Deserialize)]
-pub struct UpdateInfo {
-    pub mod_id: u64,
-    #[serde(with = "time::serde::timestamp")]
-    pub latest_file_update: OffsetDateTime,
-    #[serde(with = "time::serde::timestamp")]
-    pub latest_mod_activity: OffsetDateTime,
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum UpdatePeriod {
-    Day,
-    Week,
-    Month,
-}
-
-impl Default for UpdatePeriod {
-    fn default() -> Self {
-        Self::Week
-    }
-}
-
-impl Serialize for UpdatePeriod {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut tup = serializer.serialize_tuple(2)?;
-        tup.serialize_element("period")?;
-        tup.serialize_element(match self {
-            Self::Day => "1d",
-            Self::Week => "1w",
-            Self::Month => "1m",
-        })?;
-        tup.end()
-    }
-}
-
 pub struct Api {
     client: Client,
 }
@@ -94,21 +56,36 @@ impl Api {
     }
 
     #[tracing::instrument(skip(self))]
+    async fn send<T>(&self, req: RequestBuilder) -> Result<T>
+    where
+        T: for<'a> Deserialize<'a>,
+    {
+        let res = req.send().await?.error_for_status()?;
+        tracing::trace!(?res);
+
+        let json = res.text().await?;
+        serde_json::from_str(&json).map_err(|error| Error::Deserialize { json, error })
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn user_validate(&self) -> Result<User> {
+        let url = BASE_URL.join("users/validate.json")?;
+        let req = self.client.get(url);
+        self.send(req).await
+    }
+
+    #[tracing::instrument(skip(self))]
     pub async fn mods_updated(&self, period: UpdatePeriod) -> Result<Vec<UpdateInfo>> {
         let url = BASE_URL_GAME.join("mods/updated.json")?;
+        let req = self.client.get(url).query(&[period]);
+        self.send(req).await
+    }
 
-        let res = self
-            .client
-            .get(url)
-            .query(&[period])
-            .send()
-            .await?
-            .error_for_status()?;
-
-        tracing::trace!(?res);
-        let json = res.text().await?;
-
-        serde_json::from_str(&json).map_err(|error| Error::Deserialize { json, error })
+    #[tracing::instrument(skip(self))]
+    pub async fn mods_id(&self, id: u64) -> Result<Mod> {
+        let url = BASE_URL_GAME.join(&format!("mods/{}.json", id))?;
+        let req = self.client.get(url);
+        self.send(req).await
     }
 }
 
@@ -128,5 +105,24 @@ mod test {
             .mods_updated(Default::default())
             .await
             .expect("failed to query 'mods_updated'");
+    }
+
+    #[tokio::test]
+    async fn user_validate() {
+        let client = make_api();
+        client
+            .user_validate()
+            .await
+            .expect("failed to query 'user_validate'");
+    }
+
+    #[tokio::test]
+    async fn mods_id() {
+        let client = make_api();
+        let dmf_id = 8;
+        client
+            .mods_id(dmf_id)
+            .await
+            .expect("failed to query 'mods_id'");
     }
 }
