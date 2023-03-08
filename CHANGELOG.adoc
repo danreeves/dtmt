@@ -9,6 +9,7 @@
 - dtmm: indicate when a deployment is necessary
 - dtmm: check for Steam game update before deployment
 - dtmm: remove unused bundles from previous deployment
+- dtmm: show dialog for critical errors
 
 === Fixed
 

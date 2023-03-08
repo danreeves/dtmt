@@ -1,24 +1,29 @@
 use std::sync::Arc;
 
 use druid::im::Vector;
-use druid::lens;
 use druid::widget::{
     Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment,
     Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
+use druid::{lens, LifeCycleCtx};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
-    TextAlignment, Widget, WidgetExt, WindowDesc,
+    TextAlignment, Widget, WidgetExt, WindowDesc, WindowId,
 };
+use lazy_static::lazy_static;
 
 use crate::state::{
     ModInfo, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
-    ACTION_SELECT_MOD, ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
-    ACTION_START_RESET_DEPLOYMENT,
+    ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_DELETE_SELECTED_MOD,
+    ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme;
 use crate::ui::widget::controller::{AutoScrollController, DirtyStateController};
 use crate::ui::widget::PathBufFormatter;
+
+lazy_static! {
+    pub static ref WINDOW_ID: WindowId = WindowId::next();
+}
 
 const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (1080., 720.);
@@ -324,4 +329,9 @@ fn build_window() -> impl Widget<State> {
         .with_flex_child(build_main(), 1.0)
         .with_child(build_log_view())
         .controller(DirtyStateController)
+        .on_added(|_, ctx: &mut LifeCycleCtx, _, _| {
+            ctx.submit_command(
+                ACTION_SET_WINDOW_HANDLE.with(SingleUse::new((*WINDOW_ID, ctx.window().clone()))),
+            );
+        })
 }

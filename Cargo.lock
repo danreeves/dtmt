@@ -705,6 +705,7 @@ dependencies = [
  "druid",
  "dtmt-shared",
  "futures",
+ "lazy_static",
  "oodle-sys",
  "path-slash",
  "sdk",

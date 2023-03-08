@@ -1,9 +1,13 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
+use color_eyre::Report;
 use druid::{
-    AppDelegate, Command, DelegateCtx, Env, FileInfo, Handled, Selector, SingleUse, Target,
+    im::Vector, AppDelegate, Command, DelegateCtx, Env, FileInfo, Handled, Selector, SingleUse,
+    Target, WindowHandle, WindowId,
 };
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::ui::window;
 
 use super::{ModInfo, State};
 
@@ -37,12 +41,42 @@ pub(crate) const ACTION_FINISH_SAVE_SETTINGS: Selector =
 
 pub(crate) const ACTION_SET_DIRTY: Selector = Selector::new("dtmm.action.set-dirty");
 
+pub(crate) const ACTION_SHOW_ERROR_DIALOG: Selector<SingleUse<Report>> =
+    Selector::new("dtmm.action.show-error-dialog");
+
+pub(crate) const ACTION_SET_WINDOW_HANDLE: Selector<SingleUse<(WindowId, WindowHandle)>> =
+    Selector::new("dtmm.action.set-window-handle");
+
+// A sub-selection of `State`'s fields that are required in `AsyncAction`s and that are
+// `Send + Sync`
+pub(crate) struct ActionState {
+    pub mods: Vector<Arc<ModInfo>>,
+    pub game_dir: Arc<PathBuf>,
+    pub data_dir: Arc<PathBuf>,
+    pub mod_dir: Arc<PathBuf>,
+    pub config_path: Arc<PathBuf>,
+    pub ctx: Arc<sdk::Context>,
+}
+
+impl From<State> for ActionState {
+    fn from(state: State) -> Self {
+        Self {
+            mods: state.mods,
+            game_dir: state.game_dir,
+            mod_dir: Arc::new(state.data_dir.join("mods")),
+            data_dir: state.data_dir,
+            config_path: state.config_path,
+            ctx: state.ctx,
+        }
+    }
+}
+
 pub(crate) enum AsyncAction {
-    DeployMods(State),
-    ResetDeployment(State),
-    AddMod((State, FileInfo)),
-    DeleteMod((State, Arc<ModInfo>)),
-    SaveSettings(State),
+    DeployMods(ActionState),
+    ResetDeployment(ActionState),
+    AddMod(ActionState, FileInfo),
+    DeleteMod(ActionState, Arc<ModInfo>),
+    SaveSettings(ActionState),
 }
 
 pub(crate) struct Delegate {
@@ -73,7 +107,7 @@ impl AppDelegate<State> for Delegate {
             cmd if cmd.is(ACTION_START_DEPLOY) => {
                 if self
                     .sender
-                    .send(AsyncAction::DeployMods(state.clone()))
+                    .send(AsyncAction::DeployMods(state.clone().into()))
                     .is_ok()
                 {
                     state.is_deployment_in_progress = true;
@@ -91,7 +125,7 @@ impl AppDelegate<State> for Delegate {
             cmd if cmd.is(ACTION_START_RESET_DEPLOYMENT) => {
                 if self
                     .sender
-                    .send(AsyncAction::ResetDeployment(state.clone()))
+                    .send(AsyncAction::ResetDeployment(state.clone().into()))
                     .is_ok()
                 {
                     state.is_reset_in_progress = true;
@@ -147,11 +181,12 @@ impl AppDelegate<State> for Delegate {
             cmd if cmd.is(ACTION_START_DELETE_SELECTED_MOD) => {
                 let info = cmd
                     .get(ACTION_START_DELETE_SELECTED_MOD)
-                    .and_then(|info| info.take())
+                    .and_then(SingleUse::take)
                     .expect("command type matched but didn't contain the expected value");
+
                 if self
                     .sender
-                    .send(AsyncAction::DeleteMod((state.clone(), info)))
+                    .send(AsyncAction::DeleteMod(state.clone().into(), info))
                     .is_err()
                 {
                     tracing::error!("Failed to queue action to deploy mods");
@@ -162,8 +197,9 @@ impl AppDelegate<State> for Delegate {
             cmd if cmd.is(ACTION_FINISH_DELETE_SELECTED_MOD) => {
                 let info = cmd
                     .get(ACTION_FINISH_DELETE_SELECTED_MOD)
-                    .and_then(|info| info.take())
+                    .and_then(SingleUse::take)
                     .expect("command type matched but didn't contain the expected value");
+
                 let found = state.mods.iter().enumerate().find(|(_, i)| i.id == info.id);
                 let Some((index, _)) = found else {
                     return Handled::No;
@@ -177,9 +213,10 @@ impl AppDelegate<State> for Delegate {
                 let info = cmd
                     .get(ACTION_ADD_MOD)
                     .expect("command type matched but didn't contain the expected value");
+
                 if self
                     .sender
-                    .send(AsyncAction::AddMod((state.clone(), info.clone())))
+                    .send(AsyncAction::AddMod(state.clone().into(), info.clone()))
                     .is_err()
                 {
                     tracing::error!("Failed to queue action to add mod");
@@ -190,9 +227,11 @@ impl AppDelegate<State> for Delegate {
                 let info = cmd
                     .get(ACTION_FINISH_ADD_MOD)
                     .expect("command type matched but didn't contain the expected value");
+
                 if let Some(info) = info.take() {
                     state.add_mod(info);
                 }
+
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_LOG) => {
@@ -209,7 +248,7 @@ impl AppDelegate<State> for Delegate {
                     state.is_next_save_pending = true;
                 } else if self
                     .sender
-                    .send(AsyncAction::SaveSettings(state.clone()))
+                    .send(AsyncAction::SaveSettings(state.clone().into()))
                     .is_ok()
                 {
                     state.is_save_in_progress = true;
@@ -233,6 +272,31 @@ impl AppDelegate<State> for Delegate {
                 state.dirty = true;
                 Handled::Yes
             }
+            cmd if cmd.is(ACTION_SHOW_ERROR_DIALOG) => {
+                let err = cmd
+                    .get(ACTION_SHOW_ERROR_DIALOG)
+                    .and_then(SingleUse::take)
+                    .expect("command type matched but didn't contain the expected value");
+
+                let window = state
+                    .windows
+                    .get(&window::main::WINDOW_ID)
+                    .expect("root window does not exist");
+
+                let dialog = window::dialog::error::<State>(err, window.clone());
+                ctx.new_window(dialog);
+
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_SET_WINDOW_HANDLE) => {
+                let (id, handle) = cmd
+                    .get(ACTION_SET_WINDOW_HANDLE)
+                    .and_then(SingleUse::take)
+                    .expect("command type matched but didn't contain the expected value");
+
+                state.windows.insert(id, handle);
+                Handled::Yes
+            }
             cmd => {
                 if cfg!(debug_assertions) {
                     tracing::warn!("Unknown command: {:?}", cmd);
@@ -240,5 +304,20 @@ impl AppDelegate<State> for Delegate {
                 Handled::No
             }
         }
+    }
+
+    fn window_added(
+        &mut self,
+        id: WindowId,
+        handle: WindowHandle,
+        data: &mut State,
+        _: &Env,
+        _: &mut DelegateCtx,
+    ) {
+        data.windows.insert(id, handle);
+    }
+
+    fn window_removed(&mut self, id: WindowId, data: &mut State, _: &Env, _: &mut DelegateCtx) {
+        data.windows.remove(&id);
     }
 }

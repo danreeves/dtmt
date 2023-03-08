@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use color_eyre::eyre::Context;
+use color_eyre::Help;
+use color_eyre::Report;
 use color_eyre::Result;
 use druid::{ExtEventSink, SingleUse, Target};
 use tokio::runtime::Runtime;
@@ -10,10 +13,18 @@ use crate::controller::app::*;
 use crate::controller::game::*;
 use crate::state::AsyncAction;
 use crate::state::ACTION_FINISH_SAVE_SETTINGS;
+use crate::state::ACTION_SHOW_ERROR_DIALOG;
 use crate::state::{
     ACTION_FINISH_ADD_MOD, ACTION_FINISH_DELETE_SELECTED_MOD, ACTION_FINISH_DEPLOY,
     ACTION_FINISH_RESET_DEPLOYMENT, ACTION_LOG,
 };
+
+async fn send_error(sink: Arc<RwLock<ExtEventSink>>, err: Report) {
+    sink.write()
+        .await
+        .submit_command(ACTION_SHOW_ERROR_DIALOG, SingleUse::new(err), Target::Auto)
+        .expect("failed to send command");
+}
 
 async fn handle_action(
     event_sink: Arc<RwLock<ExtEventSink>>,
@@ -23,8 +34,9 @@ async fn handle_action(
         let event_sink = event_sink.clone();
         match action {
             AsyncAction::DeployMods(state) => tokio::spawn(async move {
-                if let Err(err) = deploy_mods(state).await {
-                    tracing::error!("Failed to deploy mods: {:?}", err);
+                if let Err(err) = deploy_mods(state).await.wrap_err("failed to deploy mods") {
+                    tracing::error!("{:?}", err);
+                    send_error(event_sink.clone(), err).await;
                 }
 
                 event_sink
@@ -33,8 +45,11 @@ async fn handle_action(
                     .submit_command(ACTION_FINISH_DEPLOY, (), Target::Auto)
                     .expect("failed to send command");
             }),
-            AsyncAction::AddMod((state, info)) => tokio::spawn(async move {
-                match import_mod(state, info).await {
+            AsyncAction::AddMod(state, info) => tokio::spawn(async move {
+                match import_mod(state, info)
+                    .await
+                    .wrap_err("failed to import mod")
+                {
                     Ok(mod_info) => {
                         event_sink
                             .write()
@@ -47,18 +62,22 @@ async fn handle_action(
                             .expect("failed to send command");
                     }
                     Err(err) => {
-                        tracing::error!("Failed to import mod: {:?}", err);
+                        tracing::error!("{:?}", err);
+                        send_error(event_sink.clone(), err).await;
                     }
                 }
             }),
-            AsyncAction::DeleteMod((state, info)) => tokio::spawn(async move {
-                if let Err(err) = delete_mod(state, &info).await {
-                    tracing::error!(
-                        "Failed to delete mod files. \
-                                You might want to clean up the data directory manually. \
-                                Reason: {:?}",
-                        err
-                    );
+            AsyncAction::DeleteMod(state, info) => tokio::spawn(async move {
+                let mod_dir = state.mod_dir.join(&info.id);
+                if let Err(err) = delete_mod(state, &info)
+                    .await
+                    .wrap_err("failed to delete mod files")
+                    .with_suggestion(|| {
+                        format!("Clean the folder '{}' manually", mod_dir.display())
+                    })
+                {
+                    tracing::error!("{:?}", err);
+                    send_error(event_sink.clone(), err).await;
                 }
 
                 event_sink
@@ -72,8 +91,12 @@ async fn handle_action(
                     .expect("failed to send command");
             }),
             AsyncAction::ResetDeployment(state) => tokio::spawn(async move {
-                if let Err(err) = reset_mod_deployment(state).await {
-                    tracing::error!("Failed to reset mod deployment: {:?}", err);
+                if let Err(err) = reset_mod_deployment(state)
+                    .await
+                    .wrap_err("failed to reset mod deployment")
+                {
+                    tracing::error!("{:?}", err);
+                    send_error(event_sink.clone(), err).await;
                 }
 
                 event_sink
@@ -83,8 +106,12 @@ async fn handle_action(
                     .expect("failed to send command");
             }),
             AsyncAction::SaveSettings(state) => tokio::spawn(async move {
-                if let Err(err) = save_settings(state).await {
-                    tracing::error!("Failed to save settings: {:?}", err);
+                if let Err(err) = save_settings(state)
+                    .await
+                    .wrap_err("failed to save settings")
+                {
+                    tracing::error!("{:?}", err);
+                    send_error(event_sink.clone(), err).await;
                 }
 
                 event_sink

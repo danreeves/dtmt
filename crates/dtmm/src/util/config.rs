@@ -7,7 +7,7 @@ use clap::{parser::ValueSource, ArgMatches};
 use color_eyre::{eyre::Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::state::{ModInfo, State};
+use crate::state::{ActionState, ModInfo};
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct LoadOrderEntrySerialize<'a> {
@@ -31,8 +31,8 @@ pub(crate) struct ConfigSerialize<'a> {
     mod_order: Vec<LoadOrderEntrySerialize<'a>>,
 }
 
-impl<'a> From<&'a State> for ConfigSerialize<'a> {
-    fn from(state: &'a State) -> Self {
+impl<'a> From<&'a ActionState> for ConfigSerialize<'a> {
+    fn from(state: &'a ActionState) -> Self {
         Self {
             game_dir: &state.game_dir,
             data_dir: &state.data_dir,

@@ -14,13 +14,13 @@ use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
-use crate::state::{ModInfo, PackageInfo, State};
+use crate::state::{ActionState, ModInfo, PackageInfo};
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
+pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<ModInfo> {
     let data = fs::read(&info.path)
         .await
         .wrap_err_with(|| format!("failed to read file {}", info.path.display()))?;
@@ -95,16 +95,16 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
     tracing::trace!(?files);
 
-    let mod_dir = state.get_mod_dir();
+    let mod_dir = state.mod_dir;
 
     tracing::trace!("Creating mods directory {}", mod_dir.display());
-    fs::create_dir_all(&mod_dir)
+    fs::create_dir_all(Arc::as_ref(&mod_dir))
         .await
         .wrap_err_with(|| format!("failed to create data directory {}", mod_dir.display()))?;
 
     tracing::trace!("Extracting mod archive to {}", mod_dir.display());
     archive
-        .extract(&mod_dir)
+        .extract(Arc::as_ref(&mod_dir))
         .wrap_err_with(|| format!("failed to extract archive to {}", mod_dir.display()))?;
 
     let packages = files
@@ -117,8 +117,8 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
-    let mod_dir = state.get_mod_dir().join(&info.id);
+pub(crate) async fn delete_mod(state: ActionState, info: &ModInfo) -> Result<()> {
+    let mod_dir = state.mod_dir.join(&info.id);
     fs::remove_dir_all(&mod_dir)
         .await
         .wrap_err_with(|| format!("failed to remove directory {}", mod_dir.display()))?;
@@ -127,7 +127,7 @@ pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn save_settings(state: State) -> Result<()> {
+pub(crate) async fn save_settings(state: ActionState) -> Result<()> {
     let cfg = ConfigSerialize::from(&state);
 
     tracing::info!("Saving settings to '{}'", state.config_path.display());

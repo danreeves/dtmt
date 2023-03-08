@@ -22,7 +22,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
 
 use super::read_sjson_file;
-use crate::state::{PackageInfo, State};
+use crate::state::{ActionState, PackageInfo};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
 const BOOT_BUNDLE_NAME: &str = "packages/boot";
@@ -100,7 +100,7 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_game_settings(state: Arc<State>) -> Result<()> {
+async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
     let settings_path = state.game_dir.join("bundle").join(SETTINGS_FILE_PATH);
 
     let settings = read_file_with_backup(&settings_path)
@@ -146,7 +146,7 @@ fn make_package(info: &PackageInfo) -> Result<Package> {
     Ok(pkg)
 }
 
-fn build_mod_data_lua(state: Arc<State>) -> String {
+fn build_mod_data_lua(state: Arc<ActionState>) -> String {
     let mut lua = String::from("return {\n");
 
     // DMF is handled explicitely by the loading procedures, as it actually drives most of that
@@ -203,7 +203,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 }
 
 #[tracing::instrument(skip_all)]
-async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
+async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
     let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME.to_string());
     let mut tasks = Vec::new();
 
@@ -227,7 +227,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
         let span = tracing::trace_span!("building mod packages", name = mod_info.name);
         let _enter = span.enter();
 
-        let mod_dir = state.get_mod_dir().join(&mod_info.id);
+        let mod_dir = state.mod_dir.join(&mod_info.id);
         for pkg_info in &mod_info.packages {
             let span = tracing::trace_span!("building package", name = pkg_info.name);
             let _enter = span.enter();
@@ -320,7 +320,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
+async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
@@ -381,7 +381,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
         let bundle_name = Murmur64::hash(&pkg_info.name)
             .to_string()
             .to_ascii_lowercase();
-        let src = state.get_mod_dir().join(&mod_info.id).join(&bundle_name);
+        let src = state.mod_dir.join(&mod_info.id).join(&bundle_name);
 
         {
             let bin = fs::read(&src)
@@ -461,7 +461,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
-async fn patch_bundle_database<B>(state: Arc<State>, bundles: B) -> Result<()>
+async fn patch_bundle_database<B>(state: Arc<ActionState>, bundles: B) -> Result<()>
 where
     B: AsRef<[Bundle]>,
 {
@@ -499,7 +499,7 @@ where
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
-async fn write_deployment_data<B>(state: Arc<State>, bundles: B) -> Result<()>
+async fn write_deployment_data<B>(state: Arc<ActionState>, bundles: B) -> Result<()>
 where
     B: AsRef<[Bundle]>,
 {
@@ -525,7 +525,7 @@ where
     game_dir = %state.game_dir.display(),
     mods = state.mods.len()
 ))]
-pub(crate) async fn deploy_mods(state: State) -> Result<()> {
+pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
 
     {
@@ -643,7 +643,7 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
+pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
     let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
     let paths = [BUNDLE_DATABASE_NAME, &boot_bundle_path, SETTINGS_FILE_PATH];
     let bundle_dir = state.game_dir.join("bundle");
