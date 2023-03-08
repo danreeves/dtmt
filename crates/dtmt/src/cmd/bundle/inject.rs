@@ -61,7 +61,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     if let Some(name) = matches.get_one::<String>("replace") {
         let mut file = File::open(&file_path)
             .await
-            .wrap_err_with(|| format!("failed to open '{}'", file_path.display()))?;
+            .wrap_err_with(|| format!("Failed to open '{}'", file_path.display()))?;
 
         if let Some(variant) = bundle
             .files_mut()
@@ -72,7 +72,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             let mut data = Vec::new();
             file.read_to_end(&mut data)
                 .await
-                .wrap_err("failed to read input file")?;
+                .wrap_err("Failed to read input file")?;
             variant.set_data(data);
         } else {
             let err = eyre::eyre!("No file '{}' in this bundle.", name)
@@ -99,11 +99,11 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
         let out_path = matches.get_one::<PathBuf>("output").unwrap_or(bundle_path);
         let data = bundle
             .to_binary()
-            .wrap_err("failed to write changed bundle to output")?;
+            .wrap_err("Failed to write changed bundle to output")?;
 
         fs::write(out_path, &data)
             .await
-            .wrap_err("failed to write data to output file")?;
+            .wrap_err("Failed to write data to output file")?;
 
         Ok(())
     } else {

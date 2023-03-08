@@ -52,7 +52,7 @@ async fn process_dir_entry(res: Result<DirEntry>) -> Result<(OsString, Vec<u8>)>
 
     let data = fs::read(&path)
         .await
-        .wrap_err_with(|| format!("failed to read '{}'", path.display()))?;
+        .wrap_err_with(|| format!("Failed to read '{}'", path.display()))?;
 
     Ok((entry.file_name(), data))
 }
@@ -87,7 +87,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
         let data = fs::read(&path)
             .await
-            .wrap_err_with(|| format!("failed to read mod config at {}", path.display()))?;
+            .wrap_err_with(|| format!("Failed to read mod config at {}", path.display()))?;
 
         zip.start_file(name.to_slash_lossy(), Default::default())?;
         zip.write_all(&data)?;
@@ -101,10 +101,10 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         );
         let read_dir = fs::read_dir(&path)
             .await
-            .wrap_err_with(|| format!("failed to read directory '{}'", path.display()))?;
+            .wrap_err_with(|| format!("Failed to read directory '{}'", path.display()))?;
 
         let stream = ReadDirStream::new(read_dir)
-            .map(|res| res.wrap_err("failed to read dir entry"))
+            .map(|res| res.wrap_err("Failed to read dir entry"))
             .then(process_dir_entry);
         tokio::pin!(stream);
 
@@ -121,7 +121,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     fs::write(&dest, data.into_inner())
         .await
-        .wrap_err_with(|| format!("failed to write mod archive to '{}'", dest.display()))
+        .wrap_err_with(|| format!("Failed to write mod archive to '{}'", dest.display()))
         .with_suggestion(|| "Make sure that parent directories exist.".to_string())?;
 
     tracing::info!("Mod archive written to {}", dest.display());

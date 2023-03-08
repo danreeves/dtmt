@@ -113,10 +113,10 @@ where
     match fs::read(path) {
         Ok(data) => {
             let data = String::from_utf8(data).wrap_err_with(|| {
-                format!("config file {} contains invalid UTF-8", path.display())
+                format!("Config file '{}' contains invalid UTF-8", path.display())
             })?;
             let mut cfg: Config = serde_sjson::from_str(&data)
-                .wrap_err_with(|| format!("invalid config file {}", path.display()))?;
+                .wrap_err_with(|| format!("Invalid config file {}", path.display()))?;
 
             cfg.path = path.clone();
             Ok(cfg)
@@ -124,7 +124,7 @@ where
         Err(err) if err.kind() == ErrorKind::NotFound => {
             if matches.value_source("config") != Some(ValueSource::DefaultValue) {
                 return Err(err)
-                    .wrap_err_with(|| format!("failed to read config file {}", path.display()))?;
+                    .wrap_err_with(|| format!("Failed to read config file {}", path.display()))?;
             }
 
             {
@@ -132,7 +132,7 @@ where
                     .parent()
                     .expect("a file path always has a parent directory");
                 fs::create_dir_all(parent).wrap_err_with(|| {
-                    format!("failed to create directories {}", parent.display())
+                    format!("Failed to create directories {}", parent.display())
                 })?;
             }
 
@@ -145,7 +145,7 @@ where
 
             {
                 let data = serde_sjson::to_string(&config)
-                    .wrap_err("failed to serialize default config value")?;
+                    .wrap_err("Failed to serialize default config value")?;
                 fs::write(&config.path, data).wrap_err_with(|| {
                     format!(
                         "failed to write default config to {}",
@@ -157,7 +157,7 @@ where
             Ok(config)
         }
         Err(err) => {
-            Err(err).wrap_err_with(|| format!("failed to read config file {}", path.display()))
+            Err(err).wrap_err_with(|| format!("Failed to read config file {}", path.display()))
         }
     }
 }

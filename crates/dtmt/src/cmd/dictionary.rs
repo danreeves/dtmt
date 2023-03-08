@@ -122,7 +122,7 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
                     .expect("required argument not found");
 
                 u64::from_str_radix(s, 16)
-                    .wrap_err("failed to parse argument as hexadecimal string")?
+                    .wrap_err("Failed to parse argument as hexadecimal string")?
             };
 
             let groups = sub_matches

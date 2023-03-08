@@ -17,7 +17,7 @@ where
     let path = path.as_ref();
     let buf = fs::read(path)
         .await
-        .wrap_err_with(|| format!("failed to read file '{}'", path.display()))?;
-    let data = String::from_utf8(buf).wrap_err("invalid UTF8")?;
-    serde_sjson::from_str(&data).wrap_err("failed to deserialize SJSON")
+        .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+    let data = String::from_utf8(buf).wrap_err("Invalid UTF8")?;
+    serde_sjson::from_str(&data).wrap_err("Failed to deserialize SJSON")
 }

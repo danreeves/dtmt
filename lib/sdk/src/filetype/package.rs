@@ -148,7 +148,7 @@ impl Package {
                 None
             } else {
                 let t = BundleFileType::from_str(ty)
-                    .wrap_err("invalid file type in package definition")?;
+                    .wrap_err("Invalid file type in package definition")?;
                 Some(t)
             };
 
@@ -200,7 +200,7 @@ impl Package {
             }
         }
 
-        serde_sjson::to_string(&map).wrap_err("failed to serialize Package to SJSON")
+        serde_sjson::to_string(&map).wrap_err("Failed to serialize Package to SJSON")
     }
 
     #[tracing::instrument("Package::from_binary", skip(binary, ctx), fields(binary_len = binary.as_ref().len()))]

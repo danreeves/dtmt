@@ -56,7 +56,7 @@ impl TryFrom<&str> for Murmur64 {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         u64::from_str_radix(value, 16)
             .map(Self)
-            .wrap_err_with(|| format!("failed to convert value to Murmur64: {value}"))
+            .wrap_err_with(|| format!("Failed to convert value to Murmur64: {value}"))
     }
 }
 
@@ -164,7 +164,7 @@ impl TryFrom<&str> for Murmur32 {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         u32::from_str_radix(value, 16)
             .map(Self)
-            .wrap_err_with(|| format!("failed to convert value to Murmur32: {value}"))
+            .wrap_err_with(|| format!("Failed to convert value to Murmur32: {value}"))
     }
 }
 

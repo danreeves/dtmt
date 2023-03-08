@@ -86,7 +86,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     let root = if let Some(dir) = matches.get_one::<String>("root") {
         if dir == "." {
             std::env::current_dir()
-                .wrap_err("the current working dir is invalid")
+                .wrap_err("The current working dir is invalid")
                 .with_suggestion(|| "Change to a different directory.")?
         } else {
             PathBuf::from(dir)
@@ -142,13 +142,13 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 .recursive(true)
                 .create(&dir)
                 .await
-                .wrap_err_with(|| format!("failed to create directory {}", dir.display()))?;
+                .wrap_err_with(|| format!("Failed to create directory {}", dir.display()))?;
 
             tracing::trace!("Writing file {}", path.display());
 
             fs::write(&path, content.as_bytes())
                 .await
-                .wrap_err_with(|| format!("failed to write content to path {}", path.display()))
+                .wrap_err_with(|| format!("Failed to write content to path {}", path.display()))
         });
 
     futures::stream::iter(templates)

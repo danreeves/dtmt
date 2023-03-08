@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let res = File::open(&path)
                 .await
-                .wrap_err_with(|| format!("failed to open dictionary file: {}", path.display()));
+                .wrap_err_with(|| format!("Failed to open dictionary file: {}", path.display()));
 
             let f = match res {
                 Ok(f) => f,
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let conf = tokio::task::spawn_blocking(|| {
                 confy::load::<GlobalConfig>(clap::crate_name!(), None)
-                    .wrap_err("failed to load global configuration")
+                    .wrap_err("Failed to load global configuration")
             })
             .await;
 

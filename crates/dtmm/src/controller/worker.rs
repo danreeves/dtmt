@@ -34,7 +34,7 @@ async fn handle_action(
         let event_sink = event_sink.clone();
         match action {
             AsyncAction::DeployMods(state) => tokio::spawn(async move {
-                if let Err(err) = deploy_mods(state).await.wrap_err("failed to deploy mods") {
+                if let Err(err) = deploy_mods(state).await.wrap_err("Failed to deploy mods") {
                     tracing::error!("{:?}", err);
                     send_error(event_sink.clone(), err).await;
                 }
@@ -48,7 +48,7 @@ async fn handle_action(
             AsyncAction::AddMod(state, info) => tokio::spawn(async move {
                 match import_mod(state, info)
                     .await
-                    .wrap_err("failed to import mod")
+                    .wrap_err("Failed to import mod")
                 {
                     Ok(mod_info) => {
                         event_sink
@@ -71,7 +71,7 @@ async fn handle_action(
                 let mod_dir = state.mod_dir.join(&info.id);
                 if let Err(err) = delete_mod(state, &info)
                     .await
-                    .wrap_err("failed to delete mod files")
+                    .wrap_err("Failed to delete mod files")
                     .with_suggestion(|| {
                         format!("Clean the folder '{}' manually", mod_dir.display())
                     })
@@ -93,7 +93,7 @@ async fn handle_action(
             AsyncAction::ResetDeployment(state) => tokio::spawn(async move {
                 if let Err(err) = reset_mod_deployment(state)
                     .await
-                    .wrap_err("failed to reset mod deployment")
+                    .wrap_err("Failed to reset mod deployment")
                 {
                     tracing::error!("{:?}", err);
                     send_error(event_sink.clone(), err).await;
@@ -108,7 +108,7 @@ async fn handle_action(
             AsyncAction::SaveSettings(state) => tokio::spawn(async move {
                 if let Err(err) = save_settings(state)
                     .await
-                    .wrap_err("failed to save settings")
+                    .wrap_err("Failed to save settings")
                 {
                     tracing::error!("{:?}", err);
                     send_error(event_sink.clone(), err).await;
