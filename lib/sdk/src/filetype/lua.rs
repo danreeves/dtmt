@@ -25,7 +25,7 @@ where
 pub fn compile<S, C>(name: S, code: C) -> Result<BundleFile>
 where
     S: Into<String>,
-    C: AsRef<CStr>,
+    C: AsRef<str>,
 {
     let name = name.into();
     let code = code.as_ref();
@@ -34,15 +34,33 @@ where
         let state = lua::luaL_newstate();
         lua::luaL_openlibs(state);
 
-        lua::lua_pushstring(state, code.as_ptr() as _);
-        lua::lua_setglobal(state, b"code\0".as_ptr() as _);
-
         let name = CString::new(name.as_bytes())
             .wrap_err_with(|| format!("Cannot convert name into CString: {}", name))?;
-        lua::lua_pushstring(state, name.as_ptr() as _);
-        lua::lua_setglobal(state, b"name\0".as_ptr() as _);
+        match lua::luaL_loadbuffer(
+            state,
+            code.as_ptr() as _,
+            code.len() as _,
+            name.as_ptr() as _,
+        ) as u32
+        {
+            lua::LUA_OK => {}
+            lua::LUA_ERRSYNTAX => {
+                let err = lua::lua_tostring(state, -1);
+                let err = CStr::from_ptr(err).to_string_lossy().to_string();
 
-        let run = b"return string.dump(loadstring(code, \"@\" .. name), false)\0";
+                lua::lua_close(state);
+
+                eyre::bail!("Invalid syntax: {}", err);
+            }
+            lua::LUA_ERRMEM => {
+                lua::lua_close(state);
+                eyre::bail!("Failed to allocate sufficient memory to compile LuaJIT bytecode")
+            }
+            _ => unreachable!(),
+        }
+        lua::lua_setglobal(state, b"fn\0".as_ptr() as _);
+
+        let run = b"return string.dump(fn, false)\0";
         match lua::luaL_loadstring(state, run.as_ptr() as _) as u32 {
             lua::LUA_OK => {}
             lua::LUA_ERRSYNTAX => {
