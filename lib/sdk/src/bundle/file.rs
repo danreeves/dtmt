@@ -548,7 +548,7 @@ impl BundleFile {
             let _enter = span.enter();
 
             let header = BundleFileVariant::read_header(r)
-                .wrap_err_with(|| format!("failed to read header {i}"))?;
+                .wrap_err_with(|| format!("Failed to read header {i}"))?;
 
             // TODO: Figure out how `header.unknown_1` correlates to `properties::DATA`
             // if props.contains(Properties::DATA) {
@@ -572,18 +572,18 @@ impl BundleFile {
                 let data = vec![];
                 let s = r
                     .read_string_len(header.size)
-                    .wrap_err("failed to read data file name")?;
+                    .wrap_err("Failed to read data file name")?;
 
                 (data, Some(s))
             } else {
                 let mut data = vec![0; header.size];
                 r.read_exact(&mut data)
-                    .wrap_err_with(|| format!("failed to read file {i}"))?;
+                    .wrap_err_with(|| format!("Failed to read file {i}"))?;
 
                 let data_file_name = if header.len_data_file_name > 0 {
                     let s = r
                         .read_string_len(header.len_data_file_name)
-                        .wrap_err("failed to read data file name")?;
+                        .wrap_err("Failed to read data file name")?;
                     Some(s)
                 } else {
                     None
@@ -662,7 +662,7 @@ impl BundleFile {
         match file_type {
             BundleFileType::Lua => {
                 let sjson =
-                    CString::new(sjson.as_ref()).wrap_err("failed to build CString from SJSON")?;
+                    CString::new(sjson.as_ref()).wrap_err("Failed to build CString from SJSON")?;
                 lua::compile(name, sjson)
             }
             BundleFileType::Unknown(_) => {
@@ -784,7 +784,7 @@ impl BundleFile {
                 }
             };
 
-            let res = res.wrap_err_with(|| format!("failed to decompile file {name}"));
+            let res = res.wrap_err_with(|| format!("Failed to decompile file {name}"));
             match res {
                 Ok(files) => files,
                 Err(err) => {

@@ -98,7 +98,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             async move {
                 if let Err(err) = print_bundle_contents(&ctx, &p, fmt)
                     .await
-                    .wrap_err_with(|| format!("failed to list contents of bundle {}", p.display()))
+                    .wrap_err_with(|| format!("Failed to list contents of bundle {}", p.display()))
                 {
                     tracing::error!("{err:?}");
                 }

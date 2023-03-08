@@ -38,7 +38,7 @@ where
         lua::lua_setglobal(state, b"code\0".as_ptr() as _);
 
         let name = CString::new(name.as_bytes())
-            .wrap_err_with(|| format!("cannot convert name into CString: {}", name))?;
+            .wrap_err_with(|| format!("Cannot convert name into CString: {}", name))?;
         lua::lua_pushstring(state, name.as_ptr() as _);
         lua::lua_setglobal(state, b"name\0".as_ptr() as _);
 

@@ -66,7 +66,7 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let (path, mut file) = if let Some(path) = dir {
         let file = File::open(&path.join(PROJECT_CONFIG_NAME))
             .await
-            .wrap_err_with(|| format!("failed to open file: {}", path.display()))
+            .wrap_err_with(|| format!("Failed to open file: {}", path.display()))
             .with_suggestion(|| {
                 format!(
                     "Make sure the file at '{}' exists and is readable",
@@ -90,7 +90,7 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
                 }
                 Err(err) => {
                     let err = Report::new(err)
-                        .wrap_err(format!("failed to open file: {}", path.display()));
+                        .wrap_err(format!("Failed to open file: {}", path.display()));
                     return Err(err);
                 }
             }
@@ -100,10 +100,10 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let mut buf = String::new();
     file.read_to_string(&mut buf)
         .await
-        .wrap_err("invalid UTF-8")?;
+        .wrap_err("Invalid UTF-8")?;
 
     let mut cfg: ModConfig =
-        serde_sjson::from_str(&buf).wrap_err("failed to deserialize mod config")?;
+        serde_sjson::from_str(&buf).wrap_err("Failed to deserialize mod config")?;
     cfg.dir = path;
     Ok(cfg)
 }
@@ -175,18 +175,18 @@ where
     path.set_extension("package");
     let sjson = fs::read_to_string(&path)
         .await
-        .wrap_err_with(|| format!("failed to read file {}", path.display()))?;
+        .wrap_err_with(|| format!("Failed to read file {}", path.display()))?;
 
     let pkg_name = package.to_slash_lossy().to_string();
     let pkg = Package::from_sjson(sjson, pkg_name.clone(), root)
         .await
-        .wrap_err_with(|| format!("invalid package file {}", &pkg_name))?;
+        .wrap_err_with(|| format!("Invalid package file {}", &pkg_name))?;
 
     compile_package_files(&pkg, root)
         .await
-        .wrap_err("failed to compile package")
+        .wrap_err("Failed to compile package")
         .and_then(|files| compile_bundle(pkg_name, files))
-        .wrap_err("failed to build bundle")
+        .wrap_err("Failed to build bundle")
 }
 
 fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
@@ -211,7 +211,7 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
     let mut cfg = find_project_config(dir).await?;
 
     cfg.resources.init = normalize_file_path(cfg.resources.init)
-        .wrap_err("invalid config field 'resources.init'")
+        .wrap_err("Invalid config field 'resources.init'")
         .with_suggestion(|| {
             "Specify a file path relative to and child path of the \
                     directory where 'dtmt.cfg' is."
@@ -225,7 +225,7 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
 
     if let Some(path) = cfg.resources.data {
         let path = normalize_file_path(path)
-            .wrap_err("invalid config field 'resources.data'")
+            .wrap_err("Invalid config field 'resources.data'")
             .with_suggestion(|| {
                 "Specify a file path relative to and child path of the \
                             directory where 'dtmt.cfg' is."
@@ -241,7 +241,7 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
 
     if let Some(path) = cfg.resources.localization {
         let path = normalize_file_path(path)
-            .wrap_err("invalid config field 'resources.localization'")
+            .wrap_err("Invalid config field 'resources.localization'")
             .with_suggestion(|| {
                 "Specify a file path relative to and child path of the \
                         directory where 'dtmt.cfg' is."
@@ -281,7 +281,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     fs::create_dir_all(out_path)
         .await
-        .wrap_err_with(|| format!("failed to create output directory '{}'", out_path.display()))?;
+        .wrap_err_with(|| format!("Failed to create output directory '{}'", out_path.display()))?;
 
     let file_map = Arc::new(Mutex::new(FileIndexMap::new()));
 
@@ -335,7 +335,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             );
             fs::write(&path, &data)
                 .await
-                .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
+                .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
 
             if let Some(game_dir) = game_dir.as_ref() {
                 let path = game_dir.join(&name);
@@ -347,7 +347,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 );
                 fs::write(&path, &data)
                     .await
-                    .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
+                    .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
             }
 
             Ok(())
@@ -355,7 +355,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     try_join_all(tasks)
         .await
-        .wrap_err("failed to build mod bundles")?;
+        .wrap_err("Failed to build mod bundles")?;
 
     {
         let file_map = file_map.lock().await;
@@ -363,7 +363,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         let path = out_path.join("files.sjson");
         fs::write(&path, data)
             .await
-            .wrap_err_with(|| format!("failed to write file index to '{}'", path.display()))?;
+            .wrap_err_with(|| format!("Failed to write file index to '{}'", path.display()))?;
     }
 
     tracing::info!("Compiled bundles written to '{}'", out_path.display());

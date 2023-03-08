@@ -1,6 +1,9 @@
 use std::{path::PathBuf, sync::Arc};
 
-use druid::{im::Vector, Data, Lens};
+use druid::{
+    im::{HashMap, Vector},
+    Data, Lens, WindowHandle, WindowId,
+};
 use dtmt_shared::ModConfig;
 
 use super::SelectedModLens;
@@ -86,6 +89,9 @@ pub(crate) struct State {
     pub config_path: Arc<PathBuf>,
     #[lens(ignore)]
     #[data(ignore)]
+    pub windows: HashMap<WindowId, WindowHandle>,
+    #[lens(ignore)]
+    #[data(ignore)]
     pub ctx: Arc<sdk::Context>,
 }
 
@@ -110,6 +116,7 @@ impl State {
             game_dir: Arc::new(game_dir),
             data_dir: Arc::new(data_dir),
             log: Arc::new(String::new()),
+            windows: HashMap::new(),
         }
     }
 

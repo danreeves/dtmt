@@ -14,19 +14,19 @@ use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
-use crate::state::{ModInfo, PackageInfo, State};
+use crate::state::{ActionState, ModInfo, PackageInfo};
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> {
+pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<ModInfo> {
     let data = fs::read(&info.path)
         .await
-        .wrap_err_with(|| format!("failed to read file {}", info.path.display()))?;
+        .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
     let data = Cursor::new(data);
 
-    let mut archive = ZipArchive::new(data).wrap_err("failed to open ZIP archive")?;
+    let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
     if tracing::enabled!(tracing::Level::DEBUG) {
         let names = archive.file_names().fold(String::new(), |mut s, name| {
@@ -38,7 +38,7 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
     }
 
     let dir_name = {
-        let f = archive.by_index(0).wrap_err("archive is empty")?;
+        let f = archive.by_index(0).wrap_err("Archive is empty")?;
 
         if !f.is_dir() {
             let err = eyre::eyre!("archive does not have a top-level directory");
@@ -62,15 +62,15 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
         let mut f = archive
             .by_name(name)
-            .wrap_err("failed to read mod config from archive")?;
+            .wrap_err("Failed to read mod config from archive")?;
 
         let mut buf = Vec::with_capacity(f.size() as usize);
         f.read_to_end(&mut buf)
-            .wrap_err("failed to read mod config from archive")?;
+            .wrap_err("Failed to read mod config from archive")?;
 
-        let data = String::from_utf8(buf).wrap_err("mod config is not valid UTF-8")?;
+        let data = String::from_utf8(buf).wrap_err("Mod config is not valid UTF-8")?;
 
-        serde_sjson::from_str(&data).wrap_err("failed to deserialize mod config")?
+        serde_sjson::from_str(&data).wrap_err("Failed to deserialize mod config")?
     };
 
     tracing::debug!(?mod_cfg);
@@ -83,29 +83,29 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 
         let mut f = archive
             .by_name(name)
-            .wrap_err("failed to read file index from archive")?;
+            .wrap_err("Failed to read file index from archive")?;
         let mut buf = Vec::with_capacity(f.size() as usize);
         f.read_to_end(&mut buf)
-            .wrap_err("failed to read file index from archive")?;
+            .wrap_err("Failed to read file index from archive")?;
 
-        let data = String::from_utf8(buf).wrap_err("file index is not valid UTF-8")?;
+        let data = String::from_utf8(buf).wrap_err("File index is not valid UTF-8")?;
 
-        serde_sjson::from_str(&data).wrap_err("failed to deserialize file index")?
+        serde_sjson::from_str(&data).wrap_err("Failed to deserialize file index")?
     };
 
     tracing::trace!(?files);
 
-    let mod_dir = state.get_mod_dir();
+    let mod_dir = state.mod_dir;
 
     tracing::trace!("Creating mods directory {}", mod_dir.display());
-    fs::create_dir_all(&mod_dir)
+    fs::create_dir_all(Arc::as_ref(&mod_dir))
         .await
-        .wrap_err_with(|| format!("failed to create data directory {}", mod_dir.display()))?;
+        .wrap_err_with(|| format!("Failed to create data directory {}", mod_dir.display()))?;
 
     tracing::trace!("Extracting mod archive to {}", mod_dir.display());
     archive
-        .extract(&mod_dir)
-        .wrap_err_with(|| format!("failed to extract archive to {}", mod_dir.display()))?;
+        .extract(Arc::as_ref(&mod_dir))
+        .wrap_err_with(|| format!("Failed to extract archive to {}", mod_dir.display()))?;
 
     let packages = files
         .into_iter()
@@ -117,23 +117,23 @@ pub(crate) async fn import_mod(state: State, info: FileInfo) -> Result<ModInfo> 
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn delete_mod(state: State, info: &ModInfo) -> Result<()> {
-    let mod_dir = state.get_mod_dir().join(&info.id);
+pub(crate) async fn delete_mod(state: ActionState, info: &ModInfo) -> Result<()> {
+    let mod_dir = state.mod_dir.join(&info.id);
     fs::remove_dir_all(&mod_dir)
         .await
-        .wrap_err_with(|| format!("failed to remove directory {}", mod_dir.display()))?;
+        .wrap_err_with(|| format!("Failed to remove directory {}", mod_dir.display()))?;
 
     Ok(())
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn save_settings(state: State) -> Result<()> {
+pub(crate) async fn save_settings(state: ActionState) -> Result<()> {
     let cfg = ConfigSerialize::from(&state);
 
     tracing::info!("Saving settings to '{}'", state.config_path.display());
     tracing::debug!(?cfg);
 
-    let data = serde_sjson::to_string(&cfg).wrap_err("failed to serialize config")?;
+    let data = serde_sjson::to_string(&cfg).wrap_err("Failed to serialize config")?;
 
     fs::write(state.config_path.as_ref(), &data)
         .await
@@ -155,11 +155,11 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
 
     let cfg: ModConfig = read_sjson_file(&config_path)
         .await
-        .wrap_err_with(|| format!("failed to read mod config '{}'", config_path.display()))?;
+        .wrap_err_with(|| format!("Failed to read mod config '{}'", config_path.display()))?;
 
     let files: HashMap<String, Vec<String>> = read_sjson_file(&index_path)
         .await
-        .wrap_err_with(|| format!("failed to read file index '{}'", index_path.display()))?;
+        .wrap_err_with(|| format!("Failed to read file index '{}'", index_path.display()))?;
 
     let packages = files
         .into_iter()
@@ -186,12 +186,12 @@ where
             }
             Err(err) => {
                 return Err(err)
-                    .wrap_err_with(|| format!("failed to open directory '{}'", mod_dir.display()));
+                    .wrap_err_with(|| format!("Failed to open directory '{}'", mod_dir.display()));
             }
         };
 
         let stream = ReadDirStream::new(read_dir)
-            .map(|res| res.wrap_err("failed to read dir entry"))
+            .map(|res| res.wrap_err("Failed to read dir entry"))
             .then(read_mod_dir_entry);
         tokio::pin!(stream);
 

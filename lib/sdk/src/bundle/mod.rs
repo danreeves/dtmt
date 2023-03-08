@@ -164,7 +164,7 @@ impl Bundle {
                     OodleLZ_FuzzSafe::No,
                     OodleLZ_CheckCRC::No,
                 )
-                .wrap_err_with(|| format!("failed to decompress chunk {chunk_index}"))?;
+                .wrap_err_with(|| format!("Failed to decompress chunk {chunk_index}"))?;
 
                 if unpacked_size_tracked < CHUNK_SIZE {
                     raw_buffer.resize(unpacked_size_tracked, 0);
@@ -192,7 +192,7 @@ impl Bundle {
             let _enter = span.enter();
 
             let file = BundleFile::from_reader(ctx, &mut r, *props)
-                .wrap_err_with(|| format!("failed to read file {i}"))?;
+                .wrap_err_with(|| format!("Failed to read file {i}"))?;
             files.push(file);
         }
 

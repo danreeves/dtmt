@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     }
 
     let config = util::config::read_config(&default_config_path, &matches)
-        .wrap_err("failed to read config file")?;
+        .wrap_err("Failed to read config file")?;
 
     let game_info = dtmt_shared::collect_game_info()?;
 
@@ -71,7 +71,7 @@ fn main() -> Result<()> {
             config.data_dir.unwrap_or_default(),
         );
         state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
-            .wrap_err("failed to load mods")?;
+            .wrap_err("Failed to load mods")?;
         state
     };
 

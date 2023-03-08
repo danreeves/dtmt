@@ -22,7 +22,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
 
 use super::read_sjson_file;
-use crate::state::{PackageInfo, State};
+use crate::state::{ActionState, PackageInfo};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
 const BOOT_BUNDLE_NAME: &str = "packages/boot";
@@ -74,7 +74,7 @@ where
             );
             fs::copy(path, &backup_path).await.wrap_err_with(|| {
                 format!(
-                    "failed to back up {} '{}' to '{}'",
+                    "Failed to back up {} '{}' to '{}'",
                     file_name,
                     path.display(),
                     backup_path.display()
@@ -83,13 +83,13 @@ where
 
             tracing::debug!("Reading {} from original '{}'", file_name, path.display());
             fs::read(path).await.wrap_err_with(|| {
-                format!("failed to read {} file: {}", file_name, path.display())
+                format!("Failed to read {} file: {}", file_name, path.display())
             })?
         }
         Err(err) => {
             return Err(err).wrap_err_with(|| {
                 format!(
-                    "failed to read {} from backup '{}'",
+                    "Failed to read {} from backup '{}'",
                     file_name,
                     backup_path.display()
                 )
@@ -100,17 +100,17 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_game_settings(state: Arc<State>) -> Result<()> {
+async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
     let settings_path = state.game_dir.join("bundle").join(SETTINGS_FILE_PATH);
 
     let settings = read_file_with_backup(&settings_path)
         .await
-        .wrap_err("failed to read settings.ini")?;
-    let settings = String::from_utf8(settings).wrap_err("settings.ini is not valid UTF-8")?;
+        .wrap_err("Failed to read settings.ini")?;
+    let settings = String::from_utf8(settings).wrap_err("Settings.ini is not valid UTF-8")?;
 
     let mut f = fs::File::create(&settings_path)
         .await
-        .wrap_err_with(|| format!("failed to open {}", settings_path.display()))?;
+        .wrap_err_with(|| format!("Failed to open {}", settings_path.display()))?;
 
     let Some(i) = settings.find("boot_script =") else {
         eyre::bail!("couldn't find 'boot_script' field");
@@ -138,7 +138,7 @@ fn make_package(info: &PackageInfo) -> Result<Package> {
             .next()
             .ok_or_else(|| eyre::eyre!("missing file extension"))
             .and_then(BundleFileType::from_str)
-            .wrap_err("invalid file name in package info")?;
+            .wrap_err("Invalid file name in package info")?;
         let name: String = it.collect();
         pkg.add_file(file_type, name);
     }
@@ -146,7 +146,7 @@ fn make_package(info: &PackageInfo) -> Result<Package> {
     Ok(pkg)
 }
 
-fn build_mod_data_lua(state: Arc<State>) -> String {
+fn build_mod_data_lua(state: Arc<ActionState>) -> String {
     let mut lua = String::from("return {\n");
 
     // DMF is handled explicitely by the loading procedures, as it actually drives most of that
@@ -203,7 +203,7 @@ fn build_mod_data_lua(state: Arc<State>) -> String {
 }
 
 #[tracing::instrument(skip_all)]
-async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
+async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
     let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME.to_string());
     let mut tasks = Vec::new();
 
@@ -216,9 +216,9 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let lua = build_mod_data_lua(state.clone());
-        let lua = CString::new(lua).wrap_err("failed to build CString from mod data Lua string")?;
+        let lua = CString::new(lua).wrap_err("Failed to build CString from mod data Lua string")?;
         let file =
-            lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("failed to compile mod data Lua file")?;
+            lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("Failed to compile mod data Lua file")?;
 
         mod_bundle.add_file(file);
     }
@@ -227,16 +227,16 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
         let span = tracing::trace_span!("building mod packages", name = mod_info.name);
         let _enter = span.enter();
 
-        let mod_dir = state.get_mod_dir().join(&mod_info.id);
+        let mod_dir = state.mod_dir.join(&mod_info.id);
         for pkg_info in &mod_info.packages {
             let span = tracing::trace_span!("building package", name = pkg_info.name);
             let _enter = span.enter();
 
-            let pkg = make_package(pkg_info).wrap_err("failed to make package")?;
+            let pkg = make_package(pkg_info).wrap_err("Failed to make package")?;
             let mut variant = BundleFileVariant::new();
             let bin = pkg
                 .to_binary()
-                .wrap_err("failed to serialize package to binary")?;
+                .wrap_err("Failed to serialize package to binary")?;
             variant.set_data(bin);
             let mut file = BundleFile::new(pkg_info.name.clone(), BundleFileType::Package);
             file.add_variant(variant);
@@ -260,11 +260,11 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
             let task = async move {
                 let bundle = {
                     let bin = fs::read(&src).await.wrap_err_with(|| {
-                        format!("failed to read bundle file '{}'", src.display())
+                        format!("Failed to read bundle file '{}'", src.display())
                     })?;
                     let name = Bundle::get_name_from_path(&ctx, &src);
                     Bundle::from_binary(&ctx, name, bin)
-                        .wrap_err_with(|| format!("failed to parse bundle '{}'", src.display()))?
+                        .wrap_err_with(|| format!("Failed to parse bundle '{}'", src.display()))?
                 };
 
                 tracing::debug!(
@@ -283,7 +283,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
                 let _ = fs::remove_file(&dest).await;
                 fs::copy(&src, &dest).await.wrap_err_with(|| {
                     format!(
-                        "failed to copy bundle {pkg_name} for mod {mod_name}. src: {}, dest: {}",
+                        "Failed to copy bundle {pkg_name} for mod {mod_name}. Src: {}, dest: {}",
                         src.display(),
                         dest.display()
                     )
@@ -311,7 +311,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
         tracing::trace!("Writing mod bundle to '{}'", path.display());
         fs::write(&path, mod_bundle.to_binary()?)
             .await
-            .wrap_err_with(|| format!("failed to write bundle to '{}'", path.display()))?;
+            .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
     }
 
     bundles.push(mod_bundle);
@@ -320,7 +320,7 @@ async fn build_bundles(state: Arc<State>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
+async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
@@ -329,14 +329,14 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
     let mut boot_bundle = async {
         let bin = read_file_with_backup(&bundle_path)
             .await
-            .wrap_err("failed to read boot bundle")?;
+            .wrap_err("Failed to read boot bundle")?;
 
         Bundle::from_binary(&state.ctx, BOOT_BUNDLE_NAME.to_string(), bin)
-            .wrap_err("failed to parse boot bundle")
+            .wrap_err("Failed to parse boot bundle")
     }
     .instrument(tracing::trace_span!("read boot bundle"))
     .await
-    .wrap_err_with(|| format!("failed to read bundle '{}'", BOOT_BUNDLE_NAME))?;
+    .wrap_err_with(|| format!("Failed to read bundle '{}'", BOOT_BUNDLE_NAME))?;
 
     {
         tracing::trace!("Adding mod package file to boot bundle");
@@ -381,16 +381,16 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
         let bundle_name = Murmur64::hash(&pkg_info.name)
             .to_string()
             .to_ascii_lowercase();
-        let src = state.get_mod_dir().join(&mod_info.id).join(&bundle_name);
+        let src = state.mod_dir.join(&mod_info.id).join(&bundle_name);
 
         {
             let bin = fs::read(&src)
                 .await
-                .wrap_err_with(|| format!("failed to read bundle file '{}'", src.display()))?;
+                .wrap_err_with(|| format!("Failed to read bundle file '{}'", src.display()))?;
             let name = Bundle::get_name_from_path(&state.ctx, &src);
 
             let dml_bundle = Bundle::from_binary(&state.ctx, name, bin)
-                .wrap_err_with(|| format!("failed to parse bundle '{}'", src.display()))?;
+                .wrap_err_with(|| format!("Failed to parse bundle '{}'", src.display()))?;
 
             bundles.push(dml_bundle);
         };
@@ -416,14 +416,14 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
             let _ = fs::remove_file(&dest).await;
             fs::copy(&src, &dest).await.wrap_err_with(|| {
                 format!(
-                    "failed to copy bundle {pkg_name} for mod {mod_name}. src: {}, dest: {}",
+                    "Failed to copy bundle {pkg_name} for mod {mod_name}. Src: {}, dest: {}",
                     src.display(),
                     dest.display()
                 )
             })?;
         }
 
-        let pkg = make_package(pkg_info).wrap_err("failed to create package file for dml")?;
+        let pkg = make_package(pkg_info).wrap_err("Failed to create package file for dml")?;
         variant.set_data(pkg.to_binary()?);
 
         let mut f = BundleFile::new(DML_BUNDLE_NAME.to_string(), BundleFileType::Package);
@@ -437,9 +437,9 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let lua = include_str!("../../assets/mod_main.lua");
-        let lua = CString::new(lua).wrap_err("failed to build CString from mod main Lua string")?;
+        let lua = CString::new(lua).wrap_err("Failed to build CString from mod main Lua string")?;
         let file =
-            lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("failed to compile mod main Lua file")?;
+            lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("Failed to compile mod main Lua file")?;
 
         boot_bundle.add_file(file);
     }
@@ -447,10 +447,10 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
     async {
         let bin = boot_bundle
             .to_binary()
-            .wrap_err("failed to serialize boot bundle")?;
+            .wrap_err("Failed to serialize boot bundle")?;
         fs::write(&bundle_path, bin)
             .await
-            .wrap_err_with(|| format!("failed to write main bundle: {}", bundle_path.display()))
+            .wrap_err_with(|| format!("Failed to write main bundle: {}", bundle_path.display()))
     }
     .instrument(tracing::trace_span!("write boot bundle"))
     .await?;
@@ -461,7 +461,7 @@ async fn patch_boot_bundle(state: Arc<State>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
-async fn patch_bundle_database<B>(state: Arc<State>, bundles: B) -> Result<()>
+async fn patch_bundle_database<B>(state: Arc<ActionState>, bundles: B) -> Result<()>
 where
     B: AsRef<[Bundle]>,
 {
@@ -471,9 +471,9 @@ where
     let mut db = {
         let bin = read_file_with_backup(&database_path)
             .await
-            .wrap_err("failed to read bundle database")?;
+            .wrap_err("Failed to read bundle database")?;
         let mut r = Cursor::new(bin);
-        let db = BundleDatabase::from_binary(&mut r).wrap_err("failed to parse bundle database")?;
+        let db = BundleDatabase::from_binary(&mut r).wrap_err("Failed to parse bundle database")?;
         tracing::trace!("Finished parsing bundle database");
         db
     };
@@ -486,7 +486,7 @@ where
     {
         let bin = db
             .to_binary()
-            .wrap_err("failed to serialize bundle database")?;
+            .wrap_err("Failed to serialize bundle database")?;
         fs::write(&database_path, bin).await.wrap_err_with(|| {
             format!(
                 "failed to write bundle database to '{}'",
@@ -499,7 +499,7 @@ where
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
-async fn write_deployment_data<B>(state: Arc<State>, bundles: B) -> Result<()>
+async fn write_deployment_data<B>(state: Arc<ActionState>, bundles: B) -> Result<()>
 where
     B: AsRef<[Bundle]>,
 {
@@ -512,11 +512,11 @@ where
             .collect(),
     };
     let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
-    let data = serde_sjson::to_string(&info).wrap_err("failed to serizalie deployment data")?;
+    let data = serde_sjson::to_string(&info).wrap_err("Failed to serizalie deployment data")?;
 
     fs::write(&path, &data)
         .await
-        .wrap_err_with(|| format!("failed to write deployment data to '{}'", path.display()))?;
+        .wrap_err_with(|| format!("Failed to write deployment data to '{}'", path.display()))?;
 
     Ok(())
 }
@@ -525,7 +525,7 @@ where
     game_dir = %state.game_dir.display(),
     mods = state.mods.len()
 ))]
-pub(crate) async fn deploy_mods(state: State) -> Result<()> {
+pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
 
     {
@@ -552,15 +552,15 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
                     if let Some(err) = err.downcast_ref::<std::io::Error>() && err.kind() == ErrorKind::NotFound {
                         Ok(None)
                     } else {
-                        Err(err).wrap_err("failed to read deployment data")
+                        Err(err).wrap_err("Failed to read deployment data")
                     }
                 }
             }
         }
     )
-    .wrap_err("failed to gather deployment information")?;
+    .wrap_err("Failed to gather deployment information")?;
 
-    let game_info = game_info.wrap_err("failed to collect Steam info")?;
+    let game_info = game_info.wrap_err("Failed to collect Steam info")?;
 
     tracing::debug!(?game_info, ?deployment_info);
 
@@ -581,12 +581,12 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     tracing::info!("Build mod bundles");
     let mut bundles = build_bundles(state.clone())
         .await
-        .wrap_err("failed to build mod bundles")?;
+        .wrap_err("Failed to build mod bundles")?;
 
     tracing::info!("Patch boot bundle");
     let mut more_bundles = patch_boot_bundle(state.clone())
         .await
-        .wrap_err("failed to patch boot bundle")?;
+        .wrap_err("Failed to patch boot bundle")?;
     bundles.append(&mut more_bundles);
 
     if let Some(info) = &deployment_info {
@@ -609,7 +609,7 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
                         tracing::debug!("Removing unused bundle '{}'", file_name);
 
                         if let Err(err) = fs::remove_file(&path).await.wrap_err_with(|| {
-                            format!("failed to remove unused bundle '{}'", path.display())
+                            format!("Failed to remove unused bundle '{}'", path.display())
                         }) {
                             tracing::error!("{:?}", err);
                         }
@@ -626,24 +626,24 @@ pub(crate) async fn deploy_mods(state: State) -> Result<()> {
     tracing::info!("Patch game settings");
     patch_game_settings(state.clone())
         .await
-        .wrap_err("failed to patch game settings")?;
+        .wrap_err("Failed to patch game settings")?;
 
     tracing::info!("Patching bundle database");
     patch_bundle_database(state.clone(), &bundles)
         .await
-        .wrap_err("failed to patch bundle database")?;
+        .wrap_err("Failed to patch bundle database")?;
 
     tracing::info!("Writing deployment data");
     write_deployment_data(state.clone(), &bundles)
         .await
-        .wrap_err("failed to write deployment data")?;
+        .wrap_err("Failed to write deployment data")?;
 
     tracing::info!("Finished deploying mods");
     Ok(())
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
+pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
     let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
     let paths = [BUNDLE_DATABASE_NAME, &boot_bundle_path, SETTINGS_FILE_PATH];
     let bundle_dir = state.game_dir.join("bundle");
@@ -662,14 +662,14 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
             }
             Err(err) => {
                 return Err(err).wrap_err_with(|| {
-                    format!("failed to read deployment info at '{}'", path.display())
+                    format!("Failed to read deployment info at '{}'", path.display())
                 });
             }
         };
 
-        let data = String::from_utf8(data).wrap_err("invalid UTF8 in deployment data")?;
+        let data = String::from_utf8(data).wrap_err("Invalid UTF8 in deployment data")?;
 
-        serde_sjson::from_str(&data).wrap_err("invalid SJSON in deployment data")?
+        serde_sjson::from_str(&data).wrap_err("Invalid SJSON in deployment data")?
     };
 
     for name in info.bundles {
@@ -697,7 +697,7 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
 
             fs::copy(&backup, &path)
                 .await
-                .wrap_err_with(|| format!("failed to copy from '{}'", backup.display()))?;
+                .wrap_err_with(|| format!("Failed to copy from '{}'", backup.display()))?;
 
             tracing::debug!("Deleting backup: {}", backup.display());
 
@@ -705,7 +705,7 @@ pub(crate) async fn reset_mod_deployment(state: State) -> Result<()> {
                 Ok(_) => Ok(()),
                 Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
                 Err(err) => {
-                    Err(err).wrap_err_with(|| format!("failed to remove '{}'", backup.display()))
+                    Err(err).wrap_err_with(|| format!("Failed to remove '{}'", backup.display()))
                 }
             }
         }
