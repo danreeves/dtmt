@@ -20,7 +20,8 @@ impl ChannelWriter {
 impl std::io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let tx = self.tx.clone();
-        let string = String::from_utf8_lossy(buf).to_string();
+        let stripped = strip_ansi_escapes::strip(buf)?;
+        let string = String::from_utf8_lossy(&stripped).to_string();
 
         // The `send` errors when the receiving end has closed.
         // But there's not much we can do at that point, so we just ignore it.
