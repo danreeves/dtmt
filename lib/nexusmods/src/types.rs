@@ -63,7 +63,15 @@ pub struct Mod {
     // pub contains_adult_content: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
+pub struct DownloadLink {
+    pub name: String,
+    pub short_name: String,
+    #[serde(alias = "URI")]
+    pub uri: Url,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateInfo {
     pub mod_id: u64,
     #[serde(with = "time::serde::timestamp")]
