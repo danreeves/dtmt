@@ -1,4 +1,3 @@
-use std::ffi::CString;
 use std::io::{Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -216,7 +215,6 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let lua = build_mod_data_lua(state.clone());
-        let lua = CString::new(lua).wrap_err("Failed to build CString from mod data Lua string")?;
         let file =
             lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("Failed to compile mod data Lua file")?;
 
@@ -437,9 +435,8 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let lua = include_str!("../../assets/mod_main.lua");
-        let lua = CString::new(lua).wrap_err("Failed to build CString from mod main Lua string")?;
         let file =
-            lua::compile(MOD_BOOT_SCRIPT, &lua).wrap_err("Failed to compile mod main Lua file")?;
+            lua::compile(MOD_BOOT_SCRIPT, lua).wrap_err("Failed to compile mod main Lua file")?;
 
         boot_bundle.add_file(file);
     }

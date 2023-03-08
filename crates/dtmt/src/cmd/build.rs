@@ -151,17 +151,6 @@ where
     results.into_iter().collect()
 }
 
-#[tracing::instrument(skip_all, fields(files = files.len()))]
-fn compile_bundle(name: String, files: Vec<BundleFile>) -> Result<Bundle> {
-    let mut bundle = Bundle::new(name);
-
-    for file in files {
-        bundle.add_file(file);
-    }
-
-    Ok(bundle)
-}
-
 #[tracing::instrument]
 async fn build_package<P1, P2>(package: P1, root: P2) -> Result<Bundle>
 where
@@ -182,18 +171,20 @@ where
         .await
         .wrap_err_with(|| format!("Invalid package file {}", &pkg_name))?;
 
-    compile_package_files(&pkg, root)
-        .await
-        .wrap_err("Failed to compile package")
-        .and_then(|files| compile_bundle(pkg_name, files))
-        .wrap_err("Failed to build bundle")
+    let files = compile_package_files(&pkg, root).await?;
+    let mut bundle = Bundle::new(pkg_name);
+    for file in files {
+        bundle.add_file(file);
+    }
+
+    Ok(bundle)
 }
 
 fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     let path = path.as_ref();
 
     if path.is_absolute() || path.has_root() {
-        let err = eyre::eyre!("path is absolute: {}", path.display());
+        let err = eyre::eyre!("Path is absolute: {}", path.display());
         return Err(err).with_suggestion(|| "Specify a relative file path.".to_string());
     }
 
@@ -302,7 +293,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
             let bundle = build_package(path, &cfg.dir).await.wrap_err_with(|| {
                 format!(
-                    "failed to build package {} in {}",
+                    "Failed to build package '{}' at '{}'",
                     path.display(),
                     cfg.dir.display()
                 )
