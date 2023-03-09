@@ -21,6 +21,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
 
 use super::read_sjson_file;
+use crate::controller::app::check_mod_order;
 use crate::state::{ActionState, PackageInfo};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
@@ -525,14 +526,6 @@ where
 pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
 
-    {
-        let first = state.mods.get(0);
-        if first.is_none() || !(first.unwrap().id == "dml" && first.unwrap().enabled) {
-            // TODO: Add a suggestion where to get it, once that's published
-            eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
-        }
-    }
-
     let (_, game_info, deployment_info) = tokio::try_join!(
         async {
             let path = state.game_dir.join("bundle");
@@ -575,6 +568,8 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
             eyre::bail!("Game was updated since last mod deployment. Please reset first.");
         }
     }
+
+    check_mod_order(&state)?;
 
     tracing::info!(
         "Deploying {} mods to {}",

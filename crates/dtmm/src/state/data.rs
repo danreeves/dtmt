@@ -39,6 +39,36 @@ pub(crate) struct ModResourceInfo {
     pub localization: Option<PathBuf>,
 }
 
+#[derive(Clone, Data, Debug, PartialEq)]
+pub(crate) enum ModOrder {
+    Before,
+    After,
+}
+
+#[derive(Clone, Data, Debug, PartialEq)]
+pub(crate) struct ModDependency {
+    pub id: String,
+    pub order: ModOrder,
+}
+
+impl From<dtmt_shared::ModDependency> for ModDependency {
+    fn from(value: dtmt_shared::ModDependency) -> Self {
+        match value {
+            dtmt_shared::ModDependency::ID(id) => ModDependency {
+                id,
+                order: ModOrder::Before,
+            },
+            dtmt_shared::ModDependency::Config { id, order } => ModDependency {
+                id,
+                order: match order {
+                    dtmt_shared::ModOrder::Before => ModOrder::Before,
+                    dtmt_shared::ModOrder::After => ModOrder::After,
+                },
+            },
+        }
+    }
+}
+
 #[derive(Clone, Data, Debug, Lens, PartialEq)]
 pub(crate) struct ModInfo {
     pub id: String,
@@ -51,6 +81,7 @@ pub(crate) struct ModInfo {
     #[lens(ignore)]
     #[data(ignore)]
     pub resources: ModResourceInfo,
+    pub depends: Vector<ModDependency>,
 }
 
 impl ModInfo {
@@ -66,6 +97,7 @@ impl ModInfo {
                 data: cfg.resources.data,
                 localization: cfg.resources.localization,
             },
+            depends: cfg.depends.into_iter().map(ModDependency::from).collect(),
         }
     }
 }

@@ -3,10 +3,11 @@ use std::path::PathBuf;
 mod log;
 
 pub use log::*;
+use serde::Deserialize;
 use steamlocate::SteamDir;
 use time::OffsetDateTime;
 
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ModConfigResources {
     pub init: PathBuf,
     #[serde(default)]
@@ -15,7 +16,21 @@ pub struct ModConfigResources {
     pub localization: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModOrder {
+    Before,
+    After,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum ModDependency {
+    ID(String),
+    Config { id: String, order: ModOrder },
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct ModConfig {
     #[serde(skip)]
     pub dir: std::path::PathBuf,
@@ -26,7 +41,7 @@ pub struct ModConfig {
     pub packages: Vec<std::path::PathBuf>,
     pub resources: ModConfigResources,
     #[serde(default)]
-    pub depends: Vec<String>,
+    pub depends: Vec<ModDependency>,
 }
 
 pub const STEAMAPP_ID: u32 = 1361210;

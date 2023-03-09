@@ -14,7 +14,7 @@ use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
-use crate::state::{ActionState, ModInfo, PackageInfo};
+use crate::state::{ActionState, ModInfo, ModOrder, PackageInfo};
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
@@ -215,4 +215,65 @@ where
 
         Ok::<_, color_eyre::Report>(mods)
     })
+}
+
+pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
+    {
+        let first = state.mods.get(0);
+        if first.is_none() || !(first.unwrap().id == "dml" && first.unwrap().enabled) {
+            // TODO: Add a suggestion where to get it, once that's published
+            eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
+        }
+    }
+
+    state
+        .mods
+        .iter()
+        .filter(|i| i.enabled)
+        .enumerate()
+        .for_each(|(i, info)| tracing::debug!(i, ?info));
+
+    for (i, mod_info) in state.mods.iter().filter(|i| i.enabled).enumerate() {
+        for dep in &mod_info.depends {
+            let dep_info = state.mods.iter().enumerate().find(|(_, m)| m.id == dep.id);
+
+            match dep_info {
+                Some((_, dep_info)) if !dep_info.enabled => {
+                    eyre::bail!(
+                        "Dependency '{}' ({}) must be enabled.",
+                        dep_info.name,
+                        dep.id
+                    );
+                }
+                Some((j, dep_info)) if dep.order == ModOrder::Before && j >= i => {
+                    eyre::bail!(
+                        "Dependency '{}' ({}) must be loaded before '{}'",
+                        dep_info.name,
+                        dep.id,
+                        mod_info.name
+                    );
+                }
+                Some((j, dep_info)) if dep.order == ModOrder::After && j <= i => {
+                    eyre::bail!(
+                        "Dependency '{}' ({}) must be loaded after '{}'",
+                        dep_info.name,
+                        dep.id,
+                        mod_info.name
+                    );
+                }
+                None => {
+                    eyre::bail!(
+                        "Missing dependency '{}' for mod '{}'",
+                        dep.id,
+                        mod_info.name
+                    );
+                }
+                Some(_) => {
+                    // All good
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
