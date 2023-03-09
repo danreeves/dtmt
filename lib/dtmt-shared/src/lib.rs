@@ -33,13 +33,14 @@ pub enum ModDependency {
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ModConfig {
     #[serde(skip)]
-    pub dir: std::path::PathBuf,
+    pub dir: PathBuf,
     pub id: String,
     pub name: String,
     pub summary: String,
     pub description: Option<String>,
     pub author: Option<String>,
     pub version: String,
+    pub image: Option<PathBuf>,
     #[serde(default)]
     pub categories: Vec<String>,
     pub packages: Vec<PathBuf>,

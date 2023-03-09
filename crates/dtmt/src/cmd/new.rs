@@ -19,6 +19,7 @@ version = "0.1.0"
 // A one- or two-line short description.
 summary = "This is my new mod '{{name}}'!"
 // description = ""
+// image = "assets/logo.png"
 
 // Can contain arbitrary strings. But to keep things consistent and useful,
 // capitalize names and check existing mods for matching categories.

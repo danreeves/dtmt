@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use druid::im::Vector;
 use druid::widget::{
-    Button, Checkbox, CrossAxisAlignment, Flex, Label, LineBreaking, List, MainAxisAlignment,
-    Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
+    Button, Checkbox, CrossAxisAlignment, Flex, Image, Label, LineBreaking, List,
+    MainAxisAlignment, Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
 };
-use druid::{lens, LifeCycleCtx};
+use druid::{lens, Data, ImageBuf, LifeCycleCtx};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
     TextAlignment, Widget, WidgetExt, WindowDesc, WindowId,
@@ -18,7 +18,9 @@ use crate::state::{
     ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme;
-use crate::ui::widget::controller::{AutoScrollController, DirtyStateController};
+use crate::ui::widget::controller::{
+    AutoScrollController, DirtyStateController, ImageLensController,
+};
 use crate::ui::widget::PathBufFormatter;
 
 lazy_static! {
@@ -124,7 +126,7 @@ fn build_mod_list() -> impl Widget<State> {
         },
         |state, infos| {
             infos.into_iter().for_each(|(i, new, _)| {
-                if state.mods.get(i).cloned() != Some(new.clone()) {
+                if Data::same(&state.mods.get(i).cloned(), &Some(new.clone())) {
                     state.mods.set(i, new);
                 }
             });
@@ -251,7 +253,7 @@ fn build_mod_details_info() -> impl Widget<State> {
                 }
             });
 
-            Flex::column()
+            let details = Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .with_child(name)
@@ -261,10 +263,23 @@ fn build_mod_details_info() -> impl Widget<State> {
                 .with_child(version_line)
                 .with_spacer(4.)
                 .with_child(categories)
+                .padding((4., 4.));
+
+            let image =
+                Maybe::or_empty(|| Image::new(ImageBuf::empty()).controller(ImageLensController))
+                    .lens(ModInfo::image.in_arc());
+
+            Flex::column()
+                .main_axis_alignment(MainAxisAlignment::Start)
+                .must_fill_main_axis(true)
+                .cross_axis_alignment(CrossAxisAlignment::Start)
+                .with_child(image)
+                // .with_spacer(4.)
+                // .with_flex_child(details, 1.)
+                .with_child(details)
         },
         Flex::column,
     )
-    .padding((4., 4.))
     .lens(State::selected_mod)
 }
 

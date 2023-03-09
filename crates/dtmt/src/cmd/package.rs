@@ -1,12 +1,13 @@
-use std::ffi::OsString;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::Help;
 use path_slash::PathBufExt;
-use tokio::fs::{self, DirEntry};
+use tokio::fs;
+use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipWriter;
@@ -46,15 +47,45 @@ pub(crate) fn command_definition() -> Command {
         )
 }
 
-async fn process_dir_entry(res: Result<DirEntry>) -> Result<(OsString, Vec<u8>)> {
-    let entry = res?;
-    let path = entry.path();
-
-    let data = fs::read(&path)
+#[async_recursion::async_recursion]
+async fn process_directory<W: std::io::Write + std::io::Seek + std::marker::Send>(
+    zip: Arc<Mutex<ZipWriter<W>>>,
+    path: PathBuf,
+    prefix: PathBuf,
+) -> Result<()> {
+    zip.lock()
         .await
-        .wrap_err_with(|| format!("Failed to read '{}'", path.display()))?;
+        .add_directory(prefix.to_slash_lossy(), Default::default())?;
 
-    Ok((entry.file_name(), data))
+    let read_dir = fs::read_dir(&path)
+        .await
+        .wrap_err_with(|| format!("Failed to read directory '{}'", path.display()))?;
+
+    let stream = ReadDirStream::new(read_dir).map(|res| res.wrap_err("Failed to read dir entry"));
+    tokio::pin!(stream);
+
+    while let Some(res) = stream.next().await {
+        let entry = res?;
+        let in_path = entry.path();
+        let out_path = prefix.join(entry.file_name());
+
+        let t = entry.file_type().await?;
+
+        if t.is_file() || t.is_symlink() {
+            let data = fs::read(&in_path)
+                .await
+                .wrap_err_with(|| format!("Failed to read '{}'", in_path.display()))?;
+            {
+                let mut zip = zip.lock().await;
+                zip.start_file(out_path.to_slash_lossy(), Default::default())?;
+                zip.write_all(&data)?;
+            }
+        } else if t.is_dir() {
+            process_directory(zip.clone(), in_path, out_path).await?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tracing::instrument(skip_all)]
@@ -75,14 +106,23 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     };
 
     let data = Cursor::new(Vec::new());
-    let mut zip = ZipWriter::new(data);
+    let zip = ZipWriter::new(data);
+    let zip = Arc::new(Mutex::new(zip));
 
-    zip.add_directory(&cfg.id, Default::default())?;
+    let path = cfg.dir.join(
+        matches
+            .get_one::<PathBuf>("directory")
+            .expect("parameter has default value"),
+    );
 
-    let base_path = PathBuf::from(cfg.id);
+    process_directory(zip.clone(), path, PathBuf::from(&cfg.id))
+        .await
+        .wrap_err("Failed to add directory to archive")?;
+
+    let mut zip = zip.lock().await;
 
     {
-        let name = base_path.join("dtmt.cfg");
+        let name = PathBuf::from(&cfg.id).join("dtmt.cfg");
         let path = cfg.dir.join("dtmt.cfg");
 
         let data = fs::read(&path)
@@ -92,30 +132,6 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         zip.start_file(name.to_slash_lossy(), Default::default())?;
         zip.write_all(&data)?;
     }
-
-    {
-        let path = cfg.dir.join(
-            matches
-                .get_one::<PathBuf>("directory")
-                .expect("parameter has default value"),
-        );
-        let read_dir = fs::read_dir(&path)
-            .await
-            .wrap_err_with(|| format!("Failed to read directory '{}'", path.display()))?;
-
-        let stream = ReadDirStream::new(read_dir)
-            .map(|res| res.wrap_err("Failed to read dir entry"))
-            .then(process_dir_entry);
-        tokio::pin!(stream);
-
-        while let Some(res) = stream.next().await {
-            let (name, data) = res?;
-
-            let name = base_path.join(name);
-            zip.start_file(name.to_slash_lossy(), Default::default())?;
-            zip.write_all(&data)?;
-        }
-    };
 
     let data = zip.finish()?;
 

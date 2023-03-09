@@ -259,6 +259,11 @@ impl AppDelegate<State> for Delegate {
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_FINISH_SAVE_SETTINGS) => {
+                tracing::trace!(
+                    in_progress = state.is_save_in_progress,
+                    next_pending = state.is_next_save_pending,
+                    "Finished saving settings",
+                );
                 state.is_save_in_progress = false;
 
                 if state.is_next_save_pending {

@@ -1,5 +1,7 @@
-use druid::widget::{Button, Controller, Scroll};
-use druid::{Data, Env, Event, EventCtx, Rect, UpdateCtx, Widget};
+use druid::widget::{Button, Controller, Image, Scroll};
+use druid::{
+    Data, Env, Event, EventCtx, ImageBuf, LifeCycle, LifeCycleCtx, Rect, UpdateCtx, Widget,
+};
 
 use crate::state::{State, ACTION_SET_DIRTY, ACTION_START_SAVE_SETTINGS};
 
@@ -48,18 +50,19 @@ impl<T: Data, W: Widget<T>> Controller<T, Scroll<T, W>> for AutoScrollController
         data: &T,
         env: &Env,
     ) {
+        child.update(ctx, old_data, data, env);
+
         if !ctx.is_disabled() {
             let size = child.child_size();
             let end_region = Rect::new(size.width - 1., size.height - 1., size.width, size.height);
             child.scroll_to(ctx, end_region);
         }
-        child.update(ctx, old_data, data, env)
     }
 }
 
 macro_rules! compare_state_fields {
     ($old:ident, $new:ident, $($field:ident),+) => {
-        $($old.$field != $new.$field) || +
+        $(!Data::same(&$old.$field, &$new.$field)) || +
     }
 }
 
@@ -84,5 +87,39 @@ impl<W: Widget<State>> Controller<State, W> for DirtyStateController {
         }
 
         child.update(ctx, old_data, data, env)
+    }
+}
+
+pub struct ImageLensController;
+
+impl Controller<ImageBuf, Image> for ImageLensController {
+    fn lifecycle(
+        &mut self,
+        widget: &mut Image,
+        ctx: &mut LifeCycleCtx,
+        event: &LifeCycle,
+        data: &ImageBuf,
+        env: &Env,
+    ) {
+        if let LifeCycle::WidgetAdded = event {
+            widget.set_image_data(data.clone());
+        }
+
+        widget.lifecycle(ctx, event, data, env);
+    }
+
+    fn update(
+        &mut self,
+        widget: &mut Image,
+        ctx: &mut UpdateCtx,
+        old_data: &ImageBuf,
+        data: &ImageBuf,
+        env: &Env,
+    ) {
+        if !Data::same(old_data, data) {
+            widget.set_image_data(data.clone());
+        }
+
+        widget.update(ctx, old_data, data, env);
     }
 }

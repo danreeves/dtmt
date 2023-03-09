@@ -201,6 +201,17 @@ fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let mut cfg = find_project_config(dir).await?;
 
+    if let Some(path) = cfg.image {
+        let path = normalize_file_path(path)
+            .wrap_err("Invalid config field 'image'")
+            .with_suggestion(|| {
+                "Specify a file path relative to and child path of the \
+                    directory where 'dtmt.cfg' is."
+                    .to_string()
+            })?;
+        cfg.image = Some(path);
+    }
+
     cfg.resources.init = normalize_file_path(cfg.resources.init)
         .wrap_err("Invalid config field 'resources.init'")
         .with_suggestion(|| {
@@ -349,12 +360,34 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         .wrap_err("Failed to build mod bundles")?;
 
     {
+        let path = out_path.join("files.sjson");
+        tracing::trace!(path = %path.display(), "Writing file index");
         let file_map = file_map.lock().await;
         let data = serde_sjson::to_string(file_map.deref())?;
-        let path = out_path.join("files.sjson");
         fs::write(&path, data)
             .await
             .wrap_err_with(|| format!("Failed to write file index to '{}'", path.display()))?;
+    }
+
+    if let Some(img_path) = &cfg.image {
+        let path = cfg.dir.join(img_path);
+        let dest = out_path.join(img_path);
+
+        tracing::trace!(src = %path.display(), dest = %dest.display(), "Copying image file");
+
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(&parent)
+                .await
+                .wrap_err_with(|| format!("Failed to create directory '{}'", parent.display()))?;
+        }
+
+        fs::copy(&path, &dest).await.wrap_err_with(|| {
+            format!(
+                "Failed to copy image from '{}' to '{}'",
+                path.display(),
+                dest.display()
+            )
+        })?;
     }
 
     tracing::info!("Compiled bundles written to '{}'", out_path.display());
