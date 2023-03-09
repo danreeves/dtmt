@@ -21,6 +21,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::Instrument;
 
 use super::read_sjson_file;
+use crate::controller::app::check_mod_order;
 use crate::state::{ActionState, PackageInfo};
 
 const MOD_BUNDLE_NAME: &str = "packages/mods";
@@ -525,15 +526,14 @@ where
 pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
 
-    {
-        let first = state.mods.get(0);
-        if first.is_none() || !(first.unwrap().id == "dml" && first.unwrap().enabled) {
-            // TODO: Add a suggestion where to get it, once that's published
-            eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
-        }
-    }
-
-    let (game_info, deployment_info) = tokio::try_join!(
+    let (_, game_info, deployment_info) = tokio::try_join!(
+        async {
+            let path = state.game_dir.join("bundle");
+            fs::metadata(&path)
+                .await
+                .wrap_err("Failed to open game bundle directory")
+                .with_suggestion(|| "Double-check 'Game Directory' in the Settings tab.")
+        },
         async {
             tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
                 .await
@@ -557,17 +557,19 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     )
     .wrap_err("Failed to gather deployment information")?;
 
-    let game_info = game_info.wrap_err("Failed to collect Steam info")?;
-
     tracing::debug!(?game_info, ?deployment_info);
 
-    if deployment_info
-        .as_ref()
-        .map(|i| game_info.last_updated > i.timestamp)
-        .unwrap_or(false)
-    {
-        eyre::bail!("Game was updated since last mod deployment. Please reset first.");
+    if let Some(game_info) = game_info {
+        if deployment_info
+            .as_ref()
+            .map(|i| game_info.last_updated > i.timestamp)
+            .unwrap_or(false)
+        {
+            eyre::bail!("Game was updated since last mod deployment. Please reset first.");
+        }
     }
+
+    check_mod_order(&state)?;
 
     tracing::info!(
         "Deploying {} mods to {}",

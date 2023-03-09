@@ -8,13 +8,17 @@ use std::sync::Arc;
 use clap::command;
 use clap::value_parser;
 use clap::Arg;
+use color_eyre::eyre;
 use color_eyre::eyre::Context;
 use color_eyre::{Report, Result};
 use druid::AppLauncher;
+use druid::SingleUse;
+use druid::Target;
 use tokio::sync::RwLock;
 
 use crate::controller::app::load_mods;
 use crate::controller::worker::work_thread;
+use crate::state::ACTION_SHOW_ERROR_DIALOG;
 use crate::state::{Delegate, State};
 
 mod controller;
@@ -57,17 +61,32 @@ fn main() -> Result<()> {
         oodle_sys::init(matches.get_one::<String>("oodle"));
     }
 
+    let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
+    let delegate = Delegate::new(action_tx);
+
+    let launcher = AppLauncher::with_window(ui::window::main::new()).delegate(delegate);
+
+    let event_sink = launcher.get_external_handle();
+
     let config = util::config::read_config(&default_config_path, &matches)
         .wrap_err("Failed to read config file")?;
-
-    let game_info = dtmt_shared::collect_game_info()?;
+    let game_info = dtmt_shared::collect_game_info();
 
     tracing::debug!(?config, ?game_info);
+
+    let game_dir = config.game_dir.or_else(|| game_info.map(|i| i.path));
+    if game_dir.is_none() {
+        let err =
+            eyre::eyre!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
+        event_sink
+            .submit_command(ACTION_SHOW_ERROR_DIALOG, SingleUse::new(err), Target::Auto)
+            .expect("failed to send command");
+    }
 
     let initial_state = {
         let mut state = State::new(
             config.path,
-            config.game_dir.unwrap_or(game_info.path),
+            game_dir.unwrap_or_default(),
             config.data_dir.unwrap_or_default(),
         );
         state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
@@ -75,12 +94,6 @@ fn main() -> Result<()> {
         state
     };
 
-    let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
-    let delegate = Delegate::new(action_tx);
-
-    let launcher = AppLauncher::with_window(ui::window::main::new()).delegate(delegate);
-
-    let event_sink = launcher.get_external_handle();
     std::thread::spawn(move || {
         let event_sink = Arc::new(RwLock::new(event_sink));
         let action_rx = Arc::new(RwLock::new(action_rx));
