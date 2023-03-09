@@ -73,7 +73,11 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 pub(crate) struct ModInfo {
     pub id: String,
     pub name: String,
-    pub description: Arc<String>,
+    pub summary: Arc<String>,
+    pub description: Option<Arc<String>>,
+    pub categories: Vector<String>,
+    pub author: Option<String>,
+    pub version: String,
     pub enabled: bool,
     #[lens(ignore)]
     #[data(ignore)]
@@ -89,9 +93,13 @@ impl ModInfo {
         Self {
             id: cfg.id,
             name: cfg.name,
-            description: Arc::new(cfg.description),
+            summary: Arc::new(cfg.summary),
+            description: cfg.description.map(Arc::new),
+            author: cfg.author,
+            version: cfg.version,
             enabled: false,
             packages,
+            categories: cfg.categories.into_iter().collect(),
             resources: ModResourceInfo {
                 init: cfg.resources.init,
                 data: cfg.resources.data,

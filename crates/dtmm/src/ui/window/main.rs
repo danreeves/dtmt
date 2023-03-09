@@ -220,16 +220,47 @@ fn build_mod_details_info() -> impl Widget<State> {
                 // so that we can center-align it.
                 .expand_width()
                 .lens(ModInfo::name.in_arc());
-            let description = Label::raw()
+            let summary = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
-                .lens(ModInfo::description.in_arc());
+                .lens(ModInfo::summary.in_arc());
+
+            // TODO: Image/icon?
+
+            let version_line = Label::dynamic(|info: &Arc<ModInfo>, _| {
+                if let Some(author) = &info.author {
+                    format!("Version: {}, by {author}", info.version)
+                } else {
+                    format!("Version: {}", info.version)
+                }
+            });
+
+            let categories = Label::dynamic(|info: &Arc<ModInfo>, _| {
+                if info.categories.is_empty() {
+                    String::from("Uncategorized")
+                } else {
+                    info.categories.iter().enumerate().fold(
+                        String::from("Category: "),
+                        |mut s, (i, category)| {
+                            if i > 0 {
+                                s.push_str(", ");
+                            }
+                            s.push_str(category);
+                            s
+                        },
+                    )
+                }
+            });
 
             Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)
                 .main_axis_alignment(MainAxisAlignment::Start)
                 .with_child(name)
                 .with_spacer(4.)
-                .with_child(description)
+                .with_child(summary)
+                .with_spacer(4.)
+                .with_child(version_line)
+                .with_spacer(4.)
+                .with_child(categories)
         },
         Flex::column,
     )

@@ -36,9 +36,13 @@ pub struct ModConfig {
     pub dir: std::path::PathBuf,
     pub id: String,
     pub name: String,
-    pub description: String,
+    pub summary: String,
+    pub description: Option<String>,
+    pub author: Option<String>,
     pub version: String,
-    pub packages: Vec<std::path::PathBuf>,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    pub packages: Vec<PathBuf>,
     pub resources: ModConfigResources,
     #[serde(default)]
     pub depends: Vec<ModDependency>,
