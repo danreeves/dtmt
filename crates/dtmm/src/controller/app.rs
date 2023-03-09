@@ -4,9 +4,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context};
-use color_eyre::{Help, Result};
+use color_eyre::{Help, Report, Result};
 use druid::im::Vector;
-use druid::FileInfo;
+use druid::{FileInfo, ImageBuf};
 use dtmt_shared::ModConfig;
 use tokio::fs::{self, DirEntry};
 use tokio::runtime::Runtime;
@@ -95,6 +95,36 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
 
     tracing::trace!(?files);
 
+    let image = if let Some(path) = &mod_cfg.image {
+        let name = names
+            .iter()
+            .find(|name| name.ends_with(&path.display().to_string()))
+            .ok_or_else(|| eyre::eyre!("archive does not contain configured image file"))?;
+
+        let mut f = archive
+            .by_name(name)
+            .wrap_err("Failed to read image file from archive")?;
+        let mut buf = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut buf)
+            .wrap_err("Failed to read file index from archive")?;
+
+        // Druid somehow doesn't return an error compatible with eyre, here.
+        // So we have to wrap through `Display` manually.
+        let img = match ImageBuf::from_data(&buf) {
+            Ok(img) => img,
+            Err(err) => {
+                let err = Report::msg(err.to_string()).wrap_err("Invalid image data");
+                return Err(err).with_suggestion(|| {
+                    "Supported formats are: PNG, JPEG, Bitmap and WebP".to_string()
+                });
+            }
+        };
+
+        Some(img)
+    } else {
+        None
+    };
+
     let mod_dir = state.mod_dir;
 
     tracing::trace!("Creating mods directory {}", mod_dir.display());
@@ -111,7 +141,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .into_iter()
         .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
-    let info = ModInfo::new(mod_cfg, packages);
+    let info = ModInfo::new(mod_cfg, packages, image);
 
     Ok(info)
 }
@@ -161,11 +191,38 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
         .await
         .wrap_err_with(|| format!("Failed to read file index '{}'", index_path.display()))?;
 
+    let image = if let Some(path) = &cfg.image {
+        let path = entry.path().join(path);
+        if let Ok(data) = fs::read(&path).await {
+            // Druid somehow doesn't return an error compatible with eyre, here.
+            // So we have to wrap through `Display` manually.
+            let img = match ImageBuf::from_data(&data) {
+                Ok(img) => img,
+                Err(err) => {
+                    let err = Report::msg(err.to_string());
+                    return Err(err)
+                        .wrap_err_with(|| {
+                            format!("Failed to import image file '{}'", path.display())
+                        })
+                        .with_suggestion(|| {
+                            "Supported formats are: PNG, JPEG, Bitmap and WebP".to_string()
+                        });
+                }
+            };
+
+            Some(img)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let packages = files
         .into_iter()
         .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
-    let info = ModInfo::new(cfg, packages);
+    let info = ModInfo::new(cfg, packages, image);
     Ok(info)
 }
 

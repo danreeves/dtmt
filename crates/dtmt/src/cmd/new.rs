@@ -13,8 +13,28 @@ const TEMPLATES: [(&str, &str); 5] = [
         "dtmt.cfg",
         r#"id = "{{id}}"
 name = "{{name}}"
-description = "This is my new mod '{{name}}'!"
 version = "0.1.0"
+// author = ""
+
+// A one- or two-line short description.
+summary = "This is my new mod '{{name}}'!"
+// description = ""
+// image = "assets/logo.png"
+
+// Can contain arbitrary strings. But to keep things consistent and useful,
+// capitalize names and check existing mods for matching categories.
+categories = [
+    Misc
+    // UI
+    // QoL
+    // Tools
+]
+
+// A list of mod IDs that this mod depends on. You can find
+// those IDs by downloading the mod and extracting their `dtmt.cfg`.
+depends = [
+    DMF
+]
 
 resources = {
     init = "scripts/mods/{{id}}/init"
@@ -23,16 +43,12 @@ resources = {
 }
 
 packages = [
-    "packages/{{id}}"
-]
-
-depends = [
-    "dmf"
+    "packages/mods/{{id}}"
 ]
 "#,
     ),
     (
-        "packages/{{id}}.package",
+        "packages/mods/{{id}}.package",
         r#"lua = [
     "scripts/mods/{{id}}/*"
 ]

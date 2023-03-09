@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use druid::{
     im::{HashMap, Vector},
-    Data, Lens, WindowHandle, WindowId,
+    Data, ImageBuf, Lens, WindowHandle, WindowId,
 };
 use dtmt_shared::ModConfig;
 
@@ -69,11 +69,16 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
     }
 }
 
-#[derive(Clone, Data, Debug, Lens, PartialEq)]
+#[derive(Clone, Data, Debug, Lens)]
 pub(crate) struct ModInfo {
     pub id: String,
     pub name: String,
-    pub description: Arc<String>,
+    pub summary: Arc<String>,
+    pub description: Option<Arc<String>>,
+    pub categories: Vector<String>,
+    pub author: Option<String>,
+    pub image: Option<ImageBuf>,
+    pub version: String,
     pub enabled: bool,
     #[lens(ignore)]
     #[data(ignore)]
@@ -85,13 +90,22 @@ pub(crate) struct ModInfo {
 }
 
 impl ModInfo {
-    pub fn new(cfg: ModConfig, packages: Vector<Arc<PackageInfo>>) -> Self {
+    pub fn new(
+        cfg: ModConfig,
+        packages: Vector<Arc<PackageInfo>>,
+        image: Option<ImageBuf>,
+    ) -> Self {
         Self {
             id: cfg.id,
             name: cfg.name,
-            description: Arc::new(cfg.description),
+            summary: Arc::new(cfg.summary),
+            description: cfg.description.map(Arc::new),
+            author: cfg.author,
+            version: cfg.version,
             enabled: false,
             packages,
+            image,
+            categories: cfg.categories.into_iter().collect(),
             resources: ModResourceInfo {
                 init: cfg.resources.init,
                 data: cfg.resources.data,
