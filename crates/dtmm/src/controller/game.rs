@@ -533,7 +533,14 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         }
     }
 
-    let (game_info, deployment_info) = tokio::try_join!(
+    let (_, game_info, deployment_info) = tokio::try_join!(
+        async {
+            let path = state.game_dir.join("bundle");
+            fs::metadata(&path)
+                .await
+                .wrap_err("Failed to open game bundle directory")
+                .with_suggestion(|| "Double-check 'Game Directory' in the Settings tab.")
+        },
         async {
             tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
                 .await
@@ -557,16 +564,16 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     )
     .wrap_err("Failed to gather deployment information")?;
 
-    let game_info = game_info.wrap_err("Failed to collect Steam info")?;
-
     tracing::debug!(?game_info, ?deployment_info);
 
-    if deployment_info
-        .as_ref()
-        .map(|i| game_info.last_updated > i.timestamp)
-        .unwrap_or(false)
-    {
-        eyre::bail!("Game was updated since last mod deployment. Please reset first.");
+    if let Some(game_info) = game_info {
+        if deployment_info
+            .as_ref()
+            .map(|i| game_info.last_updated > i.timestamp)
+            .unwrap_or(false)
+        {
+            eyre::bail!("Game was updated since last mod deployment. Please reset first.");
+        }
     }
 
     tracing::info!(

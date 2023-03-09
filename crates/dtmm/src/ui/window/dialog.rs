@@ -20,6 +20,7 @@ pub fn error<T: Data>(err: Report, parent: WindowHandle) -> WindowDesc<T> {
 
     let widget = Flex::column()
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+        .must_fill_main_axis(true)
         .cross_axis_alignment(CrossAxisAlignment::End)
         .with_child(text)
         .with_spacer(20.)

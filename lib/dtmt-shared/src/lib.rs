@@ -1,8 +1,5 @@
 use std::path::PathBuf;
 
-use color_eyre::eyre;
-use color_eyre::Result;
-
 mod log;
 
 pub use log::*;
@@ -40,11 +37,12 @@ pub struct GameInfo {
     pub last_updated: OffsetDateTime,
 }
 
-pub fn collect_game_info() -> Result<GameInfo> {
+pub fn collect_game_info() -> Option<GameInfo> {
     let mut dir = if let Some(dir) = SteamDir::locate() {
         dir
     } else {
-        eyre::bail!("Failed to locate Steam installation")
+        tracing::debug!("Failed to locate Steam installation");
+        return None;
     };
 
     let found = dir
@@ -52,15 +50,17 @@ pub fn collect_game_info() -> Result<GameInfo> {
         .and_then(|app| app.vdf.get("LastUpdated").map(|v| (app.path.clone(), v)));
 
     let Some((path, last_updated)) = found else {
-        eyre::bail!("Failed to find game installation");
+        tracing::debug!("Found Steam, but failed to find game installation");
+        return None;
     };
 
     let Some(last_updated) = last_updated
         .as_value()
         .and_then(|v| v.to::<i64>())
         .and_then(|v| OffsetDateTime::from_unix_timestamp(v).ok()) else {
-            eyre::bail!("Couldn't read 'LastUpdate'.");
+            tracing::error!("Found Steam game, but couldn't read 'LastUpdate'.");
+            return None;
     };
 
-    Ok(GameInfo { path, last_updated })
+    Some(GameInfo { path, last_updated })
 }
