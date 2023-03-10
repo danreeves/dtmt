@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
         .subcommand(cmd::murmur::command_definition())
         .subcommand(cmd::new::command_definition())
         .subcommand(cmd::package::command_definition())
-        // .subcommand(cmd::watch::command_definition())
+        .subcommand(cmd::watch::command_definition())
         .get_matches();
 
     dtmt_shared::create_tracing_subscriber();

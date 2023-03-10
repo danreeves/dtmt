@@ -1,11 +1,12 @@
 use std::io::{Cursor, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::Help;
-use path_slash::PathBufExt;
+use dtmt_shared::ModConfig;
+use path_slash::{PathBufExt, PathExt};
 use tokio::fs;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
@@ -41,18 +42,28 @@ pub(crate) fn command_definition() -> Command {
             Arg::new("out")
                 .long("out")
                 .short('o')
-                .default_value(".")
                 .value_parser(value_parser!(PathBuf))
-                .help("The path to write the packaged file to. May be a directory or a file name."),
+                .help(
+                    "The path to write the packaged file to. Will default to a file in the \
+                        current working directory",
+                ),
         )
 }
 
 #[async_recursion::async_recursion]
-async fn process_directory<W: std::io::Write + std::io::Seek + std::marker::Send>(
+async fn process_directory<P1, P2, W>(
     zip: Arc<Mutex<ZipWriter<W>>>,
-    path: PathBuf,
-    prefix: PathBuf,
-) -> Result<()> {
+    path: P1,
+    prefix: P2,
+) -> Result<()>
+where
+    P1: AsRef<Path> + std::marker::Send,
+    P2: AsRef<Path> + std::marker::Send,
+    W: std::io::Write + std::io::Seek + std::marker::Send,
+{
+    let path = path.as_ref();
+    let prefix = prefix.as_ref();
+
     zip.lock()
         .await
         .add_directory(prefix.to_slash_lossy(), Default::default())?;
@@ -88,32 +99,17 @@ async fn process_directory<W: std::io::Write + std::io::Seek + std::marker::Send
     Ok(())
 }
 
-#[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    let cfg = read_project_config(matches.get_one::<PathBuf>("project").cloned()).await?;
-
-    let dest = {
-        let mut path = matches
-            .get_one::<PathBuf>("out")
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        if path.extension().is_none() {
-            path.push(format!("{}.zip", cfg.id))
-        }
-
-        path
-    };
+pub(crate) async fn package<P1, P2>(cfg: &ModConfig, path: P1, dest: P2) -> Result<()>
+where
+    P1: AsRef<Path>,
+    P2: AsRef<Path>,
+{
+    let path = path.as_ref();
+    let dest = dest.as_ref();
 
     let data = Cursor::new(Vec::new());
     let zip = ZipWriter::new(data);
     let zip = Arc::new(Mutex::new(zip));
-
-    let path = cfg.dir.join(
-        matches
-            .get_one::<PathBuf>("directory")
-            .expect("parameter has default value"),
-    );
 
     process_directory(zip.clone(), path, PathBuf::from(&cfg.id))
         .await
@@ -135,11 +131,29 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     let data = zip.finish()?;
 
-    fs::write(&dest, data.into_inner())
+    fs::write(dest, data.into_inner())
         .await
         .wrap_err_with(|| format!("Failed to write mod archive to '{}'", dest.display()))
         .with_suggestion(|| "Make sure that parent directories exist.".to_string())?;
 
     tracing::info!("Mod archive written to {}", dest.display());
     Ok(())
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
+    let cfg = read_project_config(matches.get_one::<PathBuf>("project").cloned()).await?;
+
+    let dest = matches
+        .get_one::<PathBuf>("out")
+        .map(path_clean::clean)
+        .unwrap_or_else(|| PathBuf::from(format!("{}.zip", cfg.id)));
+
+    let path = cfg.dir.join(
+        matches
+            .get_one::<PathBuf>("directory")
+            .expect("parameter has default value"),
+    );
+
+    package(&cfg, path, dest).await
 }

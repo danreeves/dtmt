@@ -260,26 +260,16 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
     Ok(cfg)
 }
 
-#[tracing::instrument(skip_all)]
-pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    unsafe {
-        oodle_sys::init(matches.get_one::<String>("oodle"));
-    }
-
-    let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned()).await?;
-
-    let game_dir = matches
-        .get_one::<PathBuf>("deploy")
-        .map(|p| p.join("bundle"));
-
-    let out_path = matches
-        .get_one::<PathBuf>("out")
-        .expect("parameter should have default value");
-
-    tracing::debug!(?cfg, ?game_dir, ?out_path);
-
-    let game_dir = Arc::new(game_dir);
-    let cfg = Arc::new(cfg);
+pub(crate) async fn build<P1, P2>(
+    cfg: &ModConfig,
+    out_path: P1,
+    game_dir: Arc<Option<P2>>,
+) -> Result<()>
+where
+    P1: AsRef<Path>,
+    P2: AsRef<Path>,
+{
+    let out_path = out_path.as_ref();
 
     fs::create_dir_all(out_path)
         .await
@@ -340,7 +330,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
                 .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
 
             if let Some(game_dir) = game_dir.as_ref() {
-                let path = game_dir.join(&name);
+                let path = game_dir.as_ref().join(&name);
 
                 tracing::trace!(
                     "Deploying bundle {} to '{}'",
@@ -393,8 +383,33 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     tracing::info!("Compiled bundles written to '{}'", out_path.display());
 
     if let Some(game_dir) = game_dir.as_ref() {
-        tracing::info!("Deployed bundles to '{}'", game_dir.display());
+        tracing::info!("Deployed bundles to '{}'", game_dir.as_ref().display());
     }
+
+    Ok(())
+}
+
+#[tracing::instrument(skip_all)]
+pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
+    unsafe {
+        oodle_sys::init(matches.get_one::<String>("oodle"));
+    }
+
+    let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned()).await?;
+
+    let game_dir = matches
+        .get_one::<PathBuf>("deploy")
+        .map(|p| p.join("bundle"));
+
+    let out_path = matches
+        .get_one::<PathBuf>("out")
+        .expect("parameter should have default value");
+
+    tracing::debug!(?cfg, ?game_dir, ?out_path);
+
+    let game_dir = Arc::new(game_dir);
+
+    build(&cfg, out_path, game_dir).await?;
 
     Ok(())
 }
