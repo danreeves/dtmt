@@ -1,6 +1,7 @@
 use std::convert::Infallible;
 
 use lazy_static::lazy_static;
+use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, InvalidHeaderValue};
 use reqwest::{Client, RequestBuilder, Url};
 use serde::Deserialize;
@@ -87,6 +88,26 @@ impl Api {
         let req = self.client.get(url);
         self.send(req).await
     }
+
+    pub fn parse_file_name<S: AsRef<str>>(name: S) -> Option<(String, u64, String, u64)> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r#"^(?P<name>.+?)-(?P<mod_id>[1-9]\d*)-(?P<version>.+?)-(?P<updated>[1-9]\d*)(?:\.\w+)?$"#).unwrap();
+        }
+
+        RE.captures(name.as_ref()).and_then(|cap| {
+            let name = cap.name("name")?;
+            let mod_id = cap.name("mod_id")?;
+            let version = cap.name("version")?;
+            let updated = cap.name("updated")?;
+
+            Some((
+                name.as_str().to_string(),
+                mod_id.as_str().parse().ok()?,
+                version.as_str().to_string(),
+                updated.as_str().parse().ok()?,
+            ))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -124,5 +145,16 @@ mod test {
             .mods_id(dmf_id)
             .await
             .expect("failed to query 'mods_id'");
+    }
+
+    #[test]
+    fn parse_file_name() {
+        let file = "Darktide Mod Framework-8-23-3-04-1677966575.zip";
+        let (name, mod_id, version, updated) = Api::parse_file_name(file).unwrap();
+
+        assert_eq!(name, String::from("Darktide Mod Framework"));
+        assert_eq!(mod_id, 8);
+        assert_eq!(version, String::from("23-3-04"));
+        assert_eq!(updated, 1677966575);
     }
 }
