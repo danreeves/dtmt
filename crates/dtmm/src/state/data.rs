@@ -1,11 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use druid::{
-    im::{HashMap, Vector},
-    Data, ImageBuf, Lens, WindowHandle, WindowId,
-};
+use druid::im::{HashMap, Vector};
+use druid::{Data, ImageBuf, Lens, WindowHandle, WindowId};
 use dtmt_shared::ModConfig;
-use time::OffsetDateTime;
 
 use super::SelectedModLens;
 
@@ -74,9 +72,6 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 pub(crate) struct NexusInfo {
     pub id: u64,
     pub version: String,
-    #[data(ignore)]
-    #[serde(with = "time::serde::timestamp")]
-    pub updated: OffsetDateTime,
 }
 
 #[derive(Clone, Data, Debug, Lens)]

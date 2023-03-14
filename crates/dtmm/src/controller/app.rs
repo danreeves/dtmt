@@ -32,11 +32,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .file_name()
         .and_then(|s| s.to_str())
         .and_then(NexusApi::parse_file_name)
-        .map(|(_, id, version, updated)| NexusInfo {
-            id,
-            version,
-            updated,
-        });
+        .map(|(_, id, version, _)| NexusInfo { id, version });
 
     let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
@@ -382,7 +378,6 @@ async fn check_mod_update(info: Arc<ModInfo>, api: Arc<NexusApi>) -> Result<Opti
     let updated_nexus = NexusInfo {
         id: nexus.id,
         version: updated_info.version,
-        updated: updated_info.updated_timestamp,
     };
 
     let mut info = Arc::unwrap_or_clone(info);
