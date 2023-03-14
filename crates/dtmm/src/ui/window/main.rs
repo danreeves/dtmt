@@ -8,7 +8,7 @@ use druid::widget::{
 use druid::{lens, Data, ImageBuf, LifeCycleCtx};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
-    TextAlignment, Widget, WidgetExt, WindowDesc, WindowId,
+    Widget, WidgetExt, WindowDesc, WindowId,
 };
 use lazy_static::lazy_static;
 
@@ -216,7 +216,6 @@ fn build_mod_details_info() -> impl Widget<State> {
     Maybe::new(
         || {
             let name = Label::raw()
-                .with_text_alignment(TextAlignment::Center)
                 .with_text_size(24.)
                 // Force the label to take up the entire details' pane width,
                 // so that we can center-align it.
