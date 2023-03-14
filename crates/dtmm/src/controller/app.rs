@@ -34,7 +34,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .and_then(NexusApi::parse_file_name)
         .map(|(_, id, version, updated)| NexusInfo {
             id,
-            version: Some(version),
+            version,
             updated,
         });
 
@@ -366,4 +366,56 @@ pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[tracing::instrument(skip(info, api), fields(id = info.id, name = info.name, version = info.version))]
+async fn check_mod_update(info: Arc<ModInfo>, api: Arc<NexusApi>) -> Result<Option<ModInfo>> {
+    let Some(nexus) = &info.nexus else {
+        return Ok(None);
+    };
+
+    let updated_info = api
+        .mods_id(nexus.id)
+        .await
+        .wrap_err_with(|| format!("Failed to query mod {} from Nexus", nexus.id))?;
+
+    let updated_nexus = NexusInfo {
+        id: nexus.id,
+        version: updated_info.version,
+        updated: updated_info.updated_timestamp,
+    };
+
+    let mut info = Arc::unwrap_or_clone(info);
+    info.nexus = Some(updated_nexus);
+
+    Ok(Some(info))
+}
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn check_updates(state: ActionState) -> Result<Vec<ModInfo>> {
+    if state.nexus_api_key.is_empty() {
+        eyre::bail!("Nexus API key not set. Cannot check for updates.");
+    }
+
+    let api = NexusApi::new(state.nexus_api_key.to_string())
+        .wrap_err("Failed to initialize Nexus API")?;
+    let api = Arc::new(api);
+
+    let tasks = state
+        .mods
+        .iter()
+        .map(|info| check_mod_update(info.clone(), api.clone()));
+
+    let results = futures::future::join_all(tasks).await;
+    let updates = results
+        .into_iter()
+        .filter_map(|res| match res {
+            Ok(info) => info,
+            Err(err) => {
+                tracing::error!("{:?}", err);
+                None
+            }
+        })
+        .collect();
+    Ok(updates)
 }

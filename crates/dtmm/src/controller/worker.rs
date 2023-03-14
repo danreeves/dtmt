@@ -12,6 +12,7 @@ use tokio::sync::RwLock;
 use crate::controller::app::*;
 use crate::controller::game::*;
 use crate::state::AsyncAction;
+use crate::state::ACTION_FINISH_CHECK_UPDATE;
 use crate::state::ACTION_FINISH_SAVE_SETTINGS;
 use crate::state::ACTION_SHOW_ERROR_DIALOG;
 use crate::state::{
@@ -118,6 +119,29 @@ async fn handle_action(
                     .write()
                     .await
                     .submit_command(ACTION_FINISH_SAVE_SETTINGS, (), Target::Auto)
+                    .expect("failed to send command");
+            }),
+            AsyncAction::CheckUpdates(state) => tokio::spawn(async move {
+                let updates = match check_updates(state)
+                    .await
+                    .wrap_err("Failed to check for updates")
+                {
+                    Ok(updates) => updates,
+                    Err(err) => {
+                        tracing::error!("{:?}", err);
+                        send_error(event_sink.clone(), err).await;
+                        vec![]
+                    }
+                };
+
+                event_sink
+                    .write()
+                    .await
+                    .submit_command(
+                        ACTION_FINISH_CHECK_UPDATE,
+                        SingleUse::new(updates),
+                        Target::Auto,
+                    )
                     .expect("failed to send command");
             }),
         };

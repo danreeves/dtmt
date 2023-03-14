@@ -73,7 +73,7 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 #[derive(Clone, Data, Debug, Lens, serde::Serialize, serde::Deserialize)]
 pub(crate) struct NexusInfo {
     pub id: u64,
-    pub version: Option<String>,
+    pub version: String,
     #[data(ignore)]
     #[serde(with = "time::serde::timestamp")]
     pub updated: OffsetDateTime,
@@ -97,6 +97,7 @@ pub(crate) struct ModInfo {
     #[data(ignore)]
     pub resources: ModResourceInfo,
     pub depends: Vector<ModDependency>,
+    #[data(ignore)]
     pub nexus: Option<NexusInfo>,
 }
 
@@ -139,6 +140,7 @@ pub(crate) struct State {
     pub is_reset_in_progress: bool,
     pub is_save_in_progress: bool,
     pub is_next_save_pending: bool,
+    pub is_update_in_progress: bool,
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
     pub nexus_api_key: Arc<String>,
@@ -177,6 +179,7 @@ impl State {
             is_reset_in_progress: false,
             is_save_in_progress: false,
             is_next_save_pending: false,
+            is_update_in_progress: false,
             config_path: Arc::new(config_path),
             game_dir: Arc::new(game_dir),
             data_dir: Arc::new(data_dir),

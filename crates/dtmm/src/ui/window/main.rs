@@ -15,8 +15,8 @@ use lazy_static::lazy_static;
 
 use crate::state::{
     ModInfo, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
-    ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_DELETE_SELECTED_MOD,
-    ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
+    ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
+    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme::{self, ColorExt};
 use crate::ui::widget::border::Border;
@@ -48,6 +48,12 @@ fn build_top_bar() -> impl Widget<State> {
         Button::with_label("Settings").on_click(|_ctx, state: &mut State, _env| {
             state.current_view = View::Settings;
         });
+
+    let check_update_button = Button::with_label("Check for updates")
+        .on_click(|ctx, _: &mut State, _| {
+            ctx.submit_command(ACTION_START_CHECK_UPDATE);
+        })
+        .disabled_if(|data, _| data.is_update_in_progress);
 
     let deploy_button = {
         let icon = Svg::new(SvgData::from_str(theme::icons::ALERT_CIRCLE).expect("invalid SVG"))
@@ -85,6 +91,8 @@ fn build_top_bar() -> impl Widget<State> {
         )
         .with_child(
             Flex::row()
+                .with_child(check_update_button)
+                .with_default_spacer()
                 .with_child(deploy_button)
                 .with_default_spacer()
                 .with_child(reset_button),
@@ -118,10 +126,30 @@ fn build_mod_list() -> impl Widget<State> {
         let name =
             Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
 
+        let version = Label::dynamic(|info: &Arc<ModInfo>, _| {
+            let has_update = info
+                .nexus
+                .as_ref()
+                .map(|n| info.version != n.version)
+                .unwrap_or(false);
+            if has_update {
+                format!("! {}", info.version)
+            } else {
+                info.version.to_string()
+            }
+        })
+        .lens(lens!((usize, Arc<ModInfo>, bool), 1));
+
+        let fields = Flex::row()
+            .must_fill_main_axis(true)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_child(name)
+            .with_child(version);
+
         Flex::row()
             .must_fill_main_axis(true)
             .with_child(checkbox)
-            .with_child(name)
+            .with_flex_child(fields, 1.)
             .padding((5.0, 4.0))
             .background(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR)
             .on_click(|ctx, (i, _, _), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))

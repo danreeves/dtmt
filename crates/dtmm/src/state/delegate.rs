@@ -39,6 +39,11 @@ pub(crate) const ACTION_START_SAVE_SETTINGS: Selector =
 pub(crate) const ACTION_FINISH_SAVE_SETTINGS: Selector =
     Selector::new("dtmm.action.finish-save-settings");
 
+pub(crate) const ACTION_START_CHECK_UPDATE: Selector =
+    Selector::new("dtmm.action.start-check-update");
+pub(crate) const ACTION_FINISH_CHECK_UPDATE: Selector<SingleUse<Vec<ModInfo>>> =
+    Selector::new("dtmm.action.finish-check-update");
+
 pub(crate) const ACTION_SET_DIRTY: Selector = Selector::new("dtmm.action.set-dirty");
 
 pub(crate) const ACTION_SHOW_ERROR_DIALOG: Selector<SingleUse<Report>> =
@@ -79,6 +84,7 @@ pub(crate) enum AsyncAction {
     AddMod(ActionState, FileInfo),
     DeleteMod(ActionState, Arc<ModInfo>),
     SaveSettings(ActionState),
+    CheckUpdates(ActionState),
 }
 
 pub(crate) struct Delegate {
@@ -302,6 +308,50 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
 
                 state.windows.insert(id, handle);
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_START_CHECK_UPDATE) => {
+                if self
+                    .sender
+                    .send(AsyncAction::CheckUpdates(state.clone().into()))
+                    .is_ok()
+                {
+                    state.is_update_in_progress = true;
+                } else {
+                    tracing::error!("Failed to queue action to check updates");
+                }
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_CHECK_UPDATE) => {
+                let mut updates = cmd
+                    .get(ACTION_FINISH_CHECK_UPDATE)
+                    .and_then(SingleUse::take)
+                    .expect("command type matched but didn't contain the expected value");
+
+                if tracing::enabled!(tracing::Level::DEBUG) {
+                    let mods: Vec<_> = updates
+                        .iter()
+                        .map(|info| {
+                            format!(
+                                "{}: {} -> {:?}",
+                                info.name,
+                                info.version,
+                                info.nexus.as_ref().map(|n| &n.version)
+                            )
+                        })
+                        .collect();
+
+                    tracing::info!("Mod updates:\n{}", mods.join("\n"));
+                }
+
+                for mod_info in state.mods.iter_mut() {
+                    if let Some(index) = updates.iter().position(|i2| i2.id == mod_info.id) {
+                        let update = updates.swap_remove(index);
+                        *mod_info = Arc::new(update);
+                    }
+                }
+
+                state.is_update_in_progress = false;
                 Handled::Yes
             }
             cmd => {
