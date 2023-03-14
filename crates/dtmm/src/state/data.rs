@@ -5,6 +5,7 @@ use druid::{
     Data, ImageBuf, Lens, WindowHandle, WindowId,
 };
 use dtmt_shared::ModConfig;
+use time::OffsetDateTime;
 
 use super::SelectedModLens;
 
@@ -69,6 +70,15 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
     }
 }
 
+#[derive(Clone, Data, Debug, Lens, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NexusInfo {
+    pub id: u64,
+    pub version: Option<String>,
+    #[data(ignore)]
+    #[serde(with = "time::serde::timestamp")]
+    pub updated: OffsetDateTime,
+}
+
 #[derive(Clone, Data, Debug, Lens)]
 pub(crate) struct ModInfo {
     pub id: String,
@@ -87,6 +97,7 @@ pub(crate) struct ModInfo {
     #[data(ignore)]
     pub resources: ModResourceInfo,
     pub depends: Vector<ModDependency>,
+    pub nexus: Option<NexusInfo>,
 }
 
 impl ModInfo {
@@ -94,6 +105,7 @@ impl ModInfo {
         cfg: ModConfig,
         packages: Vector<Arc<PackageInfo>>,
         image: Option<ImageBuf>,
+        nexus: Option<NexusInfo>,
     ) -> Self {
         Self {
             id: cfg.id,
@@ -112,6 +124,7 @@ impl ModInfo {
                 localization: cfg.resources.localization,
             },
             depends: cfg.depends.into_iter().map(ModDependency::from).collect(),
+            nexus,
         }
     }
 }

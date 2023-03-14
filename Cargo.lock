@@ -756,6 +756,7 @@ dependencies = [
  "dtmt-shared",
  "futures",
  "lazy_static",
+ "nexusmods",
  "oodle-sys",
  "path-slash",
  "sdk",
