@@ -20,6 +20,7 @@ use crate::controller::app::load_mods;
 use crate::controller::worker::work_thread;
 use crate::state::ACTION_SHOW_ERROR_DIALOG;
 use crate::state::{Delegate, State};
+use crate::ui::theme;
 
 mod controller;
 mod state;
@@ -64,7 +65,9 @@ fn main() -> Result<()> {
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
     let delegate = Delegate::new(action_tx);
 
-    let launcher = AppLauncher::with_window(ui::window::main::new()).delegate(delegate);
+    let launcher = AppLauncher::with_window(ui::window::main::new())
+        .delegate(delegate)
+        .configure_env(theme::set_theme_env);
 
     let event_sink = launcher.get_external_handle();
 
