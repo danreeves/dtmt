@@ -3,7 +3,7 @@ use std::sync::Arc;
 use druid::im::Vector;
 use druid::{Data, Lens};
 
-use super::{ModInfo, State};
+use super::{ModInfo, NexusInfo, State};
 
 pub(crate) struct SelectedModLens;
 
@@ -71,5 +71,53 @@ impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {
         *values = indexed.into_iter().map(|(_i, val)| val).collect();
 
         ret
+    }
+}
+
+/// A Lens that first checks a key in a mod's `NexusInfo`, then falls back to
+/// the regular one.
+pub(crate) struct NexusInfoLens<T, L, R>
+where
+    L: Lens<NexusInfo, T>,
+    R: Lens<ModInfo, T>,
+{
+    value: L,
+    fallback: R,
+    _marker: std::marker::PhantomData<T>,
+}
+
+impl<T: Data, L, R> NexusInfoLens<T, L, R>
+where
+    L: Lens<NexusInfo, T>,
+    R: Lens<ModInfo, T>,
+{
+    pub fn new(value: L, fallback: R) -> Self {
+        Self {
+            value,
+            fallback,
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T: Data, L, R> Lens<ModInfo, T> for NexusInfoLens<T, L, R>
+where
+    L: Lens<NexusInfo, T>,
+    R: Lens<ModInfo, T>,
+{
+    fn with<V, F: FnOnce(&T) -> V>(&self, data: &ModInfo, f: F) -> V {
+        if let Some(nexus) = &data.nexus {
+            self.value.with(nexus, f)
+        } else {
+            self.fallback.with(data, f)
+        }
+    }
+
+    fn with_mut<V, F: FnOnce(&mut T) -> V>(&self, data: &mut ModInfo, f: F) -> V {
+        if let Some(nexus) = &mut data.nexus {
+            self.value.with_mut(nexus, f)
+        } else {
+            self.fallback.with_mut(data, f)
+        }
     }
 }

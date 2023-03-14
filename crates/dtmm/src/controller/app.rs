@@ -27,12 +27,25 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
     let data = Cursor::new(data);
 
-    let nexus = info
+    let nexus = if let Some((_, id, _, _)) = info
         .path
         .file_name()
         .and_then(|s| s.to_str())
         .and_then(NexusApi::parse_file_name)
-        .map(|(_, id, version, _)| NexusInfo { id, version });
+    {
+        if !state.nexus_api_key.is_empty() {
+            let api = NexusApi::new(state.nexus_api_key.to_string())?;
+            let mod_info = api
+                .mods_id(id)
+                .await
+                .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
+            Some(NexusInfo::from(mod_info))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
@@ -375,13 +388,8 @@ async fn check_mod_update(info: Arc<ModInfo>, api: Arc<NexusApi>) -> Result<Opti
         .await
         .wrap_err_with(|| format!("Failed to query mod {} from Nexus", nexus.id))?;
 
-    let updated_nexus = NexusInfo {
-        id: nexus.id,
-        version: updated_info.version,
-    };
-
     let mut info = Arc::unwrap_or_clone(info);
-    info.nexus = Some(updated_nexus);
+    info.nexus = Some(NexusInfo::from(updated_info));
 
     Ok(Some(info))
 }

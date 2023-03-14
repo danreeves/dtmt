@@ -4,6 +4,7 @@ use std::sync::Arc;
 use druid::im::{HashMap, Vector};
 use druid::{Data, ImageBuf, Lens, WindowHandle, WindowId};
 use dtmt_shared::ModConfig;
+use nexusmods::Mod as NexusMod;
 
 use super::SelectedModLens;
 
@@ -72,6 +73,21 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 pub(crate) struct NexusInfo {
     pub id: u64,
     pub version: String,
+    pub author: String,
+    pub summary: String,
+    pub description: Arc<String>,
+}
+
+impl From<NexusMod> for NexusInfo {
+    fn from(value: NexusMod) -> Self {
+        Self {
+            id: value.mod_id,
+            version: value.version,
+            author: value.author,
+            summary: value.summary,
+            description: Arc::new(value.description),
+        }
+    }
 }
 
 #[derive(Clone, Data, Debug, Lens)]
