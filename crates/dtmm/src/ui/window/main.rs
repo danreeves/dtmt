@@ -126,7 +126,7 @@ fn build_mod_list() -> impl Widget<State> {
         },
         |state, infos| {
             infos.into_iter().for_each(|(i, new, _)| {
-                if Data::same(&state.mods.get(i).cloned(), &Some(new.clone())) {
+                if !Data::same(&state.mods.get(i).cloned(), &Some(new.clone())) {
                     state.mods.set(i, new);
                 }
             });
