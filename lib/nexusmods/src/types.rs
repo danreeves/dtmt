@@ -21,6 +21,7 @@ pub enum ModStatus {
 
 #[derive(Copy, Clone, Debug, Deserialize)]
 pub enum EndorseStatus {
+    Endorsed,
     Undecided,
 }
 
