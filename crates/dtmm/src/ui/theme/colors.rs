@@ -63,7 +63,7 @@ pub mod gruvbox_dark {
     make_color!(COLOR_ORANGE_DARK, 0xd6, 0x5d, 0x0e);
     make_color!(COLOR_ORANGE_LIGHT, 0xfe, 0x80, 0x19);
 
-    make_color!(COLOR_ACCENT, COLOR_RED_LIGHT);
+    make_color!(COLOR_ACCENT, COLOR_BLUE_LIGHT);
     make_color!(COLOR_ACCENT_FG, COLOR_BG0_H);
 }
 
