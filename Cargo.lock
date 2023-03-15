@@ -775,6 +775,7 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
+ "usvg",
  "zip",
 ]
 

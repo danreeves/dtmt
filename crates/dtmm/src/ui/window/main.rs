@@ -2,15 +2,16 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use druid::im::Vector;
+use druid::lens;
 use druid::widget::{
     Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
     MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
 };
-use druid::{lens, Data, ImageBuf, LifeCycleCtx};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, LensExt, SingleUse, Widget,
     WidgetExt, WindowDesc, WindowId,
 };
+use druid::{Data, ImageBuf, LifeCycleCtx};
 use lazy_static::lazy_static;
 
 use crate::state::{
@@ -18,7 +19,7 @@ use crate::state::{
     ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
-use crate::ui::theme::{self, ColorExt};
+use crate::ui::theme::{self, ColorExt, COLOR_YELLOW_LIGHT};
 use crate::ui::widget::border::Border;
 use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
@@ -126,19 +127,31 @@ fn build_mod_list() -> impl Widget<State> {
         let name =
             Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
 
-        let version = Label::dynamic(|info: &Arc<ModInfo>, _| {
-            let has_update = info
-                .nexus
-                .as_ref()
-                .map(|n| info.version != n.version)
-                .unwrap_or(false);
-            if has_update {
-                format!("! {}", info.version)
-            } else {
-                info.version.to_string()
-            }
-        })
-        .lens(lens!((usize, Arc<ModInfo>, bool), 1));
+        let version = {
+            let icon = {
+                let tree =
+                    theme::icons::parse_svg(theme::icons::ALERT_TRIANGLE).expect("invalid SVG");
+
+                let tree = theme::icons::recolor_icon(tree, true, COLOR_YELLOW_LIGHT);
+
+                Svg::new(Arc::new(tree)).fix_height(druid::theme::TEXT_SIZE_NORMAL)
+            };
+
+            Either::new(
+                |info, _| {
+                    info.nexus
+                        .as_ref()
+                        .map(|n| info.version != n.version)
+                        .unwrap_or(false)
+                },
+                Flex::row()
+                    .with_child(icon)
+                    .with_spacer(3.)
+                    .with_child(Label::raw().lens(ModInfo::version.in_arc())),
+                Label::raw().lens(ModInfo::version.in_arc()),
+            )
+            .lens(lens!((usize, Arc<ModInfo>, bool), 1))
+        };
 
         let fields = Flex::row()
             .must_fill_main_axis(true)
