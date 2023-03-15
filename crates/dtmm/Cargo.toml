@@ -15,6 +15,7 @@ dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
 futures = "0.3.25"
 oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
 sdk = { path = "../../lib/sdk", version = "*" }
+nexusmods = { path = "../../lib/nexusmods", version = "*" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }
 tokio = { version = "1.23.0", features = ["rt", "fs", "tracing", "sync"] }
@@ -28,3 +29,4 @@ time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-off
 strip-ansi-escapes = "0.1.1"
 lazy_static = "1.4.0"
 colors-transform = "0.2.11"
+usvg = "0.25.0"

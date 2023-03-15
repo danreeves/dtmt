@@ -28,6 +28,7 @@ impl<'a> From<&'a ModInfo> for LoadOrderEntrySerialize<'a> {
 pub(crate) struct ConfigSerialize<'a> {
     game_dir: &'a Path,
     data_dir: &'a Path,
+    nexus_api_key: &'a String,
     mod_order: Vec<LoadOrderEntrySerialize<'a>>,
 }
 
@@ -36,6 +37,7 @@ impl<'a> From<&'a ActionState> for ConfigSerialize<'a> {
         Self {
             game_dir: &state.game_dir,
             data_dir: &state.data_dir,
+            nexus_api_key: &state.nexus_api_key,
             mod_order: state
                 .mods
                 .iter()
@@ -58,6 +60,7 @@ pub(crate) struct Config {
     pub path: PathBuf,
     pub data_dir: Option<PathBuf>,
     pub game_dir: Option<PathBuf>,
+    pub nexus_api_key: Option<String>,
     #[serde(default)]
     pub mod_order: Vec<LoadOrderEntry>,
 }
@@ -140,6 +143,7 @@ where
                 path: default_path,
                 data_dir: Some(get_default_data_dir()),
                 game_dir: None,
+                nexus_api_key: None,
                 mod_order: Vec::new(),
             };
 

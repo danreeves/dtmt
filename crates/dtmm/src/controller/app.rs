@@ -8,13 +8,14 @@ use color_eyre::{Help, Report, Result};
 use druid::im::Vector;
 use druid::{FileInfo, ImageBuf};
 use dtmt_shared::ModConfig;
+use nexusmods::Api as NexusApi;
 use tokio::fs::{self, DirEntry};
 use tokio::runtime::Runtime;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
-use crate::state::{ActionState, ModInfo, ModOrder, PackageInfo};
+use crate::state::{ActionState, ModInfo, ModOrder, NexusInfo, PackageInfo};
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
@@ -25,6 +26,26 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .await
         .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
     let data = Cursor::new(data);
+
+    let nexus = if let Some((_, id, _, _)) = info
+        .path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .and_then(NexusApi::parse_file_name)
+    {
+        if !state.nexus_api_key.is_empty() {
+            let api = NexusApi::new(state.nexus_api_key.to_string())?;
+            let mod_info = api
+                .mods_id(id)
+                .await
+                .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
+            Some(NexusInfo::from(mod_info))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
@@ -137,11 +158,19 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .extract(Arc::as_ref(&mod_dir))
         .wrap_err_with(|| format!("Failed to extract archive to {}", mod_dir.display()))?;
 
+    if let Some(nexus) = &nexus {
+        let data = serde_sjson::to_string(nexus).wrap_err("Failed to serialize Nexus info")?;
+        let path = mod_dir.join(&mod_cfg.id).join("nexus.sjson");
+        fs::write(&path, data.as_bytes())
+            .await
+            .wrap_err_with(|| format!("Failed to write Nexus info to '{}'", path.display()))?;
+    }
+
     let packages = files
         .into_iter()
         .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
-    let info = ModInfo::new(mod_cfg, packages, image);
+    let info = ModInfo::new(mod_cfg, packages, image, nexus);
 
     Ok(info)
 }
@@ -181,11 +210,24 @@ pub(crate) async fn save_settings(state: ActionState) -> Result<()> {
 async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
     let entry = res?;
     let config_path = entry.path().join("dtmt.cfg");
+    let nexus_path = entry.path().join("nexus.sjson");
     let index_path = entry.path().join("files.sjson");
 
     let cfg: ModConfig = read_sjson_file(&config_path)
         .await
         .wrap_err_with(|| format!("Failed to read mod config '{}'", config_path.display()))?;
+
+    let nexus: Option<NexusInfo> = match read_sjson_file(&nexus_path)
+        .await
+        .wrap_err_with(|| format!("Failed to read Nexus info '{}'", nexus_path.display()))
+    {
+        Ok(nexus) => Some(nexus),
+        Err(err) if err.is::<std::io::Error>() => match err.downcast_ref::<std::io::Error>() {
+            Some(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+            _ => return Err(err),
+        },
+        Err(err) => return Err(err),
+    };
 
     let files: HashMap<String, Vec<String>> = read_sjson_file(&index_path)
         .await
@@ -222,7 +264,7 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
         .into_iter()
         .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
         .collect();
-    let info = ModInfo::new(cfg, packages, image);
+    let info = ModInfo::new(cfg, packages, image, nexus);
     Ok(info)
 }
 
@@ -333,4 +375,50 @@ pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[tracing::instrument(skip(info, api), fields(id = info.id, name = info.name, version = info.version))]
+async fn check_mod_update(info: Arc<ModInfo>, api: Arc<NexusApi>) -> Result<Option<ModInfo>> {
+    let Some(nexus) = &info.nexus else {
+        return Ok(None);
+    };
+
+    let updated_info = api
+        .mods_id(nexus.id)
+        .await
+        .wrap_err_with(|| format!("Failed to query mod {} from Nexus", nexus.id))?;
+
+    let mut info = Arc::unwrap_or_clone(info);
+    info.nexus = Some(NexusInfo::from(updated_info));
+
+    Ok(Some(info))
+}
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn check_updates(state: ActionState) -> Result<Vec<ModInfo>> {
+    if state.nexus_api_key.is_empty() {
+        eyre::bail!("Nexus API key not set. Cannot check for updates.");
+    }
+
+    let api = NexusApi::new(state.nexus_api_key.to_string())
+        .wrap_err("Failed to initialize Nexus API")?;
+    let api = Arc::new(api);
+
+    let tasks = state
+        .mods
+        .iter()
+        .map(|info| check_mod_update(info.clone(), api.clone()));
+
+    let results = futures::future::join_all(tasks).await;
+    let updates = results
+        .into_iter()
+        .filter_map(|res| match res {
+            Ok(info) => info,
+            Err(err) => {
+                tracing::error!("{:?}", err);
+                None
+            }
+        })
+        .collect();
+    Ok(updates)
 }

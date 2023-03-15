@@ -1,10 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
+use std::sync::Arc;
 
-use druid::{
-    im::{HashMap, Vector},
-    Data, ImageBuf, Lens, WindowHandle, WindowId,
-};
+use druid::im::{HashMap, Vector};
+use druid::{Data, ImageBuf, Lens, WindowHandle, WindowId};
 use dtmt_shared::ModConfig;
+use nexusmods::Mod as NexusMod;
 
 use super::SelectedModLens;
 
@@ -69,6 +69,27 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
     }
 }
 
+#[derive(Clone, Data, Debug, Lens, serde::Serialize, serde::Deserialize)]
+pub(crate) struct NexusInfo {
+    pub id: u64,
+    pub version: String,
+    pub author: String,
+    pub summary: Arc<String>,
+    pub description: Arc<String>,
+}
+
+impl From<NexusMod> for NexusInfo {
+    fn from(value: NexusMod) -> Self {
+        Self {
+            id: value.mod_id,
+            version: value.version,
+            author: value.author,
+            summary: Arc::new(value.summary),
+            description: Arc::new(value.description),
+        }
+    }
+}
+
 #[derive(Clone, Data, Debug, Lens)]
 pub(crate) struct ModInfo {
     pub id: String,
@@ -87,6 +108,8 @@ pub(crate) struct ModInfo {
     #[data(ignore)]
     pub resources: ModResourceInfo,
     pub depends: Vector<ModDependency>,
+    #[data(ignore)]
+    pub nexus: Option<NexusInfo>,
 }
 
 impl ModInfo {
@@ -94,6 +117,7 @@ impl ModInfo {
         cfg: ModConfig,
         packages: Vector<Arc<PackageInfo>>,
         image: Option<ImageBuf>,
+        nexus: Option<NexusInfo>,
     ) -> Self {
         Self {
             id: cfg.id,
@@ -112,6 +136,7 @@ impl ModInfo {
                 localization: cfg.resources.localization,
             },
             depends: cfg.depends.into_iter().map(ModDependency::from).collect(),
+            nexus,
         }
     }
 }
@@ -126,8 +151,10 @@ pub(crate) struct State {
     pub is_reset_in_progress: bool,
     pub is_save_in_progress: bool,
     pub is_next_save_pending: bool,
+    pub is_update_in_progress: bool,
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
+    pub nexus_api_key: Arc<String>,
     pub log: Arc<String>,
 
     #[lens(ignore)]
@@ -145,7 +172,12 @@ impl State {
     #[allow(non_upper_case_globals)]
     pub const selected_mod: SelectedModLens = SelectedModLens;
 
-    pub fn new(config_path: PathBuf, game_dir: PathBuf, data_dir: PathBuf) -> Self {
+    pub fn new(
+        config_path: PathBuf,
+        game_dir: PathBuf,
+        data_dir: PathBuf,
+        nexus_api_key: String,
+    ) -> Self {
         let ctx = sdk::Context::new();
 
         Self {
@@ -158,9 +190,11 @@ impl State {
             is_reset_in_progress: false,
             is_save_in_progress: false,
             is_next_save_pending: false,
+            is_update_in_progress: false,
             config_path: Arc::new(config_path),
             game_dir: Arc::new(game_dir),
             data_dir: Arc::new(data_dir),
+            nexus_api_key: Arc::new(nexus_api_key),
             log: Arc::new(String::new()),
             windows: HashMap::new(),
         }

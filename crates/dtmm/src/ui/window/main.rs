@@ -2,23 +2,24 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use druid::im::Vector;
+use druid::lens;
 use druid::widget::{
     Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
     MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
 };
-use druid::{lens, Data, ImageBuf, LifeCycleCtx};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, LensExt, SingleUse, Widget,
     WidgetExt, WindowDesc, WindowId,
 };
+use druid::{Data, ImageBuf, LifeCycleCtx};
 use lazy_static::lazy_static;
 
 use crate::state::{
-    ModInfo, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
-    ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_DELETE_SELECTED_MOD,
-    ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
+    ModInfo, NexusInfo, NexusInfoLens, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN,
+    ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
+    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
-use crate::ui::theme::{self, ColorExt};
+use crate::ui::theme::{self, ColorExt, COLOR_YELLOW_LIGHT};
 use crate::ui::widget::border::Border;
 use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
@@ -48,6 +49,12 @@ fn build_top_bar() -> impl Widget<State> {
         Button::with_label("Settings").on_click(|_ctx, state: &mut State, _env| {
             state.current_view = View::Settings;
         });
+
+    let check_update_button = Button::with_label("Check for updates")
+        .on_click(|ctx, _: &mut State, _| {
+            ctx.submit_command(ACTION_START_CHECK_UPDATE);
+        })
+        .disabled_if(|data, _| data.is_update_in_progress);
 
     let deploy_button = {
         let icon = Svg::new(SvgData::from_str(theme::icons::ALERT_CIRCLE).expect("invalid SVG"))
@@ -85,6 +92,8 @@ fn build_top_bar() -> impl Widget<State> {
         )
         .with_child(
             Flex::row()
+                .with_child(check_update_button)
+                .with_default_spacer()
                 .with_child(deploy_button)
                 .with_default_spacer()
                 .with_child(reset_button),
@@ -118,10 +127,42 @@ fn build_mod_list() -> impl Widget<State> {
         let name =
             Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
 
+        let version = {
+            let icon = {
+                let tree =
+                    theme::icons::parse_svg(theme::icons::ALERT_TRIANGLE).expect("invalid SVG");
+
+                let tree = theme::icons::recolor_icon(tree, true, COLOR_YELLOW_LIGHT);
+
+                Svg::new(Arc::new(tree)).fix_height(druid::theme::TEXT_SIZE_NORMAL)
+            };
+
+            Either::new(
+                |info, _| {
+                    info.nexus
+                        .as_ref()
+                        .map(|n| info.version != n.version)
+                        .unwrap_or(false)
+                },
+                Flex::row()
+                    .with_child(icon)
+                    .with_spacer(3.)
+                    .with_child(Label::raw().lens(ModInfo::version.in_arc())),
+                Label::raw().lens(ModInfo::version.in_arc()),
+            )
+            .lens(lens!((usize, Arc<ModInfo>, bool), 1))
+        };
+
+        let fields = Flex::row()
+            .must_fill_main_axis(true)
+            .main_axis_alignment(MainAxisAlignment::SpaceBetween)
+            .with_child(name)
+            .with_child(version);
+
         Flex::row()
             .must_fill_main_axis(true)
             .with_child(checkbox)
-            .with_child(name)
+            .with_flex_child(fields, 1.)
             .padding((5.0, 4.0))
             .background(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR)
             .on_click(|ctx, (i, _, _), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))
@@ -253,12 +294,18 @@ fn build_mod_details_info() -> impl Widget<State> {
                 .lens(ModInfo::name.in_arc());
             let summary = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
-                .lens(ModInfo::summary.in_arc());
+                .lens(NexusInfoLens::new(NexusInfo::summary, ModInfo::summary).in_arc());
 
             // TODO: Image/icon?
 
             let version_line = Label::dynamic(|info: &Arc<ModInfo>, _| {
-                if let Some(author) = &info.author {
+                let author = info
+                    .nexus
+                    .as_ref()
+                    .map(|n| &n.author)
+                    .or(info.author.as_ref());
+
+                if let Some(author) = &author {
                     format!("Version: {}, by {author}", info.version)
                 } else {
                     format!("Version: {}", info.version)
@@ -359,12 +406,22 @@ fn build_view_settings() -> impl Widget<State> {
         )
         .expand_width();
 
+    let nexus_apy_key_setting = Flex::row()
+        .must_fill_main_axis(true)
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Nexus API Key:"))
+        .with_default_spacer()
+        .with_flex_child(TextBox::new().expand_width().lens(State::nexus_api_key), 1.)
+        .expand_width();
+
     let content = Flex::column()
         .must_fill_main_axis(true)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .with_child(data_dir_setting)
         .with_default_spacer()
-        .with_child(game_dir_setting);
+        .with_child(game_dir_setting)
+        .with_default_spacer()
+        .with_child(nexus_apy_key_setting);
 
     SizedBox::new(content)
         .width(800.)
