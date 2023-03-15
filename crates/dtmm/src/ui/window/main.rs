@@ -57,7 +57,7 @@ fn build_top_bar() -> impl Widget<State> {
             |state: &State, _| state.dirty,
             Flex::row()
                 .with_child(icon)
-                .with_spacer(1.)
+                .with_spacer(3.)
                 .with_child(Label::new("Deploy Mods")),
             Label::new("Deploy Mods"),
         );
