@@ -4,6 +4,8 @@ use std::sync::Arc;
 use druid::text::Formatter;
 use druid::{Data, Widget};
 
+pub mod border;
+pub mod button;
 pub mod controller;
 
 pub trait ExtraWidgetExt<T: Data>: Widget<T> + Sized + 'static {}

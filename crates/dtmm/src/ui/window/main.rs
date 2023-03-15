@@ -1,14 +1,15 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use druid::im::Vector;
 use druid::widget::{
-    Button, Checkbox, CrossAxisAlignment, Flex, Image, Label, LineBreaking, List,
-    MainAxisAlignment, Maybe, Scroll, SizedBox, Split, TextBox, ViewSwitcher,
+    Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
+    MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
 };
 use druid::{lens, Data, ImageBuf, LifeCycleCtx};
 use druid::{
-    Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, Key, LensExt, SingleUse,
-    Widget, WidgetExt, WindowDesc, WindowId,
+    Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, LensExt, SingleUse, Widget,
+    WidgetExt, WindowDesc, WindowId,
 };
 use lazy_static::lazy_static;
 
@@ -17,7 +18,9 @@ use crate::state::{
     ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_DELETE_SELECTED_MOD,
     ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
-use crate::ui::theme;
+use crate::ui::theme::{self, ColorExt};
+use crate::ui::widget::border::Border;
+use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
     AutoScrollController, DirtyStateController, ImageLensController,
 };
@@ -31,8 +34,6 @@ const TITLE: &str = "Darktide Mod Manager";
 const WINDOW_SIZE: (f64, f64) = (1080., 720.);
 const MOD_DETAILS_MIN_WIDTH: f64 = 325.;
 
-const KEY_MOD_LIST_ITEM_BG_COLOR: Key<Color> = Key::new("dtmm.mod-list.item.background-color");
-
 pub(crate) fn new() -> WindowDesc<State> {
     WindowDesc::new(build_window())
         .title(TITLE)
@@ -40,35 +41,40 @@ pub(crate) fn new() -> WindowDesc<State> {
 }
 
 fn build_top_bar() -> impl Widget<State> {
-    let mods_button = Button::new("Mods")
+    let mods_button = Button::with_label("Mods")
         .on_click(|_ctx, state: &mut State, _env| state.current_view = View::Mods);
 
-    let settings_button = Button::new("Settings").on_click(|_ctx, state: &mut State, _env| {
-        state.current_view = View::Settings;
-    });
+    let settings_button =
+        Button::with_label("Settings").on_click(|_ctx, state: &mut State, _env| {
+            state.current_view = View::Settings;
+        });
 
     let deploy_button = {
-        Button::dynamic(|state: &State, _| {
-            let mut s = String::new();
-            if state.dirty {
-                s.push_str("! ");
-            }
-            s.push_str("Deploy Mods");
-            s
-        })
-        .on_click(|ctx, _state: &mut State, _env| {
-            ctx.submit_command(ACTION_START_DEPLOY);
-        })
-        .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress)
+        let icon = Svg::new(SvgData::from_str(theme::icons::ALERT_CIRCLE).expect("invalid SVG"))
+            .fix_height(druid::theme::TEXT_SIZE_NORMAL);
+
+        let inner = Either::new(
+            |state: &State, _| state.dirty,
+            Flex::row()
+                .with_child(icon)
+                .with_spacer(3.)
+                .with_child(Label::new("Deploy Mods")),
+            Label::new("Deploy Mods"),
+        );
+        Button::new(inner)
+            .on_click(|ctx, _state: &mut State, _env| {
+                ctx.submit_command(ACTION_START_DEPLOY);
+            })
+            .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress)
     };
 
-    let reset_button = Button::new("Reset Game")
+    let reset_button = Button::with_label("Reset Game")
         .on_click(|ctx, _state: &mut State, _env| {
             ctx.submit_command(ACTION_START_RESET_DEPLOYMENT);
         })
         .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
 
-    Flex::row()
+    let bar = Flex::row()
         .must_fill_main_axis(true)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_child(
@@ -84,14 +90,29 @@ fn build_top_bar() -> impl Widget<State> {
                 .with_child(reset_button),
         )
         .padding(theme::TOP_BAR_INSETS)
-        .background(theme::TOP_BAR_BACKGROUND_COLOR)
-    // TODO: Add bottom border. Need a custom widget for that, as the built-in only provides
-    // uniform borders on all sides
+        .background(theme::TOP_BAR_BACKGROUND_COLOR);
+
+    Border::new(bar)
+        .with_color(theme::COLOR_FG2)
+        .with_bottom_border(1.)
 }
 
 fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
         let checkbox = Checkbox::new("")
+            .env_scope(|env, selected| {
+                env.set(druid::theme::BORDER_DARK, theme::COLOR_BG3);
+                env.set(druid::theme::BORDER_LIGHT, theme::COLOR_BG3);
+                env.set(druid::theme::TEXT_COLOR, theme::COLOR_ACCENT_FG);
+
+                if *selected {
+                    env.set(druid::theme::BACKGROUND_DARK, theme::COLOR_ACCENT);
+                    env.set(druid::theme::BACKGROUND_LIGHT, theme::COLOR_ACCENT);
+                } else {
+                    env.set(druid::theme::BACKGROUND_DARK, Color::TRANSPARENT);
+                    env.set(druid::theme::BACKGROUND_LIGHT, Color::TRANSPARENT);
+                }
+            })
             .lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::enabled.in_arc()));
 
         let name =
@@ -102,15 +123,23 @@ fn build_mod_list() -> impl Widget<State> {
             .with_child(checkbox)
             .with_child(name)
             .padding((5.0, 4.0))
-            .background(KEY_MOD_LIST_ITEM_BG_COLOR)
+            .background(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR)
             .on_click(|ctx, (i, _, _), _env| ctx.submit_command(ACTION_SELECT_MOD.with(*i)))
             .env_scope(|env, (i, _, selected)| {
                 if *selected {
-                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::NAVY);
-                } else if (i % 2) == 1 {
-                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::WHITE.with_alpha(0.05));
+                    env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_ACCENT);
+                    env.set(
+                        druid::theme::TEXT_COLOR,
+                        theme::COLOR_ACCENT_FG.darken(0.05),
+                    );
                 } else {
-                    env.set(KEY_MOD_LIST_ITEM_BG_COLOR, Color::TRANSPARENT);
+                    env.set(druid::theme::TEXT_COLOR, theme::COLOR_FG);
+
+                    if (i % 2) == 1 {
+                        env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_BG1);
+                    } else {
+                        env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_BG);
+                    }
                 }
             })
     });
@@ -140,35 +169,36 @@ fn build_mod_list() -> impl Widget<State> {
 }
 
 fn build_mod_details_buttons() -> impl Widget<State> {
-    let button_move_up = Button::new("Move Up")
+    let button_move_up = Button::with_label("Move Up")
         .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_SELECTED_MOD_UP))
         .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_up());
 
-    let button_move_down = Button::new("Move Down")
+    let button_move_down = Button::with_label("Move Down")
         .on_click(|ctx, _state, _env| ctx.submit_command(ACTION_SELECTED_MOD_DOWN))
         .disabled_if(|state: &State, _env: &druid::Env| !state.can_move_mod_down());
 
     let button_toggle_mod = Maybe::new(
         || {
-            Button::dynamic(|enabled, _env| {
+            let inner = Label::dynamic(|enabled, _env| {
                 if *enabled {
                     "Disable Mod".into()
                 } else {
                     "Enable Mod".into()
                 }
-            })
-            .on_click(|_ctx, enabled: &mut bool, _env| {
-                *enabled = !(*enabled);
-            })
-            .lens(ModInfo::enabled.in_arc())
+            });
+            Button::new(inner)
+                .on_click(|_ctx, enabled: &mut bool, _env| {
+                    *enabled = !(*enabled);
+                })
+                .lens(ModInfo::enabled.in_arc())
         },
         // TODO: Gray out
-        || Button::new("Enable Mod"),
+        || Button::with_label("Enable Mod"),
     )
     .disabled_if(|info: &Option<Arc<ModInfo>>, _env: &druid::Env| info.is_none())
     .lens(State::selected_mod);
 
-    let button_add_mod = Button::new("Add Mod").on_click(|ctx, _state: &mut State, _env| {
+    let button_add_mod = Button::with_label("Add Mod").on_click(|ctx, _state: &mut State, _env| {
         let zip = FileSpec::new("Zip file", &["zip"]);
         let opts = FileDialogOptions::new()
             .allowed_types(vec![zip])
@@ -179,7 +209,7 @@ fn build_mod_details_buttons() -> impl Widget<State> {
         ctx.submit_command(druid::commands::SHOW_OPEN_PANEL.with(opts))
     });
 
-    let button_delete_mod = Button::new("Delete Mod")
+    let button_delete_mod = Button::with_label("Delete Mod")
         .on_click(|ctx, data: &mut Option<Arc<ModInfo>>, _env| {
             if let Some(info) = data {
                 ctx.submit_command(
@@ -288,7 +318,7 @@ fn build_mod_details() -> impl Widget<State> {
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_flex_child(build_mod_details_info(), 1.0)
-        .with_child(build_mod_details_buttons().padding(4.))
+        .with_child(build_mod_details_buttons().padding((4., 4., 4., 8.)))
 }
 
 fn build_view_mods() -> impl Widget<State> {
@@ -363,7 +393,11 @@ fn build_log_view() -> impl Widget<State> {
         .vertical()
         .controller(AutoScrollController);
 
-    SizedBox::new(label).expand_width().height(128.0)
+    let inner = Border::new(label)
+        .with_color(theme::COLOR_FG2)
+        .with_top_border(1.);
+
+    SizedBox::new(inner).expand_width().height(128.0)
 }
 
 fn build_window() -> impl Widget<State> {

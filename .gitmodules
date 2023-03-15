@@ -4,3 +4,6 @@
 [submodule "lib/steamlocate-rs"]
 	path = lib/steamlocate-rs
 	url = git@github.com:sclu1034/steamlocate-rs.git
+[submodule "crates/dtmm/assets/icons"]
+	path = crates/dtmm/assets/icons
+	url = https://github.com/tabler/tabler-icons
