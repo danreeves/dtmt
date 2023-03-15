@@ -18,7 +18,8 @@ use crate::state::{
     ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_DELETE_SELECTED_MOD,
     ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
-use crate::ui::theme;
+use crate::ui::theme::{self, ColorExt};
+use crate::ui::widget::border::Border;
 use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
     AutoScrollController, DirtyStateController, ImageLensController,
@@ -73,7 +74,7 @@ fn build_top_bar() -> impl Widget<State> {
         })
         .disabled_if(|data, _| data.is_deployment_in_progress || data.is_reset_in_progress);
 
-    Flex::row()
+    let bar = Flex::row()
         .must_fill_main_axis(true)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_child(
@@ -89,14 +90,29 @@ fn build_top_bar() -> impl Widget<State> {
                 .with_child(reset_button),
         )
         .padding(theme::TOP_BAR_INSETS)
-        .background(theme::TOP_BAR_BACKGROUND_COLOR)
-    // TODO: Add bottom border. Need a custom widget for that, as the built-in only provides
-    // uniform borders on all sides
+        .background(theme::TOP_BAR_BACKGROUND_COLOR);
+
+    Border::new(bar)
+        .with_color(theme::COLOR_FG2)
+        .with_bottom_border(1.)
 }
 
 fn build_mod_list() -> impl Widget<State> {
     let list = List::new(|| {
         let checkbox = Checkbox::new("")
+            .env_scope(|env, selected| {
+                env.set(druid::theme::BORDER_DARK, theme::COLOR_BG3);
+                env.set(druid::theme::BORDER_LIGHT, theme::COLOR_BG3);
+                env.set(druid::theme::TEXT_COLOR, theme::COLOR_ACCENT_FG);
+
+                if *selected {
+                    env.set(druid::theme::BACKGROUND_DARK, theme::COLOR_ACCENT);
+                    env.set(druid::theme::BACKGROUND_LIGHT, theme::COLOR_ACCENT);
+                } else {
+                    env.set(druid::theme::BACKGROUND_DARK, Color::TRANSPARENT);
+                    env.set(druid::theme::BACKGROUND_LIGHT, Color::TRANSPARENT);
+                }
+            })
             .lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::enabled.in_arc()));
 
         let name =
@@ -112,13 +128,17 @@ fn build_mod_list() -> impl Widget<State> {
             .env_scope(|env, (i, _, selected)| {
                 if *selected {
                     env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_ACCENT);
-                    env.set(druid::theme::TEXT_COLOR, theme::COLOR_ACCENT_FG);
+                    env.set(
+                        druid::theme::TEXT_COLOR,
+                        theme::COLOR_ACCENT_FG.darken(0.05),
+                    );
                 } else {
                     env.set(druid::theme::TEXT_COLOR, theme::COLOR_FG);
+
                     if (i % 2) == 1 {
                         env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_BG1);
                     } else {
-                        env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, Color::TRANSPARENT);
+                        env.set(theme::keys::KEY_MOD_LIST_ITEM_BG_COLOR, theme::COLOR_BG);
                     }
                 }
             })
@@ -298,7 +318,7 @@ fn build_mod_details() -> impl Widget<State> {
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .main_axis_alignment(MainAxisAlignment::SpaceBetween)
         .with_flex_child(build_mod_details_info(), 1.0)
-        .with_child(build_mod_details_buttons().padding(4.))
+        .with_child(build_mod_details_buttons().padding((4., 4., 4., 8.)))
 }
 
 fn build_view_mods() -> impl Widget<State> {
@@ -373,7 +393,11 @@ fn build_log_view() -> impl Widget<State> {
         .vertical()
         .controller(AutoScrollController);
 
-    SizedBox::new(label).expand_width().height(128.0)
+    let inner = Border::new(label)
+        .with_color(theme::COLOR_FG2)
+        .with_top_border(1.);
+
+    SizedBox::new(inner).expand_width().height(128.0)
 }
 
 fn build_window() -> impl Widget<State> {

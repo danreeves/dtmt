@@ -13,7 +13,10 @@ pub const DISABLED_ALPHA: f64 = 0.65;
 
 pub(crate) fn set_theme_env(env: &mut Env, _: &State) {
     env.set(druid::theme::TEXT_COLOR, COLOR_FG);
+    env.set(druid::theme::SCROLLBAR_COLOR, COLOR_FG);
+    env.set(druid::theme::BORDER_LIGHT, COLOR_FG);
     env.set(druid::theme::BUTTON_BORDER_RADIUS, 2.);
+
     env.set(keys::KEY_BUTTON_BG, COLOR_ACCENT);
     env.set(keys::KEY_BUTTON_BG_HOT, COLOR_ACCENT.darken(0.03));
     env.set(keys::KEY_BUTTON_BG_ACTIVE, COLOR_ACCENT.darken(0.1));
