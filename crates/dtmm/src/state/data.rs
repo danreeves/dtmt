@@ -74,7 +74,7 @@ pub(crate) struct NexusInfo {
     pub id: u64,
     pub version: String,
     pub author: String,
-    pub summary: String,
+    pub summary: Arc<String>,
     pub description: Arc<String>,
 }
 
@@ -84,7 +84,7 @@ impl From<NexusMod> for NexusInfo {
             id: value.mod_id,
             version: value.version,
             author: value.author,
-            summary: value.summary,
+            summary: Arc::new(value.summary),
             description: Arc::new(value.description),
         }
     }

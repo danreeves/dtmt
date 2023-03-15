@@ -15,8 +15,8 @@ use druid::{Data, ImageBuf, LifeCycleCtx};
 use lazy_static::lazy_static;
 
 use crate::state::{
-    ModInfo, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP,
-    ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
+    ModInfo, NexusInfo, NexusInfoLens, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN,
+    ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
     ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme::{self, ColorExt, COLOR_YELLOW_LIGHT};
@@ -294,12 +294,18 @@ fn build_mod_details_info() -> impl Widget<State> {
                 .lens(ModInfo::name.in_arc());
             let summary = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
-                .lens(ModInfo::summary.in_arc());
+                .lens(NexusInfoLens::new(NexusInfo::summary, ModInfo::summary).in_arc());
 
             // TODO: Image/icon?
 
             let version_line = Label::dynamic(|info: &Arc<ModInfo>, _| {
-                if let Some(author) = &info.author {
+                let author = info
+                    .nexus
+                    .as_ref()
+                    .map(|n| &n.author)
+                    .or(info.author.as_ref());
+
+                if let Some(author) = &author {
                     format!("Version: {}, by {author}", info.version)
                 } else {
                     format!("Version: {}", info.version)
