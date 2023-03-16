@@ -13,7 +13,7 @@ confy = "0.5.1"
 druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "bmp", "webp", "svg"] }
 dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
 futures = "0.3.25"
-oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
+oodle = { path = "../../lib/oodle", version = "*" }
 sdk = { path = "../../lib/sdk", version = "*" }
 nexusmods = { path = "../../lib/nexusmods", version = "*" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }

@@ -15,7 +15,7 @@ futures-util = "0.3.24"
 glob = "0.3.0"
 libloading = "0.7.4"
 nanorand = "0.7.0"
-oodle-sys = { path = "../../lib/oodle-sys", version = "*" }
+oodle = { path = "../../lib/oodle", version = "*" }
 pin-project-lite = "0.2.9"
 promptly = "0.3.1"
 sdk = { path = "../../lib/sdk", version = "*" }

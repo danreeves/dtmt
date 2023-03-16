@@ -34,12 +34,6 @@ pub(crate) fn command_definition() -> Command {
                         If omitted, the current working directory is used.",
                 ),
         )
-        .arg(Arg::new("oodle").long("oodle").help(
-            "The oodle library to load. This may either be:\n\
-                - A library name that will be searched for in the system's default paths.\n\
-                - A file path relative to the current working directory.\n\
-                - An absolute file path.",
-        ))
         .arg(
             Arg::new("out")
                 .long("out")
@@ -104,10 +98,6 @@ where
 
 #[tracing::instrument(skip_all)]
 pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
-    unsafe {
-        oodle_sys::init(matches.get_one::<String>("oodle"));
-    }
-
     let cfg = read_project_config(matches.get_one::<PathBuf>("directory").cloned())
         .await
         .wrap_err("failed to load project config")?;

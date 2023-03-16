@@ -4,7 +4,7 @@ members = [
     "crates/dtmt",
     "crates/dtmm",
     "lib/dtmt-shared",
-    "lib/oodle-sys",
+    "lib/oodle",
     "lib/sdk",
     "lib/serde_sjson",
     "lib/steamlocate-rs",
