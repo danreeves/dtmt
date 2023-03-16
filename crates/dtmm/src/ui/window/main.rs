@@ -2,16 +2,17 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use druid::im::Vector;
-use druid::lens;
 use druid::widget::{
     Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
     MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
 };
+use druid::{lens, Env};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, LensExt, SingleUse, Widget,
     WidgetExt, WindowDesc, WindowId,
 };
 use druid::{Data, ImageBuf, LifeCycleCtx};
+use druid_widget_nursery::WidgetExt as _;
 use lazy_static::lazy_static;
 
 use crate::state::{
@@ -50,11 +51,21 @@ fn build_top_bar() -> impl Widget<State> {
             state.current_view = View::Settings;
         });
 
-    let check_update_button = Button::with_label("Check for updates")
-        .on_click(|ctx, _: &mut State, _| {
-            ctx.submit_command(ACTION_START_CHECK_UPDATE);
-        })
-        .disabled_if(|data, _| data.nexus_api_key.is_empty() || data.is_update_in_progress);
+    let check_update_button = {
+        let make_button = || {
+            Button::with_label("Check for updates").on_click(|ctx, _: &mut State, _| {
+                ctx.submit_command(ACTION_START_CHECK_UPDATE);
+            })
+        };
+
+        Either::new(
+            |data, _| data.nexus_api_key.is_empty(),
+            make_button()
+                .tooltip(|_: &State, _: &Env| "A Nexus API key is required")
+                .disabled_if(|_, _| true),
+            make_button().disabled_if(|data, _| data.is_update_in_progress),
+        )
+    };
 
     let deploy_button = {
         let icon = Svg::new(SvgData::from_str(theme::icons::ALERT_CIRCLE).expect("invalid SVG"))
