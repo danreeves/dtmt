@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Cursor, ErrorKind, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context};
@@ -10,12 +10,12 @@ use druid::{FileInfo, ImageBuf};
 use dtmt_shared::ModConfig;
 use nexusmods::Api as NexusApi;
 use tokio::fs::{self, DirEntry};
-use tokio::runtime::Runtime;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
 
-use crate::state::{ActionState, ModInfo, ModOrder, NexusInfo, PackageInfo};
+use crate::state::{ActionState, InitialLoadResult, ModInfo, ModOrder, NexusInfo, PackageInfo};
+use crate::util;
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
@@ -198,7 +198,7 @@ pub(crate) async fn save_settings(state: ActionState) -> Result<()> {
         .await
         .wrap_err_with(|| {
             format!(
-                "failed to write config to '{}'",
+                "Failed to write config to '{}'",
                 state.config_path.display()
             )
         })
@@ -269,51 +269,47 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
 }
 
 #[tracing::instrument(skip(mod_order))]
-pub(crate) fn load_mods<'a, P, S>(mod_dir: P, mod_order: S) -> Result<Vector<Arc<ModInfo>>>
+pub(crate) async fn load_mods<'a, P, S>(mod_dir: P, mod_order: S) -> Result<Vector<Arc<ModInfo>>>
 where
     S: Iterator<Item = &'a LoadOrderEntry>,
     P: AsRef<Path> + std::fmt::Debug,
 {
-    let rt = Runtime::new()?;
-
-    rt.block_on(async move {
-        let mod_dir = mod_dir.as_ref();
-        let read_dir = match fs::read_dir(mod_dir).await {
-            Ok(read_dir) => read_dir,
-            Err(err) if err.kind() == ErrorKind::NotFound => {
-                return Ok(Vector::new());
-            }
-            Err(err) => {
-                return Err(err)
-                    .wrap_err_with(|| format!("Failed to open directory '{}'", mod_dir.display()));
-            }
-        };
-
-        let stream = ReadDirStream::new(read_dir)
-            .map(|res| res.wrap_err("Failed to read dir entry"))
-            .then(read_mod_dir_entry);
-        tokio::pin!(stream);
-
-        let mut mods: HashMap<String, ModInfo> = HashMap::new();
-
-        while let Some(res) = stream.next().await {
-            let info = res?;
-            mods.insert(info.id.clone(), info);
+    let mod_dir = mod_dir.as_ref();
+    let read_dir = match fs::read_dir(mod_dir).await {
+        Ok(read_dir) => read_dir,
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            return Ok(Vector::new());
         }
+        Err(err) => {
+            return Err(err)
+                .wrap_err_with(|| format!("Failed to open directory '{}'", mod_dir.display()));
+        }
+    };
 
-        let mods = mod_order
-            .filter_map(|entry| {
-                if let Some(mut info) = mods.remove(&entry.id) {
-                    info.enabled = entry.enabled;
-                    Some(Arc::new(info))
-                } else {
-                    None
-                }
-            })
-            .collect();
+    let stream = ReadDirStream::new(read_dir)
+        .map(|res| res.wrap_err("Failed to read dir entry"))
+        .then(read_mod_dir_entry);
+    tokio::pin!(stream);
 
-        Ok::<_, color_eyre::Report>(mods)
-    })
+    let mut mods: HashMap<String, ModInfo> = HashMap::new();
+
+    while let Some(res) = stream.next().await {
+        let info = res?;
+        mods.insert(info.id.clone(), info);
+    }
+
+    let mods = mod_order
+        .filter_map(|entry| {
+            if let Some(mut info) = mods.remove(&entry.id) {
+                info.enabled = entry.enabled;
+                Some(Arc::new(info))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    Ok(mods)
 }
 
 pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
@@ -421,4 +417,27 @@ pub(crate) async fn check_updates(state: ActionState) -> Result<Vec<ModInfo>> {
         })
         .collect();
     Ok(updates)
+}
+
+pub(crate) async fn load_initial(path: PathBuf, is_default: bool) -> Result<InitialLoadResult> {
+    let config = util::config::read_config(path, is_default)
+        .await
+        .wrap_err("Failed to read config file")?;
+
+    let game_info = tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
+        .await
+        .wrap_err("Failed to collect Steam game info")?;
+
+    {
+        if config.game_dir.is_none() && game_info.is_none() {
+            tracing::error!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
+        }
+    }
+
+    let mod_dir = config.data_dir.join("mods");
+    let mods = load_mods(mod_dir, config.mod_order.iter())
+        .await
+        .wrap_err("Failed to load mods")?;
+
+    Ok((config, mods))
 }

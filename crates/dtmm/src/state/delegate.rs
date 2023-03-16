@@ -7,7 +7,7 @@ use druid::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ui::window;
+use crate::{ui::window, util::config::Config};
 
 use super::{ModInfo, State};
 
@@ -52,6 +52,10 @@ pub(crate) const ACTION_SHOW_ERROR_DIALOG: Selector<SingleUse<Report>> =
 pub(crate) const ACTION_SET_WINDOW_HANDLE: Selector<SingleUse<(WindowId, WindowHandle)>> =
     Selector::new("dtmm.action.set-window-handle");
 
+pub(crate) type InitialLoadResult = (Config, Vector<Arc<ModInfo>>);
+pub(crate) const ACTION_FINISH_LOAD_INITIAL: Selector<SingleUse<Option<InitialLoadResult>>> =
+    Selector::new("dtmm.action.finish-load-initial");
+
 // A sub-selection of `State`'s fields that are required in `AsyncAction`s and that are
 // `Send + Sync`
 pub(crate) struct ActionState {
@@ -85,6 +89,7 @@ pub(crate) enum AsyncAction {
     DeleteMod(ActionState, Arc<ModInfo>),
     SaveSettings(ActionState),
     CheckUpdates(ActionState),
+    LoadInitial((PathBuf, bool)),
 }
 
 pub(crate) struct Delegate {
@@ -352,6 +357,23 @@ impl AppDelegate<State> for Delegate {
                 }
 
                 state.is_update_in_progress = false;
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_FINISH_LOAD_INITIAL) => {
+                let data = cmd
+                    .get(ACTION_FINISH_LOAD_INITIAL)
+                    .and_then(SingleUse::take)
+                    .expect("command type matched but didn't contain the expected value");
+
+                if let Some((config, mods)) = data {
+                    state.mods = mods;
+                    state.config_path = Arc::new(config.path);
+                    state.data_dir = Arc::new(config.data_dir);
+                    state.game_dir = Arc::new(config.game_dir.unwrap_or_default());
+                }
+
+                state.loading = false;
+
                 Handled::Yes
             }
             _ => Handled::No,

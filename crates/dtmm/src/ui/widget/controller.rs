@@ -78,12 +78,15 @@ impl<W: Widget<State>> Controller<State, W> for DirtyStateController {
         data: &State,
         env: &Env,
     ) {
-        if compare_state_fields!(old_data, data, mods, game_dir, data_dir, nexus_api_key) {
-            ctx.submit_command(ACTION_START_SAVE_SETTINGS);
-        }
+        // Only start tracking changes after the initial load has finished
+        if old_data.loading == data.loading {
+            if compare_state_fields!(old_data, data, mods, game_dir, data_dir, nexus_api_key) {
+                ctx.submit_command(ACTION_START_SAVE_SETTINGS);
+            }
 
-        if compare_state_fields!(old_data, data, mods, game_dir) {
-            ctx.submit_command(ACTION_SET_DIRTY);
+            if compare_state_fields!(old_data, data, mods, game_dir) {
+                ctx.submit_command(ACTION_SET_DIRTY);
+            }
         }
 
         child.update(ctx, old_data, data, env)

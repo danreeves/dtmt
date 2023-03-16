@@ -1,11 +1,11 @@
 use std::io::ErrorKind;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{fs, path::Path};
 
-use clap::{parser::ValueSource, ArgMatches};
 use color_eyre::{eyre::Context, Result};
 use serde::{Deserialize, Serialize};
+use tokio::fs;
 
 use crate::state::{ActionState, ModInfo};
 
@@ -58,7 +58,8 @@ pub(crate) struct LoadOrderEntry {
 pub(crate) struct Config {
     #[serde(skip)]
     pub path: PathBuf,
-    pub data_dir: Option<PathBuf>,
+    #[serde(default = "get_default_data_dir")]
+    pub data_dir: PathBuf,
     pub game_dir: Option<PathBuf>,
     pub nexus_api_key: Option<String>,
     #[serde(default)]
@@ -99,21 +100,19 @@ pub fn get_default_data_dir() -> PathBuf {
 
 #[cfg(target_os = "windows")]
 pub fn get_default_data_dir() -> PathBuf {
-    let data_dir = std::env::var("APPDATA").expect("appdata env var not set");
+    let data_dir = std::env::var("LOCALAPPDATA").expect("appdata env var not set");
     PathBuf::from(data_dir).join("dtmm")
 }
 
-#[tracing::instrument(skip(matches),fields(path = ?matches.get_one::<PathBuf>("config")))]
-pub(crate) fn read_config<P>(default: P, matches: &ArgMatches) -> Result<Config>
+#[tracing::instrument]
+pub(crate) async fn read_config<P>(path: P, is_default: bool) -> Result<Config>
 where
     P: Into<PathBuf> + std::fmt::Debug,
 {
-    let path = matches
-        .get_one::<PathBuf>("config")
-        .expect("argument missing despite default");
-    let default_path = default.into();
+    let path = path.into();
+    let default_path = get_default_config_path();
 
-    match fs::read(path) {
+    match fs::read(&path).await {
         Ok(data) => {
             let data = String::from_utf8(data).wrap_err_with(|| {
                 format!("Config file '{}' contains invalid UTF-8", path.display())
@@ -121,11 +120,11 @@ where
             let mut cfg: Config = serde_sjson::from_str(&data)
                 .wrap_err_with(|| format!("Invalid config file {}", path.display()))?;
 
-            cfg.path = path.clone();
+            cfg.path = path;
             Ok(cfg)
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            if matches.value_source("config") != Some(ValueSource::DefaultValue) {
+            if !is_default {
                 return Err(err)
                     .wrap_err_with(|| format!("Failed to read config file {}", path.display()))?;
             }
@@ -134,14 +133,14 @@ where
                 let parent = default_path
                     .parent()
                     .expect("a file path always has a parent directory");
-                fs::create_dir_all(parent).wrap_err_with(|| {
+                fs::create_dir_all(parent).await.wrap_err_with(|| {
                     format!("Failed to create directories {}", parent.display())
                 })?;
             }
 
             let config = Config {
                 path: default_path,
-                data_dir: Some(get_default_data_dir()),
+                data_dir: get_default_data_dir(),
                 game_dir: None,
                 nexus_api_key: None,
                 mod_order: Vec::new(),
@@ -150,7 +149,7 @@ where
             {
                 let data = serde_sjson::to_string(&config)
                     .wrap_err("Failed to serialize default config value")?;
-                fs::write(&config.path, data).wrap_err_with(|| {
+                fs::write(&config.path, data).await.wrap_err_with(|| {
                     format!(
                         "failed to write default config to {}",
                         config.path.display()
