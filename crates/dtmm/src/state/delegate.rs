@@ -354,12 +354,7 @@ impl AppDelegate<State> for Delegate {
                 state.is_update_in_progress = false;
                 Handled::Yes
             }
-            cmd => {
-                if cfg!(debug_assertions) {
-                    tracing::warn!("Unknown command: {:?}", cmd);
-                }
-                Handled::No
-            }
+            _ => Handled::No,
         }
     }
 
