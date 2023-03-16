@@ -54,7 +54,7 @@ fn build_top_bar() -> impl Widget<State> {
         .on_click(|ctx, _: &mut State, _| {
             ctx.submit_command(ACTION_START_CHECK_UPDATE);
         })
-        .disabled_if(|data, _| data.is_update_in_progress);
+        .disabled_if(|data, _| data.nexus_api_key.is_empty() || data.is_update_in_progress);
 
     let deploy_button = {
         let icon = Svg::new(SvgData::from_str(theme::icons::ALERT_CIRCLE).expect("invalid SVG"))
