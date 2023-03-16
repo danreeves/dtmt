@@ -16,6 +16,8 @@ pub(crate) fn command_definition() -> Command {
         .about("Watch for file system changes and re-build the mod archive.")
         .arg(
             Arg::new("debounce")
+                .long("debounce")
+                .short('b')
                 .default_value("150")
                 .value_parser(value_parser!(u64))
                 .help(
