@@ -1,18 +1,22 @@
 use color_eyre::Report;
-use druid::widget::{Button, CrossAxisAlignment, Flex, Label, LineBreaking, MainAxisAlignment};
-use druid::{Data, WidgetExt, WindowDesc, WindowHandle, WindowLevel, WindowSizePolicy};
+use druid::widget::{CrossAxisAlignment, Flex, Label, LineBreaking, MainAxisAlignment};
+use druid::{Data, WidgetExt, WindowDesc, WindowHandle, WindowSizePolicy};
 
-const ERROR_DIALOG_SIZE: (f64, f64) = (750., 400.);
+use crate::ui::widget::button::Button;
 
-pub fn error<T: Data>(err: Report, parent: WindowHandle) -> WindowDesc<T> {
-    let msg = format!("A critical error ocurred: {:?}", err);
-    let stripped =
-        strip_ansi_escapes::strip(msg.as_bytes()).expect("failed to strip ANSI in error");
-    let msg = String::from_utf8_lossy(&stripped);
+pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
+    let msg = {
+        let msg = format!("A critical error ocurred: {:?}", err);
+        if let Ok(stripped) = strip_ansi_escapes::strip(msg.as_bytes()) {
+            String::from_utf8_lossy(&stripped).to_string()
+        } else {
+            msg
+        }
+    };
 
-    let text = Label::new(msg.to_string()).with_line_break_mode(LineBreaking::WordWrap);
+    let text = Label::new(msg).with_line_break_mode(LineBreaking::WordWrap);
 
-    let button = Button::new("Ok")
+    let button = Button::with_label("Ok")
         .on_click(|ctx, _, _| {
             ctx.window().close();
         })
@@ -29,9 +33,8 @@ pub fn error<T: Data>(err: Report, parent: WindowHandle) -> WindowDesc<T> {
 
     WindowDesc::new(widget)
         .title("Error")
-        .with_min_size(ERROR_DIALOG_SIZE)
-        .resizable(false)
+        .show_titlebar(true)
         .window_size_policy(WindowSizePolicy::Content)
         .set_always_on_top(true)
-        .set_level(WindowLevel::Modal(parent))
+        .resizable(false)
 }
