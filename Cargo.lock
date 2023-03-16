@@ -685,7 +685,8 @@ dependencies = [
 [[package]]
 name = "druid"
 version = "0.8.3"
-source = "git+https://github.com/linebender/druid.git#c02452ddeebc527992e8f112f434f23ce24c934d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ece41814b410c87e6379441caa7316539500b2e387b8d691f2ba5c0f4aff631"
 dependencies = [
  "console_error_panic_hook",
  "druid-derive",
@@ -710,7 +711,8 @@ dependencies = [
 [[package]]
 name = "druid-derive"
 version = "0.5.0"
-source = "git+https://github.com/linebender/druid.git#c02452ddeebc527992e8f112f434f23ce24c934d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1234fc14b0c07e3d4ff2ae8862eb2c24c87e1f3d6eeef0ec6b9d564fe13cef2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -720,7 +722,8 @@ dependencies = [
 [[package]]
 name = "druid-shell"
 version = "0.8.3"
-source = "git+https://github.com/linebender/druid.git#c02452ddeebc527992e8f112f434f23ce24c934d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7682d9c8fbf934504c30970775bfcfba7858a600f2f6e56bed331989958350fc"
 dependencies = [
  "anyhow",
  "bitflags",
@@ -750,6 +753,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "druid-widget-nursery"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fe4e3cbc027e5c9a4f1c135b339ac92aaf99681a7c1b51ff63111b5719194e5"
+dependencies = [
+ "druid",
+ "log",
+ "tracing",
+]
+
+[[package]]
 name = "dtmm"
 version = "0.1.0"
 dependencies = [
@@ -759,6 +773,7 @@ dependencies = [
  "colors-transform",
  "confy",
  "druid",
+ "druid-widget-nursery",
  "dtmt-shared",
  "futures",
  "lazy_static",
