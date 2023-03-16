@@ -7,19 +7,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::command;
+use clap::parser::ValueSource;
 use clap::value_parser;
 use clap::Arg;
 use color_eyre::eyre;
-use color_eyre::eyre::Context;
 use color_eyre::{Report, Result};
 use druid::AppLauncher;
-use druid::SingleUse;
-use druid::Target;
 use tokio::sync::RwLock;
 
-use crate::controller::app::load_mods;
 use crate::controller::worker::work_thread;
-use crate::state::ACTION_SHOW_ERROR_DIALOG;
+use crate::state::AsyncAction;
 use crate::state::{Delegate, State};
 use crate::ui::theme;
 
@@ -64,40 +61,52 @@ fn main() -> Result<()> {
     }
 
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
-    let delegate = Delegate::new(action_tx);
+
+    // let config = util::config::read_config(&default_config_path, &matches)
+    //     .wrap_err("Failed to read config file")?;
+    // let game_info = dtmt_shared::collect_game_info();
+
+    // tracing::debug!(?config, ?game_info);
+
+    // let game_dir = config.game_dir.or_else(|| game_info.map(|i| i.path));
+    // if game_dir.is_none() {
+    //     let err =
+    //         eyre::eyre!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
+    //     event_sink
+    //         .submit_command(ACTION_SHOW_ERROR_DIALOG, SingleUse::new(err), Target::Auto)
+    //         .expect("failed to send command");
+    // }
+
+    // let initial_state = {
+    //     let mut state = State::new(
+    //         config.path,
+    //         game_dir.unwrap_or_default(),
+    //         config.data_dir.unwrap_or_default(),
+    //         config.nexus_api_key.unwrap_or_default(),
+    //     );
+    //     state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
+    //         .wrap_err("Failed to load mods")?;
+    //     state
+    // };
+
+    let config_path = matches
+        .get_one::<PathBuf>("config")
+        .cloned()
+        .expect("argument has default value");
+    let is_config_default = matches.value_source("config") != Some(ValueSource::DefaultValue);
+    if action_tx
+        .send(AsyncAction::LoadInitial((config_path, is_config_default)))
+        .is_err()
+    {
+        let err = eyre::eyre!("Failed to send action");
+        return Err(err);
+    }
 
     let launcher = AppLauncher::with_window(ui::window::main::new())
-        .delegate(delegate)
+        .delegate(Delegate::new(action_tx))
         .configure_env(theme::set_theme_env);
 
     let event_sink = launcher.get_external_handle();
-
-    let config = util::config::read_config(&default_config_path, &matches)
-        .wrap_err("Failed to read config file")?;
-    let game_info = dtmt_shared::collect_game_info();
-
-    tracing::debug!(?config, ?game_info);
-
-    let game_dir = config.game_dir.or_else(|| game_info.map(|i| i.path));
-    if game_dir.is_none() {
-        let err =
-            eyre::eyre!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
-        event_sink
-            .submit_command(ACTION_SHOW_ERROR_DIALOG, SingleUse::new(err), Target::Auto)
-            .expect("failed to send command");
-    }
-
-    let initial_state = {
-        let mut state = State::new(
-            config.path,
-            game_dir.unwrap_or_default(),
-            config.data_dir.unwrap_or_default(),
-            config.nexus_api_key.unwrap_or_default(),
-        );
-        state.mods = load_mods(state.get_mod_dir(), config.mod_order.iter())
-            .wrap_err("Failed to load mods")?;
-        state
-    };
 
     std::thread::spawn(move || {
         let event_sink = Arc::new(RwLock::new(event_sink));
@@ -110,5 +119,5 @@ fn main() -> Result<()> {
         }
     });
 
-    launcher.launch(initial_state).map_err(Report::new)
+    launcher.launch(State::new()).map_err(Report::new)
 }

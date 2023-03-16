@@ -158,6 +158,8 @@ pub(crate) struct State {
 
     #[data(ignore)]
     pub log: Arc<String>,
+    // True, when the initial loading of configuration and mods is still in progress
+    pub loading: bool,
 
     #[lens(ignore)]
     #[data(ignore)]
@@ -174,12 +176,7 @@ impl State {
     #[allow(non_upper_case_globals)]
     pub const selected_mod: SelectedModLens = SelectedModLens;
 
-    pub fn new(
-        config_path: PathBuf,
-        game_dir: PathBuf,
-        data_dir: PathBuf,
-        nexus_api_key: String,
-    ) -> Self {
+    pub fn new() -> Self {
         let ctx = sdk::Context::new();
 
         Self {
@@ -193,12 +190,13 @@ impl State {
             is_save_in_progress: false,
             is_next_save_pending: false,
             is_update_in_progress: false,
-            config_path: Arc::new(config_path),
-            game_dir: Arc::new(game_dir),
-            data_dir: Arc::new(data_dir),
-            nexus_api_key: Arc::new(nexus_api_key),
+            config_path: Arc::new(PathBuf::new()),
+            game_dir: Arc::new(PathBuf::new()),
+            data_dir: Arc::new(PathBuf::new()),
+            nexus_api_key: Arc::new(String::new()),
             log: Arc::new(String::new()),
             windows: HashMap::new(),
+            loading: true,
         }
     }
 
@@ -224,10 +222,6 @@ impl State {
 
     pub fn can_move_mod_up(&self) -> bool {
         self.selected_mod_index.map(|i| i > 0).unwrap_or(false)
-    }
-
-    pub(crate) fn get_mod_dir(&self) -> PathBuf {
-        self.data_dir.join("mods")
     }
 
     pub(crate) fn add_log_line(&mut self, line: String) {
