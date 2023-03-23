@@ -1,12 +1,12 @@
 [submodule "lib/serde_sjson"]
 	path = lib/serde_sjson
-	url = git@git.sclu1034.dev:lucas/serde_sjson.git
+	url = https://git.sclu1034.dev/lucas/serde_sjson.git
 [submodule "lib/steamlocate-rs"]
 	path = lib/steamlocate-rs
-	url = git@github.com:sclu1034/steamlocate-rs.git
+	url = https://github.com/sclu1034/steamlocate-rs.git
 [submodule "crates/dtmm/assets/icons"]
 	path = crates/dtmm/assets/icons
 	url = https://github.com/tabler/tabler-icons
 [submodule "lib/luajit2-sys"]
 	path = lib/luajit2-sys
-	url = git@github.com:sclu1034/luajit2-sys.git
+	url = https://github.com/sclu1034/luajit2-sys.git
