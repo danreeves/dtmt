@@ -12,4 +12,10 @@ members = [
 
 [profile.release]
 strip = "debuginfo"
+
+# The MSVC toolchain cannot handle LTO properly. Some symbol related to
+# panic unwind would always be missing.
+# So we use a separate profile for when we can compile with LTO.
+[profile.release-lto]
+inherits = "release"
 lto = true
