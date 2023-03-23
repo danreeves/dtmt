@@ -1,0 +1,24 @@
+---
+platform: linux
+
+image_resource:
+  type: registry-image
+  source:
+    repository: registry.local:5000/dtmt-ci-base-((target))
+    tag: latest
+
+inputs:
+- name: repo
+
+outputs:
+- name: artifact
+
+params:
+  CI: true
+  TARGET: ((target))
+
+run:
+  path: .ci/tasks/build.sh
+  dir: repo
+  args:
+    - /artifact
