@@ -1,0 +1,28 @@
+---
+
+# The actual CI pipeline that is run per branch
+
+resources:
+- name: repo
+  type: git
+  source:
+    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+    branch: ((branch))
+
+jobs:
+- name: build-msvc
+  plan:
+  - get: repo
+    trigger: true
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: msvc
+- name: build-linux
+  plan:
+  - get: repo
+    trigger: true
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: linux
