@@ -1858,9 +1858,8 @@ dependencies = [
 [[package]]
 name = "luajit2-sys"
 version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33bb7acccd5a0224645ba06eba391af5f7194ff1762c2545860b43afcfd41af2"
 dependencies = [
+ "bindgen",
  "cc",
  "fs_extra",
  "libc",

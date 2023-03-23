@@ -1,6 +1,7 @@
 /target
 /data
 .envrc
+*.a
 *.so
 *.dll
 *.lib

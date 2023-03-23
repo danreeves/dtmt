@@ -7,3 +7,6 @@
 [submodule "crates/dtmm/assets/icons"]
 	path = crates/dtmm/assets/icons
 	url = https://github.com/tabler/tabler-icons
+[submodule "lib/luajit2-sys"]
+	path = lib/luajit2-sys
+	url = git@github.com:sclu1034/luajit2-sys.git
