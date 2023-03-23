@@ -1,0 +1,37 @@
+---
+
+# The base pipeline that runs continuously, checks for branches and
+# creates a new pipeline instance for each of them.
+
+resource_types:
+- name: git-branches
+  type: registry-image
+  source:
+    repository: aoldershaw/git-branches-resource
+
+resources:
+- name: repo-branches
+  type: git-branches
+  source:
+    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+- name: repo
+  type: git
+  source:
+    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+
+jobs:
+  - name: set-pipelines
+    plan:
+    - in_parallel:
+      - get: repo-branches
+        trigger: true
+      - get: repo
+    - load_var: branches
+      file: repo-branches/branches.json
+    - across:
+      - var: branch
+        values: ((.:branches))
+      set_pipeline: dtmt-check
+      file: repo/.ci/pipelines/check.yml
+      instance_vars:
+        branch: ((.:branch.name))
