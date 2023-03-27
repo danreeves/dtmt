@@ -3,46 +3,50 @@ use std::path::PathBuf;
 mod log;
 
 pub use log::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use steamlocate::SteamDir;
 use time::OffsetDateTime;
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModConfigResources {
     pub init: PathBuf,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub localization: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModOrder {
     Before,
     After,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ModDependency {
     ID(String),
     Config { id: String, order: ModOrder },
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModConfig {
     #[serde(skip)]
     pub dir: PathBuf,
     pub id: String,
     pub name: String,
     pub summary: String,
-    pub description: Option<String>,
-    pub author: Option<String>,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<PathBuf>,
     #[serde(default)]
     pub categories: Vec<String>,
+    #[serde(default)]
     pub packages: Vec<PathBuf>,
     pub resources: ModConfigResources,
     #[serde(default)]
