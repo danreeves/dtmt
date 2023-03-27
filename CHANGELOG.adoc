@@ -14,6 +14,7 @@
 - dtmt: add mod dependencies to config
 - dtmm: match mods to Nexus and check for updates
 - dtmt: add utility to migrate mod projects
+- dtmm: reset dtkit-patch installations
 
 === Fixed
 
