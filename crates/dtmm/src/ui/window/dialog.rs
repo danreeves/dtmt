@@ -1,19 +1,39 @@
-use color_eyre::Report;
-use druid::widget::{CrossAxisAlignment, Flex, Label, LineBreaking, MainAxisAlignment};
-use druid::{Data, WidgetExt, WindowDesc, WindowHandle, WindowSizePolicy};
+use color_eyre::{Handler, HelpInfo, Report};
+use druid::widget::{CrossAxisAlignment, Flex, Label, LineBreaking};
+use druid::{Data, WidgetExt, WindowDesc, WindowHandle};
 
+use crate::ui::theme;
 use crate::ui::widget::button::Button;
 
+const WINDOW_SIZE: (f64, f64) = (600., 250.);
+
 pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
-    let msg = {
-        let msg = format!("A critical error ocurred: {:?}", err);
-        if let Ok(stripped) = strip_ansi_escapes::strip(msg.as_bytes()) {
-            String::from_utf8_lossy(&stripped).to_string()
+    let (title, msg) = {
+        let count = err.chain().count();
+
+        if count == 1 {
+            (
+                String::from("An error occurred!"),
+                err.root_cause().to_string(),
+            )
         } else {
-            msg
+            let first = err.chain().next().unwrap();
+            let root = err.root_cause();
+
+            if count > 2 {
+                // The second to last one, the context to the root cause
+                let context = err.chain().nth(count - 2).unwrap();
+
+                (format!("{first}!"), format!("{}: {}", context, root))
+            } else {
+                (format!("{first}!"), root.to_string())
+            }
         }
     };
 
+    let title = Label::new(title)
+        .with_text_size(24.)
+        .with_text_color(theme::COLOR_RED_LIGHT);
     let text = Label::new(msg).with_line_break_mode(LineBreaking::WordWrap);
 
     let button = Button::with_label("Ok")
@@ -22,19 +42,40 @@ pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
         })
         .align_right();
 
-    let widget = Flex::column()
-        .main_axis_alignment(MainAxisAlignment::SpaceBetween)
-        .must_fill_main_axis(true)
-        .cross_axis_alignment(CrossAxisAlignment::End)
-        .with_child(text)
-        .with_spacer(20.)
-        .with_child(button)
-        .padding(10.);
+    let mut widget = Flex::column()
+        .cross_axis_alignment(CrossAxisAlignment::Start)
+        .with_child(title)
+        .with_default_spacer()
+        .with_child(text);
+
+    if let Some(handler) = err.handler().downcast_ref::<Handler>() {
+        let mut first = true;
+        for section in handler.sections() {
+            if let HelpInfo::Suggestion(data, _) = section {
+                if first {
+                    widget.add_default_spacer();
+                    first = false;
+                }
+
+                let w = Flex::row()
+                    .cross_axis_alignment(CrossAxisAlignment::Start)
+                    .with_child(Label::new("Suggestion:").with_text_color(theme::COLOR_GREEN_LIGHT))
+                    .with_spacer(2.)
+                    .with_child(
+                        Label::new(data.to_string()).with_line_break_mode(LineBreaking::WordWrap),
+                    );
+
+                widget.add_child(w);
+            }
+        }
+    }
+
+    let widget = widget.with_flex_spacer(1.).with_child(button).padding(10.);
 
     WindowDesc::new(widget)
-        .title("Error")
+        .title("Critical Error")
         .show_titlebar(true)
-        .window_size_policy(WindowSizePolicy::Content)
+        .with_min_size(WINDOW_SIZE)
         .set_always_on_top(true)
         .resizable(false)
 }

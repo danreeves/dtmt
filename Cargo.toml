@@ -10,6 +10,12 @@ members = [
     "lib/steamlocate-rs",
 ]
 
+[patch.crates-io]
+color-eyre = { path = "lib/color-eyre" }
+
+[profile.dev.package.backtrace]
+opt-level = 3
+
 [profile.release]
 strip = "debuginfo"
 

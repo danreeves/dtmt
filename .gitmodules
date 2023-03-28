@@ -10,3 +10,6 @@
 [submodule "lib/luajit2-sys"]
 	path = lib/luajit2-sys
 	url = https://github.com/sclu1034/luajit2-sys.git
+[submodule "lib/color-eyre"]
+	path = lib/color-eyre
+	url = https://github.com/sclu1034/color-eyre.git
