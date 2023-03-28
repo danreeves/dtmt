@@ -597,7 +597,7 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
                         .wrap_err("Failed to re-create backup for bundle database.")
                 },
                 async {
-                    let path = bundle_dir.join(BOOT_BUNDLE_NAME);
+                    let path = bundle_dir.join(boot_bundle_path);
                     let backup_path = path.with_extension("bak");
 
                     fs::copy(&path, &backup_path)
