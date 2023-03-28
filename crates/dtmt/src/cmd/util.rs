@@ -8,7 +8,7 @@ use tokio::fs;
 use tokio_stream::wrappers::ReadDirStream;
 
 #[tracing::instrument]
-pub async fn foo<P>(path: P) -> Vec<PathBuf>
+pub async fn process_path<P>(path: P) -> Vec<PathBuf>
 where
     P: AsRef<Path> + std::fmt::Debug,
 {
@@ -98,7 +98,10 @@ where
     I: Iterator<Item = PathBuf> + std::fmt::Debug,
 {
     let tasks = paths.map(|p| async move {
-        match tokio::spawn(async move { foo(&p).await }).await {
+        // Clippy doesn't understand that the block here is required to `move` in the reference.
+        // The task is spawned to make sure tokio can distribute these over threads.
+        #[allow(clippy::redundant_async_block)]
+        match tokio::spawn(async move { process_path(&p).await }).await {
             Ok(paths) => paths,
             Err(err) => {
                 tracing::error!(%err, "failed to spawn task to resolve bundle paths");
@@ -111,6 +114,9 @@ where
     results.into_iter().flatten().collect()
 }
 
+// `tracing::instrument` generates code that triggers this warning.
+// Not much we can do to prevent that.
+#[allow(clippy::let_with_type_underscore)]
 #[tracing::instrument(skip_all)]
 pub fn resolve_bundle_paths<I>(paths: I) -> impl Stream<Item = PathBuf>
 where
@@ -129,12 +135,12 @@ mod tests {
     use tempfile::tempdir;
     use tokio::process::Command;
 
-    use super::foo;
+    use super::process_path;
 
     #[tokio::test]
     async fn resolve_single_file() {
         let path = PathBuf::from("foo");
-        let paths = foo(&path).await;
+        let paths = process_path(&path).await;
         assert_eq!(paths.len(), 1);
         assert_eq!(paths[0], path);
     }
@@ -142,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_empty_directory() {
         let dir = tempdir().expect("failed to create temporary directory");
-        let paths = foo(dir).await;
+        let paths = process_path(dir).await;
         assert!(paths.is_empty());
     }
 
@@ -170,7 +176,7 @@ mod tests {
         .await
         .expect("failed to create temporary files");
 
-        let paths = foo(dir).await;
+        let paths = process_path(dir).await;
 
         assert_eq!(bundle_names.len(), paths.len());
 
