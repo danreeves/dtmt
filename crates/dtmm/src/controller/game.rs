@@ -1,4 +1,4 @@
-use std::io::{Cursor, ErrorKind};
+use std::io::{self, Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -526,11 +526,27 @@ where
 pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
     let bundle_dir = state.game_dir.join("bundle");
+    let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
+
+    if fs::metadata(bundle_dir.join(format!("{boot_bundle_path}.patch_999")))
+        .await
+        .is_ok()
+    {
+        let err = eyre::eyre!("Found dtkit-patch-based mod installation.");
+        return Err(err)
+            .with_suggestion(|| {
+                "If you're a mod author and saved projects directly in 'mods/', \
+                use DTMT to migrate them to the new project structure."
+                    .to_string()
+            })
+            .with_suggestion(|| {
+                "Click 'Reset Game' to remove the previous mod installation.".to_string()
+            });
+    }
 
     let (_, game_info, deployment_info) = tokio::try_join!(
         async {
-            let path = state.game_dir.join("bundle");
-            fs::metadata(&path)
+            fs::metadata(&bundle_dir)
                 .await
                 .wrap_err("Failed to open game bundle directory")
                 .with_suggestion(|| "Double-check 'Game Directory' in the Settings tab.")
@@ -668,6 +684,55 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(skip_all)]
+async fn reset_dtkit_patch(state: ActionState) -> Result<()> {
+    let bundle_dir = state.game_dir.join("bundle");
+
+    {
+        let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
+        let backup_path = path.with_extension("data.bak");
+        fs::rename(&backup_path, &path).await.wrap_err_with(|| {
+            format!(
+                "Failed to move bundle database backup '{}' -> '{}'",
+                backup_path.display(),
+                path.display()
+            )
+        })?;
+        tracing::trace!("Reverted bundle database from backup");
+    }
+
+    for path in [
+        bundle_dir.join(format!(
+            "{:016x}.patch_999",
+            Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())
+        )),
+        state.game_dir.join("binaries/mod_loader"),
+        state.game_dir.join("toggle_darktide_mods.bat"),
+        state.game_dir.join("README.md"),
+    ] {
+        match fs::remove_file(&path).await {
+            Ok(_) => tracing::trace!("Removed file '{}'", path.display()),
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                tracing::error!("Failed to remove file '{}': {}", path.display(), err)
+            }
+            Err(_) => {}
+        }
+    }
+
+    for path in [state.game_dir.join("mods"), state.game_dir.join("tools")] {
+        match fs::remove_dir_all(&path).await {
+            Ok(_) => tracing::trace!("Removed directory '{}'", path.display()),
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                tracing::error!("Failed to remove directory '{}': {}", path.display(), err)
+            }
+            Err(_) => {}
+        }
+    }
+
+    tracing::info!("Removed dtkit-patch-based mod installation.");
+    Ok(())
+}
+
 #[tracing::instrument(skip(state))]
 pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
     let boot_bundle_path = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
@@ -675,6 +740,14 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
     let bundle_dir = state.game_dir.join("bundle");
 
     tracing::info!("Resetting mod deployment in {}", bundle_dir.display());
+
+    if fs::metadata(bundle_dir.join(format!("{boot_bundle_path}.patch_999")))
+        .await
+        .is_ok()
+    {
+        tracing::info!("Found dtkit-patch-based mod installation. Removing.");
+        return reset_dtkit_patch(state).await;
+    }
 
     tracing::debug!("Reading mod deployment");
 

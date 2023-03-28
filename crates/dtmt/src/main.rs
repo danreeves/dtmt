@@ -1,5 +1,6 @@
 #![feature(io_error_more)]
 #![feature(let_chains)]
+#![feature(result_flattening)]
 #![windows_subsystem = "console"]
 
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ mod cmd {
     pub mod build;
     pub mod bundle;
     pub mod dictionary;
+    pub mod migrate;
     pub mod murmur;
     pub mod new;
     pub mod package;
@@ -52,6 +54,7 @@ async fn main() -> Result<()> {
         .subcommand(cmd::build::command_definition())
         .subcommand(cmd::bundle::command_definition())
         .subcommand(cmd::dictionary::command_definition())
+        .subcommand(cmd::migrate::command_definition())
         .subcommand(cmd::murmur::command_definition())
         .subcommand(cmd::new::command_definition())
         .subcommand(cmd::package::command_definition())
@@ -128,6 +131,7 @@ async fn main() -> Result<()> {
         Some(("build", sub_matches)) => cmd::build::run(ctx, sub_matches).await?,
         Some(("bundle", sub_matches)) => cmd::bundle::run(ctx, sub_matches).await?,
         Some(("dictionary", sub_matches)) => cmd::dictionary::run(ctx, sub_matches).await?,
+        Some(("migrate", sub_matches)) => cmd::migrate::run(ctx, sub_matches).await?,
         Some(("murmur", sub_matches)) => cmd::murmur::run(ctx, sub_matches).await?,
         Some(("new", sub_matches)) => cmd::new::run(ctx, sub_matches).await?,
         Some(("package", sub_matches)) => cmd::package::run(ctx, sub_matches).await?,
