@@ -309,6 +309,12 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     let out_dir = out_dir.join(&mod_file.id);
 
+    fs::create_dir(&out_dir)
+        .await
+        .wrap_err_with(|| format!("Failed to create mod directory '{}'", out_dir.display()))?;
+
+    tracing::info!("Created mod directory '{}'", out_dir.display());
+
     println!(
         "Enter additional information about your mod '{}'!",
         &mod_file.id
@@ -347,15 +353,6 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     };
 
     tracing::debug!(?dtmt_cfg);
-
-    fs::create_dir(&dtmt_cfg.dir).await.wrap_err_with(|| {
-        format!(
-            "Failed to create mod directory '{}'",
-            dtmt_cfg.dir.display()
-        )
-    })?;
-
-    tracing::info!("Created mod directory '{}'", dtmt_cfg.dir.display());
 
     {
         let path = dtmt_cfg.dir.join("dtmt.cfg");
