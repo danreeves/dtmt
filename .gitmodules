@@ -4,9 +4,6 @@
 [submodule "lib/steamlocate-rs"]
 	path = lib/steamlocate-rs
 	url = https://github.com/sclu1034/steamlocate-rs.git
-[submodule "crates/dtmm/assets/icons"]
-	path = crates/dtmm/assets/icons
-	url = https://github.com/tabler/tabler-icons
 [submodule "lib/luajit2-sys"]
 	path = lib/luajit2-sys
 	url = https://github.com/sclu1034/luajit2-sys.git
