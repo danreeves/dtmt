@@ -1,4 +1,4 @@
-use std::io::{Cursor, ErrorKind};
+use std::io::{self, Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -693,7 +693,7 @@ async fn reset_dtkit_patch(state: ActionState) -> Result<()> {
         let backup_path = path.with_extension("data.bak");
         fs::rename(&backup_path, &path).await.wrap_err_with(|| {
             format!(
-                "Failed to move bundle datbase backup '{}' -> '{}'",
+                "Failed to move bundle database backup '{}' -> '{}'",
                 backup_path.display(),
                 path.display()
             )
@@ -710,13 +710,23 @@ async fn reset_dtkit_patch(state: ActionState) -> Result<()> {
         state.game_dir.join("toggle_darktide_mods.bat"),
         state.game_dir.join("README.md"),
     ] {
-        let _ = fs::remove_file(&path).await;
-        tracing::trace!("Removed file '{}'", path.display());
+        match fs::remove_file(&path).await {
+            Ok(_) => tracing::trace!("Removed file '{}'", path.display()),
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                tracing::error!("Failed to remove file '{}': {}", path.display(), err)
+            }
+            Err(_) => {}
+        }
     }
 
     for path in [state.game_dir.join("mods"), state.game_dir.join("tools")] {
-        let _ = fs::remove_dir_all(&path).await;
-        tracing::trace!("Removed directory '{}'", path.display());
+        match fs::remove_dir_all(&path).await {
+            Ok(_) => tracing::trace!("Removed directory '{}'", path.display()),
+            Err(err) if err.kind() != io::ErrorKind::NotFound => {
+                tracing::error!("Failed to remove directory '{}': {}", path.display(), err)
+            }
+            Err(_) => {}
+        }
     }
 
     tracing::info!("Removed dtkit-patch-based mod installation.");
