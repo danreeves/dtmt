@@ -525,6 +525,7 @@ where
 ))]
 pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     let state = Arc::new(state);
+    let bundle_dir = state.game_dir.join("bundle");
 
     let (_, game_info, deployment_info) = tokio::try_join!(
         async {
@@ -565,16 +566,46 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
             .map(|i| game_info.last_updated > i.timestamp)
             .unwrap_or(false)
         {
-            eyre::bail!("Game was updated since last mod deployment. Please reset first.");
+            tracing::warn!(
+                "Game was updated since last mod deployment. \
+                    Attempting to reconcile game files."
+            );
+
+            tokio::try_join!(
+                async {
+                    let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
+                    let backup_path = path.with_extension("data.bak");
+
+                    fs::copy(&path, &backup_path)
+                        .await
+                        .wrap_err("Failed to re-create backup for bundle database.")
+                },
+                async {
+                    let path = bundle_dir.join(BOOT_BUNDLE_NAME);
+                    let backup_path = path.with_extension("bak");
+
+                    fs::copy(&path, &backup_path)
+                        .await
+                        .wrap_err("Failed to re-create backup for boot bundle")
+                }
+            )
+            .with_suggestion(|| {
+                "Reset the game using 'Reset Game', then verify game files.".to_string()
+            })?;
+
+            tracing::info!(
+                "Successfully re-created game file backups. \
+                    Continuing mod deployment."
+            );
         }
     }
 
     check_mod_order(&state)?;
 
     tracing::info!(
-        "Deploying {} mods to {}",
+        "Deploying {} mods to '{}'.",
         state.mods.iter().filter(|i| i.enabled).count(),
-        state.game_dir.join("bundle").display()
+        bundle_dir.display()
     );
 
     tracing::info!("Build mod bundles");
@@ -589,35 +620,31 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     bundles.append(&mut more_bundles);
 
     if let Some(info) = &deployment_info {
-        let bundle_dir = Arc::new(state.game_dir.join("bundle"));
-        let tasks = info
-            .bundles
-            .iter()
-            .cloned()
-            .map(|v| (v, bundle_dir.clone()))
-            .filter_map(|(file_name, bundle_dir)| {
-                let contains = bundles.iter().any(|b2| {
-                    let name = b2.name().to_murmur64().to_string();
-                    file_name == name
-                });
-
-                if !contains {
-                    let task = async move {
-                        let path = bundle_dir.join(&file_name);
-
-                        tracing::debug!("Removing unused bundle '{}'", file_name);
-
-                        if let Err(err) = fs::remove_file(&path).await.wrap_err_with(|| {
-                            format!("Failed to remove unused bundle '{}'", path.display())
-                        }) {
-                            tracing::error!("{:?}", err);
-                        }
-                    };
-                    Some(task)
-                } else {
-                    None
-                }
+        let bundle_dir = Arc::new(bundle_dir);
+        let tasks = info.bundles.iter().cloned().filter_map(|file_name| {
+            let contains = bundles.iter().any(|b2| {
+                let name = b2.name().to_murmur64().to_string();
+                file_name == name
             });
+
+            if !contains {
+                let bundle_dir = bundle_dir.clone();
+                let task = async move {
+                    let path = bundle_dir.join(&file_name);
+
+                    tracing::debug!("Removing unused bundle '{}'", file_name);
+
+                    if let Err(err) = fs::remove_file(&path).await.wrap_err_with(|| {
+                        format!("Failed to remove unused bundle '{}'", path.display())
+                    }) {
+                        tracing::error!("{:?}", err);
+                    }
+                };
+                Some(task)
+            } else {
+                None
+            }
+        });
 
         futures::future::join_all(tasks).await;
     }
