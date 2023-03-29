@@ -4,26 +4,22 @@ platform: linux
 image_resource:
   type: registry-image
   source:
-    repository: registry.local:5000/dtmt-ci-base-((target))
+    repository: registry.local:5000/dtmt-ci-base-linux
     tag: latest
 
 inputs:
 - name: repo
 
-outputs:
-- name: artifact
-
 params:
   CI: true
-  TARGET: ((target))
   GITEA_API_KEY: ((gitea_api_key))
   REF: ((ref))
-  OUTPUT: artifact
 
 run:
   path: .ci/util/run.sh
   dir: repo
   args:
-    - .ci/tasks/build.sh
-    - build/((target))
-    - "Build for the target platform: ((target))"
+    - .ci/tasks/clippy.sh
+    - lint/clippy
+    - "Checking for common mistakes and opportunities for code improvement"
+

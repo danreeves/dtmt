@@ -1,0 +1,49 @@
+---
+
+# The actual CI pipeline that is run per branch
+
+resources:
+- name: repo
+  type: git
+  source:
+    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+    branch: ((pr.head.ref))
+
+jobs:
+- name: clippy
+  plan:
+  - get: repo
+    trigger: true
+  - load_var: ref
+    file: repo/.git/ref
+  - task: check
+    file: repo/.ci/tasks/clippy.yml
+    vars:
+      ref: ((.:ref))
+      gitea_api_key: ((gitea_api_key))
+
+- name: build-msvc
+  plan:
+  - get: repo
+    trigger: true
+  - load_var: ref
+    file: repo/.git/ref
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: msvc
+      ref: ((.:ref))
+      gitea_api_key: ((gitea_api_key))
+
+- name: build-linux
+  plan:
+  - get: repo
+    trigger: true
+  - load_var: ref
+    file: repo/.git/ref
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: linux
+      ref: ((.:ref))
+      gitea_api_key: ((gitea_api_key))

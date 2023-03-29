@@ -4,6 +4,9 @@ RUN set -eux; \
     apt-get update; \
     apt-get install --no-install-recommends -y \
         build-essential \
+        curl \
+        gpg \
+        jq \
      	libatk1.0-dev \
         libclang-13-dev \
      	libglib2.0-dev \
@@ -18,5 +21,4 @@ RUN set -eux; \
 
 WORKDIR /src/dtmt
 
-COPY *.so /src
-
+COPY liboo2corelinux64.so /src
