@@ -21,8 +21,6 @@ resources:
   type: git
   source:
     uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
-    # DEBUG:
-    branch: feat/ci
 
 
 jobs:
