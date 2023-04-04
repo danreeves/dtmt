@@ -11,14 +11,14 @@ inputs:
 - name: repo
 
 outputs:
-- name: artifact
+- name: ((output))
 
 params:
   CI: true
   TARGET: ((target))
   GITEA_API_KEY: ((gitea_api_key))
   REF: ((ref))
-  OUTPUT: artifact
+  OUTPUT: ((output))
 
 run:
   path: .ci/util/run.sh

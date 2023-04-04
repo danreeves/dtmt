@@ -32,6 +32,7 @@ jobs:
     file: repo/.ci/tasks/build.yml
     vars:
       target: msvc
+      output: artifact
       ref: ((.:ref))
       gitea_api_key: ((gitea_api_key))
 
@@ -45,5 +46,6 @@ jobs:
     file: repo/.ci/tasks/build.yml
     vars:
       target: linux
+      output: artifact
       ref: ((.:ref))
       gitea_api_key: ((gitea_api_key))
