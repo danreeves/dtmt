@@ -22,9 +22,6 @@ pub fn ansi_to_rich_text(input: &str) -> RichText {
     for token in input.ansi_parse() {
         match token {
             Output::TextBlock(text) => {
-                dbg!(&state);
-                dbg!(&text);
-
                 let mut attr = builder.push(text);
                 attr.underline(state.underline);
                 attr.strikethrough(state.strikethrough);
