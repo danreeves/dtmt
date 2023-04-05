@@ -242,9 +242,7 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 
             mod_bundle.add_file(file);
 
-            let bundle_name = Murmur64::hash(&pkg_info.name)
-                .to_string()
-                .to_ascii_lowercase();
+            let bundle_name = format!("{:016x}", Murmur64::hash(&pkg_info.name));
             let src = mod_dir.join(&bundle_name);
             let dest = bundle_dir.join(&bundle_name);
             let pkg_name = pkg_info.name.clone();
@@ -377,9 +375,7 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
             .get(0)
             .ok_or_else(|| eyre::eyre!("invalid mod package for DML"))
             .with_suggestion(|| "Re-download and import the newest version.".to_string())?;
-        let bundle_name = Murmur64::hash(&pkg_info.name)
-            .to_string()
-            .to_ascii_lowercase();
+        let bundle_name = format!("{:016x}", Murmur64::hash(&pkg_info.name));
         let src = state.mod_dir.join(&mod_info.id).join(&bundle_name);
 
         {
@@ -639,7 +635,7 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         let bundle_dir = Arc::new(bundle_dir);
         let tasks = info.bundles.iter().cloned().filter_map(|file_name| {
             let contains = bundles.iter().any(|b2| {
-                let name = b2.name().to_murmur64().to_string();
+                let name = format!("{:016x}", b2.name());
                 file_name == name
             });
 
