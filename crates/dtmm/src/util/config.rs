@@ -151,7 +151,7 @@ where
                     .wrap_err("Failed to serialize default config value")?;
                 fs::write(&config.path, data).await.wrap_err_with(|| {
                     format!(
-                        "failed to write default config to {}",
+                        "Failed to write default config to {}",
                         config.path.display()
                     )
                 })?;
