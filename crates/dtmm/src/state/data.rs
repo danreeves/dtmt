@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use druid::im::{HashMap, Vector};
+use druid::text::RichText;
 use druid::{Data, ImageBuf, Lens, WindowHandle, WindowId};
 use dtmt_shared::ModConfig;
 use nexusmods::Mod as NexusMod;
@@ -155,9 +156,7 @@ pub(crate) struct State {
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
     pub nexus_api_key: Arc<String>,
-
-    #[data(ignore)]
-    pub log: Arc<String>,
+    pub log: Vector<RichText>,
     // True, when the initial loading of configuration and mods is still in progress
     pub loading: bool,
 
@@ -194,7 +193,7 @@ impl State {
             game_dir: Arc::new(PathBuf::new()),
             data_dir: Arc::new(PathBuf::new()),
             nexus_api_key: Arc::new(String::new()),
-            log: Arc::new(String::new()),
+            log: Vector::new(),
             windows: HashMap::new(),
             loading: true,
         }
@@ -222,10 +221,5 @@ impl State {
 
     pub fn can_move_mod_up(&self) -> bool {
         self.selected_mod_index.map(|i| i > 0).unwrap_or(false)
-    }
-
-    pub(crate) fn add_log_line(&mut self, line: String) {
-        let log = Arc::make_mut(&mut self.log);
-        log.push_str(&line);
     }
 }

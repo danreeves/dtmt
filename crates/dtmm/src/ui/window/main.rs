@@ -451,17 +451,18 @@ fn build_main() -> impl Widget<State> {
 }
 
 fn build_log_view() -> impl Widget<State> {
-    let font = FontDescriptor::new(FontFamily::MONOSPACE);
-    let label = Label::raw()
-        .with_font(font)
-        .with_line_break_mode(LineBreaking::WordWrap)
-        .lens(State::log)
-        .padding(4.)
-        .scroll()
-        .vertical()
-        .controller(AutoScrollController);
+    let list = List::new(|| {
+        Label::raw()
+            .with_font(FontDescriptor::new(FontFamily::MONOSPACE))
+            .with_line_break_mode(LineBreaking::WordWrap)
+    })
+    .lens(State::log)
+    .padding(4.)
+    .scroll()
+    .vertical()
+    .controller(AutoScrollController);
 
-    let inner = Border::new(label)
+    let inner = Border::new(list)
         .with_color(theme::COLOR_FG2)
         .with_top_border(1.);
 

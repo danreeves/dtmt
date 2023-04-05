@@ -174,7 +174,7 @@ async fn handle_action(
 
 async fn handle_log(
     event_sink: Arc<RwLock<ExtEventSink>>,
-    log_queue: Arc<RwLock<UnboundedReceiver<String>>>,
+    log_queue: Arc<RwLock<UnboundedReceiver<Vec<u8>>>>,
 ) {
     while let Some(line) = log_queue.write().await.recv().await {
         let event_sink = event_sink.clone();
@@ -189,7 +189,7 @@ async fn handle_log(
 pub(crate) fn work_thread(
     event_sink: Arc<RwLock<ExtEventSink>>,
     action_queue: Arc<RwLock<UnboundedReceiver<AsyncAction>>>,
-    log_queue: Arc<RwLock<UnboundedReceiver<String>>>,
+    log_queue: Arc<RwLock<UnboundedReceiver<Vec<u8>>>>,
 ) -> Result<()> {
     let rt = Runtime::new()?;
 

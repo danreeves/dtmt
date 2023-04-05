@@ -23,6 +23,7 @@ use crate::ui::theme;
 mod controller;
 mod state;
 mod util {
+    pub mod ansi;
     pub mod config;
     pub mod log;
 }

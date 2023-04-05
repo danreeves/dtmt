@@ -8,11 +8,11 @@ use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 pub struct ChannelWriter {
-    tx: UnboundedSender<String>,
+    tx: UnboundedSender<Vec<u8>>,
 }
 
 impl ChannelWriter {
-    pub fn new(tx: UnboundedSender<String>) -> Self {
+    pub fn new(tx: UnboundedSender<Vec<u8>>) -> Self {
         Self { tx }
     }
 }
@@ -20,12 +20,9 @@ impl ChannelWriter {
 impl std::io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let tx = self.tx.clone();
-        let stripped = strip_ansi_escapes::strip(buf)?;
-        let string = String::from_utf8_lossy(&stripped).to_string();
-
         // The `send` errors when the receiving end has closed.
         // But there's not much we can do at that point, so we just ignore it.
-        let _ = tx.send(string);
+        let _ = tx.send(buf.to_vec());
 
         Ok(buf.len())
     }
@@ -35,7 +32,7 @@ impl std::io::Write for ChannelWriter {
     }
 }
 
-pub fn create_tracing_subscriber(tx: UnboundedSender<String>) {
+pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>) {
     let env_layer = if cfg!(debug_assertions) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     } else {
@@ -50,8 +47,6 @@ pub fn create_tracing_subscriber(tx: UnboundedSender<String>) {
     };
 
     let channel_layer = fmt::layer()
-        // TODO: Re-enable and implement a formatter for the Druid widget
-        .with_ansi(false)
         .event_format(dtmt_shared::Formatter)
         .fmt_fields(debug_fn(dtmt_shared::format_fields))
         .with_writer(move || ChannelWriter::new(tx.clone()))

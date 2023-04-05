@@ -1,12 +1,14 @@
 use std::{path::PathBuf, sync::Arc};
 
 use color_eyre::Report;
+use druid::im::Vector;
 use druid::{
-    im::Vector, AppDelegate, Command, DelegateCtx, Env, FileInfo, Handled, Selector, SingleUse,
-    Target, WindowHandle, WindowId,
+    AppDelegate, Command, DelegateCtx, Env, FileInfo, Handled, Selector, SingleUse, Target,
+    WindowHandle, WindowId,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::util::ansi::ansi_to_rich_text;
 use crate::{ui::window, util::config::Config};
 
 use super::{ModInfo, State};
@@ -32,7 +34,7 @@ pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action
 pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<Arc<ModInfo>>> =
     Selector::new("dtmm.action.finish-add-mod");
 
-pub(crate) const ACTION_LOG: Selector<SingleUse<String>> = Selector::new("dtmm.action.log");
+pub(crate) const ACTION_LOG: Selector<SingleUse<Vec<u8>>> = Selector::new("dtmm.action.log");
 
 pub(crate) const ACTION_START_SAVE_SETTINGS: Selector =
     Selector::new("dtmm.action.start-save-settings");
@@ -252,7 +254,8 @@ impl AppDelegate<State> for Delegate {
                     .get(ACTION_LOG)
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(line) = line.take() {
-                    state.add_log_line(line);
+                    let line = String::from_utf8_lossy(&line);
+                    state.log.push_back(ansi_to_rich_text(line.trim()));
                 }
                 Handled::Yes
             }

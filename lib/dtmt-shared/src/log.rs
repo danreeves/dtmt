@@ -1,10 +1,11 @@
 use std::fmt::Result;
 
+use ansi_term::Color;
 use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::OffsetDateTime;
 use tracing::field::Field;
-use tracing::{Event, Metadata, Subscriber};
+use tracing::{Event, Level, Metadata, Subscriber};
 use tracing_error::ErrorLayer;
 use tracing_subscriber::filter::FilterFn;
 use tracing_subscriber::fmt::format::{debug_fn, Writer};
@@ -49,7 +50,28 @@ where
         let time = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
         let time = time.format(TIME_FORMAT).map_err(|_| std::fmt::Error)?;
 
-        write!(writer, "[{}] [{:>5}] ", time, meta.level())?;
+        let level = meta.level();
+        // Sadly, tracing's `Level` is a struct, not an enum, so we can't properly `match` it.
+        let color = if *level == Level::TRACE {
+            Color::Purple
+        } else if *level == Level::DEBUG {
+            Color::Blue
+        } else if *level == Level::INFO {
+            Color::Green
+        } else if *level == Level::WARN {
+            Color::Yellow
+        } else if *level == Level::ERROR {
+            Color::Red
+        } else {
+            unreachable!()
+        };
+
+        write!(
+            writer,
+            "[{}] [{:>5}] ",
+            time,
+            color.bold().paint(format!("{}", level))
+        )?;
 
         ctx.field_format().format_fields(writer.by_ref(), event)?;
 
