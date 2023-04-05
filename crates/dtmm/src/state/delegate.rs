@@ -255,7 +255,7 @@ impl AppDelegate<State> for Delegate {
                     .expect("command type matched but didn't contain the expected value");
                 if let Some(line) = line.take() {
                     let line = String::from_utf8_lossy(&line);
-                    state.log.push_back(ansi_to_rich_text(&line));
+                    state.log.push_back(ansi_to_rich_text(line.trim()));
                 }
                 Handled::Yes
             }
