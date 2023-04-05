@@ -1,0 +1,9 @@
+target/
+docs/
+data/
+.git/
+README.adoc
+CHANGELOG.adoc
+LICENSE
+dictionary.csv
+Justfile
