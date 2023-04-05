@@ -4,34 +4,43 @@
 # creates a new pipeline instance for each of them.
 
 resource_types:
-- name: git-branches
+- name: gitea-pr
   type: registry-image
   source:
-    repository: aoldershaw/git-branches-resource
+    repository: registry.local:5000/gitea-pr
 
 resources:
-- name: repo-branches
-  type: git-branches
+- name: repo-pr
+  type: gitea-pr
   source:
-    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+    access_token: ((gitea_api_key))
+    owner: ((owner))
+    repo: ((repo))
+    url: https://git.sclu1034.dev
 - name: repo
   type: git
   source:
     uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
 
+
 jobs:
   - name: set-pipelines
     plan:
     - in_parallel:
-      - get: repo-branches
+      - get: repo-pr
         trigger: true
       - get: repo
-    - load_var: branches
-      file: repo-branches/branches.json
+    - load_var: prs
+      file: repo-pr/prs.json
     - across:
-      - var: branch
-        values: ((.:branches))
-      set_pipeline: dtmt-check
-      file: repo/.ci/pipelines/check.yml
+      - var: pr
+        values: ((.:prs))
+      set_pipeline: dtmt-pr
+      file: repo/.ci/pipelines/pr.yml
+      vars:
+        pr: ((.:pr))
+        gitea_api_key: ((gitea_api_key))
       instance_vars:
-        branch: ((.:branch.name))
+        pr: ((.:pr.number))
+
+

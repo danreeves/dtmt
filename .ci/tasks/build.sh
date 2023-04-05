@@ -2,8 +2,6 @@
 
 set -eux
 
-OUTPUT="$1"
-
 case "$TARGET" in
     msvc)
         cp /src/*.lib ./lib/oodle/
@@ -13,7 +11,6 @@ case "$TARGET" in
             install -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmt.exe
             install -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmm.exe
         fi
-
         ;;
     linux)
         cp /src/*.so ./lib/oodle/
@@ -23,10 +20,8 @@ case "$TARGET" in
             install -t "$OUTPUT/" target/release/dtmt
             install -t "$OUTPUT/" target/release/dtmm
         fi
-
         ;;
     *)
-        set +x
         echo "Env var 'TARGET' must either be 'msvc' or 'linux'. Got '$TARGET'." >&2
         exit 1
 esac
