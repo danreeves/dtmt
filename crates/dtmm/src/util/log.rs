@@ -47,8 +47,6 @@ pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>) {
     };
 
     let channel_layer = fmt::layer()
-        // TODO: Re-enable and implement a formatter for the Druid widget
-        .with_ansi(false)
         .event_format(dtmt_shared::Formatter)
         .fmt_fields(debug_fn(dtmt_shared::format_fields))
         .with_writer(move || ChannelWriter::new(tx.clone()))
