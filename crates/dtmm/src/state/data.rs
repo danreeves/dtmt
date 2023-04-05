@@ -156,8 +156,6 @@ pub(crate) struct State {
     pub game_dir: Arc<PathBuf>,
     pub data_dir: Arc<PathBuf>,
     pub nexus_api_key: Arc<String>,
-
-    #[data(ignore)]
     pub log: Vector<RichText>,
     // True, when the initial loading of configuration and mods is still in progress
     pub loading: bool,
