@@ -6,10 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::command;
 use clap::parser::ValueSource;
-use clap::value_parser;
-use clap::Arg;
+use clap::{command, value_parser, Arg};
 use color_eyre::eyre;
 use color_eyre::{Report, Result};
 use druid::AppLauncher;
@@ -19,6 +17,7 @@ use crate::controller::worker::work_thread;
 use crate::state::AsyncAction;
 use crate::state::{Delegate, State};
 use crate::ui::theme;
+use crate::util::log::LogLevel;
 
 mod controller;
 mod state;
@@ -46,10 +45,22 @@ fn main() -> Result<()> {
                 .value_parser(value_parser!(PathBuf))
                 .default_value(default_config_path.to_string_lossy().to_string()),
         )
+        .arg(
+            Arg::new("log-level")
+                .long("log-level")
+                .help("The maximum level of log events to print")
+                .value_parser(value_parser!(LogLevel))
+                .default_value("info"),
+        )
         .get_matches();
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
-    util::log::create_tracing_subscriber(log_tx);
+    let level = if matches.value_source("log-level") == Some(ValueSource::DefaultValue) {
+        None
+    } else {
+        matches.get_one::<LogLevel>("log-level").cloned()
+    };
+    util::log::create_tracing_subscriber(log_tx, level);
 
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
 

@@ -92,6 +92,7 @@ pub(crate) enum AsyncAction {
     SaveSettings(ActionState),
     CheckUpdates(ActionState),
     LoadInitial((PathBuf, bool)),
+    Log((ActionState, Vec<u8>)),
 }
 
 pub(crate) struct Delegate {
@@ -253,10 +254,22 @@ impl AppDelegate<State> for Delegate {
                 let line = cmd
                     .get(ACTION_LOG)
                     .expect("command type matched but didn't contain the expected value");
+
                 if let Some(line) = line.take() {
-                    let line = String::from_utf8_lossy(&line);
-                    state.log.push_back(ansi_to_rich_text(line.trim()));
+                    {
+                        let line = String::from_utf8_lossy(&line);
+                        state.log.push_back(ansi_to_rich_text(line.trim()));
+                    }
+
+                    if self
+                        .sender
+                        .send(AsyncAction::Log((state.clone().into(), line)))
+                        .is_err()
+                    {
+                        tracing::error!("Failed to queue action to add mod");
+                    }
                 }
+
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_START_SAVE_SETTINGS) => {
