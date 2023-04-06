@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::filter::FilterFn;
@@ -6,6 +7,28 @@ use tracing_subscriber::fmt::format::debug_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl From<LogLevel> for EnvFilter {
+    fn from(level: LogLevel) -> Self {
+        let filter = match level {
+            LogLevel::Trace => "error,dtmm=trace,sdk=trace",
+            LogLevel::Debug => "error,dtmm=debug,sdk=debug",
+            LogLevel::Info => "error,dtmm=info",
+            LogLevel::Warn => "error,dtmm=warn",
+            LogLevel::Error => "error",
+        };
+        EnvFilter::new(filter)
+    }
+}
 
 pub struct ChannelWriter {
     tx: UnboundedSender<Vec<u8>>,
@@ -32,8 +55,10 @@ impl std::io::Write for ChannelWriter {
     }
 }
 
-pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>) {
-    let env_layer = if cfg!(debug_assertions) {
+pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>, level: Option<LogLevel>) {
+    let env_layer = if let Some(level) = level {
+        EnvFilter::from(level)
+    } else if cfg!(debug_assertions) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     } else {
         EnvFilter::new("error,dtmm=info")
