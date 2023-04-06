@@ -34,7 +34,7 @@ where
         let state = lua::luaL_newstate();
         lua::luaL_openlibs(state);
 
-        let name = CString::new(name.as_bytes())
+        let name = CString::new(format!("@{name}").into_bytes())
             .wrap_err_with(|| format!("Cannot convert name into CString: {}", name))?;
         match lua::luaL_loadbuffer(
             state,
