@@ -67,13 +67,15 @@ pub fn ansi_to_rich_text(input: &str) -> RichText {
                             state.color = match col {
                                 // This escape code is usually called 'black', but is actually used
                                 // as "foreground color", in regards to light themes.
-                                1 => Some(theme::COLOR_FG),
-                                2 => Some(theme::COLOR_RED_LIGHT),
-                                3 => Some(theme::COLOR_GREEN_LIGHT),
-                                4 => Some(theme::COLOR_YELLOW_LIGHT),
-                                5 => Some(theme::COLOR_BLUE_LIGHT),
-                                6 => Some(theme::COLOR_PURPLE_LIGHT),
-                                7 => Some(theme::COLOR_AQUA_LIGHT),
+                                0 => Some(theme::COLOR_FG),
+                                1 => Some(theme::COLOR_RED_LIGHT),
+                                2 => Some(theme::COLOR_GREEN_LIGHT),
+                                3 => Some(theme::COLOR_YELLOW_LIGHT),
+                                4 => Some(theme::COLOR_BLUE_LIGHT),
+                                5 => Some(theme::COLOR_PURPLE_LIGHT),
+                                6 => Some(theme::COLOR_AQUA_LIGHT),
+                                // Similarly, 'white' is the background color
+                                7 => Some(theme::COLOR_BG),
                                 9 => None,
                                 _ => unreachable!(),
                             };
