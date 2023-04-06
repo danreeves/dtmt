@@ -9,7 +9,7 @@ use druid::im::Vector;
 use druid::{FileInfo, ImageBuf};
 use dtmt_shared::ModConfig;
 use nexusmods::Api as NexusApi;
-use tokio::fs::{self, DirEntry};
+use tokio::fs::{self, DirEntry, File};
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 use zip::ZipArchive;
@@ -423,6 +423,13 @@ pub(crate) async fn load_initial(path: PathBuf, is_default: bool) -> Result<Init
     let config = util::config::read_config(path, is_default)
         .await
         .wrap_err("Failed to read config file")?;
+
+    // Create or truncate the log file
+    let log_path = config.data_dir.join("dtmm.log");
+    tokio::spawn(async move {
+        let _ = File::create(&log_path).await;
+        tracing::debug!("Truncated log file");
+    });
 
     let game_info = tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
         .await

@@ -5,7 +5,10 @@ use color_eyre::Help;
 use color_eyre::Report;
 use color_eyre::Result;
 use druid::{ExtEventSink, SingleUse, Target};
+use tokio::fs::OpenOptions;
+use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
+
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
 
@@ -167,6 +170,15 @@ async fn handle_action(
                         Target::Auto,
                     )
                     .expect("failed to send command");
+            }),
+            AsyncAction::Log((state, line)) => tokio::spawn(async move {
+                if let Ok(mut f) = OpenOptions::new()
+                    .append(true)
+                    .open(state.data_dir.join("dtmm.log"))
+                    .await
+                {
+                    let _ = f.write_all(&line).await;
+                }
             }),
         };
     }
