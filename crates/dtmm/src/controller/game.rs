@@ -715,7 +715,11 @@ async fn reset_dtkit_patch(state: ActionState) -> Result<()> {
         }
     }
 
-    for path in [state.game_dir.join("mods"), state.game_dir.join("tools")] {
+    // We deliberately skip the `mods/` directory here.
+    // Many modders did their development right in there, and as people are prone to not read
+    // error messages and guides in full, there is bound to be someone who would have
+    // deleted all their source code if this removed the `mods/` folder.
+    for path in [state.game_dir.join("tools")] {
         match fs::remove_dir_all(&path).await {
             Ok(_) => tracing::trace!("Removed directory '{}'", path.display()),
             Err(err) if err.kind() != io::ErrorKind::NotFound => {
