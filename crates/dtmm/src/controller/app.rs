@@ -321,12 +321,17 @@ pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
         }
     }
 
-    state
-        .mods
-        .iter()
-        .filter(|i| i.enabled)
-        .enumerate()
-        .for_each(|(i, info)| tracing::debug!(i, ?info));
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        let order = state.mods.iter().filter(|i| i.enabled).enumerate().fold(
+            String::new(),
+            |mut s, (i, info)| {
+                s.push_str(&format!("{}: {} - {}\n", i, info.id, info.name));
+                s
+            },
+        );
+
+        tracing::debug!("Mod order:\n{}", order);
+    }
 
     for (i, mod_info) in state.mods.iter().filter(|i| i.enabled).enumerate() {
         for dep in &mod_info.depends {

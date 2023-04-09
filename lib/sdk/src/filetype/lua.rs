@@ -30,6 +30,12 @@ where
     let name = name.into();
     let code = code.as_ref();
 
+    tracing::trace!(
+        "Compiling '{}', {} bytes of code",
+        name,
+        code.as_bytes().len()
+    );
+
     let bytecode = unsafe {
         let state = lua::luaL_newstate();
         lua::luaL_openlibs(state);

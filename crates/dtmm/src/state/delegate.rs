@@ -95,6 +95,27 @@ pub(crate) enum AsyncAction {
     Log((ActionState, Vec<u8>)),
 }
 
+impl std::fmt::Debug for AsyncAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AsyncAction::DeployMods(_) => write!(f, "AsyncAction::DeployMods(_state)"),
+            AsyncAction::ResetDeployment(_) => write!(f, "AsyncAction::ResetDeployment(_state)"),
+            AsyncAction::AddMod(_, info) => write!(f, "AsyncAction::AddMod(_state, {:?})", info),
+            AsyncAction::DeleteMod(_, info) => {
+                write!(f, "AsyncAction::DeleteMod(_state, {:?})", info)
+            }
+            AsyncAction::SaveSettings(_) => write!(f, "AsyncAction::SaveSettings(_state)"),
+            AsyncAction::CheckUpdates(_) => write!(f, "AsyncAction::CheckUpdates(_state)"),
+            AsyncAction::LoadInitial((path, is_default)) => write!(
+                f,
+                "AsyncAction::LoadInitial(({:?}, {:?}))",
+                path, is_default
+            ),
+            AsyncAction::Log(_) => write!(f, "AsyncAction::Log(_)"),
+        }
+    }
+}
+
 pub(crate) struct Delegate {
     sender: UnboundedSender<AsyncAction>,
 }

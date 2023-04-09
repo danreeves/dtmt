@@ -212,15 +212,24 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
     let mut bundles = Vec::new();
 
     {
+        tracing::trace!("Building mod data script");
+
         let span = tracing::debug_span!("Building mod data script");
         let _enter = span.enter();
 
         let lua = build_mod_data_lua(state.clone());
+
+        tracing::trace!("Compiling mod data script");
+
         let file =
             lua::compile(MOD_DATA_SCRIPT, &lua).wrap_err("Failed to compile mod data Lua file")?;
 
+        tracing::trace!("Compile mod data script");
+
         mod_bundle.add_file(file);
     }
+
+    tracing::trace!("Preparing tasks to deploy bundle files");
 
     for mod_info in state.mods.iter().filter(|m| m.id != "dml" && m.enabled) {
         let span = tracing::trace_span!("building mod packages", name = mod_info.name);
@@ -231,6 +240,12 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
             let span = tracing::trace_span!("building package", name = pkg_info.name);
             let _enter = span.enter();
 
+            tracing::trace!(
+                "Building package {} for mod {}",
+                pkg_info.name,
+                mod_info.name
+            );
+
             let pkg = make_package(pkg_info).wrap_err("Failed to make package")?;
             let mut variant = BundleFileVariant::new();
             let bin = pkg
@@ -239,6 +254,12 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
             variant.set_data(bin);
             let mut file = BundleFile::new(pkg_info.name.clone(), BundleFileType::Package);
             file.add_variant(variant);
+
+            tracing::trace!(
+                "Compiled package {} for mod {}",
+                pkg_info.name,
+                mod_info.name
+            );
 
             mod_bundle.add_file(file);
 
