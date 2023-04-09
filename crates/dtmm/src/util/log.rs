@@ -64,12 +64,7 @@ pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>, level: Option<Log
         EnvFilter::new("error,dtmm=info")
     };
 
-    let stdout_layer = if cfg!(debug_assertions) {
-        let layer = fmt::layer().pretty();
-        Some(layer)
-    } else {
-        None
-    };
+    let stdout_layer = fmt::layer().pretty();
 
     let channel_layer = fmt::layer()
         .event_format(dtmt_shared::Formatter)

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::{command, value_parser, Arg};
-use color_eyre::eyre;
+use color_eyre::eyre::{self, Context};
 use color_eyre::{Report, Result};
 use druid::AppLauncher;
 use tokio::sync::RwLock;
@@ -83,16 +83,20 @@ fn main() -> Result<()> {
 
     let event_sink = launcher.get_external_handle();
 
-    std::thread::spawn(move || {
-        let event_sink = Arc::new(RwLock::new(event_sink));
-        let action_rx = Arc::new(RwLock::new(action_rx));
-        let log_rx = Arc::new(RwLock::new(log_rx));
-        loop {
-            if let Err(err) = work_thread(event_sink.clone(), action_rx.clone(), log_rx.clone()) {
-                tracing::error!("Work thread failed, restarting: {:?}", err);
+    std::thread::Builder::new()
+        .name("work-thread".into())
+        .spawn(move || {
+            let event_sink = Arc::new(RwLock::new(event_sink));
+            let action_rx = Arc::new(RwLock::new(action_rx));
+            let log_rx = Arc::new(RwLock::new(log_rx));
+            loop {
+                if let Err(err) = work_thread(event_sink.clone(), action_rx.clone(), log_rx.clone())
+                {
+                    tracing::error!("Work thread failed, restarting: {:?}", err);
+                }
             }
-        }
-    });
+        })
+        .wrap_err("Work thread panicked")?;
 
     launcher.launch(State::new()).map_err(Report::new)
 }

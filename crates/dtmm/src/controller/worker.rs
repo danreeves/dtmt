@@ -36,6 +36,8 @@ async fn handle_action(
     action_queue: Arc<RwLock<UnboundedReceiver<AsyncAction>>>,
 ) {
     while let Some(action) = action_queue.write().await.recv().await {
+        tracing::debug!(?action);
+
         let event_sink = event_sink.clone();
         match action {
             AsyncAction::DeployMods(state) => tokio::spawn(async move {

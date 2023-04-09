@@ -1,10 +1,10 @@
 ci-build: ci-build-msvc ci-build-linux
 
 ci-build-msvc:
-    docker run --rm -ti -v ./:/src/dtmt dtmt-ci-base-msvc cargo --color always build --release --target x86_64-pc-windows-msvc --locked -Zbuild-std
+    docker run --rm -ti --user $(id -u) -v ./:/src/dtmt dtmt-ci-base-msvc cargo --color always build --release --target x86_64-pc-windows-msvc --locked -Zbuild-std
 
 ci-build-linux:
-    docker run --rm -ti -v ./:/src/dtmt dtmt-ci-base-linux cargo --color always build --profile release-lto --locked
+    docker run --rm -ti --user $(id -u) -v ./:/src/dtmt dtmt-ci-base-linux cargo --color always build --profile release-lto --locked
 
 build-image: build-image-msvc build-image-linux
 
