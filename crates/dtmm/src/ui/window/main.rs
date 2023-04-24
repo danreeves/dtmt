@@ -425,12 +425,37 @@ fn build_view_settings() -> impl Widget<State> {
         .with_flex_child(TextBox::new().expand_width().lens(State::nexus_api_key), 1.)
         .expand_width();
 
+    let io_setting = Flex::row()
+        .must_fill_main_axis(true)
+        .main_axis_alignment(MainAxisAlignment::Start)
+        .with_child(Label::new("Enable unsafe I/O:"))
+        .with_default_spacer()
+        .with_child(Checkbox::from_label(Label::dynamic(
+            |enabled: &bool, _: &Env| {
+                if *enabled {
+                    "Enabled".into()
+                } else {
+                    "Disabled".into()
+                }
+            },
+        )))
+        .lens(State::is_io_enabled)
+        .tooltip(|_: &State, _: &Env| {
+            "Enabling this gives ANY mod full access to your files \
+                and the ability to load arbitrary software libraries.\n\
+                Only enable this if it is crucial for a mod's functionality, \
+                and you are sure none of the ones you have installed are malicious."
+        })
+        .expand_width();
+
     let content = Flex::column()
         .must_fill_main_axis(true)
         .cross_axis_alignment(CrossAxisAlignment::Start)
         .with_child(data_dir_setting)
         .with_default_spacer()
         .with_child(game_dir_setting)
+        .with_default_spacer()
+        .with_child(io_setting)
         .with_default_spacer()
         .with_child(nexus_apy_key_setting);
 
