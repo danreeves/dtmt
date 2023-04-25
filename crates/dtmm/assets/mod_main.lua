@@ -107,19 +107,35 @@ log("mod_main", "Initializing mods...")
 
 local require_store = {}
 
+-- This token is treated as a string template and filled by DTMM during deployment.
+-- This allows hiding unsafe I/O functions behind a setting.
+-- It's also a valid table definition, thereby degrading gracefully when not replaced.
+local is_io_enabled = {{is_io_enabled}} -- luacheck: ignore 113
+local lua_libs = {
+    debug = debug,
+    os = {
+        date = os.date,
+        time = os.time,
+        clock = os.clock,
+        getenv = os.getenv,
+        difftime = os.difftime,
+    },
+    load = load,
+    loadfile = loadfile,
+    loadstring = loadstring,
+}
+
+if is_io_enabled then
+    lua_libs.io = io
+    lua_libs.os = os
+    lua_libs.ffi = ffi
+end
+
 Mods = {
     -- Keep a backup of certain system libraries before
     -- Fatshark's code scrubs them.
     -- The loader can then decide to pass them on to mods, or ignore them
-    lua = setmetatable({}, {
-        io = io,
-        debug = debug,
-        ffi = ffi,
-        os = os,
-        load = load,
-        loadfile = loadfile,
-        loadstring = loadstring,
-    }),
+    lua = setmetatable({}, { __index = lua_libs }),
     require_store = require_store
 }
 

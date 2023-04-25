@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::{self, Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -15,6 +16,7 @@ use sdk::{
     Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
 use serde::{Deserialize, Serialize};
+use string_template::Template;
 use time::OffsetDateTime;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -452,7 +454,13 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let span = tracing::debug_span!("Importing mod main script");
         let _enter = span.enter();
 
-        let lua = include_str!("../../assets/mod_main.lua");
+        let is_io_enabled = format!("{}", state.is_io_enabled);
+        let mut data = HashMap::new();
+        data.insert("is_io_enabled", is_io_enabled.as_str());
+
+        let tmpl = include_str!("../../assets/mod_main.lua");
+        let lua = Template::new(tmpl).render(&data);
+        tracing::trace!("Main script rendered:\n===========\n{}\n=============", lua);
         let file =
             lua::compile(MOD_BOOT_SCRIPT, lua).wrap_err("Failed to compile mod main Lua file")?;
 

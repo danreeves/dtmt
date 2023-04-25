@@ -1,4 +1,5 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 use color_eyre::Report;
 use druid::im::Vector;
@@ -8,8 +9,9 @@ use druid::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::ui::window;
 use crate::util::ansi::ansi_to_rich_text;
-use crate::{ui::window, util::config::Config};
+use crate::util::config::Config;
 
 use super::{ModInfo, State};
 
@@ -68,6 +70,7 @@ pub(crate) struct ActionState {
     pub config_path: Arc<PathBuf>,
     pub ctx: Arc<sdk::Context>,
     pub nexus_api_key: Arc<String>,
+    pub is_io_enabled: bool,
 }
 
 impl From<State> for ActionState {
@@ -80,6 +83,7 @@ impl From<State> for ActionState {
             config_path: state.config_path,
             ctx: state.ctx,
             nexus_api_key: state.nexus_api_key,
+            is_io_enabled: state.is_io_enabled,
         }
     }
 }
@@ -407,6 +411,7 @@ impl AppDelegate<State> for Delegate {
                     state.config_path = Arc::new(config.path);
                     state.data_dir = Arc::new(config.data_dir);
                     state.game_dir = Arc::new(config.game_dir.unwrap_or_default());
+                    state.is_io_enabled = config.unsafe_io;
                 }
 
                 state.loading = false;
