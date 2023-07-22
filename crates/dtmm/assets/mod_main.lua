@@ -128,7 +128,7 @@ local lua_libs = {
 if is_io_enabled then
     lua_libs.io = io
     lua_libs.os = os
-    lua_libs.ffi = ffi
+    lua_libs.ffi = require("ffi")
 end
 
 Mods = {
