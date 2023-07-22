@@ -18,7 +18,7 @@ local function patch_mod_loading_state()
 
     -- A necessary override.
     -- The original does not proxy `dt` to `_state_update`, but we need that.
-    StateBootSubStateBase.update = function (self, dt)
+    StateBootSubStateBase.update = function(self, dt)
         local done, error = self:_state_update(dt)
         local params = self._params
 
@@ -39,7 +39,7 @@ local function patch_mod_loading_state()
 
     local StateBootLoadMods = class("StateBootLoadMods", "StateBootSubStateBase")
 
-    StateBootLoadMods.on_enter = function (self, parent, params)
+    StateBootLoadMods.on_enter = function(self, parent, params)
         log("StateBootLoadMods", "Entered")
         StateBootLoadMods.super.on_enter(self, parent, params)
 
@@ -54,18 +54,17 @@ local function patch_mod_loading_state()
         }
     end
 
-    StateBootLoadMods._state_update = function (self, dt)
+    StateBootLoadMods._state_update = function(self, dt)
         local state = self._state
         local package_manager = self._package_manager
 
         if state == "load_package" and package_manager:update() then
             log("StateBootLoadMods", "Packages loaded, loading mods")
             self._state = "load_mods"
-            local mod_loader = require("scripts/mods/dml/init")
-            self._mod_loader = mod_loader
+            local ModLoader = require("scripts/mods/dml/init")
 
             local mod_data = require("scripts/mods/mod_data")
-            mod_loader:init(mod_data, self._parent:gui())
+            self._mod_loader = ModLoader:new(mod_data, self._parent:gui())
         elseif state == "load_mods" and self._mod_loader:update(dt) then
             log("StateBootLoadMods", "Mods loaded, exiting")
             return true, false
@@ -110,7 +109,7 @@ local require_store = {}
 -- This token is treated as a string template and filled by DTMM during deployment.
 -- This allows hiding unsafe I/O functions behind a setting.
 -- It's also a valid table definition, thereby degrading gracefully when not replaced.
-local is_io_enabled = {{is_io_enabled}} -- luacheck: ignore 113
+local is_io_enabled = { { is_io_enabled } } -- luacheck: ignore 113
 local lua_libs = {
     debug = debug,
     os = {
