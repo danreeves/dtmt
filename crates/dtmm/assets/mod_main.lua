@@ -64,7 +64,10 @@ local function patch_mod_loading_state()
             local ModLoader = require("scripts/mods/dml/init")
 
             local mod_data = require("scripts/mods/mod_data")
-            self._mod_loader = ModLoader:new(mod_data, self._parent:gui())
+            local mod_loader = ModLoader:new(mod_data, self._parent:gui())
+
+            self._mod_loader = mod_loader
+            Managers.mod = mod_loader
         elseif state == "load_mods" and self._mod_loader:update(dt) then
             log("StateBootLoadMods", "Mods loaded, exiting")
             return true, false
