@@ -43,6 +43,7 @@ impl<T: FromBinary> FromBinary for Vec<T> {
 }
 
 pub mod sync {
+    use std::ffi::CStr;
     use std::io::{self, Read, Seek, SeekFrom};
 
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -165,25 +166,13 @@ pub mod sync {
         }
 
         fn read_string_len(&mut self, len: usize) -> Result<String> {
-            let mut buf = vec![0; len];
-            let res = self
-                .read_exact(&mut buf)
-                .map_err(Report::new)
-                .and_then(|_| {
-                    String::from_utf8(buf).map_err(|err| {
-                        let ascii = String::from_utf8_lossy(err.as_bytes()).to_string();
-                        let bytes = format!("{:?}", err.as_bytes());
-                        Report::new(err)
-                            .with_section(move || bytes.header("Bytes:"))
-                            .with_section(move || ascii.header("ASCII:"))
-                    })
-                });
+            let pos = self.stream_position();
 
+            let res = read_string_len(self, len);
             if res.is_ok() {
                 return res;
             }
 
-            let pos = self.stream_position();
             if pos.is_ok() {
                 res.with_section(|| {
                     format!("{pos:#X} ({pos})", pos = pos.unwrap()).header("Position: ")
@@ -242,5 +231,23 @@ pub mod sync {
         };
 
         Err(err).with_section(|| format!("{pos:#X} ({pos})").header("Position: "))
+    }
+
+    fn read_string_len(mut r: impl Read, len: usize) -> Result<String> {
+        let mut buf = vec![0; len];
+        r.read_exact(&mut buf)
+            .wrap_err_with(|| format!("Failed to read {} bytes", len))?;
+
+        let res = match CStr::from_bytes_until_nul(&buf) {
+            Ok(s) => {
+                let s = s.to_str()?;
+                Ok(s.to_string())
+            }
+            Err(_) => String::from_utf8(buf.clone()).map_err(Report::new),
+        };
+
+        res.wrap_err("Invalid binary for UTF8 string")
+            .with_section(|| format!("{}", String::from_utf8_lossy(&buf)).header("ASCI:"))
+            .with_section(|| format!("{:x?}", buf).header("Bytes:"))
     }
 }
