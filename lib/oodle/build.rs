@@ -4,24 +4,21 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    // Tell cargo to look for shared libraries in the specified directory
-    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-        println!("cargo:rustc-link-search={}", manifest_dir);
-        dbg!(&manifest_dir);
-    }
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("No CARGO_MANIFEST_DIR");
+    println!("cargo:rustc-link-search=native={}", &manifest_dir);
+    dbg!(&manifest_dir);
 
-    let lib_name = if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
-        if cfg!(debug_assertions) {
+    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
+        let lib_name = if cfg!(debug_assertions) {
             "oo2core_win64_debug"
         } else {
             "oo2core_win64"
-        }
+        };
+        println!("cargo:rustc-link-lib=static={}", lib_name);
     } else {
-        "oo2corelinux64"
-    };
-
-    println!("cargo:rustc-link-lib={}", lib_name);
-    dbg!(&lib_name);
+        println!("cargo:rustc-link-lib=static=oo2corelinux64");
+        println!("cargo:rustc-link-lib=stdc++")
+    }
 
     println!("cargo:rerun-if-changed=oodle2.h");
 
