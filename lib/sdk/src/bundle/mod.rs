@@ -7,14 +7,13 @@ use color_eyre::{Help, Report, SectionExt};
 use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
 
 use crate::binary::sync::*;
-use crate::bundle::file::Properties;
 use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 pub(crate) mod database;
 pub(crate) mod file;
 pub(crate) mod filetype;
 
-pub use file::{BundleFile, BundleFileVariant};
+pub use file::{BundleFile, BundleFileVariant, Properties};
 pub use filetype::BundleFileType;
 
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
