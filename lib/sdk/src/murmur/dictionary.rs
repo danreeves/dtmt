@@ -147,14 +147,14 @@ impl Dictionary {
         Ok(())
     }
 
-    pub fn add(&mut self, value: String, group: HashGroup) {
-        let long = Murmur64::from(murmurhash64::hash(value.as_bytes(), SEED as u64));
-        let short = Murmur32::from(murmurhash64::hash32(value.as_bytes(), SEED));
+    pub fn add(&mut self, value: impl AsRef<[u8]>, group: HashGroup) {
+        let long = Murmur64::from(murmurhash64::hash(value.as_ref(), SEED as u64));
+        let short = Murmur32::from(murmurhash64::hash32(value.as_ref(), SEED));
 
         let entry = Entry {
             long,
             short,
-            value,
+            value: String::from_utf8_lossy(value.as_ref()).to_string(),
             group,
         };
 
