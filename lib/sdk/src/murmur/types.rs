@@ -1,3 +1,7 @@
+use std::path::Path;
+
+use path_slash::PathExt;
+
 use self::util::{parse_hex32, parse_hex64};
 
 use super::*;
@@ -263,11 +267,23 @@ impl IdString64 {
             IdString64::String(_) => false,
         }
     }
+
+    // Would love to have this as a proper `impl From`, but
+    // rustc will complain that it overlaps with the `impl From<Into<String>>`.
+    pub fn from_path(p: impl AsRef<Path>) -> Self {
+        Self::String(p.as_ref().to_slash_lossy().to_string())
+    }
 }
 
-impl<S: Into<String>> From<S> for IdString64 {
-    fn from(value: S) -> Self {
-        Self::String(value.into())
+impl From<String> for IdString64 {
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
+}
+
+impl From<u64> for IdString64 {
+    fn from(value: u64) -> Self {
+        Self::Hash(value.into())
     }
 }
 
@@ -280,6 +296,12 @@ impl From<Murmur64> for IdString64 {
 impl From<IdString64> for Murmur64 {
     fn from(value: IdString64) -> Self {
         value.to_murmur64()
+    }
+}
+
+impl Default for IdString64 {
+    fn default() -> Self {
+        Self::Hash(0.into())
     }
 }
 

@@ -120,7 +120,7 @@ pub struct BundleFile {
 }
 
 impl BundleFile {
-    pub fn new(name: String, file_type: BundleFileType) -> Self {
+    pub fn new(name: impl Into<IdString64>, file_type: BundleFileType) -> Self {
         Self {
             file_type,
             name: name.into(),
@@ -252,20 +252,15 @@ impl BundleFile {
         Ok(w.into_inner())
     }
 
-    #[tracing::instrument(name = "File::from_sjson", skip(sjson))]
-    pub async fn from_sjson<P, S>(
-        name: String,
+    #[tracing::instrument("File::from_sjson", skip(sjson, name), fields(name = %name.display()))]
+    pub async fn from_sjson(
+        name: IdString64,
         file_type: BundleFileType,
-        sjson: S,
-        root: P,
-    ) -> Result<Self>
-    where
-        P: AsRef<Path> + std::fmt::Debug,
-        S: AsRef<str>,
-    {
+        sjson: impl AsRef<str>,
+        root: impl AsRef<Path> + std::fmt::Debug,
+    ) -> Result<Self> {
         match file_type {
-            BundleFileType::Lua => lua::compile(name.clone(), sjson)
-                .wrap_err_with(|| format!("Failed to compile Lua file '{}'", name)),
+            BundleFileType::Lua => lua::compile(name, sjson).wrap_err("Failed to compile Lua file"),
             BundleFileType::Unknown(_) => {
                 eyre::bail!("Unknown file type. Cannot compile from SJSON");
             }
@@ -304,10 +299,7 @@ impl BundleFile {
         s
     }
 
-    pub fn matches_name<S>(&self, name: S) -> bool
-    where
-        S: Into<IdString64>,
-    {
+    pub fn matches_name(&self, name: impl Into<IdString64>) -> bool {
         let name = name.into();
         if self.name == name {
             return true;

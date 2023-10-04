@@ -77,17 +77,14 @@ pub(crate) fn command_definition() -> Command {
         )
 }
 
-async fn compile<P1, P2, P3>(
+#[tracing::instrument]
+async fn compile(
     cfg: &ModConfig,
-    out_path: P1,
-    archive_path: P2,
-    game_dir: Arc<Option<P3>>,
-) -> Result<()>
-where
-    P1: AsRef<Path> + std::marker::Copy,
-    P2: AsRef<Path>,
-    P3: AsRef<Path>,
-{
+    out_path: impl AsRef<Path> + std::fmt::Debug,
+    archive_path: impl AsRef<Path> + std::fmt::Debug,
+    game_dir: Arc<Option<impl AsRef<Path> + std::fmt::Debug>>,
+) -> Result<()> {
+    let out_path = out_path.as_ref();
     build(cfg, out_path, game_dir)
         .await
         .wrap_err("Failed to build bundles")?;
