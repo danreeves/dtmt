@@ -96,12 +96,15 @@ where
 
     let content = output.stdout;
 
-    if let Err(err) = fs::remove_file(&temp)
-        .await
-        .wrap_err("Failed to remove temporary file")
-    {
-        tracing::warn!("{:?}", err);
-    }
+    // No need to wait for this, so we move it to a separate task.
+    tokio::spawn(async move {
+        if let Err(err) = fs::remove_file(&temp)
+            .await
+            .wrap_err_with(|| format!("Failed to remove temporary file '{}'", temp.display()))
+        {
+            tracing::warn!("{:?}", err);
+        }
+    });
 
     Ok(vec![UserFile::with_name(content, name)])
 }
