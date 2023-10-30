@@ -81,7 +81,12 @@ where
         .map(|c| c.into())
         .unwrap_or_else(|| Command::new("ljd"));
 
-    cmd.arg("-f").arg(&temp);
+    cmd.arg("--catch_asserts")
+        .args(["--function_def_sugar", "false"])
+        .args(["--function_def_self_arg", "true"])
+        .args(["--unsafe", "false"])
+        .arg("-f")
+        .arg(&temp);
 
     tracing::debug!("Executing command: '{:?}'", cmd);
 

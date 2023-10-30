@@ -133,7 +133,7 @@ async fn parse_command_line_template(tmpl: &String) -> Result<CmdLine> {
         if path.file_name() == Some(OsStr::new("main.py")) {
             let arg = path.display().to_string();
             let mut cmd = CmdLine::new("python");
-            cmd.arg("-c").arg(shlex::quote(&arg).to_string());
+            cmd.arg(shlex::quote(&arg).to_string());
             cmd
         } else {
             CmdLine::new(path)
