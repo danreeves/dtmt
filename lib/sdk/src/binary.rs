@@ -133,6 +133,23 @@ pub mod sync {
         make_skip!(skip_u8, read_u8, u8);
         make_skip!(skip_u32, read_u32, u32);
 
+        // Implementation based on https://en.wikipedia.com/wiki/LEB128
+        fn read_uleb128(&mut self) -> io::Result<u64> {
+            let mut result: u64 = 0;
+            let mut shift: u64 = 0;
+
+            loop {
+                let byte = ReadExt::read_u8(self)? as u64;
+                result |= (byte & 0x7f) << shift;
+
+                if byte < 0x80 {
+                    return Ok(result);
+                }
+
+                shift += 7;
+            }
+        }
+
         fn skip_padding(&mut self) -> io::Result<()> {
             let pos = self.stream_position()?;
             let padding_size = 16 - (pos % 16);

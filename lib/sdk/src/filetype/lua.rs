@@ -1,24 +1,109 @@
+use std::env;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::io::Cursor;
+use std::io::Read;
 use std::io::Write;
+use std::process::Command;
 
 use color_eyre::eyre;
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use luajit2_sys as lua;
+use tokio::fs;
 
+use crate::binary::sync::ReadExt;
 use crate::binary::sync::WriteExt;
 use crate::bundle::file::{BundleFileVariant, UserFile};
 use crate::{BundleFile, BundleFileType};
 
+const BITSQUID_LUAJIT_HEADER: u32 = 0x8253461B;
+
 #[tracing::instrument(skip_all, fields(buf_len = data.as_ref().len()))]
-pub(crate) async fn decompile<T>(_ctx: &crate::Context, data: T) -> Result<Vec<UserFile>>
+pub(crate) async fn decompile<T>(ctx: &crate::Context, data: T) -> Result<Vec<UserFile>>
 where
     T: AsRef<[u8]>,
 {
-    let mut _r = Cursor::new(data.as_ref());
-    todo!();
+    let data = data.as_ref();
+    let length = {
+        let mut r = Cursor::new(data);
+        r.read_u32()? as usize
+    };
+
+    // This skips the unknown bytes 5..12
+    let content = &data[12..];
+    eyre::ensure!(
+        content.len() == length,
+        "Content length doesn't match. Expected {}, got {}",
+        length,
+        content.len()
+    );
+
+    let name = {
+        let mut r = Cursor::new(content);
+
+        eyre::ensure!(
+            r.read_u32()? == BITSQUID_LUAJIT_HEADER,
+            "Invalid magic bytes"
+        );
+
+        // Skip additional header bytes
+        let _ = r.read_uleb128()?;
+        let length = r.read_uleb128()? as usize;
+
+        let mut buf = vec![0u8; length];
+        r.read_exact(&mut buf)?;
+        let mut s = String::from_utf8(buf)
+            .wrap_err_with(|| format!("Invalid byte sequence for LuaJIT bytecode name"))?;
+        // Remove the leading `@`
+        s.remove(0);
+        s
+    };
+
+    let mut temp = env::temp_dir();
+    // Using the actual file name and keeping it in case of an error makes debugging easier.
+    // But to avoid creating a bunch of folders, we flatten the name.
+    temp.push(name.replace('/', "_"));
+    temp.set_extension("luao");
+
+    tracing::debug!(
+        "Writing temporary LuaJIT bytecode file to '{}'",
+        temp.display()
+    );
+
+    fs::write(&temp, content)
+        .await
+        .wrap_err_with(|| format!("Failed to write LuaJIT bytecode to '{}'", temp.display()))?;
+
+    let mut cmd = ctx
+        .ljd
+        .as_ref()
+        .map(|c| c.into())
+        .unwrap_or_else(|| Command::new("ljd"));
+
+    cmd.arg("-f").arg(&temp);
+
+    tracing::debug!("Executing command: '{:?}'", cmd);
+
+    let output = cmd.output().wrap_err("Failed to run ljd")?;
+
+    if !output.stderr.is_empty() {
+        eyre::bail!(
+            "Decompilation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let content = output.stdout;
+
+    if let Err(err) = fs::remove_file(&temp)
+        .await
+        .wrap_err("Failed to remove temporary file")
+    {
+        tracing::warn!("{:?}", err);
+    }
+
+    Ok(vec![UserFile::with_name(content, name)])
 }
 
 #[tracing::instrument(skip_all)]

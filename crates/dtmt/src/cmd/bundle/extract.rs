@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -7,7 +8,7 @@ use color_eyre::{Help, Report};
 use futures::future::try_join_all;
 use futures::StreamExt;
 use glob::Pattern;
-use sdk::{Bundle, BundleFile};
+use sdk::{Bundle, BundleFile, CmdLine};
 use tokio::fs;
 
 use crate::cmd::util::resolve_bundle_paths;
@@ -89,30 +90,78 @@ pub(crate) fn command_definition() -> Command {
             Arg::new("ljd")
                 .long("ljd")
                 .help(
-                    "Path to a custom ljd executable. If not set, \
-                        `ljd` will be called from PATH.",
+                    "A custom command line to execute ljd with. It is treated as follows:\n\
+                        * if the argument is a valid path to an existing file:\n\
+                        ** if the file is called 'main.py', it is assumed that 'python.exe' \
+                        exists in PATH to execute this with.\n\
+                        ** otherwise it is treated as an executable\n\
+                        * if it's a single word, it's treated as an executable in PATH\n\
+                        * otherwise it is treated as a command line template.\n\
+                        In any case, the application being run must accept ljd's flags '-c' and '-f'.",
                 )
                 .default_value("ljd"),
         )
-        .arg(
-            Arg::new("revorb")
-                .long("revorb")
-                .help(
-                    "Path to a custom revorb executable. If not set, \
-                        `revorb` will be called from PATH.",
-                )
-                .default_value("revorb"),
-        )
-        .arg(
-            Arg::new("ww2ogg")
-                .long("ww2ogg")
-                .help(
-                    "Path to a custom ww2ogg executable. If not set, \
-                        `ww2ogg` will be called from PATH.\nSee the documentation for how \
-                        to set up the script for this.",
-                )
-                .default_value("ww2ogg"),
-        )
+    // .arg(
+    //     Arg::new("revorb")
+    //         .long("revorb")
+    //         .help(
+    //             "Path to a custom revorb executable. If not set, \
+    //                 `revorb` will be called from PATH.",
+    //         )
+    //         .default_value("revorb"),
+    // )
+    // .arg(
+    //     Arg::new("ww2ogg")
+    //         .long("ww2ogg")
+    //         .help(
+    //             "Path to a custom ww2ogg executable. If not set, \
+    //                 `ww2ogg` will be called from PATH.\nSee the documentation for how \
+    //                 to set up the script for this.",
+    //         )
+    //         .default_value("ww2ogg"),
+    // )
+}
+
+#[tracing::instrument]
+async fn parse_command_line_template(tmpl: &String) -> Result<CmdLine> {
+    if tmpl.trim().is_empty() {
+        eyre::bail!("Command line template must not be empty");
+    }
+
+    let mut cmd = if matches!(fs::try_exists(tmpl).await, Ok(true)) {
+        let path = PathBuf::from(tmpl);
+        if path.file_name() == Some(OsStr::new("main.py")) {
+            let arg = path.display().to_string();
+            let mut cmd = CmdLine::new("python");
+            cmd.arg("-c").arg(shlex::quote(&arg).to_string());
+            cmd
+        } else {
+            CmdLine::new(path)
+        }
+    } else {
+        let Some(args) = shlex::split(tmpl) else {
+            eyre::bail!("Invalid shell syntax");
+        };
+
+        // We already checked that the template is not empty
+        let mut cmd = CmdLine::new(args[0].clone());
+        let mut it = args.iter();
+        // Skip the first one, that's the command name
+        it.next();
+
+        for arg in it {
+            cmd.arg(arg);
+        }
+
+        cmd
+    };
+
+    // Add ljd flags
+    cmd.arg("-c");
+
+    tracing::debug!("Parsed command line template: {:?}", cmd);
+
+    Ok(cmd)
 }
 
 #[tracing::instrument(skip_all)]
@@ -121,16 +170,19 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
         let ljd_bin = matches
             .get_one::<String>("ljd")
             .expect("no default value for 'ljd' parameter");
-        let revorb_bin = matches
-            .get_one::<String>("revorb")
-            .expect("no default value for 'revorb' parameter");
-        let ww2ogg_bin = matches
-            .get_one::<String>("ww2ogg")
-            .expect("no default value for 'ww2ogg' parameter");
+        // let revorb_bin = matches
+        //     .get_one::<String>("revorb")
+        //     .expect("no default value for 'revorb' parameter");
+        // let ww2ogg_bin = matches
+        //     .get_one::<String>("ww2ogg")
+        //     .expect("no default value for 'ww2ogg' parameter");
 
-        ctx.ljd = Some(ljd_bin.clone());
-        ctx.revorb = Some(revorb_bin.clone());
-        ctx.ww2ogg = Some(ww2ogg_bin.clone());
+        ctx.ljd = parse_command_line_template(ljd_bin)
+            .await
+            .map(Option::Some)
+            .wrap_err("Failed to parse command line template for flag 'ljd'")?;
+        // ctx.revorb = Some(revorb_bin.clone());
+        // ctx.ww2ogg = Some(ww2ogg_bin.clone());
     }
 
     let includes = match matches.get_many::<Pattern>("include") {

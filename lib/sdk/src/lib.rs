@@ -8,4 +8,4 @@ pub use binary::{FromBinary, ToBinary};
 pub use bundle::database::BundleDatabase;
 pub use bundle::decompress;
 pub use bundle::{Bundle, BundleFile, BundleFileType, BundleFileVariant};
-pub use context::Context;
+pub use context::{CmdLine, Context};
