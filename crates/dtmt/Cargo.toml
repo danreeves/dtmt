@@ -33,6 +33,7 @@ path-slash = "0.2.1"
 async-recursion = "1.0.2"
 notify = "5.1.0"
 luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
+shlex = "1.2.0"
 
 [dev-dependencies]
 tempfile = "3.3.0"
