@@ -28,6 +28,6 @@ RUN cargo build --release --locked
 RUN rm -r crates lib
 
 COPY . /src/dtmt
-COPY --from=dtmt-ci-base-linux /src/*.lib /src/dtmt/lib/oodle/
+COPY --from=dtmt-ci-base-linux /src/*.lib /src/*.so /src/dtmt/lib/oodle/
 
 RUN cargo build --release --locked
