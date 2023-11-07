@@ -8,6 +8,7 @@ RUN set -e; \
     cargo new --lib lib/nexusmods; \
     cargo new --lib lib/sdk; \
     cargo new --lib lib/serde_sjson; \
+    cargo new --lib lib/ansi-parser
 
 COPY Cargo.toml Cargo.lock /src/dtmt/
 COPY crates/dtmt/Cargo.toml /src/dtmt/crates/dtmt/
@@ -16,6 +17,7 @@ COPY lib/dtmt-shared/Cargo.toml /src/dtmt/lib/dtmt-shared/
 COPY lib/nexusmods/Cargo.toml /src/dtmt/lib/nexusmods/
 COPY lib/sdk/Cargo.toml /src/dtmt/lib/sdk/
 COPY lib/serde_sjson/Cargo.toml /src/dtmt/lib/serde_sjson/
+COPY lib/ansi-parser/Cargo.toml /src/dtmt/lib/ansi-parser/
 
 # Crates with build scripts cannot be split that way, but they shouldn't change too often
 COPY lib/luajit2-sys /src/dtmt/lib/luajit2-sys

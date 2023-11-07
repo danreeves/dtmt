@@ -9,4 +9,5 @@
 	url = https://github.com/sclu1034/color-eyre.git
 [submodule "lib/ansi-parser"]
 	path = lib/ansi-parser
-	url = git@gitlab.com:lschwiderski/ansi-parser.git
+	url = https://gitlab.com/lschwiderski/ansi-parser.git
+    branch = "issue/outdated-nom"
