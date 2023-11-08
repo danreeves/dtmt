@@ -350,6 +350,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
             localization: mod_file.localization,
         },
         depends: vec![ModDependency::ID(String::from("DMF"))],
+        bundle: true,
     };
 
     tracing::debug!(?dtmt_cfg);

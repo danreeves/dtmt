@@ -30,6 +30,17 @@ pub enum ModDependency {
     Config { id: String, order: ModOrder },
 }
 
+// A bit dumb, but serde doesn't support literal values with the
+// `default` attribute, only paths.
+fn default_true() -> bool {
+    true
+}
+
+// Similarly dumb, as the `skip_serializing_if` attribute needs a function
+fn is_true(val: &bool) -> bool {
+    *val
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModConfig {
     #[serde(skip)]
@@ -51,6 +62,8 @@ pub struct ModConfig {
     pub resources: ModConfigResources,
     #[serde(default)]
     pub depends: Vec<ModDependency>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub bundle: bool,
 }
 
 pub const STEAMAPP_ID: u32 = 1361210;
