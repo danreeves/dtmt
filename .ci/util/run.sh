@@ -47,4 +47,5 @@ if sh "$script"; then
     notify 'success' "$context" "$desc"
 else
     notify 'failure' "$context" "$desc"
+    exit 1
 fi

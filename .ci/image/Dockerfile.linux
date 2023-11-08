@@ -21,4 +21,4 @@ RUN set -eux; \
 
 WORKDIR /src/dtmt
 
-COPY liboo2corelinux64.so /src
+COPY *.so *.a /src/

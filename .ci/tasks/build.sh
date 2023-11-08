@@ -13,7 +13,7 @@ case "$TARGET" in
         fi
         ;;
     linux)
-        cp /src/*.so ./lib/oodle/
+        cp /src/*.a ./lib/oodle/
         cargo build --color always --locked --profile release-lto
 
         if [ -d "$OUTPUT" ]; then

@@ -71,20 +71,15 @@ pub fn collect_game_info() -> Option<GameInfo> {
 
     let found = dir
         .app(&STEAMAPP_ID)
-        .and_then(|app| app.vdf.get("LastUpdated").map(|v| (app.path.clone(), v)));
+        .and_then(|app| app.last_updated.map(|v| (app.path.clone(), v)));
 
     let Some((path, last_updated)) = found else {
         tracing::debug!("Found Steam, but failed to find game installation");
         return None;
     };
 
-    let Some(last_updated) = last_updated
-        .as_value()
-        .and_then(|v| v.to::<i64>())
-        .and_then(|v| OffsetDateTime::from_unix_timestamp(v).ok()) else {
-            tracing::error!("Found Steam game, but couldn't read 'LastUpdate'.");
-            return None;
-    };
-
-    Some(GameInfo { path, last_updated })
+    Some(GameInfo {
+        path,
+        last_updated: last_updated.into(),
+    })
 }

@@ -1,12 +1,13 @@
 [submodule "lib/serde_sjson"]
 	path = lib/serde_sjson
 	url = https://git.sclu1034.dev/lucas/serde_sjson.git
-[submodule "lib/steamlocate-rs"]
-	path = lib/steamlocate-rs
-	url = https://github.com/sclu1034/steamlocate-rs.git
 [submodule "lib/luajit2-sys"]
 	path = lib/luajit2-sys
 	url = https://github.com/sclu1034/luajit2-sys.git
 [submodule "lib/color-eyre"]
 	path = lib/color-eyre
 	url = https://github.com/sclu1034/color-eyre.git
+[submodule "lib/ansi-parser"]
+	path = lib/ansi-parser
+	url = https://gitlab.com/lschwiderski/ansi-parser.git
+    branch = "issue/outdated-nom"
