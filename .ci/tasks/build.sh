@@ -4,7 +4,7 @@ set -eux
 
 case "$TARGET" in
     msvc)
-        cp /src/*.lib /src/*.so ./lib/oodle/
+        cp /src/*.lib ./lib/oodle/
         cargo build --color always --locked --release --target x86_64-pc-windows-msvc -Zbuild-std
 
         if [ -d "$OUTPUT" ]; then
@@ -13,7 +13,7 @@ case "$TARGET" in
         fi
         ;;
     linux)
-        cp /src/*.so ./lib/oodle/
+        cp /src/*.a ./lib/oodle/
         cargo build --color always --locked --profile release-lto
 
         if [ -d "$OUTPUT" ]; then

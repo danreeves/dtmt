@@ -86,4 +86,4 @@ RUN wine wineboot --init
 
 WORKDIR /src/dtmt
 
-COPY oo2core_win32.lib oo2core_win64.lib /src
+COPY *.lib /src
