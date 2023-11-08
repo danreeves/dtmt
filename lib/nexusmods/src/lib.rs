@@ -215,7 +215,7 @@ impl Api {
         };
 
         let user_id = query.get("user_id").and_then(|id| id.parse().ok());
-        let Some(user_id) = user_id  else {
+        let Some(user_id) = user_id else {
             return Err(Error::InvalidNXM("Missing 'user_id'", nxm));
         };
 

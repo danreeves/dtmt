@@ -583,12 +583,12 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         },
         async {
             let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
-            match read_sjson_file::<_, DeploymentData>(path)
-                .await
-            {
+            match read_sjson_file::<_, DeploymentData>(path).await {
                 Ok(data) => Ok(Some(data)),
                 Err(err) => {
-                    if let Some(err) = err.downcast_ref::<std::io::Error>() && err.kind() == ErrorKind::NotFound {
+                    if let Some(err) = err.downcast_ref::<std::io::Error>()
+                        && err.kind() == ErrorKind::NotFound
+                    {
                         Ok(None)
                     } else {
                         Err(err).wrap_err("Failed to read deployment data")
