@@ -6,9 +6,8 @@ use std::path::PathBuf;
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("No CARGO_MANIFEST_DIR");
     println!("cargo:rustc-link-search=native={}", &manifest_dir);
-    dbg!(&manifest_dir);
 
-    if std::env::var("CARGO_CFG_WINDOWS").is_ok() {
+    if std::env::var("CARGO_CFG_TARGET_FAMILY") == Ok(String::from("windows")) {
         let lib_name = if cfg!(debug_assertions) {
             "oo2core_win64_debug"
         } else {
@@ -17,7 +16,7 @@ fn main() {
         println!("cargo:rustc-link-lib=static={}", lib_name);
     } else {
         println!("cargo:rustc-link-lib=static=oo2corelinux64");
-        println!("cargo:rustc-link-lib=stdc++")
+        println!("cargo:rustc-link-lib=stdc++");
     }
 
     println!("cargo:rerun-if-changed=oodle2.h");
