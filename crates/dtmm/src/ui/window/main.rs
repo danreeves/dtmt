@@ -145,7 +145,7 @@ fn build_mod_list() -> impl Widget<State> {
 
                 let tree = theme::icons::recolor_icon(tree, true, COLOR_YELLOW_LIGHT);
 
-                Svg::new(Arc::new(tree)).fix_height(druid::theme::TEXT_SIZE_NORMAL)
+                Svg::new(tree).fix_height(druid::theme::TEXT_SIZE_NORMAL)
             };
 
             Either::new(

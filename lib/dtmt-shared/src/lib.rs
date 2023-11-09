@@ -63,7 +63,7 @@ pub struct ModConfig {
     #[serde(default)]
     pub depends: Vec<ModDependency>,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
-    pub bundle: bool,
+    pub bundled: bool,
 }
 
 pub const STEAMAPP_ID: u32 = 1361210;

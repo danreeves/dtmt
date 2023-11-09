@@ -31,5 +31,7 @@ lazy_static = "1.4.0"
 colors-transform = "0.2.11"
 usvg = "0.25.0"
 druid-widget-nursery = "0.1"
-ansi-parser = "0.8.0"
+ansi-parser = "0.9.0"
 string_template = "0.2.1"
+luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
+async-recursion = "1.0.5"

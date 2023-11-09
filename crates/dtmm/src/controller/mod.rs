@@ -5,7 +5,9 @@ use serde::Deserialize;
 use tokio::fs;
 
 pub mod app;
+pub mod deploy;
 pub mod game;
+pub mod import;
 pub mod worker;
 
 #[tracing::instrument]

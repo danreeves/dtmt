@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 #![feature(let_chains)]
 #![feature(arc_unwrap_or_clone)]
+#![feature(iterator_try_collect)]
 #![windows_subsystem = "windows"]
 
 use std::path::PathBuf;

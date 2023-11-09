@@ -109,7 +109,7 @@ pub(crate) struct ModInfo {
     #[data(ignore)]
     pub resources: ModResourceInfo,
     pub depends: Vector<ModDependency>,
-    pub bundle: bool,
+    pub bundled: bool,
     #[data(ignore)]
     pub nexus: Option<NexusInfo>,
 }
@@ -130,7 +130,7 @@ impl ModInfo {
             version: cfg.version,
             enabled: false,
             packages,
-            bundle: cfg.bundle,
+            bundled: cfg.bundled,
             image,
             categories: cfg.categories.into_iter().collect(),
             resources: ModResourceInfo {
