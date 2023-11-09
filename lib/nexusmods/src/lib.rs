@@ -154,7 +154,7 @@ impl Api {
             self.mods_download_link(nxm.mod_id, nxm.file_id, nxm.key, nxm.expires)
         )?;
 
-        let Some(download_url) = download_info.get(0).map(|i| i.uri.clone()) else {
+        let Some(download_url) = download_info.first().map(|i| i.uri.clone()) else {
             return Err(Error::InvalidNXM("no download link", url));
         };
 
