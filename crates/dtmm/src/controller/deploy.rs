@@ -223,7 +223,7 @@ async fn copy_recursive(
 
 #[tracing::instrument(skip(state))]
 async fn copy_mod_folders(state: Arc<ActionState>) -> Result<Vec<String>> {
-    let bundle_dir = Arc::new(state.game_dir.join("bundle"));
+    let game_dir = Arc::clone(&state.game_dir);
 
     let mut tasks = Vec::new();
 
@@ -237,11 +237,11 @@ async fn copy_mod_folders(state: Arc<ActionState>) -> Result<Vec<String>> {
 
         let mod_id = mod_info.id.clone();
         let mod_dir = Arc::clone(&state.mod_dir);
-        let bundle_dir = Arc::clone(&bundle_dir);
+        let game_dir = Arc::clone(&game_dir);
 
         let task = async move {
             let from = mod_dir.join(&mod_id);
-            let to = bundle_dir.join("mods").join(&mod_id);
+            let to = game_dir.join("mods").join(&mod_id);
 
             tracing::debug!(from = %from.display(), to = %to.display(), "Copying legacy mod '{}'", mod_id);
             let _ = fs::create_dir_all(&to).await;
