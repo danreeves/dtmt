@@ -8,7 +8,7 @@ use color_eyre::eyre::Context;
 use color_eyre::{eyre, Help, Report, Result};
 use futures::StreamExt;
 use futures::{stream, TryStreamExt};
-use path_slash::PathBufExt;
+use minijinja::Environment;
 use sdk::filetype::lua;
 use sdk::filetype::package::Package;
 use sdk::murmur::Murmur64;
@@ -201,10 +201,10 @@ async fn copy_recursive(
         async move {
             if is_dir {
                 tracing::trace!("Creating directory '{}'", dest.display());
-                fs::create_dir(&dest)
-                    .await
-                    .map(|_| ())
-                    .wrap_err_with(|| format!("Failed to create directory '{}'", dest.display()))
+                // Instead of trying to filter "already exists" errors out explicitly,
+                // we just ignore all. It'll fail eventually with the next copy operation.
+                let _ = fs::create_dir(&dest).await;
+                Ok(())
             } else {
                 tracing::trace!("Copying file '{}' -> '{}'", path.display(), dest.display());
                 fs::copy(&path, &dest).await.map(|_| ()).wrap_err_with(|| {
@@ -262,67 +262,60 @@ async fn copy_mod_folders(state: Arc<ActionState>) -> Result<Vec<String>> {
     Ok(ids)
 }
 
-fn build_mod_data_lua(state: Arc<ActionState>) -> String {
-    let mut lua = String::from("return {\n");
-
-    // DMF is handled explicitely by the loading procedures, as it actually drives most of that
-    // and should therefore not show up in the load order.
-    for mod_info in state.mods.iter().filter(|m| m.id != "dml" && m.enabled) {
-        lua.push_str("    {\n        name = \"");
-        lua.push_str(&mod_info.name);
-
-        lua.push_str("\",\n        id = \"");
-        lua.push_str(&mod_info.id);
-
-        lua.push_str("\",\n        bundled = \"");
-        if mod_info.bundled {
-            lua.push_str("true");
-        } else {
-            lua.push_str("false");
-        }
-
-        lua.push_str("\",\n        run = function()\n");
-
-        let resources = &mod_info.resources;
-        if resources.data.is_some() || resources.localization.is_some() {
-            lua.push_str("            new_mod(\"");
-            lua.push_str(&mod_info.id);
-            lua.push_str("\", {\n                mod_script = \"");
-            lua.push_str(&resources.init.to_slash_lossy());
-
-            if let Some(data) = resources.data.as_ref() {
-                lua.push_str("\",\n                mod_data = \"");
-                lua.push_str(&data.to_slash_lossy());
-            }
-
-            if let Some(localization) = &resources.localization {
-                lua.push_str("\",\n                mod_localization = \"");
-                lua.push_str(&localization.to_slash_lossy());
-            }
-
-            lua.push_str("\",\n            })\n");
-        } else {
-            lua.push_str("            return dofile(\"");
-            lua.push_str(&resources.init.to_slash_lossy());
-            lua.push_str("\")\n");
-        }
-
-        lua.push_str("        end,\n        packages = {\n");
-
-        for pkg_info in &mod_info.packages {
-            lua.push_str("            \"");
-            lua.push_str(&pkg_info.name);
-            lua.push_str("\",\n");
-        }
-
-        lua.push_str("        },\n    },\n");
+fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
+    #[derive(Serialize)]
+    struct TemplateDataMod {
+        id: String,
+        name: String,
+        bundled: bool,
+        init: String,
+        data: Option<String>,
+        localization: Option<String>,
+        packages: Vec<String>,
     }
 
-    lua.push('}');
+    let mut env = Environment::new();
+    env.add_template("mod_data.lua", include_str!("../../assets/mod_data.lua.j2"))
+        .wrap_err("Failed to compile template for `mod_data.lua`")?;
+    let tmpl = env
+        .get_template("mod_data.lua")
+        .wrap_err("Failed to get template `mod_data.lua`")?;
 
-    tracing::debug!("mod_data_lua:\n{}", lua);
+    let data: Vec<TemplateDataMod> = state
+        .mods
+        .iter()
+        .filter_map(|m| {
+            if m.id == "dml" || !m.enabled {
+                return None;
+            }
 
-    lua
+            Some(TemplateDataMod {
+                id: m.id.clone(),
+                name: m.name.clone(),
+                bundled: m.bundled,
+                init: m.resources.init.to_string_lossy().to_string(),
+                data: m
+                    .resources
+                    .data
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                localization: m
+                    .resources
+                    .localization
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                packages: m.packages.iter().map(|p| p.name.clone()).collect(),
+            })
+        })
+        .collect();
+
+    let lua = tmpl
+        .render(minijinja::context!(mods => data))
+        .wrap_err("Failed to render template `mod_data.lua`")?;
+
+    tracing::debug!("mod_data.lua:\n{}", lua);
+
+    Ok(lua)
 }
 
 #[tracing::instrument(skip_all)]
@@ -340,7 +333,7 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let span = tracing::debug_span!("Building mod data script");
         let _enter = span.enter();
 
-        let lua = build_mod_data_lua(state.clone());
+        let lua = build_mod_data_lua(state.clone()).wrap_err("Failed to build Lua mod data")?;
 
         tracing::trace!("Compiling mod data script");
 

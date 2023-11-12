@@ -61,14 +61,14 @@ local function patch_mod_loading_state()
         if state == "load_package" and package_manager:update() then
             log("StateBootLoadMods", "Packages loaded, loading mods")
             self._state = "load_mods"
-            local ModLoader = require("scripts/mods/dml/init")
+            local DML = require("scripts/mods/dml/init")
 
             local mod_data = require("scripts/mods/mod_data")
-            local mod_loader = ModLoader:new(mod_data, self._parent:gui())
+            local mod_loader = DML.create_loader(mod_data, self._parent:gui())
 
-            self._mod_loader = mod_loader
+            self._dml = DML
             Managers.mod = mod_loader
-        elseif state == "load_mods" and self._mod_loader:update(dt) then
+        elseif state == "load_mods" and self._dml.update(Managers.mod, dt) then
             log("StateBootLoadMods", "Mods loaded, exiting")
             return true, false
         end
@@ -112,7 +112,7 @@ local require_store = {}
 -- This token is treated as a string template and filled by DTMM during deployment.
 -- This allows hiding unsafe I/O functions behind a setting.
 -- It's also a valid table definition, thereby degrading gracefully when not replaced.
-local is_io_enabled = { { is_io_enabled } } -- luacheck: ignore 113
+local is_io_enabled = {{ is_io_enabled }} -- luacheck: ignore 113
 local lua_libs = {
     debug = debug,
     os = {
