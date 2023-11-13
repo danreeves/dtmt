@@ -15,6 +15,10 @@ inputs:
 outputs:
 - name: artifacts
 
+caches:
+  - path: repo/target
+  - path: /usr/local/cargo/registry
+
 params:
   CI: "true"
   TARGET: ((target))

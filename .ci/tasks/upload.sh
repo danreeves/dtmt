@@ -23,7 +23,6 @@ echo "ref: $ref"
 for f in dtmt dtmt.exe dtmm dtmm.exe; do
     if [ -f "$artifacts/$f" ]; then
         url="$base_url/$(basename -s .exe $f)/$ref/$f"
-        echo "$url"
         curl -i -X 'PUT' \
             --user "concourse:$GITEA_API_KEY" \
             --upload-file "$artifacts/$f" \
