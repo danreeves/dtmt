@@ -3,29 +3,22 @@
 platform: linux
 
 image_resource:
-  name: dtmt-ci-base-linux
+  name: python-script
   type: registry-image
   source:
-    repository: registry.local:5000/dtmt-ci-base-linux
+    repository: registry.local:5000/python-script
     tag: latest
 
 inputs:
 - name: repo
-
-caches:
-  - path: repo/target
-  - path: /usr/local/cargo/registry
+- name: ((input))
 
 params:
   CI: "true"
   GITEA_API_KEY: ((gitea_api_key))
-  REF: ((ref))
+  GITEA_URL: ((gitea_url))
+  GITEA_USER: ((user))
+  PR: ((pr))
 
 run:
-  path: .ci/util/run.sh
-  dir: repo
-  args:
-    - .ci/tasks/clippy.sh
-    - lint/clippy
-    - "Checking for common mistakes and opportunities for code improvement"
-
+  path: repo/.ci/tasks/upload.sh

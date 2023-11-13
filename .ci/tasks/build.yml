@@ -1,7 +1,9 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cappyzawa/concourse-pipeline-jsonschema/master/concourse_jsonschema.json#/definitions/TaskConfig
 ---
 platform: linux
 
 image_resource:
+  name: ctmt-bi-base-((target))
   type: registry-image
   source:
     repository: registry.local:5000/dtmt-ci-base-((target))
@@ -11,14 +13,18 @@ inputs:
 - name: repo
 
 outputs:
-- name: ((output))
+- name: artifacts
+
+caches:
+  - path: repo/target
+  - path: /usr/local/cargo/registry
 
 params:
-  CI: true
+  CI: "true"
   TARGET: ((target))
   GITEA_API_KEY: ((gitea_api_key))
   REF: ((ref))
-  OUTPUT: ((output))
+  OUTPUT: artifacts
 
 run:
   path: .ci/util/run.sh
