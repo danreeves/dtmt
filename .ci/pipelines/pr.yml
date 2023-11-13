@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cappyzawa/concourse-pipeline-jsonschema/master/concourse_jsonschema.json#/definitions/Config
 ---
 
 # The actual CI pipeline that is run per branch
@@ -6,7 +7,7 @@ resources:
 - name: repo
   type: git
   source:
-    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
+    uri: http://forgejo:3000/bitsquid_dt/dtmt
     branch: ((pr.head.ref))
 
 jobs:
@@ -34,6 +35,7 @@ jobs:
       target: msvc
       output: artifact
       ref: ((.:ref))
+      gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
 
 - name: build-linux
@@ -48,4 +50,13 @@ jobs:
       target: linux
       output: artifact
       ref: ((.:ref))
+      gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
+  - task: upload
+    file: repo/.ci/tasks/upload.yml
+    vars:
+      input: artifact
+      pr: ((.:pr))
+      gitea_api_key: ((gitea_api_key))
+      gitea_user: bitsquid_dt
+      gitea_url: http://forgejo:3000

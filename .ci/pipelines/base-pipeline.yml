@@ -22,7 +22,6 @@ resources:
   source:
     uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
 
-
 jobs:
   - name: set-pipelines
     plan:
@@ -42,5 +41,3 @@ jobs:
         gitea_api_key: ((gitea_api_key))
       instance_vars:
         pr: ((.:pr.number))
-
-

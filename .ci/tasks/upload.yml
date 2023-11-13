@@ -3,29 +3,22 @@
 platform: linux
 
 image_resource:
-  name: ctmt-bi-base-((target))
+  name: python-script
   type: registry-image
   source:
-    repository: registry.local:5000/dtmt-ci-base-((target))
+    repository: registry.local:5000/python-script
     tag: latest
 
 inputs:
 - name: repo
-
-outputs:
-- name: artifacts
+- name: ((input))
 
 params:
   CI: "true"
-  TARGET: ((target))
   GITEA_API_KEY: ((gitea_api_key))
-  REF: ((ref))
-  OUTPUT: artifacts
+  GITEA_URL: ((gitea_url))
+  GITEA_USER: ((user))
+  PR: ((pr))
 
 run:
-  path: .ci/util/run.sh
-  dir: repo
-  args:
-    - .ci/tasks/build.sh
-    - build/((target))
-    - "Build for the target platform: ((target))"
+  path: repo/.ci/tasks/upload.sh
