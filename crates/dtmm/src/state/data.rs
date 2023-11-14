@@ -73,6 +73,7 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 #[derive(Clone, Data, Debug, Lens, serde::Serialize, serde::Deserialize)]
 pub(crate) struct NexusInfo {
     pub id: u64,
+    pub name: String,
     pub version: String,
     pub author: String,
     pub summary: Arc<String>,
@@ -83,6 +84,7 @@ impl From<NexusMod> for NexusInfo {
     fn from(value: NexusMod) -> Self {
         Self {
             id: value.mod_id,
+            name: value.name,
             version: value.version,
             author: value.author,
             summary: Arc::new(value.summary),
