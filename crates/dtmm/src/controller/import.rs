@@ -384,7 +384,10 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
                 .mods_id(id)
                 .await
                 .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
-            Some(NexusInfo::from(mod_info))
+            let info = NexusInfo::from(mod_info);
+
+            tracing::debug!("{:?}", info);
+            Some(info)
         } else {
             None
         }

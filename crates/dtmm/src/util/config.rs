@@ -125,6 +125,9 @@ where
                 .wrap_err_with(|| format!("Invalid config file {}", path.display()))?;
 
             cfg.path = path;
+
+            tracing::debug!("Read config file '{}': {:?}", cfg.path.display(), cfg);
+
             Ok(cfg)
         }
         Err(err) if err.kind() == ErrorKind::NotFound => {
@@ -132,6 +135,11 @@ where
                 return Err(err)
                     .wrap_err_with(|| format!("Failed to read config file {}", path.display()))?;
             }
+
+            tracing::debug!(
+                "Config file not found at '{}', creating default.",
+                path.display()
+            );
 
             {
                 let parent = default_path
