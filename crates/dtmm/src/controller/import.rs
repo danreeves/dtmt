@@ -372,7 +372,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
     let data = Cursor::new(data);
 
-    let nexus = if let Some((_, id, _, _)) = info
+    let nexus = if let Some((_, id, version, _)) = info
         .path
         .file_name()
         .and_then(|s| s.to_str())
@@ -387,7 +387,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
             let info = NexusInfo::from(mod_info);
 
             tracing::debug!("{:?}", info);
-            Some(info)
+            Some((info, version))
         } else {
             None
         }
@@ -406,7 +406,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         tracing::debug!("Archive contents:{}", names);
     }
 
-    let (mod_cfg, root) =
+    let (mut mod_cfg, root) =
         extract_mod_config(&mut archive).wrap_err("Failed to extract mod configuration")?;
     tracing::info!("Importing mod {} ({})", mod_cfg.name, mod_cfg.id);
     tracing::debug!(root, ?mod_cfg);
@@ -457,6 +457,13 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
     } else {
         extract_legacy_mod(&mut archive, root, &dest).wrap_err("Failed to extract legacy mod")?;
 
+        if let Some((_, version)) = &nexus {
+            // We use the version number stored in the `ModInfo` to compare against the `NexusInfo`
+            // for version checks. So for this one, we can't actually rely on merely shadowing,
+            // like with the other fields.
+            mod_cfg.version = version.clone();
+        }
+
         let data = serde_sjson::to_string(&mod_cfg).wrap_err("Failed to serialize mod config")?;
         fs::write(dest.join("dtmt.cfg"), &data)
             .await
@@ -465,7 +472,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         Default::default()
     };
 
-    if let Some(nexus) = &nexus {
+    if let Some((nexus, _)) = &nexus {
         let data = serde_sjson::to_string(nexus).wrap_err("Failed to serialize Nexus info")?;
         let path = dest.join("nexus.sjson");
         fs::write(&path, data.as_bytes())
@@ -473,6 +480,6 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
             .wrap_err_with(|| format!("Failed to write Nexus info to '{}'", path.display()))?;
     }
 
-    let info = ModInfo::new(mod_cfg, packages, image, nexus);
+    let info = ModInfo::new(mod_cfg, packages, image, nexus.map(|(info, _)| info));
     Ok(info)
 }

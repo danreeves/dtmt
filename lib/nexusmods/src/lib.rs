@@ -112,7 +112,7 @@ impl Api {
         RE.captures(name.as_ref()).and_then(|cap| {
             let name = cap.name("name").map(|s| s.as_str().to_string())?;
             let mod_id = cap.name("mod_id").and_then(|s| s.as_str().parse().ok())?;
-            let version = cap.name("version").map(|s| s.as_str().to_string())?;
+            let version = cap.name("version").map(|s| s.as_str().replace('-', "."))?;
             let updated = cap
                 .name("updated")
                 .and_then(|s| s.as_str().parse().ok())
