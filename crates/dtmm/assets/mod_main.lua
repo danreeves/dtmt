@@ -138,7 +138,8 @@ Mods = {
     -- Fatshark's code scrubs them.
     -- The loader can then decide to pass them on to mods, or ignore them
     lua = setmetatable({}, { __index = lua_libs }),
-    require_store = require_store
+    require_store = require_store,
+    original_require = require,
 }
 
 local can_insert = function(filepath, new_result)
