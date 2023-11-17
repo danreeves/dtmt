@@ -93,11 +93,12 @@ where
     let output = cmd.output().wrap_err("Failed to run ljd")?;
 
     if !output.status.success() {
-        eyre::bail!(
+        let err = eyre::eyre!(
             "LJD exited with code {:?}:\n{}",
             output.status.code(),
             String::from_utf8_lossy(&output.stderr)
         );
+        tracing::error!("Failed to decompile '{}':\n{:?}", name, err);
     }
 
     let content = output.stdout;
