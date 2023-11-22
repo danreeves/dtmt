@@ -40,4 +40,4 @@ jobs:
         pr: ((.:pr))
         gitea_api_key: ((gitea_api_key))
       instance_vars:
-        pr: ((.:pr.number))
+        n: ((.:pr.number))

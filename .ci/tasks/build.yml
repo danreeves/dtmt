@@ -13,7 +13,7 @@ inputs:
 - name: repo
 
 outputs:
-- name: artifacts
+- name: artifact
 
 caches:
   - path: repo/target
@@ -24,12 +24,12 @@ params:
   TARGET: ((target))
   GITEA_API_KEY: ((gitea_api_key))
   REF: ((ref))
-  OUTPUT: artifacts
+  PR: ((pr))
+  OUTPUT: artifact
 
 run:
-  path: .ci/util/run.sh
-  dir: repo
+  path: repo/.ci/util/run.sh
   args:
-    - .ci/tasks/build.sh
+    - repo/.ci/tasks/build.sh
     - build/((target))
     - "Build for the target platform: ((target))"

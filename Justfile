@@ -1,3 +1,5 @@
+fly_target := "main"
+
 ci-build: ci-build-msvc ci-build-linux
 
 ci-build-msvc:
@@ -25,3 +27,26 @@ ci-image-linux:
     docker build -t dtmt-ci-base-linux -f .ci/image/Dockerfile.linux .ci/image
     docker tag dtmt-ci-base-linux registry.sclu1034.dev/dtmt-ci-base-linux
     docker push registry.sclu1034.dev/dtmt-ci-base-linux
+
+set-base-pipeline:
+    fly -t ((fly_target)) set-pipeline \
+        --pipeline dtmt-prs \
+        --config .ci/pipelines/base-pipeline.yml \
+        -v gitea_api_key=${GITEA_API_KEY} \
+        -v owner=bitsquid_dt \
+        -v repo=dtmt
+
+set-pr-pipeline pr:
+    curl \
+        -H "Authorization: ${GITEA_API_KEY}" \
+        -H 'Accept: application/json' \
+        'https://git.sclu1034.dev/api/v1/repos/bitsquid_dt/dtmt/pulls/{{pr}}' \
+        | yq -y '.' - > 'pr-{{pr}}.yaml' 
+    fly -t main set-pipeline \
+        --pipeline dtmt-pr \
+        --config .ci/pipelines/pr.yml \
+        -v gitea_api_key=${GITEA_API_KEY} \
+        -i n={{pr}} \
+        -y branch="$(yq -y '.head.ref' 'pr-{{pr}}.yaml')" \
+        -y pr="$(cat 'pr-{{pr}}.yaml')"
+

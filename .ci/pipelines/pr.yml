@@ -2,6 +2,11 @@
 ---
 
 # The actual CI pipeline that is run per branch
+resource_types:
+- name: gitea-package
+  type: registry-image
+  source:
+    repository: registry.local:5000/gitea-package
 
 resources:
 - name: repo
@@ -9,6 +14,14 @@ resources:
   source:
     uri: http://forgejo:3000/bitsquid_dt/dtmt
     branch: ((pr.head.ref))
+- name: gitea-package
+  type: gitea-package
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: concourse
+    type: generic
+    name: dtmt
 
 jobs:
 - name: clippy
@@ -16,6 +29,7 @@ jobs:
   - get: repo
     trigger: true
   - load_var: ref
+    format: trim
     file: repo/.git/ref
   - task: check
     file: repo/.ci/tasks/clippy.yml
@@ -28,35 +42,61 @@ jobs:
   - get: repo
     trigger: true
   - load_var: ref
+    format: trim
     file: repo/.git/ref
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
       target: msvc
-      output: artifact
       ref: ((.:ref))
+      pr: ((pr))
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
+  - load_var: version_number
+    reveal: true
+    file: artifact/version
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: ((.:version_number))
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/dtmt
+        - artifact/dtmm
+        - artifact/*.exe
 
 - name: build-linux
   plan:
   - get: repo
     trigger: true
   - load_var: ref
+    reveal: true
     file: repo/.git/ref
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
       target: linux
-      output: artifact
       ref: ((.:ref))
+      pr: ((pr))
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
-  - task: upload
-    file: repo/.ci/tasks/upload.yml
-    vars:
-      input: artifact
-      pr: ((.:pr))
-      gitea_api_key: ((gitea_api_key))
-      gitea_user: bitsquid_dt
-      gitea_url: http://forgejo:3000
+  - load_var: version_number
+    reveal: true
+    file: artifact/version
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: ((.:version_number))
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/dtmt
+        - artifact/dtmm
+        - artifact/*.exe
