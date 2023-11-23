@@ -8,12 +8,19 @@ resource_types:
   source:
     repository: registry.local:5000/gitea-package
 
+- name: gitea-status
+  type: registry-image
+  source:
+    repository: registry.local:5000/gitea-status
+
+
 resources:
 - name: repo
   type: git
   source:
     uri: http://forgejo:3000/bitsquid_dt/dtmt
     branch: ((pr.head.ref))
+
 - name: gitea-package
   type: gitea-package
   source:
@@ -23,38 +30,109 @@ resources:
     type: generic
     name: dtmt
 
+- name: pr-status-lint-clippy
+  type: gitea-status
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    repo: dtmt
+    sha: ((pr.head.sha))
+    context: lint/clippy
+    description: Checking for common mistakes and opportunities for code improvement
+
+- name: pr-status-build-msvc
+  type: gitea-status
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    repo: dtmt
+    sha: ((pr.head.sha))
+    context: build/msvc
+    description: "Build for the target platform: msvc"
+
+- name: pr-status-build-linux
+  type: gitea-status
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    repo: dtmt
+    sha: ((pr.head.sha))
+    context: build/linux
+    description: "Build for the target platform: linux"
+
+
 jobs:
 - name: clippy
+  on_success:
+    put: state-success
+    resource: pr-status-lint-clippy
+    no_get: true
+    params:
+      state: success
+
+  on_failure:
+    put: state-success
+    resource: pr-status-lint-clippy
+    no_get: true
+    params:
+      state: failure
+
   plan:
+  - put: state-pending
+    resource: pr-status-lint-clippy
+    no_get: true
+    params:
+      state: pending
+
   - get: repo
     trigger: true
-  - load_var: ref
-    format: trim
-    file: repo/.git/ref
+
   - task: check
     file: repo/.ci/tasks/clippy.yml
     vars:
-      ref: ((.:ref))
       gitea_api_key: ((gitea_api_key))
 
+
 - name: build-msvc
+  on_success:
+    put: state-success
+    resource: pr-status-build-msvc
+    no_get: true
+    params:
+      state: success
+
+  on_failure:
+    put: state-success
+    resource: pr-status-build-msvc
+    no_get: true
+    params:
+      state: failure
+
   plan:
+  - put: state-pending
+    resource: pr-status-build-msvc
+    no_get: true
+    params:
+      state: pending
+
   - get: repo
     trigger: true
-  - load_var: ref
-    format: trim
-    file: repo/.git/ref
+
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
       target: msvc
-      ref: ((.:ref))
       pr: ((pr))
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
+
   - load_var: version_number
     reveal: true
     file: artifact/version
+
   - put: package
     resource: gitea-package
     no_get: true
@@ -70,23 +148,42 @@ jobs:
         - artifact/*.exe
 
 - name: build-linux
+  on_success:
+    put: state-success
+    resource: pr-status-build-linux
+    no_get: true
+    params:
+      state: success
+
+  on_failure:
+    put: state-success
+    resource: pr-status-build-linux
+    no_get: true
+    params:
+      state: failure
+
   plan:
+  - put: state-pending
+    resource: pr-status-build-linux
+    no_get: true
+    params:
+      state: pending
+
   - get: repo
     trigger: true
-  - load_var: ref
-    reveal: true
-    file: repo/.git/ref
+
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
       target: linux
-      ref: ((.:ref))
       pr: ((pr))
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
+
   - load_var: version_number
     reveal: true
     file: artifact/version
+
   - put: package
     resource: gitea-package
     no_get: true

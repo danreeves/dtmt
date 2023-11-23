@@ -19,13 +19,8 @@ caches:
 params:
   CI: "true"
   GITEA_API_KEY: ((gitea_api_key))
-  REF: ((ref))
 
 run:
-  path: .ci/util/run.sh
+  path: .ci/tasks/clippy.sh
   dir: repo
-  args:
-    - .ci/tasks/clippy.sh
-    - lint/clippy
-    - "Checking for common mistakes and opportunities for code improvement"
 
