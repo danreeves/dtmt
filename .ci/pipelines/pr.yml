@@ -37,7 +37,6 @@ resources:
     url: http://forgejo:3000
     owner: bitsquid_dt
     repo: dtmt
-    sha: ((pr.head.sha))
     context: lint/clippy
     description: Checking for common mistakes and opportunities for code improvement
 
@@ -48,7 +47,6 @@ resources:
     url: http://forgejo:3000
     owner: bitsquid_dt
     repo: dtmt
-    sha: ((pr.head.sha))
     context: build/msvc
     description: "Build for the target platform: msvc"
 
@@ -59,7 +57,6 @@ resources:
     url: http://forgejo:3000
     owner: bitsquid_dt
     repo: dtmt
-    sha: ((pr.head.sha))
     context: build/linux
     description: "Build for the target platform: linux"
 
@@ -72,6 +69,7 @@ jobs:
     no_get: true
     params:
       state: success
+      sha: ((.:git_sha))
 
   on_failure:
     put: state-failure
@@ -79,16 +77,21 @@ jobs:
     no_get: true
     params:
       state: failure
+      sha: ((.:git_sha))
 
   plan:
+  - get: repo
+    trigger: true
+
+  - load_var: git_sha
+    file: repo/.git/ref
+
   - put: state-pending
     resource: pr-status-lint-clippy
     no_get: true
     params:
       state: pending
-
-  - get: repo
-    trigger: true
+      sha: ((.:git_sha))
 
   - task: check
     file: repo/.ci/tasks/clippy.yml
@@ -103,6 +106,7 @@ jobs:
     no_get: true
     params:
       state: success
+      sha: ((.:git_sha))
 
   on_failure:
     put: state-failure
@@ -110,16 +114,21 @@ jobs:
     no_get: true
     params:
       state: failure
+      sha: ((.:git_sha))
 
   plan:
+  - get: repo
+    trigger: true
+
+  - load_var: git_sha
+    file: repo/.git/ref
+
   - put: state-pending
     resource: pr-status-build-msvc
     no_get: true
     params:
       state: pending
-
-  - get: repo
-    trigger: true
+      sha: ((.:git_sha))
 
   - task: build
     file: repo/.ci/tasks/build.yml
@@ -154,6 +163,7 @@ jobs:
     no_get: true
     params:
       state: success
+      sha: ((.:git_sha))
 
   on_failure:
     put: state-failure
@@ -161,16 +171,21 @@ jobs:
     no_get: true
     params:
       state: failure
+      sha: ((.:git_sha))
 
   plan:
+  - get: repo
+    trigger: true
+
+  - load_var: git_sha
+    file: repo/.git/ref
+
   - put: state-pending
     resource: pr-status-build-linux
     no_get: true
     params:
       state: pending
-
-  - get: repo
-    trigger: true
+      sha: ((.:git_sha))
 
   - task: build
     file: repo/.ci/tasks/build.yml
