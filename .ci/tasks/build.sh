@@ -12,39 +12,42 @@ title() {
     printf "\033[1m%s\033[0m\n" "$1"
 }
 
+cd "repo"
+
 if [ -n "${PR:-}" ]; then
     title "PR: $(echo "$PR" | jq '.number') - $(echo "$PR" | jq '.title')"
-    ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short HEAD 2>/dev/null || echo 'manual')"
+    ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short $(cat .git/ref || echo "HEAD")) 2>/dev/null || echo 'manual')"
 else
     ref=$(git describe --tags)
 fi
 
-title "Version is '$ref'"
+title "Version: '$ref'"
 echo "$ref" > "$OUTPUT/version"
 
-cd "repo"
 case "$TARGET" in
     msvc)
         cp /src/*.lib ./lib/oodle/
 
-        title "Build project for target $TARGET"
+        title "Building project for target $TARGET"
         cargo build --color always --locked --release --target x86_64-pc-windows-msvc -Zbuild-std
 
         title "Install artifacts"
-        install -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmt.exe
-        install -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmm.exe
+        install -v -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmt.exe
+        install -v -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmm.exe
         ;;
     linux)
         cp /src/*.a ./lib/oodle/
 
-        title "Build project for target $TARGET"
+        title "Building project for target $TARGET"
         cargo build --color always --locked --profile release-lto
 
-        title "Install artifacts"
-        install -t "$OUTPUT/" target/release-lto/dtmt
-        install -t "$OUTPUT/" target/release-lto/dtmm
+        title "Installing artifacts"
+        install -v -t "$OUTPUT/" target/release-lto/dtmt
+        install -v -t "$OUTPUT/" target/release-lto/dtmm
         ;;
     *)
-        echo "Env var 'TARGET' must either be 'msvc' or 'linux'. Got '$TARGET'." >&2
+        echo -e "\033[31;1mEnv var 'TARGET' must either be 'msvc' or 'linux'. Got '$TARGET'.\033[0m" >&2
         exit 1
 esac
+
+title "Done"
