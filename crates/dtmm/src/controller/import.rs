@@ -31,7 +31,7 @@ fn find_archive_file<R: Read + Seek>(
 // from legacy mods.
 // 1. Create a global function `new_mod` that stores
 // the relevant bits in global variables.
-// 2. Run the `.mod` file, which will merely return a table.
+// 2. Run the `.mod` file, which will return a table.
 // 3. Run the `run` function from that table.
 // 4. Access the global variables from #1.
 #[tracing::instrument]
@@ -203,6 +203,37 @@ end
 // still end up creating tarbombs and Nexus does its own re-packaging.
 #[tracing::instrument(skip(archive))]
 fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(ModConfig, String)> {
+    let legacy_mod_data = if let Some(name) = find_archive_file(archive, ".mod") {
+        let (mod_id, resources) = {
+            let mut f = archive
+                .by_name(&name)
+                .wrap_err("Failed to read `.mod` file from archive")?;
+
+            let mut buf = Vec::with_capacity(f.size() as usize);
+            f.read_to_end(&mut buf)
+                .wrap_err("Failed to read `.mod` file from archive")?;
+
+            let data = String::from_utf8(buf).wrap_err("`.mod` file is not valid UTF-8")?;
+            parse_mod_id_file(&data)
+                .wrap_err("Invalid `.mod` file")
+                .note(
+                    "The `.mod` file's `run` function may not contain any additional logic \
+                    besides the default.",
+                )
+                .suggestion("Contact the mod author to fix this.")?
+        };
+
+        let root = if let Some(index) = name.rfind('/') {
+            name[..index].to_string()
+        } else {
+            String::new()
+        };
+
+        Some((mod_id, resources, root))
+    } else {
+        None
+    };
+
     if let Some(name) = find_archive_file(archive, "dtmt.cfg") {
         let mut f = archive
             .by_name(&name)
@@ -214,52 +245,30 @@ fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(Mo
 
         let data = String::from_utf8(buf).wrap_err("Mod config is not valid UTF-8")?;
 
-        let cfg = serde_sjson::from_str(&data).wrap_err("Failed to deserialize mod config")?;
-        let root = name
-            .strip_suffix("dtmt.cfg")
-            .expect("String must end with that suffix")
-            .to_string();
+        let mut cfg: ModConfig = serde_sjson::from_str(&data)
+            .wrap_err("Failed to deserialize mod config")
+            .suggestion("Contact the mod author to fix this.")?;
 
-        Ok((cfg, root))
-    } else if let Some(name) = find_archive_file(archive, ".mod") {
-        let (mod_id, resources) = {
-            let mut f = archive
-                .by_name(&name)
-                .wrap_err("Failed to read `.mod` file from archive")?;
+        if let Some((mod_id, resources, root)) = legacy_mod_data {
+            if cfg.id != mod_id {
+                let err = eyre::eyre!("Mod ID in `dtmt.cfg` does not match mod ID in `.mod` file");
+                return Err(err).suggestion("Contact the mod author to fix this.");
+            }
 
-            let mut buf = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut buf)
-                .wrap_err("Failed to read `.mod` file from archive")?;
+            cfg.resources = resources;
 
-            let data = String::from_utf8(buf).wrap_err("`.mod` file is not valid UTF-8")?;
-            parse_mod_id_file(&data).wrap_err("Invalid `.mod` file")?
-        };
-
-        let cfg = ModConfig {
-            bundled: false,
-            dir: PathBuf::new(),
-            id: mod_id.clone(),
-            name: mod_id,
-            summary: String::new(),
-            version: String::new(),
-            description: None,
-            author: None,
-            image: None,
-            categories: Vec::new(),
-            packages: Vec::new(),
-            resources,
-            depends: Vec::new(),
-        };
-        let root = if let Some(index) = name.rfind('/') {
-            name[..index].to_string()
+            Ok((cfg, root))
         } else {
-            String::new()
-        };
+            let root = name
+                .strip_suffix("dtmt.cfg")
+                .expect("String must end with that suffix")
+                .to_string();
 
-        Ok((cfg, root))
+            Ok((cfg, root))
+        }
     } else {
         eyre::bail!(
-            "Mod needs either a config file or `.mod` file. \
+            "Mod needs a config file or `.mod` file. \
                 Please get in touch with the author to provide a properly packaged mod."
         );
     }
@@ -322,11 +331,11 @@ fn extract_legacy_mod<R: Read + Seek>(
             .wrap_err_with(|| format!("Failed to get file at index {}", i))?;
 
         let Some(name) = f.enclosed_name().map(|p| p.to_path_buf()) else {
-            let err = eyre::eyre!("File name in archive is not a safe path value.");
-            return Err(err).with_suggestion(|| {
+            let err = eyre::eyre!("File name in archive is not a safe path value.").suggestion(
                 "Only use well-known applications to create the ZIP archive, \
-                and don't create paths that point outside the archive directory."
-            });
+                and don't create paths that point outside the archive directory.",
+            );
+            return Err(err);
         };
 
         let Ok(suffix) = name.strip_prefix(&root) else {
@@ -430,10 +439,11 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         let img = match ImageBuf::from_data(&buf) {
             Ok(img) => img,
             Err(err) => {
-                let err = Report::msg(err.to_string()).wrap_err("Invalid image data");
-                return Err(err).with_suggestion(|| {
-                    "Supported formats are: PNG, JPEG, Bitmap and WebP".to_string()
-                });
+                let err = Report::msg(err.to_string())
+                    .wrap_err("Invalid image data")
+                    .note("Supported formats are: PNG, JPEG, Bitmap and WebP")
+                    .suggestion("Contact the mod author to fix this");
+                return Err(err);
             }
         };
 
