@@ -12,6 +12,11 @@ title() {
     printf "\033[1m%s\033[0m\n" "$1"
 }
 
+install_artifact() {
+    install -v -t "$OUTPUT/" "$1"
+    sha256sum "$1" | cut -d' ' -f1 > "$OUTPUT/$(basename "$1").sha256"
+}
+
 cd "repo"
 
 if [ -n "${PR:-}" ]; then
@@ -32,8 +37,8 @@ case "$TARGET" in
         cargo build --color always --locked --release --target x86_64-pc-windows-msvc -Zbuild-std
 
         title "Install artifacts"
-        install -v -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmt.exe
-        install -v -t "$OUTPUT/" target/x86_64-pc-windows-msvc/release/dtmm.exe
+        install_artifact target/x86_64-pc-windows-msvc/release/dtmt.exe
+        install_artifact target/x86_64-pc-windows-msvc/release/dtmm.exe
         ;;
     linux)
         cp /src/*.a ./lib/oodle/
@@ -42,8 +47,8 @@ case "$TARGET" in
         cargo build --color always --locked --profile release-lto
 
         title "Installing artifacts"
-        install -v -t "$OUTPUT/" target/release-lto/dtmt
-        install -v -t "$OUTPUT/" target/release-lto/dtmm
+        install_artifact target/release-lto/dtmt
+        install_artifact target/release-lto/dtmm
         ;;
     *)
         echo -e "\033[31;1mEnv var 'TARGET' must either be 'msvc' or 'linux'. Got '$TARGET'.\033[0m" >&2
