@@ -5,6 +5,7 @@ RUN set -eux; \
     apt-get install --no-install-recommends -y \
         build-essential \
         curl \
+        git \
         gpg \
         jq \
      	libatk1.0-dev \
