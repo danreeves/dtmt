@@ -155,6 +155,7 @@ jobs:
         - artifact/dtmt
         - artifact/dtmm
         - artifact/*.exe
+        - artifact/*.sha256
 
 - name: build-linux
   on_success:
@@ -212,3 +213,5 @@ jobs:
         - artifact/dtmt
         - artifact/dtmm
         - artifact/*.exe
+        - artifact/*.sha256
+
