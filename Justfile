@@ -29,7 +29,7 @@ ci-image-linux:
     docker push registry.sclu1034.dev/dtmt-ci-base-linux
 
 set-base-pipeline:
-    fly -t ((fly_target)) set-pipeline \
+    fly -t {{fly_target}} set-pipeline \
         --pipeline dtmt-prs \
         --config .ci/pipelines/base-pipeline.yml \
         -v gitea_api_key=${GITEA_API_KEY} \
@@ -46,7 +46,7 @@ set-pr-pipeline pr:
         --pipeline dtmt-pr \
         --config .ci/pipelines/pr.yml \
         -v gitea_api_key=${GITEA_API_KEY} \
-        -i n={{pr}} \
+        -i number={{pr}} \
         -y branch="$(yq -y '.head.ref' 'pr-{{pr}}.yaml')" \
         -y pr="$(cat 'pr-{{pr}}.yaml')"
 

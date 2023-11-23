@@ -7,6 +7,7 @@
 [submodule "lib/color-eyre"]
 	path = lib/color-eyre
 	url = https://github.com/sclu1034/color-eyre.git
+    branch = "fork"
 [submodule "lib/ansi-parser"]
 	path = lib/ansi-parser
 	url = https://gitlab.com/lschwiderski/ansi-parser.git
