@@ -74,7 +74,7 @@ jobs:
       state: success
 
   on_failure:
-    put: state-success
+    put: state-failure
     resource: pr-status-lint-clippy
     no_get: true
     params:
@@ -105,7 +105,7 @@ jobs:
       state: success
 
   on_failure:
-    put: state-success
+    put: state-failure
     resource: pr-status-build-msvc
     no_get: true
     params:
@@ -156,7 +156,7 @@ jobs:
       state: success
 
   on_failure:
-    put: state-success
+    put: state-failure
     resource: pr-status-build-linux
     no_get: true
     params:
