@@ -26,7 +26,7 @@ resources:
   source:
     access_token: ((gitea_api_key))
     url: http://forgejo:3000
-    owner: concourse
+    owner: bitsquid_dt
     type: generic
     name: dtmt
 
