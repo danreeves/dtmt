@@ -411,6 +411,7 @@ impl AppDelegate<State> for Delegate {
                     state.config_path = Arc::new(config.path);
                     state.data_dir = Arc::new(config.data_dir);
                     state.game_dir = Arc::new(config.game_dir.unwrap_or_default());
+                    state.nexus_api_key = Arc::new(config.nexus_api_key.unwrap_or_default());
                     state.is_io_enabled = config.unsafe_io;
                 }
 

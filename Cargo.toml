@@ -7,10 +7,7 @@ members = [
     "lib/oodle",
     "lib/sdk",
     "lib/serde_sjson",
-]
-exclude = [
-    "lib/color-eyre",
-    "lib/ansi-parser",
+    "lib/luajit2-sys",
 ]
 
 [patch.crates-io]

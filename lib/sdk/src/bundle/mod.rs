@@ -227,13 +227,10 @@ impl Bundle {
             let _enter = span.enter();
             tracing::trace!(num_files = self.files.len());
 
-            self.files
-                .iter()
-                .fold(Ok::<Vec<u8>, Report>(Vec::new()), |data, file| {
-                    let mut data = data?;
-                    data.append(&mut file.to_binary()?);
-                    Ok(data)
-                })?
+            self.files.iter().try_fold(Vec::new(), |mut data, file| {
+                data.append(&mut file.to_binary()?);
+                Ok::<_, Report>(data)
+            })?
         };
 
         // Ceiling division (or division toward infinity) to calculate

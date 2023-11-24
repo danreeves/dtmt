@@ -1,179 +1,23 @@
 use std::collections::HashMap;
-use std::io::{Cursor, ErrorKind, Read};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Help, Report, Result};
 use druid::im::Vector;
-use druid::{FileInfo, ImageBuf};
+use druid::ImageBuf;
 use dtmt_shared::ModConfig;
 use nexusmods::Api as NexusApi;
 use tokio::fs::{self, DirEntry, File};
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
-use zip::ZipArchive;
 
 use crate::state::{ActionState, InitialLoadResult, ModInfo, ModOrder, NexusInfo, PackageInfo};
 use crate::util;
 use crate::util::config::{ConfigSerialize, LoadOrderEntry};
 
 use super::read_sjson_file;
-
-#[tracing::instrument(skip(state))]
-pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<ModInfo> {
-    let data = fs::read(&info.path)
-        .await
-        .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
-    let data = Cursor::new(data);
-
-    let nexus = if let Some((_, id, _, _)) = info
-        .path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .and_then(NexusApi::parse_file_name)
-    {
-        if !state.nexus_api_key.is_empty() {
-            let api = NexusApi::new(state.nexus_api_key.to_string())?;
-            let mod_info = api
-                .mods_id(id)
-                .await
-                .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
-            Some(NexusInfo::from(mod_info))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
-
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        let names = archive.file_names().fold(String::new(), |mut s, name| {
-            s.push('\n');
-            s.push_str(name);
-            s
-        });
-        tracing::debug!("Archive contents:{}", names);
-    }
-
-    let dir_name = {
-        let f = archive.by_index(0).wrap_err("Archive is empty")?;
-
-        if !f.is_dir() {
-            let err = eyre::eyre!("archive does not have a top-level directory");
-            return Err(err).with_suggestion(|| "Use 'dtmt build' to create the mod archive.");
-        }
-
-        let name = f.name();
-        // The directory name is returned with a trailing slash, which we don't want
-        name[..(name.len().saturating_sub(1))].to_string()
-    };
-
-    tracing::info!("Importing mod {}", dir_name);
-
-    let names: Vec<_> = archive.file_names().map(|s| s.to_string()).collect();
-
-    let mod_cfg: ModConfig = {
-        let name = names
-            .iter()
-            .find(|name| name.ends_with("dtmt.cfg"))
-            .ok_or_else(|| eyre::eyre!("archive does not contain mod config"))?;
-
-        let mut f = archive
-            .by_name(name)
-            .wrap_err("Failed to read mod config from archive")?;
-
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        f.read_to_end(&mut buf)
-            .wrap_err("Failed to read mod config from archive")?;
-
-        let data = String::from_utf8(buf).wrap_err("Mod config is not valid UTF-8")?;
-
-        serde_sjson::from_str(&data).wrap_err("Failed to deserialize mod config")?
-    };
-
-    tracing::debug!(?mod_cfg);
-
-    let files: HashMap<String, Vec<String>> = {
-        let name = names
-            .iter()
-            .find(|name| name.ends_with("files.sjson"))
-            .ok_or_else(|| eyre::eyre!("archive does not contain file index"))?;
-
-        let mut f = archive
-            .by_name(name)
-            .wrap_err("Failed to read file index from archive")?;
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        f.read_to_end(&mut buf)
-            .wrap_err("Failed to read file index from archive")?;
-
-        let data = String::from_utf8(buf).wrap_err("File index is not valid UTF-8")?;
-
-        serde_sjson::from_str(&data).wrap_err("Failed to deserialize file index")?
-    };
-
-    tracing::trace!(?files);
-
-    let image = if let Some(path) = &mod_cfg.image {
-        let name = names
-            .iter()
-            .find(|name| name.ends_with(&path.display().to_string()))
-            .ok_or_else(|| eyre::eyre!("archive does not contain configured image file"))?;
-
-        let mut f = archive
-            .by_name(name)
-            .wrap_err("Failed to read image file from archive")?;
-        let mut buf = Vec::with_capacity(f.size() as usize);
-        f.read_to_end(&mut buf)
-            .wrap_err("Failed to read file index from archive")?;
-
-        // Druid somehow doesn't return an error compatible with eyre, here.
-        // So we have to wrap through `Display` manually.
-        let img = match ImageBuf::from_data(&buf) {
-            Ok(img) => img,
-            Err(err) => {
-                let err = Report::msg(err.to_string()).wrap_err("Invalid image data");
-                return Err(err).with_suggestion(|| {
-                    "Supported formats are: PNG, JPEG, Bitmap and WebP".to_string()
-                });
-            }
-        };
-
-        Some(img)
-    } else {
-        None
-    };
-
-    let mod_dir = state.mod_dir;
-
-    tracing::trace!("Creating mods directory {}", mod_dir.display());
-    fs::create_dir_all(Arc::as_ref(&mod_dir))
-        .await
-        .wrap_err_with(|| format!("Failed to create data directory {}", mod_dir.display()))?;
-
-    tracing::trace!("Extracting mod archive to {}", mod_dir.display());
-    archive
-        .extract(Arc::as_ref(&mod_dir))
-        .wrap_err_with(|| format!("Failed to extract archive to {}", mod_dir.display()))?;
-
-    if let Some(nexus) = &nexus {
-        let data = serde_sjson::to_string(nexus).wrap_err("Failed to serialize Nexus info")?;
-        let path = mod_dir.join(&mod_cfg.id).join("nexus.sjson");
-        fs::write(&path, data.as_bytes())
-            .await
-            .wrap_err_with(|| format!("Failed to write Nexus info to '{}'", path.display()))?;
-    }
-
-    let packages = files
-        .into_iter()
-        .map(|(name, files)| Arc::new(PackageInfo::new(name, files.into_iter().collect())))
-        .collect();
-    let info = ModInfo::new(mod_cfg, packages, image, nexus);
-
-    Ok(info)
-}
 
 #[tracing::instrument(skip(state))]
 pub(crate) async fn delete_mod(state: ActionState, info: &ModInfo) -> Result<()> {
@@ -229,9 +73,13 @@ async fn read_mod_dir_entry(res: Result<DirEntry>) -> Result<ModInfo> {
         Err(err) => return Err(err),
     };
 
-    let files: HashMap<String, Vec<String>> = read_sjson_file(&index_path)
-        .await
-        .wrap_err_with(|| format!("Failed to read file index '{}'", index_path.display()))?;
+    let files: HashMap<String, Vec<String>> = if cfg.bundled {
+        read_sjson_file(&index_path)
+            .await
+            .wrap_err_with(|| format!("Failed to read file index '{}'", index_path.display()))?
+    } else {
+        Default::default()
+    };
 
     let image = if let Some(path) = &cfg.image {
         let path = entry.path().join(path);

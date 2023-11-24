@@ -1,0 +1,27 @@
+return {
+{% for mod in mods %}
+{
+    id = "{{ mod.id }}",
+    name = "{{ mod.name }}",
+    bundled = {{ mod.bundled }},
+    packages = {
+        {% for pkg in mod.packages %}
+        "{{ pkg }}",
+        {% endfor %}
+    },
+    run = function()
+        {% if mod.data is none %}
+        return dofile("{{ mod.init }}")
+        {% else %}
+        new_mod("{{ mod.id }}", {
+            mod_script = "{{ mod.init }}",
+            mod_data = "{{ mod.data }}",
+            {% if not mod.localization is none %}
+            mod_localization = "{{ mod.localization }}",
+            {% endif %}
+        })
+        {% endif %}
+    end,
+},
+{% endfor %}
+}

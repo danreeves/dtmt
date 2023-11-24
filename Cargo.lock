@@ -39,12 +39,10 @@ dependencies = [
 
 [[package]]
 name = "ansi-parser"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcb2392079bf27198570d6af79ecbd9ec7d8f16d3ec6b60933922fdb66287127"
+version = "0.9.0"
 dependencies = [
  "heapless",
- "nom 4.2.3",
+ "nom",
 ]
 
 [[package]]
@@ -381,7 +379,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
- "nom 7.1.3",
+ "nom",
 ]
 
 [[package]]
@@ -896,6 +894,7 @@ name = "dtmm"
 version = "0.1.0"
 dependencies = [
  "ansi-parser",
+ "async-recursion",
  "bitflags 1.3.2",
  "clap",
  "color-eyre",
@@ -906,6 +905,8 @@ dependencies = [
  "dtmt-shared",
  "futures",
  "lazy_static",
+ "luajit2-sys",
+ "minijinja",
  "nexusmods",
  "oodle",
  "path-slash",
@@ -1390,7 +1391,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
- "version_check 0.9.4",
+ "version_check",
 ]
 
 [[package]]
@@ -1614,12 +1615,12 @@ checksum = "f93e7192158dbcda357bdec5fb5788eebf8bbac027f3f33e719d29135ae84156"
 
 [[package]]
 name = "heapless"
-version = "0.5.6"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74911a68a1658cfcfb61bc0ccfbd536e3b6e906f8c2f7883ee50157e3e2184f1"
+checksum = "634bd4d29cbf24424d0a4bfcbf80c6960129dc24424752a7d1d1390607023422"
 dependencies = [
  "as-slice",
- "generic-array 0.13.3",
+ "generic-array 0.14.7",
  "hash32",
  "stable_deref_trait",
 ]
@@ -1747,7 +1748,7 @@ dependencies = [
  "serde",
  "sized-chunks",
  "typenum",
- "version_check 0.9.4",
+ "version_check",
 ]
 
 [[package]]
@@ -2085,6 +2086,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "minijinja"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "208758577ef2c86cf5dd3e85730d161413ec3284e2d73b2ef65d9a24d9971bcb"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2177,16 +2187,6 @@ dependencies = [
 
 [[package]]
 name = "nom"
-version = "4.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ad2a91a8e869eeb30b9cb3119ae87773a8f4ae617f41b1eb9c154b2905f7bd6"
-dependencies = [
- "memchr",
- "version_check 0.1.5",
-]
-
-[[package]]
-name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
@@ -2203,7 +2203,7 @@ checksum = "1e3c83c053b0713da60c5b8de47fe8e494fe3ece5267b2f23090a07a053ba8f3"
 dependencies = [
  "bytecount",
  "memchr",
- "nom 7.1.3",
+ "nom",
 ]
 
 [[package]]
@@ -2673,7 +2673,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
- "version_check 0.9.4",
+ "version_check",
 ]
 
 [[package]]
@@ -2684,7 +2684,7 @@ checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
 dependencies = [
  "proc-macro2",
  "quote",
- "version_check 0.9.4",
+ "version_check",
 ]
 
 [[package]]
@@ -3102,7 +3102,7 @@ dependencies = [
 name = "serde_sjson"
 version = "1.0.0"
 dependencies = [
- "nom 7.1.3",
+ "nom",
  "nom_locate",
  "serde",
 ]
@@ -3832,7 +3832,7 @@ version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7d2d4dafb69621809a81864c9c1b864479e1235c0dd4e199924b9742439ed89"
 dependencies = [
- "version_check 0.9.4",
+ "version_check",
 ]
 
 [[package]]
@@ -3965,12 +3965,6 @@ name = "version-compare"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
-
-[[package]]
-name = "version_check"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "914b1a6776c4c929a602fafd8bc742e06365d4bcbe48c30f9cca5824f70dc9dd"
 
 [[package]]
 name = "version_check"
@@ -4384,7 +4378,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "ansi-parser"
-version = "0.9.0"

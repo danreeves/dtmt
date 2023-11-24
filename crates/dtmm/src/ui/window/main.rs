@@ -135,8 +135,13 @@ fn build_mod_list() -> impl Widget<State> {
             })
             .lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::enabled.in_arc()));
 
-        let name =
-            Label::raw().lens(lens!((usize, Arc<ModInfo>, bool), 1).then(ModInfo::name.in_arc()));
+        let name = Label::dynamic(|info: &Arc<ModInfo>, _| {
+            info.nexus
+                .as_ref()
+                .map(|n| n.name.clone())
+                .unwrap_or_else(|| info.name.clone())
+        })
+        .lens(lens!((usize, Arc<ModInfo>, bool), 1));
 
         let version = {
             let icon = {
@@ -145,7 +150,7 @@ fn build_mod_list() -> impl Widget<State> {
 
                 let tree = theme::icons::recolor_icon(tree, true, COLOR_YELLOW_LIGHT);
 
-                Svg::new(Arc::new(tree)).fix_height(druid::theme::TEXT_SIZE_NORMAL)
+                Svg::new(tree).fix_height(druid::theme::TEXT_SIZE_NORMAL)
             };
 
             Either::new(

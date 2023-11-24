@@ -112,7 +112,7 @@ impl Api {
         RE.captures(name.as_ref()).and_then(|cap| {
             let name = cap.name("name").map(|s| s.as_str().to_string())?;
             let mod_id = cap.name("mod_id").and_then(|s| s.as_str().parse().ok())?;
-            let version = cap.name("version").map(|s| s.as_str().to_string())?;
+            let version = cap.name("version").map(|s| s.as_str().replace('-', "."))?;
             let updated = cap
                 .name("updated")
                 .and_then(|s| s.as_str().parse().ok())
@@ -154,7 +154,7 @@ impl Api {
             self.mods_download_link(nxm.mod_id, nxm.file_id, nxm.key, nxm.expires)
         )?;
 
-        let Some(download_url) = download_info.get(0).map(|i| i.uri.clone()) else {
+        let Some(download_url) = download_info.first().map(|i| i.uri.clone()) else {
             return Err(Error::InvalidNXM("no download link", url));
         };
 
@@ -215,7 +215,7 @@ impl Api {
         };
 
         let user_id = query.get("user_id").and_then(|id| id.parse().ok());
-        let Some(user_id) = user_id  else {
+        let Some(user_id) = user_id else {
             return Err(Error::InvalidNXM("Missing 'user_id'", nxm));
         };
 

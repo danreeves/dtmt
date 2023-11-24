@@ -145,7 +145,10 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
                 .get_one::<HashGroup>("group")
                 .expect("required argument not found");
 
-            let r: BufReader<Box<dyn tokio::io::AsyncRead + std::marker::Unpin>> = if let Some(name) = path.file_name() && name == "-" {
+            let r: BufReader<Box<dyn tokio::io::AsyncRead + std::marker::Unpin>> = if let Some(name) =
+                path.file_name()
+                && name == "-"
+            {
                 let f = tokio::io::stdin();
                 BufReader::new(Box::new(f))
             } else {

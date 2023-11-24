@@ -53,8 +53,8 @@ where
 
         let mut buf = vec![0u8; length];
         r.read_exact(&mut buf)?;
-        let mut s = String::from_utf8(buf)
-            .wrap_err_with(|| format!("Invalid byte sequence for LuaJIT bytecode name"))?;
+        let mut s =
+            String::from_utf8(buf).wrap_err("Invalid byte sequence for LuaJIT bytecode name")?;
         // Remove the leading `@`
         s.remove(0);
         s
