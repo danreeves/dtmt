@@ -7,11 +7,14 @@ use crate::ui::widget::button::Button;
 
 const WINDOW_SIZE: (f64, f64) = (600., 250.);
 
+/// Show an error dialog.
+/// The title and message are extracted from the error chain in the given `Report`.
 pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
     let (title, msg) = {
         let count = err.chain().count();
 
         if count == 1 {
+            // If there is only one error, that's all we can show.
             (
                 String::from("An error occurred!"),
                 err.root_cause().to_string(),
@@ -20,13 +23,20 @@ pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
             let first = err.chain().next().unwrap();
             let root = err.root_cause();
 
+            // If there is more than one error in the chain we want to show
+            // - The first one: This will describe the overall operation that failed
+            // - The root cause: The actual thing that failed (e.g. 'No such file or directory')
+            // - The one before the root cause: With diligent `wrap_err` usage, this will provide
+            // context to the root cause (e.g. the file name we failed to access)
+            //
+            // If there are only two errors, the first one is also the context to the root cause.
             if count > 2 {
                 // The second to last one, the context to the root cause
                 let context = err.chain().nth(count - 2).unwrap();
 
                 (format!("{first}!"), format!("{}: {}", context, root))
             } else {
-                (format!("{first}!"), root.to_string())
+                ("An error occurred!".to_string(), format!("{}: {}", first, root))
             }
         }
     };
