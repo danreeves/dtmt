@@ -56,13 +56,25 @@ impl std::io::Write for ChannelWriter {
 }
 
 pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>, level: Option<LogLevel>) {
-    let env_layer = if let Some(level) = level {
+    let mut env_layer = if let Some(level) = level {
         EnvFilter::from(level)
     } else if cfg!(debug_assertions) {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     } else {
         EnvFilter::new("error,dtmm=info")
     };
+
+    // The internal implementation of Druid's GTK file dialog turns
+    // cancelling the dialog into an error. The, also internal, wrapper
+    // then logs and swallows the error.
+    // Therefore, as a consumer of the library, we don't have any way
+    // to customize this behavior, and instead have to filter out the
+    // tracing event.
+    env_layer = env_layer.add_directive(
+        "druid_shell::backend::gtk::window=off"
+            .parse()
+            .expect("Invalid env filter directive"),
+    );
 
     let stdout_layer = fmt::layer().pretty();
 
