@@ -78,6 +78,7 @@ pub(crate) struct NexusInfo {
     pub author: String,
     pub summary: Arc<String>,
     pub description: Arc<String>,
+    pub picture_url: Arc<String>,
 }
 
 impl From<NexusMod> for NexusInfo {
@@ -89,6 +90,7 @@ impl From<NexusMod> for NexusInfo {
             author: value.author,
             summary: Arc::new(value.summary),
             description: Arc::new(value.description),
+            picture_url: Arc::new(value.picture_url.into()),
         }
     }
 }

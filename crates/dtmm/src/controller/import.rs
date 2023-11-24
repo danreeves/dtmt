@@ -27,6 +27,16 @@ fn find_archive_file<R: Read + Seek>(
     path
 }
 
+fn image_data_to_buffer(data: impl AsRef<[u8]>) -> Result<ImageBuf> {
+    // Druid somehow doesn't return an error compatible with eyre, here.
+    // So we have to wrap through `Display` manually.
+    ImageBuf::from_data(data.as_ref()).map_err(|err| {
+        Report::msg(err.to_string())
+            .wrap_err("Invalid image data")
+            .suggestion("Supported formats are: PNG, JPEG, Bitmap and WebP")
+    })
+}
+
 // Runs the content of a `.mod` file to extract what data we can get
 // from legacy mods.
 // 1. Create a global function `new_mod` that stores
@@ -420,6 +430,9 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
     tracing::info!("Importing mod {} ({})", mod_cfg.name, mod_cfg.id);
     tracing::debug!(root, ?mod_cfg);
 
+    let mod_dir = state.data_dir.join(state.mod_dir.as_ref());
+    let dest = mod_dir.join(&mod_cfg.id);
+
     let image = if let Some(path) = &mod_cfg.image {
         let name = archive
             .file_names()
@@ -434,28 +447,39 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         f.read_to_end(&mut buf)
             .wrap_err("Failed to read file index from archive")?;
 
-        // Druid somehow doesn't return an error compatible with eyre, here.
-        // So we have to wrap through `Display` manually.
-        let img = match ImageBuf::from_data(&buf) {
-            Ok(img) => img,
-            Err(err) => {
-                let err = Report::msg(err.to_string())
-                    .wrap_err("Invalid image data")
-                    .note("Supported formats are: PNG, JPEG, Bitmap and WebP")
-                    .suggestion("Contact the mod author to fix this");
-                return Err(err);
-            }
-        };
-
+        let img = image_data_to_buffer(buf)?;
         Some(img)
+    } else if let Some((nexus, _)) = &nexus {
+        let api = NexusApi::new(state.nexus_api_key.to_string())?;
+        let url = nexus.picture_url.as_ref();
+        let data = api
+            .picture(url)
+            .await
+            .wrap_err_with(|| format!("Failed to download Nexus image from '{}'", url))?;
+
+        let img = image_data_to_buffer(&data)?;
+
+        let name = "image.bin";
+        let path = dest.join(name);
+        match fs::write(&path, &data).await {
+            Ok(_) => {
+                mod_cfg.image = Some(name.into());
+                Some(img)
+            }
+            Err(err) => {
+                let err = Report::new(err).wrap_err(format!(
+                    "Failed to write Nexus picture to file '{}'",
+                    path.display()
+                ));
+                tracing::error!("{:?}", err);
+                None
+            }
+        }
     } else {
         None
     };
 
     tracing::trace!(?image);
-
-    let mod_dir = state.data_dir.join(state.mod_dir.as_ref());
-    let dest = mod_dir.join(&mod_cfg.id);
 
     tracing::trace!("Creating mods directory {}", dest.display());
     fs::create_dir_all(&dest)
