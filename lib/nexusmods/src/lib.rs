@@ -136,6 +136,13 @@ impl Api {
             .map_err(From::from)
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn get_file_by_id(&self, mod_id: u64, file_id: u64) -> Result<File> {
+        let url = BASE_URL_GAME.join(&format!("mods/{mod_id}/files/{file_id}.json"))?;
+        let req = self.client.get(url);
+        self.send(req).await
+    }
+
     pub fn parse_file_name<S: AsRef<str>>(
         name: S,
     ) -> Option<(String, u64, String, OffsetDateTime)> {
@@ -174,7 +181,7 @@ impl Api {
         self.send(req).await
     }
 
-    pub async fn handle_nxm(&self, url: Url) -> Result<(Mod, Vec<u8>)> {
+    pub async fn handle_nxm(&self, url: Url) -> Result<(Mod, File, Vec<u8>)> {
         let nxm = Self::parse_nxm(url.clone())?;
 
         let user = self.user_validate().await?;
@@ -183,8 +190,9 @@ impl Api {
             return Err(Error::InvalidNXM("user_id mismtach", url));
         }
 
-        let (mod_data, download_info) = futures::try_join!(
+        let (mod_data, file_info, download_info) = futures::try_join!(
             self.mods_id(nxm.mod_id),
+            self.get_file_by_id(nxm.mod_id, nxm.file_id),
             self.mods_download_link(nxm.mod_id, nxm.file_id, nxm.key, nxm.expires)
         )?;
 
@@ -195,7 +203,7 @@ impl Api {
         let req = self.client.get(download_url);
         let data = req.send().await?.bytes().await?;
 
-        Ok((mod_data, data.to_vec()))
+        Ok((mod_data, file_info, data.to_vec()))
     }
 
     pub fn parse_nxm(nxm: Url) -> Result<Nxm> {
@@ -204,17 +212,20 @@ impl Api {
         }
 
         // Now it makes sense, why Nexus calls this field `game_domain_name`, when it's just
-        // another path segmentin the regular API calls.
+        // another path segment in the regular API calls.
         if nxm.host_str() != Some(GAME_ID) {
             return Err(Error::InvalidNXM("Invalid game domain name", nxm));
         }
 
         let Some(mut segments) = nxm.path_segments() else {
-            return Err(Error::InvalidNXM("Cannot be a base", nxm));
+            return Err(Error::InvalidNXM("Missing path segments", nxm));
         };
 
         if segments.next() != Some("mods") {
-            return Err(Error::InvalidNXM("Unexpected path segment", nxm));
+            return Err(Error::InvalidNXM(
+                "Unexpected path segment, expected 'mods'",
+                nxm,
+            ));
         }
 
         let Some(mod_id) = segments.next().and_then(|id| id.parse().ok()) else {
@@ -222,7 +233,10 @@ impl Api {
         };
 
         if segments.next() != Some("files") {
-            return Err(Error::InvalidNXM("Unexpected path segment", nxm));
+            return Err(Error::InvalidNXM(
+                "Unexpected path segment, expected 'files'",
+                nxm,
+            ));
         }
 
         let Some(file_id) = segments.next().and_then(|id| id.parse().ok()) else {
@@ -237,7 +251,7 @@ impl Api {
         }
 
         let Some(key) = query.get("key") else {
-            return Err(Error::InvalidNXM("Missing 'key'", nxm));
+            return Err(Error::InvalidNXM("Missing query field 'key'", nxm));
         };
 
         let expires = query
@@ -245,12 +259,12 @@ impl Api {
             .and_then(|expires| expires.parse().ok())
             .and_then(|expires| OffsetDateTime::from_unix_timestamp(expires).ok());
         let Some(expires) = expires else {
-            return Err(Error::InvalidNXM("Missing 'expires'", nxm));
+            return Err(Error::InvalidNXM("Missing query field 'expires'", nxm));
         };
 
         let user_id = query.get("user_id").and_then(|id| id.parse().ok());
         let Some(user_id) = user_id else {
-            return Err(Error::InvalidNXM("Missing 'user_id'", nxm));
+            return Err(Error::InvalidNXM("Missing query field 'user_id'", nxm));
         };
 
         Ok(Nxm {

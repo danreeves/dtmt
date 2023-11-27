@@ -18,6 +18,7 @@
 - sdk: implement decompiling Lua files
 - dtmm: fetch cover image for Nexus mods
 - dtmm: fetch file version for Nexus mods
+- dtmm: handle `nxm://` URIs via IPC and import the corresponding mod
 
 === Fixed
 
