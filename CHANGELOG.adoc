@@ -16,6 +16,7 @@
 - dtmt: add utility to migrate mod projects
 - dtmm: reset dtkit-patch installations
 - sdk: implement decompiling Lua files
+- dtmm: fetch cover image for Nexus mods
 
 === Fixed
 
