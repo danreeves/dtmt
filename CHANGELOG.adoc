@@ -16,6 +16,7 @@
 - dtmt: add utility to migrate mod projects
 - dtmm: reset dtkit-patch installations
 - sdk: implement decompiling Lua files
+- dtmm: fetch file version for Nexus mods
 
 === Fixed
 
