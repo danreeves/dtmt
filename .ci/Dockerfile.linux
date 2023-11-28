@@ -1,35 +1,7 @@
 FROM dtmt-ci-base-linux
 
-# Create dummy crates and copy their Cargo.toml, so that dependencies can be cached
-RUN set -e; \
-    cargo new --bin crates/dtmt; \
-    cargo new --bin crates/dtmm; \
-    cargo new --lib lib/dtmt-shared; \
-    cargo new --lib lib/nexusmods; \
-    cargo new --lib lib/sdk; \
-    cargo new --lib lib/serde_sjson; \
-    cargo new --lib lib/ansi-parser
-
-COPY Cargo.toml Cargo.lock /src/dtmt/
-COPY crates/dtmt/Cargo.toml /src/dtmt/crates/dtmt/
-COPY crates/dtmm/Cargo.toml /src/dtmt/crates/dtmm/
-COPY lib/dtmt-shared/Cargo.toml /src/dtmt/lib/dtmt-shared/
-COPY lib/nexusmods/Cargo.toml /src/dtmt/lib/nexusmods/
-COPY lib/sdk/Cargo.toml /src/dtmt/lib/sdk/
-COPY lib/serde_sjson/Cargo.toml /src/dtmt/lib/serde_sjson/
-COPY lib/ansi-parser/Cargo.toml /src/dtmt/lib/ansi-parser/
-
-# Crates with build scripts cannot be split that way, but they shouldn't change too often
-COPY lib/luajit2-sys /src/dtmt/lib/luajit2-sys
-COPY lib/oodle /src/dtmt/lib/oodle
-# color-eyre needs to be copied, too, then, as it's used by `oodle`
-COPY lib/color-eyre /src/dtmt/lib/color-eyre
-COPY --from=dtmt-ci-base-linux /src/*.lib /src/dtmt/lib/oodle/
-
-RUN cargo build --release --locked
-RUN rm -r crates lib
-
 COPY . /src/dtmt
 COPY --from=dtmt-ci-base-linux /src/*.lib /src/*.so /src/dtmt/lib/oodle/
-
-RUN cargo build --release --locked
+RUN --mount=type=cache,id=cargo-registry,target=/cargo/registry \
+    --mount=type=cache,id=cargo-target,target=/src/dtmt/target \
+    cargo build --release --locked
