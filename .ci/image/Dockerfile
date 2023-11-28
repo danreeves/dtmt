@@ -1,13 +1,68 @@
 # https://jake-shadle.github.io/xwin/
-FROM dtmt-ci-base-linux
+FROM debian:bullseye-slim as xwin
+
+ARG XWIN_VERSION=0.5.0
+ARG XWIN_PREFIX="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
+ADD https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$XWIN_PREFIX.tar.gz /root/$XWIN_PREFIX.tar.gz
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --no-install-recommends -y \
+        tar \
+        ; \
+    # Install xwin to cargo/bin via github release. Note you could also just use `cargo install xwin`.
+    tar -xzv -f /root/$XWIN_PREFIX.tar.gz -C /usr/bin --strip-components=1 $XWIN_PREFIX/xwin; \
+    apt-get remove -y --auto-remove; \
+    rm -rf \
+        /var/lib/apt/lists/* \
+        /root/$XWIN_PREFIX.tar.gz;
+
+RUN set -eux; \
+    # Splat the CRT and SDK files to /xwin/crt and /xwin/sdk respectively
+    xwin \
+        --log-level debug \
+        --cache-dir /root/.xwin-cache \
+        --manifest-version 16 \
+        --accept-license \
+        splat \
+        --output /xwin; \
+    # Even though this build step only exists temporary, to copy the
+    # final data out of, it still generates a cache entry on the Docker host.
+    # And to keep that to a minimum, we still delete the stuff we don't need.
+    rm -rf /root/.xwin-cache;
+
+FROM rust:slim-bullseye as linux
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --no-install-recommends -y \
+        build-essential \
+        curl \
+        git \
+        gpg \
+        jq \
+        libatk1.0-dev \
+        libclang-13-dev \
+        libglib2.0-dev \
+        libgtk-3-dev \
+        libpango1.0-dev \
+        libssl-dev \
+        libzstd-dev \
+        pkg-config; \
+    apt-get remove -y --auto-remove; \
+    rm -rf /var/lib/apt/lists/*; \
+    rustup default nightly
+
+WORKDIR /src/dtmt
+
+COPY lib/oodle/*.so lib/oodle/*.a /src/
+
+FROM linux as msvc
 
 ENV KEYRINGS /usr/local/share/keyrings
-ARG XWIN_VERSION=0.2.11
-ARG XWIN_PREFIX="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
 
 ADD https://apt.llvm.org/llvm-snapshot.gpg.key /root/llvm-snapshot.gpg.key
 ADD https://dl.winehq.org/wine-builds/winehq.key /root/winehq.key
-ADD https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$XWIN_PREFIX.tar.gz /root/$XWIN_PREFIX.tar.gz
 
 RUN set -eux; \
     mkdir -p $KEYRINGS; \
@@ -26,7 +81,7 @@ RUN set -eux; \
         llvm-13 \
         lld-13 \
         winehq-staging \
-        tar; \
+        ; \
     # ensure that clang/clang++ are callable directly
     ln -s clang-13 /usr/bin/clang && ln -s clang /usr/bin/clang++ && ln -s lld-13 /usr/bin/ld.lld; \
     # We also need to setup symlinks ourselves for the MSVC shims because they aren't in the debian packages
@@ -44,18 +99,14 @@ RUN set -eux; \
     update-alternatives --install /usr/bin/ld ld /usr/bin/ld.lld 100; \
     rustup target add x86_64-pc-windows-msvc; \
     rustup component add rust-src; \
-    # Install xwin to cargo/bin via github release. Note you could also just use `cargo install xwin`.
-    tar -xzv -f /root/$XWIN_PREFIX.tar.gz -C /usr/local/cargo/bin --strip-components=1 $XWIN_PREFIX/xwin; \
-    # Splat the CRT and SDK files to /xwin/crt and /xwin/sdk respectively
-    xwin --accept-license splat --output /xwin; \
     # Remove unneeded files to reduce image size
     apt-get remove -y --auto-remove; \
     rm -rf \
-        .xwin-cache \
-        /usr/local/cargo/bin/xwin \
-        /root/$XWIN_PREFIX.tar.gz \
         /var/lib/apt/lists/* \
         /root/*.key;
+
+COPY lib/oodle/*.lib /src
+COPY --from=xwin /xwin /xwin
 
 # Note that we're using the full target triple for each variable instead of the
 # simple CC/CXX/AR shorthands to avoid issues when compiling any C/C++ code for
@@ -83,7 +134,3 @@ ENV CFLAGS_x86_64_pc_windows_msvc="$CL_FLAGS" \
 # Run wineboot just to setup the default WINEPREFIX so we don't do it every
 # container run
 RUN wine wineboot --init
-
-WORKDIR /src/dtmt
-
-COPY *.lib /src
