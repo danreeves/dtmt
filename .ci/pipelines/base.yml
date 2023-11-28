@@ -1,0 +1,204 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cappyzawa/concourse-pipeline-jsonschema/master/concourse_jsonschema.json#/definitions/Config
+---
+
+# The actual CI pipeline that is run per branch
+resource_types:
+- name: gitea-package
+  type: registry-image
+  source:
+    repository: registry.local:5000/gitea-package
+
+- name: gitea-status
+  type: registry-image
+  source:
+    repository: registry.local:5000/gitea-status
+
+- name: gitea-pr
+  type: registry-image
+  source:
+    repository: registry.local:5000/gitea-pr
+
+
+resources:
+- name: repo
+  type: git
+  source:
+    uri: http://forgejo:3000/bitsquid_dt/dtmt
+    branch: master
+
+- name: repo-pr
+  type: gitea-pr
+  source:
+    access_token: ((gitea_api_key))
+    owner: ((owner))
+    repo: ((repo))
+    url: https://git.sclu1034.dev
+
+- name: gitea-package
+  type: gitea-package
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    type: generic
+    name: dtmt
+
+
+- name: status-build-msvc
+  type: gitea-status
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    repo: dtmt
+    context: build/msvc
+    description: "Build for the target platform: msvc"
+
+- name: status-build-linux
+  type: gitea-status
+  source:
+    access_token: ((gitea_api_key))
+    url: http://forgejo:3000
+    owner: bitsquid_dt
+    repo: dtmt
+    context: build/linux
+    description: "Build for the target platform: linux"
+
+
+jobs:
+- name: set-pipelines
+  plan:
+  - in_parallel:
+    - get: repo-pr
+      trigger: true
+
+    - get: repo
+
+  - load_var: prs
+    file: repo-pr/prs.json
+
+  - across:
+    - var: pr
+      values: ((.:prs))
+    set_pipeline: dtmt-pr
+    file: repo/.ci/pipelines/pr.yml
+    vars:
+      pr: ((.:pr))
+      gitea_api_key: ((gitea_api_key))
+    instance_vars:
+      number: ((.:pr.number))
+
+
+- name: build-msvc
+  on_success:
+    put: state-success
+    resource: status-build-msvc
+    no_get: true
+    params:
+      state: success
+      sha: ((.:git_sha))
+
+  on_failure:
+    put: state-failure
+    resource: status-build-msvc
+    no_get: true
+    params:
+      state: failure
+      sha: ((.:git_sha))
+
+  plan:
+  - get: repo
+    trigger: true
+
+  - load_var: git_sha
+    file: repo/.git/ref
+
+  - put: state-pending
+    resource: status-build-msvc
+    no_get: true
+    params:
+      state: pending
+      sha: ((.:git_sha))
+
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: msvc
+      gitea_url: http://forgejo:3000
+      gitea_api_key: ((gitea_api_key))
+
+  - load_var: version_number
+    reveal: true
+    file: artifact/version
+
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: ((.:version_number))
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/dtmt
+        - artifact/dtmm
+        - artifact/*.exe
+        - artifact/*.sha256
+
+- name: build-linux
+  on_success:
+    put: state-success
+    resource: status-build-linux
+    no_get: true
+    params:
+      state: success
+      sha: ((.:git_sha))
+
+  on_failure:
+    put: state-failure
+    resource: status-build-linux
+    no_get: true
+    params:
+      state: failure
+      sha: ((.:git_sha))
+
+  plan:
+  - get: repo
+    trigger: true
+
+  - load_var: git_sha
+    file: repo/.git/ref
+
+  - put: state-pending
+    resource: status-build-linux
+    no_get: true
+    params:
+      state: pending
+      sha: ((.:git_sha))
+
+  - task: build
+    file: repo/.ci/tasks/build.yml
+    vars:
+      target: linux
+      gitea_url: http://forgejo:3000
+      gitea_api_key: ((gitea_api_key))
+
+  - load_var: version_number
+    reveal: true
+    file: artifact/version
+
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: ((.:version_number))
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/dtmt
+        - artifact/dtmm
+        - artifact/*.exe
+        - artifact/*.sha256

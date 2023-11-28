@@ -30,8 +30,8 @@ ci-image-linux:
 
 set-base-pipeline:
     fly -t {{fly_target}} set-pipeline \
-        --pipeline dtmt-prs \
-        --config .ci/pipelines/base-pipeline.yml \
+        --pipeline dtmt \
+        --config .ci/pipelines/base.yml \
         -v gitea_api_key=${GITEA_API_KEY} \
         -v owner=bitsquid_dt \
         -v repo=dtmt
