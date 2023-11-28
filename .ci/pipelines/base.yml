@@ -123,6 +123,7 @@ jobs:
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
+      pr: ""
       target: msvc
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
@@ -180,6 +181,7 @@ jobs:
   - task: build
     file: repo/.ci/tasks/build.yml
     vars:
+      pr: ""
       target: linux
       gitea_url: http://forgejo:3000
       gitea_api_key: ((gitea_api_key))
