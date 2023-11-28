@@ -16,16 +16,15 @@ build-image-msvc:
 build-image-linux:
     docker build -f .ci/Dockerfile.linux .
 
-ci-image: ci-image-msvc ci-image-linux
-
-ci-image-msvc:
-    docker build -t dtmt-ci-base-msvc -f .ci/image/Dockerfile.msvc .
+ci-image:
+    # The MSVC image depends on the Linux image. So by building that first,
+    # we actually build both, and cache them, so that "building" the
+    # Linux image afterwards merely needs to pull the cache.
+    docker build --target msvc -t dtmt-ci-base-msvc -f .ci/image/Dockerfile .
+    docker build --target linux -t dtmt-ci-base-linux -f .ci/image/Dockerfile .
     docker tag dtmt-ci-base-msvc registry.sclu1034.dev/dtmt-ci-base-msvc
-    docker push registry.sclu1034.dev/dtmt-ci-base-msvc
-
-ci-image-linux:
-    docker build -t dtmt-ci-base-linux -f .ci/image/Dockerfile.linux .
     docker tag dtmt-ci-base-linux registry.sclu1034.dev/dtmt-ci-base-linux
+    docker push registry.sclu1034.dev/dtmt-ci-base-msvc
     docker push registry.sclu1034.dev/dtmt-ci-base-linux
 
 set-base-pipeline:

@@ -26,10 +26,38 @@ RUN set -eux; \
         --accept-license \
         splat \
         --output /xwin; \
-    rm -rf \
-        /root/.xwin-cache;
+    # Even though this build step only exists temporary, to copy the
+    # final data out of, it still generates a cache entry on the Docker host.
+    # And to keep that to a minimum, we still delete the stuff we don't need.
+    rm -rf /root/.xwin-cache;
 
-FROM dtmt-ci-base-linux as final
+FROM rust:slim-bullseye as linux
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --no-install-recommends -y \
+        build-essential \
+        curl \
+        git \
+        gpg \
+        jq \
+        libatk1.0-dev \
+        libclang-13-dev \
+        libglib2.0-dev \
+        libgtk-3-dev \
+        libpango1.0-dev \
+        libssl-dev \
+        libzstd-dev \
+        pkg-config; \
+    apt-get remove -y --auto-remove; \
+    rm -rf /var/lib/apt/lists/*; \
+    rustup default nightly
+
+WORKDIR /src/dtmt
+
+COPY lib/oodle/*.so lib/oodle/*.a /src/
+
+FROM linux as msvc
 
 ENV KEYRINGS /usr/local/share/keyrings
 
