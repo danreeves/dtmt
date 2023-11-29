@@ -234,6 +234,8 @@ fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(Mo
         None
     };
 
+    tracing::debug!(?legacy_mod_data);
+
     if let Some(name) = find_archive_file(archive, "dtmt.cfg") {
         let mut f = archive
             .by_name(&name)
@@ -266,6 +268,24 @@ fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(Mo
 
             Ok((cfg, root))
         }
+    } else if let Some((mod_id, resources, root)) = legacy_mod_data {
+        let cfg = ModConfig {
+            bundled: false,
+            dir: PathBuf::new(),
+            id: mod_id.clone(),
+            name: mod_id,
+            summary: "A mod for the game Warhammer 40,000: Darktide".into(),
+            version: "N/A".into(),
+            description: None,
+            author: None,
+            image: None,
+            categories: Vec::new(),
+            packages: Vec::new(),
+            resources,
+            depends: Vec::new(),
+        };
+
+        Ok((cfg, root))
     } else {
         eyre::bail!(
             "Mod needs a config file or `.mod` file. \
