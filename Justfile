@@ -16,22 +16,21 @@ build-image-msvc:
 build-image-linux:
     docker build -f .ci/Dockerfile.linux .
 
-ci-image: ci-image-msvc ci-image-linux
-
-ci-image-msvc: ci-image-linux
-    docker build -t dtmt-ci-base-msvc -f .ci/image/Dockerfile.msvc .ci/image
+ci-image:
+    # The MSVC image depends on the Linux image. So by building that first,
+    # we actually build both, and cache them, so that "building" the
+    # Linux image afterwards merely needs to pull the cache.
+    docker build --target msvc -t dtmt-ci-base-msvc -f .ci/image/Dockerfile .
+    docker build --target linux -t dtmt-ci-base-linux -f .ci/image/Dockerfile .
     docker tag dtmt-ci-base-msvc registry.sclu1034.dev/dtmt-ci-base-msvc
-    docker push registry.sclu1034.dev/dtmt-ci-base-msvc
-
-ci-image-linux:
-    docker build -t dtmt-ci-base-linux -f .ci/image/Dockerfile.linux .ci/image
     docker tag dtmt-ci-base-linux registry.sclu1034.dev/dtmt-ci-base-linux
+    docker push registry.sclu1034.dev/dtmt-ci-base-msvc
     docker push registry.sclu1034.dev/dtmt-ci-base-linux
 
 set-base-pipeline:
     fly -t {{fly_target}} set-pipeline \
-        --pipeline dtmt-prs \
-        --config .ci/pipelines/base-pipeline.yml \
+        --pipeline dtmt \
+        --config .ci/pipelines/base.yml \
         -v gitea_api_key=${GITEA_API_KEY} \
         -v owner=bitsquid_dt \
         -v repo=dtmt
