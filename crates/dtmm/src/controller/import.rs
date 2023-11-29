@@ -411,7 +411,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
     let data = Cursor::new(data);
 
-    let nexus = if let Some((_, id, version, _)) = info
+    let nexus = if let Some((_, id, version, timestamp)) = info
         .path
         .file_name()
         .and_then(|s| s.to_str())
@@ -423,9 +423,23 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
                 .mods_id(id)
                 .await
                 .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
-            let info = NexusInfo::from(mod_info);
 
-            tracing::debug!("{:?}", info);
+            let version = match api.file_version(id, timestamp).await {
+                Ok(version) => version,
+                Err(err) => {
+                    let err = Report::new(err);
+                    tracing::warn!(
+                        "Failed to fetch version for Nexus download. \
+                        Falling back to file name:\n{:?}",
+                        err
+                    );
+                    version
+                }
+            };
+
+            let info = NexusInfo::from(mod_info);
+            tracing::debug!(version, ?info);
+
             Some((info, version))
         } else {
             None

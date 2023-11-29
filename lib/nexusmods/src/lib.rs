@@ -39,6 +39,8 @@ pub enum Error {
     Infallible(#[from] Infallible),
     #[error("invalid NXM URL '{}': {0}", .1.as_str())]
     InvalidNXM(&'static str, Url),
+    #[error("{0}")]
+    Custom(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -100,6 +102,28 @@ impl Api {
         let url = BASE_URL_GAME.join(&format!("mods/{}.json", id))?;
         let req = self.client.get(url);
         self.send(req).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn file_version<T>(&self, id: u64, timestamp: T) -> Result<String>
+    where
+        T: std::fmt::Debug,
+        OffsetDateTime: PartialEq<T>,
+    {
+        let url = BASE_URL_GAME.join(&format!("mods/{id}/files.json"))?;
+        let req = self.client.get(url);
+        let files: FileList = self.send(req).await?;
+
+        let Some(file) = files
+            .files
+            .into_iter()
+            .find(|file| file.uploaded_timestamp == timestamp)
+        else {
+            let err = Error::Custom("Timestamp does not match any file".into());
+            return Err(err);
+        };
+
+        Ok(file.version)
     }
 
     #[tracing::instrument(skip(self))]

@@ -65,6 +65,35 @@ pub struct Mod {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct File {
+    pub id: Vec<u64>,
+    pub uid: u64,
+    pub file_id: u64,
+    pub name: String,
+    pub version: String,
+    pub category_id: u64,
+    pub category_name: String,
+    pub is_primary: bool,
+    pub size: u64,
+    pub file_name: String,
+    #[serde(with = "time::serde::timestamp")]
+    pub uploaded_timestamp: OffsetDateTime,
+    pub mod_version: String,
+    pub external_virus_scan_url: String,
+    pub description: String,
+    pub size_kb: u64,
+    pub size_in_bytes: u64,
+    pub changelog_html: Option<String>,
+    pub content_preview_link: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FileList {
+    pub files: Vec<File>,
+    // pub file_updates: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct DownloadLink {
     pub name: String,
     pub short_name: String,
