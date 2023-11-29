@@ -4,7 +4,7 @@ use std::convert::Infallible;
 use lazy_static::lazy_static;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, InvalidHeaderValue};
-use reqwest::{Client, RequestBuilder, Url};
+use reqwest::{Client, IntoUrl, RequestBuilder, Url};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -100,6 +100,16 @@ impl Api {
         let url = BASE_URL_GAME.join(&format!("mods/{}.json", id))?;
         let req = self.client.get(url);
         self.send(req).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn picture(&self, url: impl IntoUrl + std::fmt::Debug) -> Result<Vec<u8>> {
+        let res = self.client.get(url).send().await?.error_for_status()?;
+
+        res.bytes()
+            .await
+            .map(|bytes| bytes.to_vec())
+            .map_err(From::from)
     }
 
     pub fn parse_file_name<S: AsRef<str>>(
