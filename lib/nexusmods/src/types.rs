@@ -77,13 +77,13 @@ pub struct File {
     pub size: u64,
     pub file_name: String,
     #[serde(with = "time::serde::timestamp")]
-    pub updated_timestamp: OffsetDateTime,
+    pub uploaded_timestamp: OffsetDateTime,
     pub mod_version: String,
     pub external_virus_scan_url: String,
     pub description: String,
     pub size_kb: u64,
     pub size_in_bytes: u64,
-    pub changelog_html: String,
+    pub changelog_html: Option<String>,
     pub content_preview_link: String,
 }
 

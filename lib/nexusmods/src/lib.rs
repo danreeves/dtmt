@@ -117,7 +117,7 @@ impl Api {
         let Some(file) = files
             .files
             .into_iter()
-            .find(|file| file.updated_timestamp == timestamp)
+            .find(|file| file.uploaded_timestamp == timestamp)
         else {
             let err = Error::Custom("Timestamp does not match any file".into());
             return Err(err);
