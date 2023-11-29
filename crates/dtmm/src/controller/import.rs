@@ -434,6 +434,8 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
         None
     };
 
+    tracing::trace!(?nexus);
+
     let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
     if tracing::enabled!(tracing::Level::DEBUG) {
@@ -448,10 +450,13 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
     let (mut mod_cfg, root) =
         extract_mod_config(&mut archive).wrap_err("Failed to extract mod configuration")?;
     tracing::info!("Importing mod {} ({})", mod_cfg.name, mod_cfg.id);
-    tracing::debug!(root, ?mod_cfg);
 
     let mod_dir = state.data_dir.join(state.mod_dir.as_ref());
     let dest = mod_dir.join(&mod_cfg.id);
+    tracing::trace!("Creating mods directory {}", dest.display());
+    fs::create_dir_all(&dest)
+        .await
+        .wrap_err_with(|| format!("Failed to create data directory '{}'", dest.display()))?;
 
     let image = if let Some(path) = &mod_cfg.image {
         let name = archive
@@ -500,11 +505,7 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
     };
 
     tracing::trace!(?image);
-
-    tracing::trace!("Creating mods directory {}", dest.display());
-    fs::create_dir_all(&dest)
-        .await
-        .wrap_err_with(|| format!("Failed to create data directory '{}'", dest.display()))?;
+    tracing::debug!(root, ?mod_cfg);
 
     let packages = if mod_cfg.bundled {
         extract_bundled_mod(&mut archive, root, &mod_dir).wrap_err("Failed to extract mod")?
