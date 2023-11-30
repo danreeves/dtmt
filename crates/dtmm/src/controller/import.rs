@@ -468,7 +468,7 @@ pub(crate) async fn import_from_nxm(state: ActionState, uri: String) -> Result<M
     import_mod(state, Some((nexus, file_info.version)), data).await
 }
 
-#[tracing::instrument(skip(state))]
+#[tracing::instrument(skip(state, data), fields(data = data.len()))]
 pub(crate) async fn import_mod(
     state: ActionState,
     nexus: Option<(NexusInfo, String)>,

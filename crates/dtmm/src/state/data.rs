@@ -95,7 +95,7 @@ impl From<NexusMod> for NexusInfo {
     }
 }
 
-#[derive(Clone, Data, Debug, Lens)]
+#[derive(Clone, Data, Lens)]
 pub(crate) struct ModInfo {
     pub id: String,
     pub name: String,
@@ -116,6 +116,39 @@ pub(crate) struct ModInfo {
     pub bundled: bool,
     #[data(ignore)]
     pub nexus: Option<NexusInfo>,
+}
+
+impl std::fmt::Debug for ModInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ModInfo")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("summary", &self.summary)
+            .field(
+                "description",
+                &(match &self.description {
+                    Some(desc) => format!("Some(String[0..{}])", desc.len()),
+                    None => "None".to_string(),
+                }),
+            )
+            .field("categories", &self.categories)
+            .field("author", &self.author)
+            .field(
+                "image",
+                &(match &self.image {
+                    Some(image) => format!("Some(ImageBuf[{}x{}])", image.width(), image.height()),
+                    None => "None".to_string(),
+                }),
+            )
+            .field("version", &self.version)
+            .field("enabled", &self.enabled)
+            .field("packages", &format!("Vec[0..{}]", self.packages.len()))
+            .field("resources", &self.resources)
+            .field("depends", &self.depends)
+            .field("bundled", &self.bundled)
+            .field("nexus", &self.nexus)
+            .finish()
+    }
 }
 
 impl ModInfo {
