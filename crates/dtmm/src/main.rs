@@ -10,12 +10,13 @@ use std::sync::Arc;
 use clap::parser::ValueSource;
 use clap::{command, value_parser, Arg};
 use color_eyre::eyre::{self, Context};
-use color_eyre::{Report, Result};
+use color_eyre::{Report, Result, Section};
 use druid::AppLauncher;
+use interprocess::local_socket::{LocalSocketListener, LocalSocketStream};
 use tokio::sync::RwLock;
 
 use crate::controller::worker::work_thread;
-use crate::state::AsyncAction;
+use crate::state::{AsyncAction, ACTION_HANDLE_NXM};
 use crate::state::{Delegate, State};
 use crate::ui::theme;
 use crate::util::log::LogLevel;
@@ -28,6 +29,37 @@ mod util {
     pub mod log;
 }
 mod ui;
+
+// As explained in https://docs.rs/interprocess/latest/interprocess/local_socket/enum.NameTypeSupport.html
+// namespaces are supported on both platforms we care about: Windows and Linux.
+const IPC_ADDRESS: &str = "@dtmm.sock";
+
+#[tracing::instrument]
+fn notify_nxm_download(
+    uri: impl AsRef<str> + std::fmt::Debug,
+    level: Option<LogLevel>,
+) -> Result<()> {
+    util::log::create_tracing_subscriber(level, None);
+
+    tracing::debug!("Received Uri '{}', sending to main process.", uri.as_ref());
+
+    let mut stream = LocalSocketStream::connect(IPC_ADDRESS)
+        .wrap_err_with(|| format!("Failed to connect to '{}'", IPC_ADDRESS))
+        .suggestion("Make sure the main window is open.")?;
+
+    tracing::debug!("Connected to main process at '{}'", IPC_ADDRESS);
+
+    bincode::serialize_into(&mut stream, uri.as_ref()).wrap_err("Failed to send URI")?;
+
+    // We don't really care what the message is, we just need an acknowledgement.
+    let _: String = bincode::deserialize_from(&mut stream).wrap_err("Failed to receive reply")?;
+
+    tracing::info!(
+        "Notified DTMM with uri '{}'. Check the main window.",
+        uri.as_ref()
+    );
+    Ok(())
+}
 
 #[tracing::instrument]
 fn main() -> Result<()> {
@@ -53,15 +85,25 @@ fn main() -> Result<()> {
                 .value_parser(value_parser!(LogLevel))
                 .default_value("info"),
         )
+        .arg(
+            Arg::new("nxm")
+                .help("An `nxm://` URI to download")
+                .required(false),
+        )
         .get_matches();
 
-    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
     let level = if matches.value_source("log-level") == Some(ValueSource::DefaultValue) {
         None
     } else {
         matches.get_one::<LogLevel>("log-level").cloned()
     };
-    util::log::create_tracing_subscriber(log_tx, level);
+
+    if let Some(uri) = matches.get_one::<String>("nxm") {
+        return notify_nxm_download(uri, level).wrap_err("Failed to send NXM Uri to main window.");
+    }
+
+    let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
+    util::log::create_tracing_subscriber(level, Some(log_tx));
 
     let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -84,6 +126,59 @@ fn main() -> Result<()> {
 
     let event_sink = launcher.get_external_handle();
 
+    {
+        let span = tracing::info_span!(IPC_ADDRESS, "nxm-socket");
+        let _guard = span.enter();
+
+        let event_sink = event_sink.clone();
+        let server =
+            LocalSocketListener::bind(IPC_ADDRESS).wrap_err("Failed to create IPC listener")?;
+
+        tracing::debug!("IPC server listening on '{}'", IPC_ADDRESS);
+
+        // Drop the guard here, so that we can re-enter the same span in the thread.
+        drop(_guard);
+
+        std::thread::Builder::new()
+            .name("nxm-socket".into())
+            .spawn(move || {
+                let _guard = span.enter();
+
+                loop {
+                    let res = server.accept().wrap_err_with(|| {
+                        format!("IPC server failed to listen on '{}'", IPC_ADDRESS)
+                    });
+
+                    match res {
+                        Ok(mut stream) => {
+                            let res = bincode::deserialize_from(&mut stream)
+                                .wrap_err("Failed to read message")
+                                .and_then(|uri: String| {
+                                    tracing::trace!(uri, "Received NXM uri");
+
+                                    event_sink
+                                        .submit_command(ACTION_HANDLE_NXM, uri, druid::Target::Auto)
+                                        .wrap_err("Failed to start NXM download")
+                                });
+                            match res {
+                                Ok(()) => {
+                                    let _ = bincode::serialize_into(&mut stream, "Ok");
+                                }
+                                Err(err) => {
+                                    tracing::error!("{:?}", err);
+                                    let _ = bincode::serialize_into(&mut stream, "Error");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Failed to receive client connection: {:?}", err)
+                        }
+                    }
+                }
+            })
+            .wrap_err("Failed to create thread")?;
+    }
+
     std::thread::Builder::new()
         .name("work-thread".into())
         .spawn(move || {
@@ -97,7 +192,7 @@ fn main() -> Result<()> {
                 }
             }
         })
-        .wrap_err("Work thread panicked")?;
+        .wrap_err("Failed to create thread")?;
 
     launcher.launch(State::new()).map_err(Report::new)
 }

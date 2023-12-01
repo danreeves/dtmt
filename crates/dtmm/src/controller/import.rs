@@ -405,11 +405,10 @@ fn extract_legacy_mod<R: Read + Seek>(
 }
 
 #[tracing::instrument(skip(state))]
-pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<ModInfo> {
+pub(crate) async fn import_from_file(state: ActionState, info: FileInfo) -> Result<ModInfo> {
     let data = fs::read(&info.path)
         .await
         .wrap_err_with(|| format!("Failed to read file {}", info.path.display()))?;
-    let data = Cursor::new(data);
 
     let nexus = if let Some((_, id, version, timestamp)) = info
         .path
@@ -450,6 +449,32 @@ pub(crate) async fn import_mod(state: ActionState, info: FileInfo) -> Result<Mod
 
     tracing::trace!(?nexus);
 
+    import_mod(state, nexus, data).await
+}
+
+#[tracing::instrument(skip(state))]
+pub(crate) async fn import_from_nxm(state: ActionState, uri: String) -> Result<ModInfo> {
+    let url = uri
+        .parse()
+        .wrap_err_with(|| format!("Invalid Uri '{}'", uri))?;
+
+    let api = NexusApi::new(state.nexus_api_key.to_string())?;
+    let (mod_info, file_info, data) = api
+        .handle_nxm(url)
+        .await
+        .wrap_err_with(|| format!("Failed to download mod from NXM uri '{}'", uri))?;
+
+    let nexus = NexusInfo::from(mod_info);
+    import_mod(state, Some((nexus, file_info.version)), data).await
+}
+
+#[tracing::instrument(skip(state, data), fields(data = data.len()))]
+pub(crate) async fn import_mod(
+    state: ActionState,
+    nexus: Option<(NexusInfo, String)>,
+    data: Vec<u8>,
+) -> Result<ModInfo> {
+    let data = Cursor::new(data);
     let mut archive = ZipArchive::new(data).wrap_err("Failed to open ZIP archive")?;
 
     if tracing::enabled!(tracing::Level::DEBUG) {

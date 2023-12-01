@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use crate::controller::app::*;
 use crate::controller::deploy::deploy_mods;
 use crate::controller::game::*;
-use crate::controller::import::import_mod;
+use crate::controller::import::*;
 use crate::state::AsyncAction;
 use crate::state::ACTION_FINISH_CHECK_UPDATE;
 use crate::state::ACTION_FINISH_LOAD_INITIAL;
@@ -57,7 +57,7 @@ async fn handle_action(
                     .expect("failed to send command");
             }),
             AsyncAction::AddMod(state, info) => tokio::spawn(async move {
-                match import_mod(state, info)
+                match import_from_file(state, info)
                     .await
                     .wrap_err("Failed to import mod")
                 {
@@ -184,6 +184,28 @@ async fn handle_action(
                     .await
                 {
                     let _ = f.write_all(&line).await;
+                }
+            }),
+            AsyncAction::NxmDownload(state, uri) => tokio::spawn(async move {
+                match import_from_nxm(state, uri)
+                    .await
+                    .wrap_err("Failed to handle NXM URI")
+                {
+                    Ok(mod_info) => {
+                        event_sink
+                            .write()
+                            .await
+                            .submit_command(
+                                ACTION_FINISH_ADD_MOD,
+                                SingleUse::new(Arc::new(mod_info)),
+                                Target::Auto,
+                            )
+                            .expect("failed to send command");
+                    }
+                    Err(err) => {
+                        tracing::error!("{:?}", err);
+                        send_error(event_sink.clone(), err).await;
+                    }
                 }
             }),
         };

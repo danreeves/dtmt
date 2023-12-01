@@ -32,6 +32,7 @@ pub(crate) const ACTION_START_RESET_DEPLOYMENT: Selector =
 pub(crate) const ACTION_FINISH_RESET_DEPLOYMENT: Selector =
     Selector::new("dtmm.action.finish-reset-deployment");
 
+pub(crate) const ACTION_HANDLE_NXM: Selector<String> = Selector::new("dtmm.action.handle-nxm");
 pub(crate) const ACTION_ADD_MOD: Selector<FileInfo> = Selector::new("dtmm.action.add-mod");
 pub(crate) const ACTION_FINISH_ADD_MOD: Selector<SingleUse<Arc<ModInfo>>> =
     Selector::new("dtmm.action.finish-add-mod");
@@ -97,6 +98,7 @@ pub(crate) enum AsyncAction {
     CheckUpdates(ActionState),
     LoadInitial((PathBuf, bool)),
     Log((ActionState, Vec<u8>)),
+    NxmDownload(ActionState, String),
 }
 
 impl std::fmt::Debug for AsyncAction {
@@ -116,6 +118,9 @@ impl std::fmt::Debug for AsyncAction {
                 path, is_default
             ),
             AsyncAction::Log(_) => write!(f, "AsyncAction::Log(_)"),
+            AsyncAction::NxmDownload(_, uri) => {
+                write!(f, "AsyncAction::NxmDownload(_state, {})", uri)
+            }
         }
     }
 }
@@ -248,6 +253,20 @@ impl AppDelegate<State> for Delegate {
 
                 state.mods.remove(index);
 
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_HANDLE_NXM) => {
+                let uri = cmd
+                    .get(ACTION_HANDLE_NXM)
+                    .expect("command type match but didn't contain the expected value");
+
+                if self
+                    .sender
+                    .send(AsyncAction::NxmDownload(state.clone().into(), uri.clone()))
+                    .is_err()
+                {
+                    tracing::error!("Failed to queue action to download NXM mod");
+                }
                 Handled::Yes
             }
             cmd if cmd.is(ACTION_ADD_MOD) => {

@@ -8,7 +8,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
-#[derive(Clone, Copy, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum LogLevel {
     Trace,
     Debug,
@@ -55,7 +55,7 @@ impl std::io::Write for ChannelWriter {
     }
 }
 
-pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>, level: Option<LogLevel>) {
+pub fn create_tracing_subscriber(level: Option<LogLevel>, tx: Option<UnboundedSender<Vec<u8>>>) {
     let mut env_layer = if let Some(level) = level {
         EnvFilter::from(level)
     } else if cfg!(debug_assertions) {
@@ -78,11 +78,13 @@ pub fn create_tracing_subscriber(tx: UnboundedSender<Vec<u8>>, level: Option<Log
 
     let stdout_layer = fmt::layer().pretty();
 
-    let channel_layer = fmt::layer()
-        .event_format(dtmt_shared::Formatter)
-        .fmt_fields(debug_fn(dtmt_shared::format_fields))
-        .with_writer(move || ChannelWriter::new(tx.clone()))
-        .with_filter(FilterFn::new(dtmt_shared::filter_fields));
+    let channel_layer = tx.map(|tx| {
+        fmt::layer()
+            .event_format(dtmt_shared::Formatter)
+            .fmt_fields(debug_fn(dtmt_shared::format_fields))
+            .with_writer(move || ChannelWriter::new(tx.clone()))
+            .with_filter(FilterFn::new(dtmt_shared::filter_fields))
+    });
 
     tracing_subscriber::registry()
         .with(env_layer)

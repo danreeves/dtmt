@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=DTMM
+GenericName=Mod Manager
+Comment=A graphical mod manager for Warhammer 40,000: Darktide
+Exec=dtmm %u
+Type=Application
+Keywords=Mod;
+StartupNotify=true
+Categories=Utility;
+MimeType=x-scheme-handler/nxm;
