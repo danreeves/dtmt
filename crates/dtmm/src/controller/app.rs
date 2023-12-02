@@ -161,14 +161,6 @@ where
 }
 
 pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
-    {
-        let first = state.mods.get(0);
-        if first.is_none() || !(first.unwrap().id == "dml" && first.unwrap().enabled) {
-            // TODO: Add a suggestion where to get it, once that's published
-            eyre::bail!("'Darktide Mod Loader' needs to be installed, enabled and at the top of the load order");
-        }
-    }
-
     if tracing::enabled!(tracing::Level::DEBUG) {
         let order = state.mods.iter().filter(|i| i.enabled).enumerate().fold(
             String::new(),

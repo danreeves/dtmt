@@ -18,7 +18,7 @@ local require_store = {}
 -- This token is treated as a string template and filled by DTMM during deployment.
 -- This allows hiding unsafe I/O functions behind a setting.
 -- When not replaced, it's also a valid table definition, thereby degrading gracefully.
-local is_io_enabled = {{ is_io_enabled }} -- luacheck: ignore 113
+local is_io_enabled = { { is_io_enabled } } -- luacheck: ignore 113
 local lua_libs = {
     debug = debug,
     os = {
@@ -105,8 +105,15 @@ end
 require("scripts/main")
 log("mod_main", "'scripts/main' loaded")
 
--- Inject our state into the game. The state needs to run after `StateGame._init_managers`,
--- since some parts of DMF, and presumably other mods, depend on some of those managers to exist.
+-- We need to inject two states into two different state machines:
+-- First, we inject one into the `"Main"` state machine at a specific location, so that we're
+-- still early in the process, but right after `StateRequireScripts` where most game files
+-- are already available to `require` and hook.
+-- This is where the `ModLoader` is created initially.
+-- Then, we inject into the very first position of the `"Game"` state machine. This runs right
+-- after `StateGame._init_managers`, at which point all the parts needed for DMF and other mods
+-- have been initialized.
+-- This is where `ModLoader` will finally start loading mods.
 local function patch_mod_loading_state()
     local StateBootSubStateBase = require("scripts/game_states/boot/state_boot_sub_state_base")
     local StateBootLoadDML = class("StateBootLoadDML", "StateBootSubStateBase")
@@ -121,8 +128,7 @@ local function patch_mod_loading_state()
 
         self._package_manager = package_manager
         self._package_handles = {
-            ["packages/mods"] = package_manager:load("packages/mods", "StateBootDML", nil),
-            ["packages/dml"] = package_manager:load("packages/dml", "StateBootDML", nil),
+            ["packages/mods"] = package_manager:load("packages/mods", "StateBootLoadDML", nil),
         }
     end
 
@@ -130,10 +136,13 @@ local function patch_mod_loading_state()
         local package_manager = self._package_manager
 
         if package_manager:update() then
-            local DML = require("scripts/mods/dml/init")
             local mod_data = require("scripts/mods/mod_data")
-            local mod_loader = DML.create_loader(mod_data)
+
+            local create_mod_loader = require("scripts/mods/init")
+            local mod_loader = create_mod_loader(mod_data)
+
             Managers.mod = mod_loader
+
             log("StateBootLoadDML", "DML loaded, exiting")
             return true, false
         end
@@ -188,8 +197,6 @@ local function patch_mod_loading_state()
             GameStateMachine_init(self, parent, StateGameLoadMods, params, creation_context, state_change_callbacks, name)
             -- And since we're done now, we can revert the function to its original
             GameStateMachine.init = GameStateMachine_init
-
-            return
         else
             -- In all other cases, simply call the original
             GameStateMachine_init(self, parent, start_state, params, creation_context, state_change_callbacks, name)
