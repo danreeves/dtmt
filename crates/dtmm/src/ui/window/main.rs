@@ -307,12 +307,10 @@ fn build_mod_details_info() -> impl Widget<State> {
                 // Force the label to take up the entire details' pane width,
                 // so that we can center-align it.
                 .expand_width()
-                .lens(ModInfo::name.in_arc());
+                .lens(NexusInfoLens::new(NexusInfo::name, ModInfo::name).in_arc());
             let summary = Label::raw()
                 .with_line_break_mode(LineBreaking::WordWrap)
                 .lens(NexusInfoLens::new(NexusInfo::summary, ModInfo::summary).in_arc());
-
-            // TODO: Image/icon?
 
             let version_line = Label::dynamic(|info: &Arc<ModInfo>, _| {
                 let author = info
@@ -366,8 +364,6 @@ fn build_mod_details_info() -> impl Widget<State> {
                 .must_fill_main_axis(true)
                 .cross_axis_alignment(CrossAxisAlignment::Start)
                 .with_child(image)
-                // .with_spacer(4.)
-                // .with_flex_child(details, 1.)
                 .with_child(details)
         },
         Flex::column,
