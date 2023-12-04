@@ -61,6 +61,8 @@ pub(crate) type InitialLoadResult = (Config, Vector<Arc<ModInfo>>);
 pub(crate) const ACTION_FINISH_LOAD_INITIAL: Selector<SingleUse<Option<InitialLoadResult>>> =
     Selector::new("dtmm.action.finish-load-initial");
 
+pub(crate) const ACTION_OPEN_LINK: Selector<Arc<String>> = Selector::new("dtmm.action.open-link");
+
 // A sub-selection of `State`'s fields that are required in `AsyncAction`s and that are
 // `Send + Sync`
 pub(crate) struct ActionState {
@@ -435,6 +437,20 @@ impl AppDelegate<State> for Delegate {
                 }
 
                 state.loading = false;
+
+                Handled::Yes
+            }
+            cmd if cmd.is(ACTION_OPEN_LINK) => {
+                let url = cmd
+                    .get(ACTION_OPEN_LINK)
+                    .expect("command type matched but didn't contain the expected value");
+
+                if let Err(err) = open::that_detached(Arc::as_ref(url)) {
+                    tracing::error!(
+                        "{:?}",
+                        Report::new(err).wrap_err(format!("Failed to open url '{}'", url))
+                    );
+                }
 
                 Handled::Yes
             }

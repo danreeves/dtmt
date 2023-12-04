@@ -17,6 +17,7 @@ macro_rules! make_color {
 }
 
 make_color!(TOP_BAR_BACKGROUND_COLOR, COLOR_BG1);
+make_color!(LINK_COLOR, COLOR_ACCENT);
 
 #[allow(dead_code)]
 pub mod gruvbox_dark {
