@@ -269,6 +269,10 @@ fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(Mo
 
             cfg.resources = resources;
 
+            // Enforce that packages are skipped
+            cfg.bundled = false;
+            cfg.packages = vec![];
+
             Ok((cfg, root))
         } else {
             let root = name
