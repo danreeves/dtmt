@@ -72,25 +72,35 @@ impl From<dtmt_shared::ModDependency> for ModDependency {
 
 #[derive(Clone, Data, Debug, Lens, serde::Serialize, serde::Deserialize)]
 pub(crate) struct NexusInfo {
+    pub author: String,
+    pub category_id: u64,
+    pub created_timestamp: i64,
+    pub description: Arc<String>,
     pub id: u64,
     pub name: String,
-    pub version: String,
-    pub author: String,
-    pub summary: Arc<String>,
-    pub description: Arc<String>,
     pub picture_url: Arc<String>,
+    pub summary: Arc<String>,
+    pub uid: u64,
+    pub updated_timestamp: i64,
+    pub uploaded_by: String,
+    pub version: String,
 }
 
 impl From<NexusMod> for NexusInfo {
     fn from(value: NexusMod) -> Self {
         Self {
+            author: value.author,
+            category_id: value.category_id,
+            created_timestamp: value.created_timestamp.unix_timestamp(),
+            description: Arc::new(value.description),
             id: value.mod_id,
             name: value.name,
-            version: value.version,
-            author: value.author,
-            summary: Arc::new(value.summary),
-            description: Arc::new(value.description),
             picture_url: Arc::new(value.picture_url.into()),
+            summary: Arc::new(value.summary),
+            uid: value.uid,
+            updated_timestamp: value.updated_timestamp.unix_timestamp(),
+            uploaded_by: value.uploaded_by,
+            version: value.version,
         }
     }
 }
@@ -106,14 +116,14 @@ pub(crate) struct ModInfo {
     pub image: Option<ImageBuf>,
     pub version: String,
     pub enabled: bool,
+    pub depends: Vector<ModDependency>,
+    pub bundled: bool,
     #[lens(ignore)]
     #[data(ignore)]
     pub packages: Vector<Arc<PackageInfo>>,
     #[lens(ignore)]
     #[data(ignore)]
     pub resources: ModResourceInfo,
-    pub depends: Vector<ModDependency>,
-    pub bundled: bool,
     #[data(ignore)]
     pub nexus: Option<NexusInfo>,
 }
