@@ -4,7 +4,7 @@ use usvg::{
 };
 
 pub static ALERT_CIRCLE: &str = include_str!("../../../assets/tabler-icons/alert-circle.svg");
-pub static ALERT_TRIANGLE: &str = include_str!("../../../assets/tabler-icons/alert-triangle.svg");
+pub static CLOUD_DOWNLOAD: &str = include_str!("../../../assets/tabler-icons/cloud-download.svg");
 
 pub fn parse_svg(svg: &str) -> Result<Tree, Error> {
     let opt = Options::default();

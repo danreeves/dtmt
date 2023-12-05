@@ -22,7 +22,7 @@ use crate::state::{
     ACTION_START_CHECK_UPDATE, ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
     ACTION_START_RESET_DEPLOYMENT,
 };
-use crate::ui::theme::{self, ColorExt, COLOR_YELLOW_LIGHT};
+use crate::ui::theme::{self, ColorExt, COLOR_GREEN_LIGHT};
 use crate::ui::widget::border::Border;
 use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
@@ -148,9 +148,9 @@ fn build_mod_list() -> impl Widget<State> {
         let version = {
             let icon = {
                 let tree =
-                    theme::icons::parse_svg(theme::icons::ALERT_TRIANGLE).expect("invalid SVG");
+                    theme::icons::parse_svg(theme::icons::CLOUD_DOWNLOAD).expect("invalid SVG");
 
-                let tree = theme::icons::recolor_icon(tree, true, COLOR_YELLOW_LIGHT);
+                let tree = theme::icons::recolor_icon(tree, true, COLOR_GREEN_LIGHT);
 
                 Svg::new(tree).fix_height(druid::theme::TEXT_SIZE_NORMAL)
             };
