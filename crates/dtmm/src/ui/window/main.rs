@@ -2,6 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use druid::im::Vector;
+use druid::text::RichTextBuilder;
 use druid::widget::{
     Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
     MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
@@ -16,9 +17,10 @@ use druid_widget_nursery::WidgetExt as _;
 use lazy_static::lazy_static;
 
 use crate::state::{
-    ModInfo, NexusInfo, NexusInfoLens, State, View, ACTION_ADD_MOD, ACTION_SELECTED_MOD_DOWN,
-    ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
-    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT,
+    ModInfo, NexusInfo, NexusInfoLens, State, View, ACTION_ADD_MOD, ACTION_OPEN_LINK,
+    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE,
+    ACTION_START_CHECK_UPDATE, ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
+    ACTION_START_RESET_DEPLOYMENT,
 };
 use crate::ui::theme::{self, ColorExt, COLOR_YELLOW_LIGHT};
 use crate::ui::widget::border::Border;
@@ -343,6 +345,28 @@ fn build_mod_details_info() -> impl Widget<State> {
                 }
             });
 
+            let nexus_link = Maybe::or_empty(|| {
+                let link = Label::raw().lens(NexusInfo::id.map(
+                    |id| {
+                        let url = format!("https://nexusmods.com/warhammer40kdarktide/mods/{}", id);
+                        let mut builder = RichTextBuilder::new();
+                        builder
+                            .push("Open on Nexusmods")
+                            .underline(true)
+                            .text_color(theme::LINK_COLOR)
+                            .link(ACTION_OPEN_LINK.with(Arc::new(url)));
+                        builder.build()
+                    },
+                    |_, _| {},
+                ));
+                Flex::column()
+                    .cross_axis_alignment(CrossAxisAlignment::Start)
+                    .main_axis_alignment(MainAxisAlignment::Start)
+                    .with_child(link)
+                    .with_spacer(4.)
+            })
+            .lens(ModInfo::nexus.in_arc());
+
             let details = Flex::column()
                 .cross_axis_alignment(CrossAxisAlignment::Start)
                 .main_axis_alignment(MainAxisAlignment::Start)
@@ -350,6 +374,7 @@ fn build_mod_details_info() -> impl Widget<State> {
                 .with_spacer(4.)
                 .with_child(summary)
                 .with_spacer(4.)
+                .with_child(nexus_link)
                 .with_child(version_line)
                 .with_spacer(4.)
                 .with_child(categories)

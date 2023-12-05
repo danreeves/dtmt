@@ -24,6 +24,7 @@ luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
 minijinja = "1.0.10"
 nexusmods = { path = "../../lib/nexusmods", version = "*" }
 oodle = { path = "../../lib/oodle", version = "*" }
+open = "5.0.1"
 path-slash = "0.2.1"
 sdk = { path = "../../lib/sdk", version = "*" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }
