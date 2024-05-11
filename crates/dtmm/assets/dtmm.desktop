@@ -8,3 +8,4 @@ Keywords=Mod;
 StartupNotify=true
 Categories=Utility;
 MimeType=x-scheme-handler/nxm;
+Icon=dtmm
