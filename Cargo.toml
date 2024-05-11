@@ -12,7 +12,6 @@ members = [
 
 [patch.crates-io]
 color-eyre = { path = "lib/color-eyre" }
-ansi-parser = { path = "lib/ansi-parser" }
 
 [profile.dev.package.backtrace]
 opt-level = 3
