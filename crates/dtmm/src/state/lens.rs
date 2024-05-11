@@ -42,6 +42,7 @@ impl Lens<State, Option<Arc<ModInfo>>> for SelectedModLens {
 /// A Lens that maps an `im::Vector<T>` to `im::Vector<(usize, T)>`,
 /// where each element in the destination vector includes its index in the
 /// source vector.
+#[allow(dead_code)]
 pub(crate) struct IndexedVectorLens;
 
 impl<T: Data> Lens<Vector<T>, Vector<(usize, T)>> for IndexedVectorLens {

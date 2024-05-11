@@ -69,23 +69,10 @@ pub mod gruvbox_dark {
 }
 
 pub trait ColorExt {
-    fn lighten(&self, fac: f32) -> Self;
     fn darken(&self, fac: f32) -> Self;
 }
 
 impl ColorExt for Color {
-    fn lighten(&self, fac: f32) -> Self {
-        let (r, g, b, a) = self.as_rgba();
-        let rgb = Rgb::from(r as f32, g as f32, b as f32);
-        let rgb = rgb.lighten(fac);
-        Self::rgba(
-            rgb.get_red() as f64,
-            rgb.get_green() as f64,
-            rgb.get_blue() as f64,
-            a,
-        )
-    }
-
     fn darken(&self, fac: f32) -> Self {
         let (r, g, b, a) = self.as_rgba();
         let rgb = Rgb::from(r as f32, g as f32, b as f32);

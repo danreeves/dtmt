@@ -9,6 +9,7 @@ members = [
     "lib/serde_sjson",
     "lib/luajit2-sys",
 ]
+exclude = ["lib/color-eyre"]
 
 [patch.crates-io]
 color-eyre = { path = "lib/color-eyre" }
