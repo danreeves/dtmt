@@ -1,11 +1,14 @@
 use std::path::PathBuf;
 
-mod log;
-
-pub use log::*;
+use color_eyre::eyre::{OptionExt as _, WrapErr as _};
+use color_eyre::Result;
 use serde::{Deserialize, Serialize};
 use steamlocate::SteamDir;
 use time::OffsetDateTime;
+
+pub use log::*;
+
+mod log;
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModConfigResources {
@@ -74,25 +77,23 @@ pub struct GameInfo {
     pub last_updated: OffsetDateTime,
 }
 
-pub fn collect_game_info() -> Option<GameInfo> {
-    let mut dir = if let Some(dir) = SteamDir::locate() {
-        dir
-    } else {
-        tracing::debug!("Failed to locate Steam installation");
-        return None;
-    };
+pub fn collect_game_info() -> Result<Option<GameInfo>> {
+    let dir = SteamDir::locate().wrap_err("Failed to locate Steam installation")?;
 
     let found = dir
-        .app(&STEAMAPP_ID)
-        .and_then(|app| app.last_updated.map(|v| (app.path.clone(), v)));
+        .find_app(STEAMAPP_ID)
+        .wrap_err("Failed to look up game by Steam app ID")?;
 
-    let Some((path, last_updated)) = found else {
-        tracing::debug!("Found Steam, but failed to find game installation");
-        return None;
+    let Some((app, _)) = found else {
+        return Ok(None);
     };
 
-    Some(GameInfo {
-        path,
+    let last_updated = app
+        .last_updated
+        .ok_or_eyre("Missing field 'last_updated'")?;
+
+    Ok(Some(GameInfo {
+        path: app.install_dir.into(),
         last_updated: last_updated.into(),
-    })
+    }))
 }

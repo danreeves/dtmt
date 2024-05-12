@@ -286,12 +286,18 @@ pub(crate) async fn load_initial(path: PathBuf, is_default: bool) -> Result<Init
 
     let game_info = tokio::task::spawn_blocking(dtmt_shared::collect_game_info)
         .await
-        .wrap_err("Failed to collect Steam game info")?;
+        .wrap_err("Failed to spawn task to collect Steam game info")?;
 
-    {
-        if config.game_dir.is_none() && game_info.is_none() {
-            tracing::error!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
+    let game_info = match game_info {
+        Ok(game_info) => game_info,
+        Err(err) => {
+            tracing::error!("Failed to collect game info: {:?}", err);
+            None
         }
+    };
+
+    if config.game_dir.is_none() && game_info.is_none() {
+        tracing::error!("No Game Directory set. Head to the 'Settings' tab to set it manually",);
     }
 
     let mod_dir = config.data_dir.join("mods");

@@ -723,6 +723,14 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
     )
     .wrap_err("Failed to gather deployment information")?;
 
+    let game_info = match game_info {
+        Ok(game_info) => game_info,
+        Err(err) => {
+            tracing::error!("Failed to collect game info: {:#?}", err);
+            None
+        }
+    };
+
     tracing::debug!(?game_info, ?deployment_info);
 
     if let Some(game_info) = game_info {
