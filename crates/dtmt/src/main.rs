@@ -1,6 +1,7 @@
 #![feature(io_error_more)]
 #![feature(let_chains)]
 #![feature(result_flattening)]
+#![feature(test)]
 #![windows_subsystem = "console"]
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ mod cmd {
     mod util;
     pub mod watch;
 }
+mod shell_parse;
 
 #[derive(Default, Deserialize, Serialize)]
 struct GlobalConfig {
