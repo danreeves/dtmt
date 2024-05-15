@@ -14,6 +14,7 @@ exclude = ["lib/color-eyre"]
 
 [patch.crates-io]
 color-eyre = { path = "lib/color-eyre" }
+ansi-parser = { git = "https://gitlab.com/lschwiderski/ansi-parser.git", branch = "issue/outdated-heapless" }
 
 [profile.dev.package.backtrace]
 opt-level = 3
