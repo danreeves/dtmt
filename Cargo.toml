@@ -12,6 +12,9 @@ members = [
 ]
 exclude = ["lib/color-eyre"]
 
+[workspace.dependencies]
+zip = { version = "1.3.0", default-features = false, features = ["deflate", "bzip2", "zstd", "time"] }
+
 [patch.crates-io]
 color-eyre = { path = "lib/color-eyre" }
 ansi-parser = { git = "https://gitlab.com/lschwiderski/ansi-parser.git", branch = "issue/outdated-heapless" }
