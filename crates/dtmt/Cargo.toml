@@ -30,7 +30,7 @@ zip = "0.6.3"
 path-clean = "1.0.1"
 path-slash = "0.2.1"
 async-recursion = "1.0.2"
-notify = "5.1.0"
+notify = "6.1.1"
 luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
 shlex = { version = "1.2.0", optional = true }
 
