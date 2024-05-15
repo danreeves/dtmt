@@ -8,6 +8,7 @@ members = [
     "lib/sdk",
     "lib/serde_sjson",
     "lib/luajit2-sys",
+    "lib/color-eyre",
 ]
 exclude = ["lib/color-eyre"]
 
