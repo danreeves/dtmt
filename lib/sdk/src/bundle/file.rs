@@ -501,7 +501,7 @@ impl BundleFileVariant {
 }
 
 bitflags! {
-    #[derive(Default)]
+    #[derive(Default, Clone, Copy, Debug)]
     pub struct Properties: u32 {
         const DATA = 0b100;
     }
