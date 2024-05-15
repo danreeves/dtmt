@@ -30,7 +30,7 @@ sdk = { path = "../../lib/sdk", version = "*" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
 string_template = "0.2.1"
-strip-ansi-escapes = "0.1.1"
+strip-ansi-escapes = "0.2.0"
 time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-offset"] }
 tokio = { version = "1.23.0", features = ["rt", "fs", "tracing", "sync"] }
 tokio-stream = { version = "0.1.12", features = ["fs"] }
