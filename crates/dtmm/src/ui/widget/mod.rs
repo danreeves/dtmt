@@ -2,15 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use druid::text::Formatter;
-use druid::{Data, Widget};
 
 pub mod border;
 pub mod button;
 pub mod controller;
-
-pub trait ExtraWidgetExt<T: Data>: Widget<T> + Sized + 'static {}
-
-impl<T: Data, W: Widget<T> + 'static> ExtraWidgetExt<T> for W {}
 
 pub(crate) struct PathBufFormatter;
 
