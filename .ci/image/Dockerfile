@@ -1,7 +1,7 @@
 # https://jake-shadle.github.io/xwin/
 FROM debian:bullseye-slim as xwin
 
-ARG XWIN_VERSION=0.5.0
+ARG XWIN_VERSION=0.5.2
 ARG XWIN_PREFIX="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
 ADD https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$XWIN_PREFIX.tar.gz /root/$XWIN_PREFIX.tar.gz
 
@@ -59,6 +59,7 @@ COPY lib/oodle/*.so lib/oodle/*.a /src/
 
 FROM linux as msvc
 
+ARG LLVM_VERSION=18
 ENV KEYRINGS /usr/local/share/keyrings
 
 ADD https://apt.llvm.org/llvm-snapshot.gpg.key /root/llvm-snapshot.gpg.key
@@ -70,22 +71,22 @@ RUN set -eux; \
     gpg --dearmor > $KEYRINGS/llvm.gpg < /root/llvm-snapshot.gpg.key; \
     # wine
     gpg --dearmor > $KEYRINGS/winehq.gpg < /root/winehq.key; \
-    echo "deb [signed-by=$KEYRINGS/llvm.gpg] http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-13 main" > /etc/apt/sources.list.d/llvm.list; \
+    echo "deb [signed-by=$KEYRINGS/llvm.gpg] http://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list; \
     echo "deb [signed-by=$KEYRINGS/winehq.gpg] https://dl.winehq.org/wine-builds/debian/ bullseye main" > /etc/apt/sources.list.d/winehq.list; \
     dpkg --add-architecture i386; \
     apt-get update; \
     apt-get install --no-install-recommends -y \
-        libclang-13-dev \
+        libclang-${LLVM_VERSION}-dev \
         gcc-mingw-w64-x86-64 \
-        clang-13 \
-        llvm-13 \
-        lld-13 \
+        clang-${LLVM_VERSION} \
+        llvm-${LLVM_VERSION} \
+        lld-${LLVM_VERSION} \
         winehq-staging \
         ; \
     # ensure that clang/clang++ are callable directly
-    ln -s clang-13 /usr/bin/clang && ln -s clang /usr/bin/clang++ && ln -s lld-13 /usr/bin/ld.lld; \
+    ln -s clang-${LLVM_VERSION} /usr/bin/clang && ln -s clang /usr/bin/clang++ && ln -s lld-${LLVM_VERSION} /usr/bin/ld.lld; \
     # We also need to setup symlinks ourselves for the MSVC shims because they aren't in the debian packages
-    ln -s clang-13 /usr/bin/clang-cl && ln -s llvm-ar-13 /usr/bin/llvm-lib && ln -s lld-link-13 /usr/bin/lld-link; \
+    ln -s clang-${LLVM_VERSION} /usr/bin/clang-cl && ln -s llvm-ar-${LLVM_VERSION} /usr/bin/llvm-lib && ln -s lld-link-${LLVM_VERSION} /usr/bin/lld-link; \
     # Verify the symlinks are correct
     clang++ -v; \
     ld.lld -v; \
