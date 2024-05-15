@@ -399,7 +399,7 @@ checksum = "67523a3b4be3ce1989d607a828d036249522dd9c1c8de7f4dd2dae43a37369d1"
 dependencies = [
  "glob",
  "libc",
- "libloading 0.8.3",
+ "libloading",
 ]
 
 [[package]]
@@ -949,7 +949,6 @@ dependencies = [
  "futures",
  "futures-util",
  "glob",
- "libloading 0.7.4",
  "luajit2-sys",
  "nanorand",
  "notify",
@@ -2008,16 +2007,6 @@ name = "libc"
 version = "0.2.154"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae743338b92ff9146ce83992f766a31066a91a8c84a45e0e9f21e7cf6de6d346"
-
-[[package]]
-name = "libloading"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
-dependencies = [
- "cfg-if",
- "winapi",
-]
 
 [[package]]
 name = "libloading"
@@ -3103,7 +3092,6 @@ dependencies = [
  "futures",
  "futures-util",
  "glob",
- "libloading 0.7.4",
  "luajit2-sys",
  "nanorand",
  "oodle",
