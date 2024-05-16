@@ -18,10 +18,10 @@ druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "b
 druid-widget-nursery = "0.1"
 dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
 futures = "0.3.25"
-interprocess = { version = "1.2.1", default-features = false }
+interprocess = "2.1.0"
 lazy_static = "1.4.0"
 luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
-minijinja = "1.0.10"
+minijinja = { version = "2.0.1", default-features = false }
 nexusmods = { path = "../../lib/nexusmods", version = "*" }
 oodle = { path = "../../lib/oodle", version = "*" }
 open = "5.0.1"
