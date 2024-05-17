@@ -31,3 +31,9 @@ strip = "debuginfo"
 [profile.release-lto]
 inherits = "release"
 lto = true
+
+[profile.perf]
+inherits = "release"
+strip = false
+lto = true
+debug = "line-tables-only"
