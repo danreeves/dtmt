@@ -28,8 +28,8 @@ dependencies = [
 
 [[package]]
 name = "ansi-parser"
-version = "0.9.0"
-source = "git+https://gitlab.com/lschwiderski/ansi-parser.git?branch=issue/outdated-heapless#af1951d16951a37101139763593be44103e3a477"
+version = "0.9.1"
+source = "git+https://gitlab.com/lschwiderski/ansi-parser.git?branch=issue/outdated-heapless#bfcd2689677fa93ce72c55833e891af36c65b2aa"
 dependencies = [
  "heapless",
  "nom",
