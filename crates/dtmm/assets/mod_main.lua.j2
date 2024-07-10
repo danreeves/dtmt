@@ -18,7 +18,7 @@ local require_store = {}
 -- This token is treated as a string template and filled by DTMM during deployment.
 -- This allows hiding unsafe I/O functions behind a setting.
 -- When not replaced, it's also a valid table definition, thereby degrading gracefully.
-local is_io_enabled = { { is_io_enabled } } -- luacheck: ignore 113
+local is_io_enabled = {{ is_io_enabled }} -- luacheck: ignore 113
 local lua_libs = {
     debug = debug,
     os = {
@@ -115,7 +115,6 @@ log("mod_main", "'scripts/main' loaded")
 -- have been initialized.
 -- This is where `ModLoader` will finally start loading mods.
 local function patch_mod_loading_state()
-    local StateBootSubStateBase = require("scripts/game_states/boot/state_boot_sub_state_base")
     local StateBootLoadDML = class("StateBootLoadDML", "StateBootSubStateBase")
     local StateGameLoadMods = class("StateGameLoadMods")
 
@@ -132,7 +131,7 @@ local function patch_mod_loading_state()
         }
     end
 
-    StateBootLoadDML._state_update = function(self, dt)
+    StateBootLoadDML._state_update = function(self, _)
         local package_manager = self._package_manager
 
         if package_manager:update() then
@@ -157,9 +156,7 @@ local function patch_mod_loading_state()
         self._next_state_params = params
     end
 
-    function StateGameLoadMods:update(main_dt)
-        local state = self._loading_state
-
+    function StateGameLoadMods:update(_)
         -- We're relying on the fact that DML internally makes sure
         -- that `Managers.mod:update()` is being called appropriately.
         -- The implementation as of this writing is to hook `StateGame.update`.
