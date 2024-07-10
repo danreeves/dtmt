@@ -37,6 +37,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install --no-install-recommends -y \
         build-essential \
+        cmake \
         curl \
         git \
         gpg \

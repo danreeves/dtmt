@@ -11,7 +11,7 @@ use clap::{command, value_parser, Arg};
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Report, Result, Section};
 use druid::AppLauncher;
-use interprocess::local_socket::{LocalSocketListener, LocalSocketStream};
+use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
 use tokio::sync::RwLock;
 
 use crate::controller::worker::work_thread;
@@ -29,9 +29,9 @@ mod util {
 }
 mod ui;
 
-// As explained in https://docs.rs/interprocess/latest/interprocess/local_socket/enum.NameTypeSupport.html
+// As explained in https://docs.rs/interprocess/2.1.0/interprocess/local_socket/struct.Name.html
 // namespaces are supported on both platforms we care about: Windows and Linux.
-const IPC_ADDRESS: &str = "@dtmm.sock";
+const IPC_ADDRESS: &str = "dtmm.sock";
 
 #[tracing::instrument]
 fn notify_nxm_download(
@@ -42,9 +42,13 @@ fn notify_nxm_download(
 
     tracing::debug!("Received Uri '{}', sending to main process.", uri.as_ref());
 
-    let mut stream = LocalSocketStream::connect(IPC_ADDRESS)
-        .wrap_err_with(|| format!("Failed to connect to '{}'", IPC_ADDRESS))
-        .suggestion("Make sure the main window is open.")?;
+    let mut stream = LocalSocketStream::connect(
+        IPC_ADDRESS
+            .to_ns_name::<GenericNamespaced>()
+            .expect("Invalid socket name"),
+    )
+    .wrap_err_with(|| format!("Failed to connect to '{}'", IPC_ADDRESS))
+    .suggestion("Make sure the main window is open.")?;
 
     tracing::debug!("Connected to main process at '{}'", IPC_ADDRESS);
 
@@ -130,8 +134,14 @@ fn main() -> Result<()> {
         let _guard = span.enter();
 
         let event_sink = event_sink.clone();
-        let server =
-            LocalSocketListener::bind(IPC_ADDRESS).wrap_err("Failed to create IPC listener")?;
+        let server = ListenerOptions::new()
+            .name(
+                IPC_ADDRESS
+                    .to_ns_name::<GenericNamespaced>()
+                    .expect("Invalid socket name"),
+            )
+            .create_sync()
+            .wrap_err("Failed to create IPC listener")?;
 
         tracing::debug!("IPC server listening on '{}'", IPC_ADDRESS);
 

@@ -1,6 +1,5 @@
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgMatches, Command};
 use color_eyre::eyre::{Context, Result};
@@ -8,9 +7,9 @@ use color_eyre::Help;
 use dtmt_shared::ModConfig;
 use path_slash::{PathBufExt, PathExt};
 use tokio::fs;
-use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
+use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
 use crate::cmd::build::read_project_config;
@@ -51,11 +50,7 @@ pub(crate) fn command_definition() -> Command {
 }
 
 #[async_recursion::async_recursion]
-async fn process_directory<P1, P2, W>(
-    zip: Arc<Mutex<ZipWriter<W>>>,
-    path: P1,
-    prefix: P2,
-) -> Result<()>
+async fn process_directory<P1, P2, W>(zip: &mut ZipWriter<W>, path: P1, prefix: P2) -> Result<()>
 where
     P1: AsRef<Path> + std::marker::Send,
     P2: AsRef<Path> + std::marker::Send,
@@ -64,9 +59,7 @@ where
     let path = path.as_ref();
     let prefix = prefix.as_ref();
 
-    zip.lock()
-        .await
-        .add_directory(prefix.to_slash_lossy(), Default::default())?;
+    zip.add_directory(prefix.to_slash_lossy(), SimpleFileOptions::default())?;
 
     let read_dir = fs::read_dir(&path)
         .await
@@ -87,12 +80,11 @@ where
                 .await
                 .wrap_err_with(|| format!("Failed to read '{}'", in_path.display()))?;
             {
-                let mut zip = zip.lock().await;
-                zip.start_file(out_path.to_slash_lossy(), Default::default())?;
+                zip.start_file(out_path.to_slash_lossy(), SimpleFileOptions::default())?;
                 zip.write_all(&data)?;
             }
         } else if t.is_dir() {
-            process_directory(zip.clone(), in_path, out_path).await?;
+            process_directory(zip, in_path, out_path).await?;
         }
     }
 
@@ -107,15 +99,11 @@ where
     let path = path.as_ref();
     let dest = dest.as_ref();
 
-    let data = Cursor::new(Vec::new());
-    let zip = ZipWriter::new(data);
-    let zip = Arc::new(Mutex::new(zip));
+    let mut zip = ZipWriter::new(Cursor::new(Vec::with_capacity(1024)));
 
-    process_directory(zip.clone(), path, PathBuf::from(&cfg.id))
+    process_directory(&mut zip, path, PathBuf::from(&cfg.id))
         .await
         .wrap_err("Failed to add directory to archive")?;
-
-    let mut zip = zip.lock().await;
 
     {
         let name = PathBuf::from(&cfg.id).join("dtmt.cfg");
@@ -125,7 +113,7 @@ where
             .await
             .wrap_err_with(|| format!("Failed to read mod config at {}", path.display()))?;
 
-        zip.start_file(name.to_slash_lossy(), Default::default())?;
+        zip.start_file(name.to_slash_lossy(), SimpleFileOptions::default())?;
         zip.write_all(&data)?;
     }
 

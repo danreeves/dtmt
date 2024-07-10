@@ -1,3 +1,5 @@
+#![feature(test)]
+
 mod binary;
 mod bundle;
 mod context;

@@ -1,4 +1,12 @@
+set positional-arguments
+
 fly_target := "main"
+
+build-perf-dtmt:
+    cargo build --profile perf --bin dtmt
+
+perf-dtmt *args='': build-perf-dtmt
+    perf record --call-graph dwarf ./target/perf/dtmt "$@"
 
 ci-build: ci-build-msvc ci-build-linux
 

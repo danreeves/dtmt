@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::{self, Context, Result};
+use color_eyre::eyre::{self, bail, Context, Result};
 use color_eyre::{Help, Report};
 use futures::future::try_join_all;
 use futures::StreamExt;
@@ -12,7 +12,9 @@ use sdk::{Bundle, BundleFile, CmdLine};
 use tokio::fs;
 
 use crate::cmd::util::resolve_bundle_paths;
+use crate::shell_parse::ShellParser;
 
+#[inline]
 fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     match Pattern::new(s) {
         Ok(p) => Ok(p),
@@ -20,6 +22,7 @@ fn parse_glob_pattern(s: &str) -> Result<Pattern, String> {
     }
 }
 
+#[inline]
 fn flatten_name(s: &str) -> String {
     s.replace('/', "_")
 }
@@ -131,26 +134,29 @@ async fn parse_command_line_template(tmpl: &String) -> Result<CmdLine> {
     let mut cmd = if matches!(fs::try_exists(tmpl).await, Ok(true)) {
         let path = PathBuf::from(tmpl);
         if path.file_name() == Some(OsStr::new("main.py")) {
-            let arg = path.display().to_string();
             let mut cmd = CmdLine::new("python");
-            cmd.arg(shlex::quote(&arg).to_string());
+            cmd.arg(path);
             cmd
         } else {
             CmdLine::new(path)
         }
     } else {
-        let Some(args) = shlex::split(tmpl) else {
-            eyre::bail!("Invalid shell syntax");
-        };
+        let mut parsed = ShellParser::new(tmpl.as_bytes());
+        // Safety: The initial `tmpl` was a `&String` (i.e. valid UTF-8), and `shlex` does not
+        // insert or remove characters, nor does it split UTF-8 characters.
+        // So the resulting byte stream is still valid UTF-8.
+        let mut cmd = CmdLine::new(unsafe {
+            let bytes = parsed.next().expect("Template is not empty");
+            String::from_utf8_unchecked(bytes.to_vec())
+        });
 
-        // We already checked that the template is not empty
-        let mut cmd = CmdLine::new(args[0].clone());
-        let mut it = args.iter();
-        // Skip the first one, that's the command name
-        it.next();
+        while let Some(arg) = parsed.next() {
+            // Safety: See above.
+            cmd.arg(unsafe { String::from_utf8_unchecked(arg.to_vec()) });
+        }
 
-        for arg in it {
-            cmd.arg(arg);
+        if parsed.errored {
+            bail!("Invalid command line template");
         }
 
         cmd

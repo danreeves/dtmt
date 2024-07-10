@@ -8,11 +8,16 @@ members = [
     "lib/sdk",
     "lib/serde_sjson",
     "lib/luajit2-sys",
+    "lib/color-eyre",
 ]
 exclude = ["lib/color-eyre"]
 
+[workspace.dependencies]
+zip = { version = "2.1.3", default-features = false, features = ["deflate", "bzip2", "zstd", "time"] }
+
 [patch.crates-io]
 color-eyre = { path = "lib/color-eyre" }
+ansi-parser = { git = "https://gitlab.com/lschwiderski/ansi-parser.git", branch = "issue/outdated-heapless", version = "0.9.1" }
 
 [profile.dev.package.backtrace]
 opt-level = 3
@@ -26,3 +31,9 @@ strip = "debuginfo"
 [profile.release-lto]
 inherits = "release"
 lto = true
+
+[profile.perf]
+inherits = "release"
+strip = false
+lto = true
+debug = "line-tables-only"
