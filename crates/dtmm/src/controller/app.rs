@@ -162,18 +162,20 @@ where
 
 pub(crate) fn check_mod_order(state: &ActionState) -> Result<()> {
     if tracing::enabled!(tracing::Level::DEBUG) {
-        let order = state.mods.iter().filter(|i| i.enabled).enumerate().fold(
-            String::new(),
-            |mut s, (i, info)| {
+        let order = state
+            .mods
+            .iter()
+            .enumerate()
+            .filter(|(_, i)| i.enabled)
+            .fold(String::new(), |mut s, (i, info)| {
                 s.push_str(&format!("{}: {} - {}\n", i, info.id, info.name));
                 s
-            },
-        );
+            });
 
         tracing::debug!("Mod order:\n{}", order);
     }
 
-    for (i, mod_info) in state.mods.iter().filter(|i| i.enabled).enumerate() {
+    for (i, mod_info) in state.mods.iter().enumerate().filter(|(_, i)| i.enabled) {
         for dep in &mod_info.depends {
             let dep_info = state.mods.iter().enumerate().find(|(_, m)| m.id == dep.id);
 
