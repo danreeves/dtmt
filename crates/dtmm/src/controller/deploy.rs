@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::io::{Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -16,7 +15,6 @@ use sdk::{
     Bundle, BundleDatabase, BundleFile, BundleFileType, BundleFileVariant, FromBinary, ToBinary,
 };
 use serde::{Deserialize, Serialize};
-use string_template::Template;
 use time::OffsetDateTime;
 use tokio::fs::{self, DirEntry};
 use tokio::io::AsyncWriteExt;
@@ -572,12 +570,17 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let span = tracing::debug_span!("Importing mod main script");
         let _enter = span.enter();
 
-        let is_io_enabled = format!("{}", state.is_io_enabled);
-        let mut data = HashMap::new();
-        data.insert("is_io_enabled", is_io_enabled.as_str());
+        let mut env = Environment::new();
+        env.add_template("mod_main.lua", include_str!("../../assets/mod_main.lua.j2"))
+            .wrap_err("Failed to compile template for `mod_main.lua`")?;
+        let tmpl = env
+            .get_template("mod_main.lua")
+            .wrap_err("Failed to get template `mod_main.lua`")?;
 
-        let tmpl = include_str!("../../assets/mod_main.lua");
-        let lua = Template::new(tmpl).render(&data);
+        let lua = tmpl
+            .render(minijinja::context!(is_io_enabled => if state.is_io_enabled { "true" } else {"false"}))
+            .wrap_err("Failed to render template `mod_main.lua`")?;
+
         tracing::trace!("Main script rendered:\n===========\n{}\n=============", lua);
         let file =
             lua::compile(MOD_BOOT_SCRIPT, lua).wrap_err("Failed to compile mod main Lua file")?;
@@ -707,7 +710,7 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         },
         async {
             let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
-            match read_sjson_file::<_, DeploymentData>(path).await {
+            match read_sjson_file::<_, DeploymentData>(&path).await {
                 Ok(data) => Ok(Some(data)),
                 Err(err) => {
                     if let Some(err) = err.downcast_ref::<std::io::Error>()
@@ -715,7 +718,10 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
                     {
                         Ok(None)
                     } else {
-                        Err(err).wrap_err("Failed to read deployment data")
+                        Err(err).wrap_err(format!(
+                            "Failed to read deployment data from: {}",
+                            path.display()
+                        ))
                     }
                 }
             }

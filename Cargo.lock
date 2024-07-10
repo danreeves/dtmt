@@ -910,7 +910,6 @@ dependencies = [
  "sdk",
  "serde",
  "serde_sjson",
- "string_template",
  "strip-ansi-escapes",
  "time",
  "tokio",

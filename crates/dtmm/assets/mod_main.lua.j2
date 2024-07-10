@@ -17,7 +17,7 @@ local require_store = {}
 
 -- This token is treated as a string template and filled by DTMM during deployment.
 -- This allows hiding unsafe I/O functions behind a setting.
--- It's also a valid table definition, thereby degrading gracefully when not replaced.
+-- When not replaced, it's also a valid table definition, thereby degrading gracefully.
 local is_io_enabled = {{ is_io_enabled }} -- luacheck: ignore 113
 local lua_libs = {
     debug = debug,
@@ -207,3 +207,5 @@ function init()
 
     Main:init()
 end
+
+-- vim: ft=lua
