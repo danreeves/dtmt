@@ -26,7 +26,6 @@ use crate::state::{ActionState, PackageInfo};
 
 pub const MOD_BUNDLE_NAME: &str = "packages/mods";
 pub const BOOT_BUNDLE_NAME: &str = "packages/boot";
-pub const DML_BUNDLE_NAME: &str = "packages/dml";
 pub const BUNDLE_DATABASE_NAME: &str = "bundle_database.data";
 pub const MOD_BOOT_SCRIPT: &str = "scripts/mod_main";
 pub const MOD_DATA_SCRIPT: &str = "scripts/mods/mod_data";
@@ -225,11 +224,7 @@ async fn copy_mod_folders(state: Arc<ActionState>) -> Result<Vec<String>> {
 
     let mut tasks = Vec::new();
 
-    for mod_info in state
-        .mods
-        .iter()
-        .filter(|m| m.id != "dml" && m.enabled && !m.bundled)
-    {
+    for mod_info in state.mods.iter().filter(|m| m.enabled && !m.bundled) {
         let span = tracing::trace_span!("copying legacy mod", name = mod_info.name);
         let _enter = span.enter();
 
@@ -283,7 +278,7 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
         .mods
         .iter()
         .filter_map(|m| {
-            if m.id == "dml" || !m.enabled {
+            if !m.enabled {
                 return None;
             }
 
@@ -325,31 +320,29 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 
     let mut bundles = Vec::new();
 
-    {
-        tracing::trace!("Building mod data script");
-
-        let span = tracing::debug_span!("Building mod data script");
+    let mut add_lua_asset = |name, data: &str| {
+        let span = tracing::info_span!("Compiling Lua", name, data_len = data.len());
         let _enter = span.enter();
 
-        let lua = build_mod_data_lua(state.clone()).wrap_err("Failed to build Lua mod data")?;
-
-        tracing::trace!("Compiling mod data script");
-
-        let file =
-            lua::compile(MOD_DATA_SCRIPT, lua).wrap_err("Failed to compile mod data Lua file")?;
-
-        tracing::trace!("Compile mod data script");
+        let file = lua::compile(name, data).wrap_err("Failed to compile Lua")?;
 
         mod_bundle.add_file(file);
-    }
+
+        Ok::<_, Report>(())
+    };
+
+    build_mod_data_lua(state.clone())
+        .wrap_err("Failed to build 'mod_data.lua'")
+        .and_then(|data| add_lua_asset(MOD_DATA_SCRIPT, &data))?;
+    add_lua_asset("scripts/mods/init", include_str!("../../assets/init.lua"))?;
+    add_lua_asset(
+        "scripts/mods/mod_loader",
+        include_str!("../../assets/mod_loader.lua"),
+    )?;
 
     tracing::trace!("Preparing tasks to deploy bundle files");
 
-    for mod_info in state
-        .mods
-        .iter()
-        .filter(|m| m.id != "dml" && m.enabled && m.bundled)
-    {
+    for mod_info in state.mods.iter().filter(|m| m.enabled && m.bundled) {
         let span = tracing::trace_span!("building mod packages", name = mod_info.name);
         let _enter = span.enter();
 
@@ -492,75 +485,6 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let mut variant = BundleFileVariant::new();
         variant.set_data(pkg.to_binary()?);
         let mut f = BundleFile::new(MOD_BUNDLE_NAME.to_string(), BundleFileType::Package);
-        f.add_variant(variant);
-
-        boot_bundle.add_file(f);
-    }
-
-    {
-        tracing::trace!("Handling DML packages and bundle");
-        let span = tracing::trace_span!("handle DML");
-        let _enter = span.enter();
-
-        let mut variant = BundleFileVariant::new();
-
-        let mod_info = state
-            .mods
-            .iter()
-            .find(|m| m.id == "dml")
-            .ok_or_else(|| eyre::eyre!("DML not found in mod list"))?;
-        let pkg_info = mod_info
-            .packages
-            .get(0)
-            .ok_or_else(|| eyre::eyre!("invalid mod package for DML"))
-            .with_suggestion(|| "Re-download and import the newest version.".to_string())?;
-        let bundle_name = format!("{:016x}", Murmur64::hash(&pkg_info.name));
-        let src = state.mod_dir.join(&mod_info.id).join(&bundle_name);
-
-        {
-            let bin = fs::read(&src)
-                .await
-                .wrap_err_with(|| format!("Failed to read bundle file '{}'", src.display()))?;
-            let name = Bundle::get_name_from_path(&state.ctx, &src);
-
-            let dml_bundle = Bundle::from_binary(&state.ctx, name, bin)
-                .wrap_err_with(|| format!("Failed to parse bundle '{}'", src.display()))?;
-
-            bundles.push(dml_bundle);
-        };
-
-        {
-            let dest = bundle_dir.join(&bundle_name);
-            let pkg_name = pkg_info.name.clone();
-            let mod_name = mod_info.name.clone();
-
-            tracing::debug!(
-                "Copying bundle {} for mod {}: {} -> {}",
-                pkg_name,
-                mod_name,
-                src.display(),
-                dest.display()
-            );
-            // We attempt to remove any previous file, so that the hard link can be created.
-            // We can reasonably ignore errors here, as a 'NotFound' is actually fine, the copy
-            // may be possible despite an error here, or the error will be reported by it anyways.
-            // TODO: There is a chance that we delete an actual game bundle, but with 64bit
-            // hashes, it's low enough for now, and the setup required to detect
-            // "game bundle vs mod bundle" is non-trivial.
-            let _ = fs::remove_file(&dest).await;
-            fs::copy(&src, &dest).await.wrap_err_with(|| {
-                format!(
-                    "Failed to copy bundle {pkg_name} for mod {mod_name}. Src: {}, dest: {}",
-                    src.display(),
-                    dest.display()
-                )
-            })?;
-        }
-
-        let pkg = make_package(pkg_info).wrap_err("Failed to create package file for dml")?;
-        variant.set_data(pkg.to_binary()?);
-
-        let mut f = BundleFile::new(DML_BUNDLE_NAME.to_string(), BundleFileType::Package);
         f.add_variant(variant);
 
         boot_bundle.add_file(f);
