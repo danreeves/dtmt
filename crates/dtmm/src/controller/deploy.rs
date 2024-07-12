@@ -261,6 +261,7 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
         id: String,
         name: String,
         bundled: bool,
+        version: String,
         init: String,
         data: Option<String>,
         localization: Option<String>,
@@ -288,6 +289,7 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
                 id: m.id.clone(),
                 name: m.name.clone(),
                 bundled: m.bundled,
+                version: m.version.clone(),
                 init: m.resources.init.to_string_lossy().to_string(),
                 data: m
                     .resources

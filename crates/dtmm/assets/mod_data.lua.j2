@@ -4,6 +4,7 @@ return {
     id = "{{ mod.id }}",
     name = "{{ mod.name }}",
     bundled = {{ mod.bundled }},
+    version = {{ mod.version }},
     packages = {
         {% for pkg in mod.packages %}
         "{{ pkg }}",
