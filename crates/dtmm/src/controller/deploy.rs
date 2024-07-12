@@ -268,6 +268,8 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
     }
 
     let mut env = Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
     env.add_template("mod_data.lua", include_str!("../../assets/mod_data.lua.j2"))
         .wrap_err("Failed to compile template for `mod_data.lua`")?;
     let tmpl = env
@@ -495,14 +497,17 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let mut env = Environment::new();
+        env.set_trim_blocks(true);
+        env.set_lstrip_blocks(true);
         env.add_template("mod_main.lua", include_str!("../../assets/mod_main.lua.j2"))
             .wrap_err("Failed to compile template for `mod_main.lua`")?;
         let tmpl = env
             .get_template("mod_main.lua")
             .wrap_err("Failed to get template `mod_main.lua`")?;
 
+        let is_io_enabled = if state.is_io_enabled { "true" } else { "false" };
         let lua = tmpl
-            .render(minijinja::context!(is_io_enabled => if state.is_io_enabled { "true" } else {"false"}))
+            .render(minijinja::context!(is_io_enabled => is_io_enabled))
             .wrap_err("Failed to render template `mod_main.lua`")?;
 
         tracing::trace!("Main script rendered:\n===========\n{}\n=============", lua);
