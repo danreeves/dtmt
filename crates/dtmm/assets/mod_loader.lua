@@ -289,7 +289,7 @@ ModLoader._load_mod = function(self, index)
 
     mod.state = "loading"
 
-    Crashify.print_property(string.format("Mod:%s:%s", mod.id, mod.name), true)
+    Crashify.print_property(string.format("Mod:%s", mod.name), true)
 
     self._mod_load_index = index
 
