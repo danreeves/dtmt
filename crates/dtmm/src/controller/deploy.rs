@@ -261,6 +261,7 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
         id: String,
         name: String,
         bundled: bool,
+        version: String,
         init: String,
         data: Option<String>,
         localization: Option<String>,
@@ -268,6 +269,8 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
     }
 
     let mut env = Environment::new();
+    env.set_trim_blocks(true);
+    env.set_lstrip_blocks(true);
     env.add_template("mod_data.lua", include_str!("../../assets/mod_data.lua.j2"))
         .wrap_err("Failed to compile template for `mod_data.lua`")?;
     let tmpl = env
@@ -286,6 +289,7 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
                 id: m.id.clone(),
                 name: m.name.clone(),
                 bundled: m.bundled,
+                version: m.version.clone(),
                 init: m.resources.init.to_string_lossy().to_string(),
                 data: m
                     .resources
@@ -449,7 +453,10 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
+async fn patch_boot_bundle(
+    state: Arc<ActionState>,
+    deployment_info: &String,
+) -> Result<Vec<Bundle>> {
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
@@ -495,14 +502,18 @@ async fn patch_boot_bundle(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         let _enter = span.enter();
 
         let mut env = Environment::new();
+        env.set_trim_blocks(true);
+        env.set_lstrip_blocks(true);
         env.add_template("mod_main.lua", include_str!("../../assets/mod_main.lua.j2"))
             .wrap_err("Failed to compile template for `mod_main.lua`")?;
         let tmpl = env
             .get_template("mod_main.lua")
             .wrap_err("Failed to get template `mod_main.lua`")?;
 
+        let is_io_enabled = if state.is_io_enabled { "true" } else { "false" };
+        let deployment_info = deployment_info.replace("\"", "\\\"").replace("\n", "\\n");
         let lua = tmpl
-            .render(minijinja::context!(is_io_enabled => if state.is_io_enabled { "true" } else {"false"}))
+            .render(minijinja::context!(is_io_enabled => is_io_enabled, deployment_info => deployment_info))
             .wrap_err("Failed to render template `mod_main.lua`")?;
 
         tracing::trace!("Main script rendered:\n===========\n{}\n=============", lua);
@@ -567,14 +578,10 @@ where
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
-async fn write_deployment_data<B>(
-    state: Arc<ActionState>,
-    bundles: B,
-    mod_folders: Vec<String>,
-) -> Result<()>
-where
-    B: AsRef<[Bundle]>,
-{
+fn build_deployment_data(
+    bundles: impl AsRef<[Bundle]>,
+    mod_folders: impl AsRef<[String]>,
+) -> Result<String> {
     let info = DeploymentData {
         timestamp: OffsetDateTime::now_utc(),
         bundles: bundles
@@ -583,16 +590,13 @@ where
             .map(|bundle| format!("{:x}", bundle.name().to_murmur64()))
             .collect(),
         // TODO:
-        mod_folders,
+        mod_folders: mod_folders
+            .as_ref()
+            .iter()
+            .map(|folder| folder.clone())
+            .collect(),
     };
-    let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
-    let data = serde_sjson::to_string(&info).wrap_err("Failed to serizalie deployment data")?;
-
-    fs::write(&path, &data)
-        .await
-        .wrap_err_with(|| format!("Failed to write deployment data to '{}'", path.display()))?;
-
-    Ok(())
+    serde_sjson::to_string(&info).wrap_err("Failed to serizalize deployment data")
 }
 
 #[tracing::instrument(skip_all, fields(
@@ -721,8 +725,11 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         .await
         .wrap_err("Failed to build mod bundles")?;
 
+    let new_deployment_info = build_deployment_data(&bundles, &mod_folders)
+        .wrap_err("Failed to build new deployment data")?;
+
     tracing::info!("Patch boot bundle");
-    let mut boot_bundles = patch_boot_bundle(state.clone())
+    let mut boot_bundles = patch_boot_bundle(state.clone(), &new_deployment_info)
         .await
         .wrap_err("Failed to patch boot bundle")?;
     bundles.append(&mut boot_bundles);
@@ -797,9 +804,12 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         .wrap_err("Failed to patch bundle database")?;
 
     tracing::info!("Writing deployment data");
-    write_deployment_data(state.clone(), &bundles, mod_folders)
-        .await
-        .wrap_err("Failed to write deployment data")?;
+    {
+        let path = state.game_dir.join(DEPLOYMENT_DATA_PATH);
+        fs::write(&path, &new_deployment_info)
+            .await
+            .wrap_err_with(|| format!("Failed to write deployment data to '{}'", path.display()))?;
+    }
 
     tracing::info!("Finished deploying mods");
     Ok(())

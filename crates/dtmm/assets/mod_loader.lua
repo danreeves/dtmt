@@ -254,8 +254,15 @@ ModLoader._build_mod_table = function(self)
     fassert(table.is_empty(self._mods), "Trying to add mods to non-empty mod table")
 
     for i, mod_data in ipairs(self._mod_data) do
-        Log.info("ModLoader", "mods[%d] = id=%q | name=%q | bundled=%s", i, mod_data.id, mod_data.name,
-            tostring(mod_data.bundled))
+        Log.info(
+            "ModLoader",
+            "mods[%d] = id=%q | name=%q | version=%q | bundled=%s",
+            i,
+            mod_data.id,
+            mod_data.name,
+            mod_data.version,
+            tostring(mod_data.bundled)
+        )
 
         self._mods[i] = {
             id = mod_data.id,
@@ -289,7 +296,7 @@ ModLoader._load_mod = function(self, index)
 
     mod.state = "loading"
 
-    Crashify.print_property(string.format("Mod:%s:%s", mod.id, mod.name), true)
+    Crashify.print_property(string.format("Mod:%s", mod.name), true)
 
     self._mod_load_index = index
 
