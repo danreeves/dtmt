@@ -2,6 +2,12 @@
 name = "dtmm"
 version = "0.1.0"
 edition = "2021"
+authors = ["Lucas Schwiderski <lucas@lschwiderski.de>"]
+description = "DTMM is a GUI application to install and manage mods for the game."
+documentation = "https://git.sclu1034.dev/bitsquid_dt/dtmt/wiki"
+repository = "https://git.sclu1034.dev/bitsquid_dt/dtmt"
+homepage = "https://git.sclu1034.dev/bitsquid_dt/dtmt"
+license-file = "LICENSE"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -38,3 +44,6 @@ tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 usvg = "0.25.0"
 zip = { workspace = true }
+
+[build-dependencies]
+winres = "0.1.12"
