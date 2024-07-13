@@ -50,7 +50,7 @@ impl fmt::LowerHex for Murmur64 {
 
 impl fmt::Display for Murmur64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
+        write!(f, "{:016X}", self)
     }
 }
 
@@ -152,7 +152,7 @@ impl fmt::UpperHex for Murmur32 {
 
 impl fmt::Display for Murmur32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::UpperHex::fmt(&self.0, f)
+        write!(f, "{:08X}", self)
     }
 }
 
