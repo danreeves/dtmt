@@ -7,12 +7,12 @@ use std::str::FromStr;
 use async_recursion::async_recursion;
 use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
-use path_slash::PathBufExt;
 use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
-use crate::bundle::file::{BundleFileType, UserFile};
-use crate::murmur::{HashGroup, Murmur64};
+use crate::bundle::file::UserFile;
+use crate::bundle::filetype::BundleFileType;
+use crate::murmur::{HashGroup, IdString64, Murmur64};
 
 #[tracing::instrument]
 #[async_recursion]
@@ -90,12 +90,12 @@ where
     Ok(paths)
 }
 
-type PackageType = HashMap<BundleFileType, HashSet<PathBuf>>;
+type PackageType = HashMap<BundleFileType, HashSet<String>>;
 type PackageDefinition = HashMap<String, HashSet<String>>;
 
 #[derive(Default)]
 pub struct Package {
-    _name: String,
+    _name: IdString64,
     _root: PathBuf,
     inner: PackageType,
     flags: u8,
@@ -116,9 +116,9 @@ impl DerefMut for Package {
 }
 
 impl Package {
-    pub fn new(name: String, root: PathBuf) -> Self {
+    pub fn new(name: impl Into<IdString64>, root: PathBuf) -> Self {
         Self {
-            _name: name,
+            _name: name.into(),
             _root: root,
             inner: Default::default(),
             flags: 1,
@@ -129,17 +129,22 @@ impl Package {
         self.values().fold(0, |total, files| total + files.len())
     }
 
-    pub fn add_file<P: Into<PathBuf>>(&mut self, file_type: BundleFileType, name: P) {
+    pub fn add_file(&mut self, file_type: BundleFileType, name: impl Into<String>) {
         self.inner.entry(file_type).or_default().insert(name.into());
     }
 
     #[tracing::instrument("Package::from_sjson", skip(sjson), fields(sjson_len = sjson.as_ref().len()))]
-    pub async fn from_sjson<P, S>(sjson: S, name: String, root: P) -> Result<Self>
+    pub async fn from_sjson<P, S>(
+        sjson: S,
+        name: impl Into<IdString64> + std::fmt::Debug,
+        root: P,
+    ) -> Result<Self>
     where
         P: AsRef<Path> + std::fmt::Debug,
         S: AsRef<str>,
     {
         let root = root.as_ref();
+        let name = name.into();
         let definition: PackageDefinition = serde_sjson::from_str(sjson.as_ref())?;
         let mut inner: PackageType = Default::default();
 
@@ -173,7 +178,11 @@ impl Package {
                         continue;
                     };
 
-                    inner.entry(t).or_default().insert(path);
+                    tracing::debug!("Adding file {}", path.display());
+                    inner
+                        .entry(t)
+                        .or_default()
+                        .insert(path.display().to_string());
                 }
             }
         }
@@ -192,11 +201,9 @@ impl Package {
     pub fn to_sjson(&self) -> Result<String> {
         let mut map: PackageDefinition = Default::default();
 
-        for (t, paths) in self.iter() {
-            for path in paths.iter() {
-                map.entry(t.ext_name())
-                    .or_default()
-                    .insert(path.display().to_string());
+        for (t, names) in self.iter() {
+            for name in names.iter() {
+                map.entry(t.ext_name()).or_default().insert(name.clone());
             }
         }
 
@@ -222,11 +229,11 @@ impl Package {
         for _ in 0..file_count {
             let t = BundleFileType::from(r.read_u64()?);
             let hash = Murmur64::from(r.read_u64()?);
-            let path = ctx.lookup_hash(hash, HashGroup::Filename);
+            let name = ctx.lookup_hash(hash, HashGroup::Filename);
             inner
                 .entry(t)
                 .or_default()
-                .insert(PathBuf::from(path.display().to_string()));
+                .insert(name.display().to_string());
         }
 
         let flags = r.read_u8()?;
@@ -239,7 +246,7 @@ impl Package {
 
         let pkg = Self {
             inner,
-            _name: name,
+            _name: name.into(),
             _root: PathBuf::new(),
             flags,
         };
@@ -255,12 +262,10 @@ impl Package {
         w.write_u32(0x2b)?;
         w.write_u32(self.values().flatten().count() as u32)?;
 
-        for (t, paths) in self.iter() {
-            for path in paths.iter() {
+        for (t, names) in self.iter() {
+            for name in names.iter() {
                 w.write_u64(t.hash().into())?;
-
-                let hash = Murmur64::hash(path.to_slash_lossy().as_bytes());
-                w.write_u64(hash.into())?;
+                w.write_u64(Murmur64::hash(name.as_bytes()).into())?;
             }
         }
 
@@ -280,17 +285,11 @@ where
     Ok(vec![UserFile::new(s.into_bytes())])
 }
 
-// #[tracing::instrument(skip_all)]
-// pub fn compile(_ctx: &crate::Context, data: String) -> Result<Vec<u8>> {
-//     let pkg = Package::from_sjson(data)?;
-//     pkg.to_binary()
-// }
-
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
 
-    use crate::BundleFileType;
+    use crate::bundle::filetype::BundleFileType;
 
     use super::resolve_wildcard;
     use super::Package;

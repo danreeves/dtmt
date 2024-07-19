@@ -351,6 +351,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         },
         depends: vec![ModDependency::ID(String::from("DMF"))],
         bundled: true,
+        name_overrides: HashMap::new(),
     };
 
     tracing::debug!(?dtmt_cfg);

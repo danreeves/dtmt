@@ -324,11 +324,11 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 
     let mut bundles = Vec::new();
 
-    let mut add_lua_asset = |name, data: &str| {
+    let mut add_lua_asset = |name: &str, data: &str| {
         let span = tracing::info_span!("Compiling Lua", name, data_len = data.len());
         let _enter = span.enter();
 
-        let file = lua::compile(name, data).wrap_err("Failed to compile Lua")?;
+        let file = lua::compile(name.to_string(), data).wrap_err("Failed to compile Lua")?;
 
         mod_bundle.add_file(file);
 
@@ -517,8 +517,8 @@ async fn patch_boot_bundle(
             .wrap_err("Failed to render template `mod_main.lua`")?;
 
         tracing::trace!("Main script rendered:\n===========\n{}\n=============", lua);
-        let file =
-            lua::compile(MOD_BOOT_SCRIPT, lua).wrap_err("Failed to compile mod main Lua file")?;
+        let file = lua::compile(MOD_BOOT_SCRIPT.to_string(), lua)
+            .wrap_err("Failed to compile mod main Lua file")?;
 
         boot_bundle.add_file(file);
     }

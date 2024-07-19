@@ -103,38 +103,41 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn compile_package_files<P>(pkg: &Package, root: P) -> Result<Vec<BundleFile>>
-where
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let root = Arc::new(root.as_ref());
+async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<BundleFile>> {
+    let root = Arc::new(&cfg.dir);
+    let name_overrides = &cfg.name_overrides;
 
     let tasks = pkg
         .iter()
-        .flat_map(|(file_type, paths)| {
-            paths.iter().map(|path| {
+        .flat_map(|(file_type, names)| {
+            names.iter().map(|name| {
                 (
                     *file_type,
-                    path,
+                    name,
                     // Cloning the `Arc` here solves the issue that in the next `.map`, I need to
                     // `move` the closure parameters, but can't `move` `root` before it was cloned.
                     root.clone(),
                 )
             })
         })
-        .map(|(file_type, path, root)| async move {
-            let sjson = fs::read_to_string(&path).await?;
+        .map(|(file_type, name, root)| async move {
+            let path = PathBuf::from(name);
+            let sjson = fs::read_to_string(&path)
+                .await
+                .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
 
-            let mut path = path.clone();
-            path.set_extension("");
-
-            BundleFile::from_sjson(
-                path.to_slash_lossy().to_string(),
-                file_type,
-                sjson,
-                root.as_ref(),
-            )
-            .await
+            let name = path.with_extension("").to_slash_lossy().to_string();
+            let name = if let Some(new_name) = name_overrides.get(&name) {
+                let new_name = match u64::from_str_radix(new_name, 16) {
+                    Ok(hash) => IdString64::from(hash),
+                    Err(_) => IdString64::from(new_name.clone()),
+                };
+                tracing::info!("Overriding '{}' -> '{}'", name, new_name.display());
+                new_name
+            } else {
+                IdString64::from(name.clone())
+            };
+            BundleFile::from_sjson(name, file_type, sjson, root.as_ref()).await
         });
 
     let results = futures::stream::iter(tasks)
@@ -146,12 +149,11 @@ where
 }
 
 #[tracing::instrument]
-async fn build_package<P1, P2>(package: P1, root: P2) -> Result<Bundle>
-where
-    P1: AsRef<Path> + std::fmt::Debug,
-    P2: AsRef<Path> + std::fmt::Debug,
-{
-    let root = root.as_ref();
+async fn build_package(
+    cfg: &ModConfig,
+    package: impl AsRef<Path> + std::fmt::Debug,
+) -> Result<Bundle> {
+    let root = &cfg.dir;
     let package = package.as_ref();
 
     let mut path = root.join(package);
@@ -165,7 +167,7 @@ where
         .await
         .wrap_err_with(|| format!("Invalid package file {}", &pkg_name))?;
 
-    let files = compile_package_files(&pkg, root).await?;
+    let files = compile_package_files(&pkg, cfg).await?;
     let mut bundle = Bundle::new(pkg_name);
     for file in files {
         bundle.add_file(file);
@@ -254,14 +256,14 @@ pub(crate) async fn read_project_config(dir: Option<PathBuf>) -> Result<ModConfi
     Ok(cfg)
 }
 
-pub(crate) async fn build<P1, P2>(
+#[tracing::instrument]
+pub(crate) async fn build<P>(
     cfg: &ModConfig,
-    out_path: P1,
-    game_dir: Arc<Option<P2>>,
+    out_path: impl AsRef<Path> + std::fmt::Debug,
+    game_dir: Arc<Option<P>>,
 ) -> Result<()>
 where
-    P1: AsRef<Path>,
-    P2: AsRef<Path>,
+    P: AsRef<Path> + std::fmt::Debug,
 {
     let out_path = out_path.as_ref();
 
@@ -286,7 +288,7 @@ where
                 );
             }
 
-            let bundle = build_package(path, &cfg.dir).await.wrap_err_with(|| {
+            let bundle = build_package(&cfg, path).await.wrap_err_with(|| {
                 format!(
                     "Failed to build package '{}' at '{}'",
                     path.display(),

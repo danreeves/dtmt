@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{OptionExt as _, WrapErr as _};
@@ -67,6 +68,8 @@ pub struct ModConfig {
     pub depends: Vec<ModDependency>,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub bundled: bool,
+    #[serde(default)]
+    pub name_overrides: HashMap<String, String>,
 }
 
 pub const STEAMAPP_ID: u32 = 1361210;

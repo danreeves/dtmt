@@ -13,7 +13,7 @@ use crate::binary::ToBinary;
 use crate::murmur::Murmur64;
 use crate::Bundle;
 
-use super::file::BundleFileType;
+use super::filetype::BundleFileType;
 
 const DATABASE_VERSION: u32 = 0x6;
 const FILE_VERSION: u32 = 0x4;

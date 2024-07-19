@@ -15,6 +15,7 @@ use tokio::fs;
 use crate::binary::sync::ReadExt;
 use crate::binary::sync::WriteExt;
 use crate::bundle::file::{BundleFileVariant, UserFile};
+use crate::murmur::IdString64;
 use crate::{BundleFile, BundleFileType};
 
 const BITSQUID_LUAJIT_HEADER: u32 = 0x8253461B;
@@ -117,17 +118,13 @@ where
 }
 
 #[tracing::instrument(skip_all)]
-pub fn compile<S, C>(name: S, code: C) -> Result<BundleFile>
-where
-    S: Into<String>,
-    C: AsRef<str>,
-{
+pub fn compile(name: impl Into<IdString64>, code: impl AsRef<str>) -> Result<BundleFile> {
     let name = name.into();
     let code = code.as_ref();
 
     tracing::trace!(
         "Compiling '{}', {} bytes of code",
-        name,
+        name.display(),
         code.as_bytes().len()
     );
 
@@ -135,8 +132,8 @@ where
         let state = lua::luaL_newstate();
         lua::luaL_openlibs(state);
 
-        let name = CString::new(format!("@{name}").into_bytes())
-            .wrap_err_with(|| format!("Cannot convert name into CString: {}", name))?;
+        let name = CString::new(format!("@{}", name.display()).into_bytes())
+            .wrap_err_with(|| format!("Cannot convert name into CString: {}", name.display()))?;
         match lua::luaL_loadbuffer(
             state,
             code.as_ptr() as _,

@@ -297,6 +297,7 @@ fn extract_mod_config<R: Read + Seek>(archive: &mut ZipArchive<R>) -> Result<(Mo
             packages: Vec::new(),
             resources,
             depends: Vec::new(),
+            name_overrides: Default::default(),
         };
 
         Ok((cfg, root))
