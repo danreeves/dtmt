@@ -36,6 +36,18 @@ enum OutputFormat {
     Text,
 }
 
+fn format_byte_size(size: usize) -> String {
+    if size < 1024 {
+        format!("{} Bytes", size)
+    } else if size < 1024 * 1024 {
+        format!("{} kB", size / 1024)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{} MB", size / (1024 * 1024))
+    } else {
+        format!("{} GB", size / (1024 * 1024 * 1024))
+    }
+}
+
 #[tracing::instrument(skip(ctx))]
 async fn print_bundle_contents<P>(ctx: &sdk::Context, path: P, fmt: OutputFormat) -> Result<()>
 where
@@ -50,7 +62,11 @@ where
 
     match fmt {
         OutputFormat::Text => {
-            println!("Bundle: {}", bundle.name().display());
+            println!(
+                "Bundle: {} ({:016x})",
+                bundle.name().display(),
+                bundle.name()
+            );
 
             for f in bundle.files().iter() {
                 if f.variants().len() != 1 {
@@ -63,9 +79,10 @@ where
 
                 let v = &f.variants()[0];
                 println!(
-                    "\t{}.{}: {} bytes",
+                    "\t{}.{}: {} ({})",
                     f.base_name().display(),
                     f.file_type().ext_name(),
+                    format_byte_size(v.size()),
                     v.size()
                 );
             }

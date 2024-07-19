@@ -55,6 +55,7 @@ pub(crate) fn command_definition() -> Command {
         )
 }
 
+/// Try to find a `dtmt.cfg` in the given directory or traverse up the parents.
 #[tracing::instrument]
 async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     let (path, mut file) = if let Some(path) = dir {
@@ -102,6 +103,8 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     Ok(cfg)
 }
 
+/// Iterate over the paths in the given `Package` and
+/// compile each file by its file type.
 #[tracing::instrument(skip_all)]
 async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<BundleFile>> {
     let root = Arc::new(&cfg.dir);
@@ -148,6 +151,8 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
     results.into_iter().collect()
 }
 
+/// Read a `.package` file, collect the referenced files
+/// and compile all of them into a bundle.
 #[tracing::instrument]
 async fn build_package(
     cfg: &ModConfig,
@@ -176,6 +181,8 @@ async fn build_package(
     Ok(bundle)
 }
 
+/// Cleans the path of internal parent (`../`) or self (`./`) components,
+/// and ensures that it is relative.
 fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     let path = path.as_ref();
 

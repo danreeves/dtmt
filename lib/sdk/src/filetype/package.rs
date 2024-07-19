@@ -14,6 +14,15 @@ use crate::bundle::file::UserFile;
 use crate::bundle::filetype::BundleFileType;
 use crate::murmur::{HashGroup, IdString64, Murmur64};
 
+/// Resolves a relative path that might contain wildcards into a list of
+/// paths that exist on disk and match that wildcard.
+/// This is similar to globbing in Unix shells, but with much less features.
+///
+/// The only wilcard character allowed is `*`, and only at the end of the string,
+/// where it matches all files recursively in that directory.
+///
+/// `t` is an optional extension name, that may be used to force a wildcard
+/// path to only match that file type `t`.
 #[tracing::instrument]
 #[async_recursion]
 async fn resolve_wildcard<P1, P2>(

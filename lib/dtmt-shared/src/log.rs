@@ -84,7 +84,7 @@ pub fn create_tracing_subscriber() {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::try_new("info").unwrap());
 
     let (dev_stdout_layer, prod_stdout_layer, filter_layer) = if cfg!(debug_assertions) {
-        let fmt_layer = fmt::layer().pretty();
+        let fmt_layer = fmt::layer().pretty().with_writer(std::io::stderr);
         (Some(fmt_layer), None, None)
     } else {
         // Creates a layer that
@@ -93,6 +93,7 @@ pub fn create_tracing_subscriber() {
         // - does not print spans/targets
         // - only prints time, not date
         let fmt_layer = fmt::layer()
+            .with_writer(std::io::stderr)
             .event_format(Formatter)
             .fmt_fields(debug_fn(format_fields));
 
