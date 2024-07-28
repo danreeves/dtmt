@@ -36,6 +36,25 @@ pub struct BundleDatabase {
     bundle_contents: HashMap<Murmur64, Vec<FileName>>,
 }
 
+// Implements the partial Murmur that's used by the engine to compute bundle resource hashes,
+// but in a way that the loop can be done outside the function.
+#[inline(always)]
+fn add_to_resource_hash(mut k: u64, name: impl Into<u64>) -> u64 {
+    const M: u64 = 0xc6a4a7935bd1e995;
+    const R: u64 = 47;
+
+    let mut h: u64 = name.into();
+
+    k = k.wrapping_mul(M);
+    k ^= k >> R;
+    k = k.wrapping_mul(M);
+
+    h ^= k;
+    k = M.wrapping_mul(h);
+
+    k
+}
+
 impl BundleDatabase {
     pub fn add_bundle(&mut self, bundle: &Bundle) {
         let hash = bundle.name().to_murmur64();
@@ -69,20 +88,26 @@ impl BundleDatabase {
             }
         }
 
+        let mut resource_hash = 0;
+
         for f in bundle.files() {
+            let name = f.base_name().to_murmur64();
             let file_name = FileName {
                 extension: f.file_type(),
-                name: f.base_name().to_murmur64(),
+                name,
             };
 
-            // TODO: Compute actual resource hash
-            self.resource_hashes.insert(hash, 0);
+            resource_hash = add_to_resource_hash(resource_hash, name);
 
+            // TODO: Make sure each file name only exists once. Probably best to turn
+            // the `Vec` into a sorted `HashSet`.
             self.bundle_contents
                 .entry(hash)
                 .or_default()
                 .push(file_name);
         }
+
+        self.resource_hashes.insert(hash, resource_hash);
     }
 }
 
@@ -103,7 +128,7 @@ impl FromBinary for BundleDatabase {
         let mut stored_files = HashMap::with_capacity(num_entries);
 
         for _ in 0..num_entries {
-            let hash = Murmur64::from(r.read_u64()?);
+            let hash = r.read_u64().map(Murmur64::from)?;
 
             let num_files = r.read_u32()? as usize;
             let mut files = Vec::with_capacity(num_files);
@@ -161,7 +186,7 @@ impl FromBinary for BundleDatabase {
         let mut resource_hashes = HashMap::with_capacity(num_hashes);
 
         for _ in 0..num_hashes {
-            let name = Murmur64::from(r.read_u64()?);
+            let name = r.read_u64().map(Murmur64::from)?;
             let hash = r.read_u64()?;
 
             resource_hashes.insert(name, hash);
@@ -171,14 +196,14 @@ impl FromBinary for BundleDatabase {
         let mut bundle_contents = HashMap::with_capacity(num_contents);
 
         for _ in 0..num_contents {
-            let hash = Murmur64::from(r.read_u64()?);
+            let hash = r.read_u64().map(Murmur64::from)?;
 
             let num_files = r.read_u32()? as usize;
             let mut files = Vec::with_capacity(num_files);
 
             for _ in 0..num_files {
-                let extension = BundleFileType::from(r.read_u64()?);
-                let name = Murmur64::from(r.read_u64()?);
+                let extension = r.read_u64().map(BundleFileType::from)?;
+                let name = r.read_u64().map(Murmur64::from)?;
 
                 files.push(FileName { extension, name });
             }
