@@ -19,15 +19,15 @@ const DATABASE_VERSION: u32 = 0x6;
 const FILE_VERSION: u32 = 0x4;
 
 pub struct BundleFile {
-    name: String,
-    stream: String,
-    platform_specific: bool,
-    file_time: u64,
+    pub name: String,
+    pub stream: String,
+    pub platform_specific: bool,
+    pub file_time: u64,
 }
 
 pub struct FileName {
-    extension: BundleFileType,
-    name: Murmur64,
+    pub extension: BundleFileType,
+    pub name: Murmur64,
 }
 
 pub struct BundleDatabase {
@@ -56,6 +56,14 @@ fn add_to_resource_hash(mut k: u64, name: impl Into<u64>) -> u64 {
 }
 
 impl BundleDatabase {
+    pub fn bundles(&self) -> &HashMap<Murmur64, Vec<BundleFile>> {
+        &self.stored_files
+    }
+
+    pub fn files(&self) -> &HashMap<Murmur64, Vec<FileName>> {
+        &self.bundle_contents
+    }
+
     pub fn add_bundle(&mut self, bundle: &Bundle) {
         let hash = bundle.name().to_murmur64();
         let name = hash.to_string();
