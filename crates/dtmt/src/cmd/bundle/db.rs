@@ -33,6 +33,21 @@ pub(crate) fn command_definition() -> Command {
                     .value_parser(value_parser!(PathBuf)),
             ),
         )
+        .subcommand(
+            Command::new("find-file")
+                .about("Find the bundle a file belongs to")
+                .arg(
+                    Arg::new("database")
+                        .required(true)
+                        .help("Path to the bundle database")
+                        .value_parser(value_parser!(PathBuf)),
+                )
+                .arg(
+                    Arg::new("file-name")
+                        .required(true)
+                        .help("Name of the file. May be a hash in hex representation or a string"),
+                ),
+        )
 }
 
 #[tracing::instrument(skip_all)]
@@ -79,10 +94,10 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
                     match bundle_name {
                         IdString64::String(name) => {
-                            println!("{:016X} {}", bundle_hash, name);
+                            println!("{:016x} {}", bundle_hash, name);
                         }
                         IdString64::Hash(hash) => {
-                            println!("{:016X}", hash);
+                            println!("{:016x}", hash);
                         }
                     }
 
@@ -92,10 +107,10 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
                         match name {
                             IdString64::String(name) => {
-                                println!("\t{:016X}.{:<12} {}", file.name, extension, name);
+                                println!("\t{:016x}.{:<12} {}", file.name, extension, name);
                             }
                             IdString64::Hash(hash) => {
-                                println!("\t{:016X}.{}", hash, extension);
+                                println!("\t{:016x}.{}", hash, extension);
                             }
                         }
                     }
@@ -112,12 +127,42 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
                 match bundle_name {
                     IdString64::String(name) => {
-                        println!("{:016X} {}", bundle_hash, name);
+                        println!("{:016x} {}", bundle_hash, name);
                     }
                     IdString64::Hash(hash) => {
-                        println!("{:016X}", hash);
+                        println!("{:016x}", hash);
                     }
                 }
+            }
+
+            Ok(())
+        }
+        "find-file" => {
+            let name = sub_matches
+                .get_one::<String>("file-name")
+                .expect("required argument");
+            let name = match u64::from_str_radix(name, 16).map(Murmur64::from) {
+                Ok(hash) => hash,
+                Err(_) => Murmur64::hash(name),
+            };
+
+            let bundles = database.files().iter().filter_map(|(bundle_hash, files)| {
+                if files.iter().any(|file| file.name == name) {
+                    Some(bundle_hash)
+                } else {
+                    None
+                }
+            });
+
+            let mut found = false;
+
+            for bundle in bundles {
+                found = true;
+                println!("{:016x}", bundle);
+            }
+
+            if !found {
+                std::process::exit(1);
             }
 
             Ok(())
