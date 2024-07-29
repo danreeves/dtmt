@@ -1,6 +1,7 @@
 use clap::{ArgMatches, Command};
 use color_eyre::eyre::Result;
 
+mod db;
 mod decompress;
 mod extract;
 mod inject;
@@ -14,6 +15,7 @@ pub(crate) fn command_definition() -> Command {
         .subcommand(extract::command_definition())
         .subcommand(inject::command_definition())
         .subcommand(list::command_definition())
+        .subcommand(db::command_definition())
 }
 
 #[tracing::instrument(skip_all)]
@@ -23,6 +25,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
         Some(("extract", sub_matches)) => extract::run(ctx, sub_matches).await,
         Some(("inject", sub_matches)) => inject::run(ctx, sub_matches).await,
         Some(("list", sub_matches)) => list::run(ctx, sub_matches).await,
+        Some(("db", sub_matches)) => db::run(ctx, sub_matches).await,
         _ => unreachable!(
             "clap is configured to require a subcommand, and they're all handled above"
         ),

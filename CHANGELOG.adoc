@@ -20,6 +20,8 @@
 - dtmm: fetch file version for Nexus mods
 - dtmm: handle `nxm://` URIs via IPC and import the corresponding mod
 - dtmm: Add button to open mod on nexusmods.com
+- dtmt: Implement commands to list bundles and contents
+- dtmt: Implement command to search for files
 
 === Fixed
 
