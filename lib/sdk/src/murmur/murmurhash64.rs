@@ -119,4 +119,9 @@ fn test_hash() {
 }
 
 #[test]
-fn test_inverse() {}
+fn test_inverse() {
+    let h = hash("lua".as_bytes(), crate::murmur::SEED as u64);
+    let inv = hash_inverse(h, crate::murmur::SEED as u64);
+    assert_eq!(h, hash(&inv.to_le_bytes(), crate::murmur::SEED as u64));
+    assert_ne!(h, hash(&inv.to_be_bytes(), crate::murmur::SEED as u64));
+}
