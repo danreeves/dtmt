@@ -27,7 +27,7 @@ futures = "0.3.25"
 interprocess = "2.1.0"
 lazy_static = "1.4.0"
 luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
-minijinja = { version = "2.0.1", default-features = false }
+minijinja = { workspace = true }
 nexusmods = { path = "../../lib/nexusmods", version = "*" }
 oodle = { path = "../../lib/oodle", version = "*" }
 open = "5.0.1"

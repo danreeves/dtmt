@@ -937,6 +937,7 @@ dependencies = [
  "futures-util",
  "glob",
  "luajit2-sys",
+ "minijinja",
  "nanorand",
  "notify",
  "oodle",
@@ -948,7 +949,6 @@ dependencies = [
  "serde",
  "serde_sjson",
  "shlex",
- "string_template",
  "tempfile",
  "tokio",
  "tokio-stream",
@@ -3305,15 +3305,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 dependencies = [
  "float-cmp",
-]
-
-[[package]]
-name = "string_template"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc6f2c6b2c3fa950895c9aeb0c3cb9271d7eb580662af9af2b711b593f446320"
-dependencies = [
- "regex",
 ]
 
 [[package]]

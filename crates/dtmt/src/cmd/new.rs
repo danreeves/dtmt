@@ -1,11 +1,10 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::Help;
 use futures::{StreamExt, TryStreamExt};
-use string_template::Template;
+use minijinja::Environment;
 use tokio::fs::{self, DirBuilder};
 
 const TEMPLATES: [(&str, &str); 5] = [
@@ -137,34 +136,45 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     tracing::debug!(root = %root.display(), name, id);
 
-    let mut data = HashMap::new();
-    data.insert("name", name.as_str());
-    data.insert("id", id.as_str());
+    let render_ctx = minijinja::context!(name => name.as_str(), id => id.as_str());
+    let env = Environment::new();
 
     let templates = TEMPLATES
         .iter()
         .map(|(path_tmpl, content_tmpl)| {
-            let path = Template::new(path_tmpl).render(&data);
-            let content = Template::new(content_tmpl).render(&data);
-
-            (root.join(path), content)
+            env.render_str(path_tmpl, &render_ctx)
+                .wrap_err_with(|| format!("Failed to render template: {}", path_tmpl))
+                .and_then(|path| {
+                    env.render_named_str(&path, content_tmpl, &render_ctx)
+                        .wrap_err_with(|| format!("Failed to render template '{}'", &path))
+                        .map(|content| (root.join(path), content))
+                })
         })
-        .map(|(path, content)| async move {
-            let dir = path
-                .parent()
-                .ok_or_else(|| eyre::eyre!("invalid root path"))?;
+        .map(|res| async move {
+            match res {
+                Ok((path, content)) => {
+                    let dir = path
+                        .parent()
+                        .ok_or_else(|| eyre::eyre!("invalid root path"))?;
 
-            DirBuilder::new()
-                .recursive(true)
-                .create(&dir)
-                .await
-                .wrap_err_with(|| format!("Failed to create directory {}", dir.display()))?;
+                    DirBuilder::new()
+                        .recursive(true)
+                        .create(&dir)
+                        .await
+                        .wrap_err_with(|| {
+                            format!("Failed to create directory {}", dir.display())
+                        })?;
 
-            tracing::trace!("Writing file {}", path.display());
+                    tracing::trace!("Writing file {}", path.display());
 
-            fs::write(&path, content.as_bytes())
-                .await
-                .wrap_err_with(|| format!("Failed to write content to path {}", path.display()))
+                    fs::write(&path, content.as_bytes())
+                        .await
+                        .wrap_err_with(|| {
+                            format!("Failed to write content to path {}", path.display())
+                        })
+                }
+                Err(e) => Err(e),
+            }
         });
 
     futures::stream::iter(templates)
