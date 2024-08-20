@@ -10,8 +10,21 @@ use tokio::fs::{self, DirBuilder};
 const TEMPLATES: [(&str, &str); 5] = [
     (
         "dtmt.cfg",
-        r#"id = "{{id}}"
+        r#"//
+// This is your mod's main configuration file. It tells DTMT how to build the mod,
+// and DTMM what to display to your users.
+// Certain files have been pre-filled by the template, the ones commented out (`//`)
+// are optional.
+//
+// A unique identifier (preferably lower case, alphanumeric)
+id = "{{id}}"
+// The display name that your users will see.
+// This doesn't have to be unique, but you still want to avoid being confused with other
+// mods.
 name = "{{name}}"
+// It's good practice to increase this number whenever you publish changes.
+// It's up to you if you use SemVer or something simpler like `1970-12-24`. It should sort and
+// compare well, though.
 version = "0.1.0"
 // author = ""
 
@@ -31,16 +44,25 @@ categories = [
 
 // A list of mod IDs that this mod depends on. You can find
 // those IDs by downloading the mod and extracting their `dtmt.cfg`.
+// To make your fellow modders' lives easier, publish your own mods' IDs
+// somewhere visible, such as the Nexusmods page.
 depends = [
     DMF
 ]
 
+// The primary resources that serve as the entry point to your
+// mod's code. Unless for very specific use cases, the generated
+// values shouldn't be changed.
 resources = {
     init = "scripts/mods/{{id}}/init"
     data = "scripts/mods/{{id}}/data"
     localization = "scripts/mods/{{id}}/localization"
 }
 
+// The list of packages, or bundles, to build.
+// Each one corresponds to a package definition in the named folder.
+// For mods that contain only code and/or a few small assets, a single
+// package will suffice.
 packages = [
     "packages/mods/{{id}}"
 ]
@@ -58,7 +80,6 @@ packages = [
         r#"local mod = get_mod("{{id}}")
 
 -- Your mod code goes here.
--- https://vmf-docs.verminti.de
 "#,
     ),
     (
