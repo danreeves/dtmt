@@ -1,0 +1,11 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":combinePatchMinorReleases",
+    ":enableVulnerabilityAlerts",
+    ":rebaseStalePrs"
+  ],
+  "prConcurrentLimit": 10,
+  "branchPrefix": "renovate/"
+}
