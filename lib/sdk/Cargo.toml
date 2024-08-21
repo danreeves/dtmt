@@ -4,23 +4,23 @@ version = "0.3.0"
 edition = "2021"
 
 [dependencies]
-bitflags = "2.5.0"
-byteorder = "1.4.3"
-color-eyre = "0.6.2"
-csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
-fastrand = "2.1.0"
-futures = "0.3.25"
-futures-util = "0.3.24"
-glob = "0.3.0"
-nanorand = "0.7.0"
-pin-project-lite = "0.2.9"
-serde = { version = "1.0.147", features = ["derive"] }
-serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
-oodle = { path = "../../lib/oodle", version = "*" }
-tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
-tokio-stream = { version = "0.1.11", features = ["fs", "io-util"] }
-tracing = { version = "0.1.37", features = ["async-await"] }
-tracing-error = "0.2.0"
-luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
-async-recursion = "1.0.2"
-path-slash = "0.2.1"
+async-recursion = { workspace = true }
+bitflags = { workspace = true }
+byteorder = { workspace = true }
+color-eyre = { workspace = true }
+csv-async = { workspace = true }
+fastrand = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+glob = { workspace = true }
+luajit2-sys = { workspace = true }
+nanorand = { workspace = true }
+oodle = { workspace = true }
+path-slash = { workspace = true }
+pin-project-lite = { workspace = true }
+serde = { workspace = true }
+serde_sjson = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-error = { workspace = true }
