@@ -1,18 +1,30 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Arg, ArgMatches, Command};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::Help;
 use futures::{StreamExt, TryStreamExt};
-use string_template::Template;
+use minijinja::Environment;
 use tokio::fs::{self, DirBuilder};
 
 const TEMPLATES: [(&str, &str); 5] = [
     (
         "dtmt.cfg",
-        r#"id = "{{id}}"
+        r#"//
+// This is your mod's main configuration file. It tells DTMT how to build the mod,
+// and DTMM what to display to your users.
+// Certain files have been pre-filled by the template, the ones commented out (`//`)
+// are optional.
+//
+// A unique identifier (preferably lower case, alphanumeric)
+id = "{{id}}"
+// The display name that your users will see.
+// This doesn't have to be unique, but you still want to avoid being confused with other
+// mods.
 name = "{{name}}"
+// It's good practice to increase this number whenever you publish changes.
+// It's up to you if you use SemVer or something simpler like `1970-12-24`. It should sort and
+// compare well, though.
 version = "0.1.0"
 // author = ""
 
@@ -32,16 +44,25 @@ categories = [
 
 // A list of mod IDs that this mod depends on. You can find
 // those IDs by downloading the mod and extracting their `dtmt.cfg`.
+// To make your fellow modders' lives easier, publish your own mods' IDs
+// somewhere visible, such as the Nexusmods page.
 depends = [
     DMF
 ]
 
+// The primary resources that serve as the entry point to your
+// mod's code. Unless for very specific use cases, the generated
+// values shouldn't be changed.
 resources = {
     init = "scripts/mods/{{id}}/init"
     data = "scripts/mods/{{id}}/data"
     localization = "scripts/mods/{{id}}/localization"
 }
 
+// The list of packages, or bundles, to build.
+// Each one corresponds to a package definition in the named folder.
+// For mods that contain only code and/or a few small assets, a single
+// package will suffice.
 packages = [
     "packages/mods/{{id}}"
 ]
@@ -59,7 +80,6 @@ packages = [
         r#"local mod = get_mod("{{id}}")
 
 -- Your mod code goes here.
--- https://vmf-docs.verminti.de
 "#,
     ),
     (
@@ -137,34 +157,45 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
     tracing::debug!(root = %root.display(), name, id);
 
-    let mut data = HashMap::new();
-    data.insert("name", name.as_str());
-    data.insert("id", id.as_str());
+    let render_ctx = minijinja::context!(name => name.as_str(), id => id.as_str());
+    let env = Environment::new();
 
     let templates = TEMPLATES
         .iter()
         .map(|(path_tmpl, content_tmpl)| {
-            let path = Template::new(path_tmpl).render(&data);
-            let content = Template::new(content_tmpl).render(&data);
-
-            (root.join(path), content)
+            env.render_str(path_tmpl, &render_ctx)
+                .wrap_err_with(|| format!("Failed to render template: {}", path_tmpl))
+                .and_then(|path| {
+                    env.render_named_str(&path, content_tmpl, &render_ctx)
+                        .wrap_err_with(|| format!("Failed to render template '{}'", &path))
+                        .map(|content| (root.join(path), content))
+                })
         })
-        .map(|(path, content)| async move {
-            let dir = path
-                .parent()
-                .ok_or_else(|| eyre::eyre!("invalid root path"))?;
+        .map(|res| async move {
+            match res {
+                Ok((path, content)) => {
+                    let dir = path
+                        .parent()
+                        .ok_or_else(|| eyre::eyre!("invalid root path"))?;
 
-            DirBuilder::new()
-                .recursive(true)
-                .create(&dir)
-                .await
-                .wrap_err_with(|| format!("Failed to create directory {}", dir.display()))?;
+                    DirBuilder::new()
+                        .recursive(true)
+                        .create(&dir)
+                        .await
+                        .wrap_err_with(|| {
+                            format!("Failed to create directory {}", dir.display())
+                        })?;
 
-            tracing::trace!("Writing file {}", path.display());
+                    tracing::trace!("Writing file {}", path.display());
 
-            fs::write(&path, content.as_bytes())
-                .await
-                .wrap_err_with(|| format!("Failed to write content to path {}", path.display()))
+                    fs::write(&path, content.as_bytes())
+                        .await
+                        .wrap_err_with(|| {
+                            format!("Failed to write content to path {}", path.display())
+                        })
+                }
+                Err(e) => Err(e),
+            }
         });
 
     futures::stream::iter(templates)

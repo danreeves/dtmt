@@ -20,7 +20,7 @@ promptly = "0.3.1"
 sdk = { path = "../../lib/sdk", version = "*" }
 serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
 serde = { version = "1.0.147", features = ["derive"] }
-string_template = "0.2.1"
+minijinja = { workspace = true }
 tokio-stream = { version = "0.1.11", features = ["fs", "io-util"] }
 tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
 tracing-error = "0.2.0"
