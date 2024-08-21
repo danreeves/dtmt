@@ -4,34 +4,36 @@ version = "0.3.0"
 edition = "2021"
 
 [dependencies]
-clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "unicode"] }
-cli-table = { version = "0.4.7", default-features = false, features = ["derive"] }
-color-eyre = "0.6.2"
-confy = "0.6.1"
-csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
-dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
-futures = "0.3.25"
-futures-util = "0.3.24"
-glob = "0.3.0"
-nanorand = "0.7.0"
-oodle = { path = "../../lib/oodle", version = "*" }
-pin-project-lite = "0.2.9"
-promptly = "0.3.1"
-sdk = { path = "../../lib/sdk", version = "*" }
-serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
-serde = { version = "1.0.147", features = ["derive"] }
+async-recursion = { workspace = true }
+clap = { workspace = true }
+cli-table = { workspace = true }
+color-eyre = { workspace = true }
+confy = { workspace = true }
+csv-async = { workspace = true }
+dtmt-shared = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+glob = { workspace = true }
+luajit2-sys = { workspace = true }
 minijinja = { workspace = true }
-tokio-stream = { version = "0.1.11", features = ["fs", "io-util"] }
-tokio = { version = "1.21.2", features = ["rt-multi-thread", "fs", "process", "macros", "tracing", "io-util", "io-std"] }
-tracing-error = "0.2.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-tracing = { version = "0.1.37", features = ["async-await"] }
+nanorand = { workspace = true }
+notify = { workspace = true }
+oodle = { workspace = true }
+path-clean = { workspace = true }
+path-slash = { workspace = true }
+pin-project-lite = { workspace = true }
+promptly = { workspace = true }
+sdk = { workspace = true }
+serde = { workspace = true }
+serde_sjson = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-error = { workspace = true }
+tracing-subscriber = { workspace = true }
 zip = { workspace = true }
-path-clean = "1.0.1"
-path-slash = "0.2.1"
-async-recursion = "1.0.2"
-notify = "6.1.1"
-luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
+
+# Cannot be a workspace dependencies when it's optional
 shlex = { version = "1.2.0", optional = true }
 
 [dev-dependencies]

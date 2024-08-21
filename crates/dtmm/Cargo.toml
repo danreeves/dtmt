@@ -12,37 +12,37 @@ license-file = "LICENSE"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ansi-parser = "0.9.0"
-async-recursion = "1.0.5"
-bincode = "1.3.3"
-bitflags = "2.5.0"
-clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "string", "unicode"] }
-color-eyre = "0.6.2"
-colors-transform = "0.2.11"
-confy = "0.6.1"
-druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "bmp", "webp", "svg"] }
-druid-widget-nursery = "0.1"
-dtmt-shared = { path = "../../lib/dtmt-shared", version = "*" }
-futures = "0.3.25"
-interprocess = "2.1.0"
-lazy_static = "1.4.0"
-luajit2-sys = { path = "../../lib/luajit2-sys", version = "*" }
+ansi-parser = { workspace = true }
+async-recursion = { workspace = true }
+bincode = { workspace = true }
+bitflags = { workspace = true }
+clap = { workspace = true }
+color-eyre = { workspace = true }
+colors-transform = { workspace = true }
+confy = { workspace = true }
+druid = { workspace = true }
+druid-widget-nursery = { workspace = true }
+dtmt-shared = { workspace = true }
+futures = { workspace = true }
+interprocess = { workspace = true }
+lazy_static = { workspace = true }
+luajit2-sys = { workspace = true }
 minijinja = { workspace = true }
-nexusmods = { path = "../../lib/nexusmods", version = "*" }
-oodle = { path = "../../lib/oodle", version = "*" }
-open = "5.0.1"
-path-slash = "0.2.1"
-sdk = { path = "../../lib/sdk", version = "*" }
-serde = { version = "1.0.152", features = ["derive", "rc"] }
-serde_sjson = { path = "../../lib/serde_sjson", version = "*" }
-strip-ansi-escapes = "0.2.0"
-time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-offset"] }
-tokio = { version = "1.23.0", features = ["rt", "fs", "tracing", "sync"] }
-tokio-stream = { version = "0.1.12", features = ["fs"] }
-tracing = "0.1.37"
-tracing-error = "0.2.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-usvg = "0.25.0"
+nexusmods = { workspace = true }
+oodle = { workspace = true }
+open = { workspace = true }
+path-slash = { workspace = true }
+sdk = { workspace = true }
+serde = { workspace = true }
+serde_sjson = { workspace = true }
+strip-ansi-escapes = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-error = { workspace = true }
+tracing-subscriber = { workspace = true }
+usvg = { workspace = true }
 zip = { workspace = true }
 
 [build-dependencies]

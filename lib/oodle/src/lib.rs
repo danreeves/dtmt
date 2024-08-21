@@ -7,6 +7,7 @@ use std::ptr;
 use color_eyre::{eyre, Result};
 
 #[allow(dead_code)]
+#[allow(clippy::identity_op)]
 mod bindings {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
