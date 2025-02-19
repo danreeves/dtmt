@@ -28,7 +28,7 @@ pub enum Error {
     HTTP(#[from] reqwest::Error),
     #[error("invalid URL: {0:?}")]
     URLParseError(#[from] url::ParseError),
-    #[error("failed to deserialize '{error}': {json}")]
+    #[error("failed to deserialize due to {error}: {json}")]
     Deserialize {
         json: String,
         error: serde_json::Error,
@@ -37,7 +37,7 @@ pub enum Error {
     InvalidHeaderValue(#[from] InvalidHeaderValue),
     #[error("this error cannot happen")]
     Infallible(#[from] Infallible),
-    #[error("invalid NXM URL '{}': {0}", .1.as_str())]
+    #[error("invalid NXM URL '{url}': {0}", url = .1.as_str())]
     InvalidNXM(&'static str, Url),
     #[error("{0}")]
     Custom(String),
