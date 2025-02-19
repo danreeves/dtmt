@@ -38,7 +38,7 @@ luajit2-sys = { path = "lib/luajit2-sys" }
 minijinja = { version = "2.0.1", default-features = false }
 nanorand = "0.7.0"
 nexusmods = { path = "lib/nexusmods" }
-notify = "7.0.0"
+notify = "8.0.0"
 oodle = { path = "lib/oodle" }
 open = "5.0.1"
 path-clean = "1.0.1"
