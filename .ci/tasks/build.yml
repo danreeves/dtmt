@@ -22,7 +22,6 @@ caches:
 params:
   CI: "true"
   TARGET: ((target))
-  GITEA_API_KEY: ((gitea_api_key))
   PR: ((pr))
   OUTPUT: artifact
 

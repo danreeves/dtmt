@@ -125,8 +125,6 @@ jobs:
     vars:
       pr: ""
       target: msvc
-      gitea_url: http://forgejo:3000
-      gitea_api_key: ((gitea_api_key))
 
   - load_var: version_number
     reveal: true
@@ -142,10 +140,21 @@ jobs:
       fail_fast: true
       override: true
       globs:
-        - artifact/dtmt
-        - artifact/dtmm
         - artifact/*.exe
-        - artifact/*.sha256
+        - artifact/*.exe.sha256
+
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: master
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/*.exe
+        - artifact/*.exe.sha256
 
 - name: build-linux
   on_success:
@@ -202,5 +211,20 @@ jobs:
       globs:
         - artifact/dtmt
         - artifact/dtmm
-        - artifact/*.exe
-        - artifact/*.sha256
+        - artifact/dtmm.sha256
+        - artifact/dtmt.sha256
+
+  - put: package
+    resource: gitea-package
+    no_get: true
+    inputs:
+      - artifact
+    params:
+      version: master
+      fail_fast: true
+      override: true
+      globs:
+        - artifact/dtmt
+        - artifact/dtmm
+        - artifact/dtmm.sha256
+        - artifact/dtmt.sha256
