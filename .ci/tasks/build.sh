@@ -24,13 +24,10 @@ PR=${PR:-}
 if [ -n "$PR" ]; then
     title "PR: $(echo "$PR" | jq '.number') - $(echo "$PR" | jq '.title')"
     ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short "$(cat .git/ref || echo "HEAD")" 2>/dev/null || echo 'manual')"
+elif [ -f ".git/branch"]; then
+    ref=$(cat .git/branch)-$(git rev-parse --short $ref)
 else
-    ref=$(cat .git/ref || echo "HEAD")
-    branch=$(git rev-parse --abbrev-ref $ref)
-    if [ -z "$branch" ]; then
-        branch=$(cat .git/ref)
-    fi
-    ref=${branch}-$(git rev-parse --short $ref)
+    ref=$(git rev-parse --short "$(cat .git/ref || echo "HEAD")")
 fi
 
 title "Version: '$ref'"
