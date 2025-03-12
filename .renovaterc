@@ -7,5 +7,9 @@
     ":rebaseStalePrs"
   ],
   "prConcurrentLimit": 10,
-  "branchPrefix": "renovate/"
+  "branchPrefix": "renovate/",
+  "baseBranches": [
+    "$default",
+    "/^release\\/.*/"
+  ]
 }
