@@ -26,7 +26,11 @@ if [ -n "$PR" ]; then
     ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short "$(cat .git/ref || echo "HEAD")" 2>/dev/null || echo 'manual')"
 else
     ref=$(cat .git/ref || echo "HEAD")
-    ref=$(git rev-parse --abbrev-ref $ref)-$(git rev-parse --short $ref)
+    branch=$(git rev-parse --abbrev-ref $ref)
+    if [ -z "$branch" ]; then
+        branch=$(cat .git/ref)
+    fi
+    ref=${branch}-$(git rev-parse --short $ref)
 fi
 
 title "Version: '$ref'"
