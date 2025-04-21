@@ -88,6 +88,7 @@ jobs:
       values: ((.:prs))
     set_pipeline: dtmt-pr
     file: repo/.ci/pipelines/pr.yml
+    public: true
     vars:
       pr: ((.:pr))
       gitea_api_key: ((gitea_api_key))
