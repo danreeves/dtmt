@@ -101,6 +101,8 @@ jobs:
     file: repo/.ci/tasks/clippy.yml
     vars:
       gitea_api_key: ((gitea_api_key))
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 
 
 - name: build-msvc
@@ -141,6 +143,8 @@ jobs:
       pr: ((pr))
       gitea_url: https://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 
   - load_var: version_number
     reveal: true
@@ -199,6 +203,8 @@ jobs:
       pr: ((pr))
       gitea_url: https://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 
   - load_var: version_number
     reveal: true
