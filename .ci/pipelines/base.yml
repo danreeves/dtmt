@@ -6,24 +6,30 @@ resource_types:
 - name: gitea-package
   type: registry-image
   source:
-    repository: registry.local:5000/gitea-package
+    repository: registry.sclu1034.dev/gitea-package
+    username: ((registry_user))
+    password: ((registry_password))
 
 - name: gitea-status
   type: registry-image
   source:
-    repository: registry.local:5000/gitea-status
+    repository: registry.sclu1034.dev/gitea-status
+    username: ((registry_user))
+    password: ((registry_password))
 
 - name: gitea-pr
   type: registry-image
   source:
-    repository: registry.local:5000/gitea-pr
+    repository: registry.sclu1034.dev/gitea-pr
+    username: ((registry_user))
+    password: ((registry_password))
 
 
 resources:
 - name: repo
   type: git
   source:
-    uri: http://forgejo:3000/bitsquid_dt/dtmt
+    uri: http://git.sclu1034.dev/bitsquid_dt/dtmt
     branch: master
 
 - name: repo-pr
@@ -38,7 +44,7 @@ resources:
   type: gitea-package
   source:
     access_token: ((gitea_api_key))
-    url: http://forgejo:3000
+    url: http://git.sclu1034.dev
     owner: bitsquid_dt
     type: generic
     name: dtmt
@@ -48,7 +54,7 @@ resources:
   type: gitea-status
   source:
     access_token: ((gitea_api_key))
-    url: http://forgejo:3000
+    url: http://git.sclu1034.dev
     owner: bitsquid_dt
     repo: dtmt
     context: build/msvc
@@ -58,7 +64,7 @@ resources:
   type: gitea-status
   source:
     access_token: ((gitea_api_key))
-    url: http://forgejo:3000
+    url: http://git.sclu1034.dev
     owner: bitsquid_dt
     repo: dtmt
     context: build/linux
@@ -85,6 +91,8 @@ jobs:
     vars:
       pr: ((.:pr))
       gitea_api_key: ((gitea_api_key))
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
     instance_vars:
       number: ((.:pr.number))
 
@@ -192,7 +200,7 @@ jobs:
     vars:
       pr: ""
       target: linux
-      gitea_url: http://forgejo:3000
+      gitea_url: http://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
 
   - load_var: version_number

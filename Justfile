@@ -40,6 +40,8 @@ set-base-pipeline:
         --pipeline dtmt \
         --config .ci/pipelines/base.yml \
         -v gitea_api_key=${GITEA_API_KEY} \
+        -v registry_user=${REGISTRY_USER} \
+        -v registry_password=${REGISTRY_PASSWORD} \
         -v owner=bitsquid_dt \
         -v repo=dtmt
 
@@ -48,7 +50,7 @@ set-pr-pipeline pr:
         -H "Authorization: ${GITEA_API_KEY}" \
         -H 'Accept: application/json' \
         'https://git.sclu1034.dev/api/v1/repos/bitsquid_dt/dtmt/pulls/{{pr}}' \
-        | yq -y '.' - > 'pr-{{pr}}.yaml' 
+        | yq -y '.' - > 'pr-{{pr}}.yaml'
     fly -t main set-pipeline \
         --pipeline dtmt-pr \
         --config .ci/pipelines/pr.yml \
