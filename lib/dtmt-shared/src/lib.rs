@@ -87,7 +87,7 @@ pub fn collect_game_info() -> Result<Option<GameInfo>> {
         .find_app(STEAMAPP_ID)
         .wrap_err("Failed to look up game by Steam app ID")?;
 
-    let Some((app, _)) = found else {
+    let Some((app, library)) = found else {
         return Ok(None);
     };
 
@@ -96,7 +96,7 @@ pub fn collect_game_info() -> Result<Option<GameInfo>> {
         .ok_or_eyre("Missing field 'last_updated'")?;
 
     Ok(Some(GameInfo {
-        path: app.install_dir.into(),
+        path: library.path().join(app.install_dir),
         last_updated: last_updated.into(),
     }))
 }
