@@ -10,6 +10,6 @@ title "Install clippy"
 rustup component add clippy
 
 title "Run clippy"
-cargo clippy --color always --no-deps
+cargo clippy --color always --no-deps -- -D warnings
 
 title "Done"
