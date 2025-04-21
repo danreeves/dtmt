@@ -116,14 +116,14 @@ async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
         eyre::bail!("couldn't find 'boot_script' field");
     };
 
-    f.write_all(settings[0..i].as_bytes()).await?;
+    f.write_all(&settings.as_bytes()[0..i]).await?;
     f.write_all(b"boot_script = \"scripts/mod_main\"").await?;
 
     let Some(j) = settings[i..].find('\n') else {
         eyre::bail!("couldn't find end of 'boot_script' field");
     };
 
-    f.write_all(settings[(i + j)..].as_bytes()).await?;
+    f.write_all(&settings.as_bytes()[(i + j)..]).await?;
 
     Ok(())
 }
@@ -453,10 +453,7 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(
-    state: Arc<ActionState>,
-    deployment_info: &String,
-) -> Result<Vec<Bundle>> {
+async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Result<Vec<Bundle>> {
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
@@ -590,11 +587,7 @@ fn build_deployment_data(
             .map(|bundle| format!("{:x}", bundle.name().to_murmur64()))
             .collect(),
         // TODO:
-        mod_folders: mod_folders
-            .as_ref()
-            .iter()
-            .map(|folder| folder.clone())
-            .collect(),
+        mod_folders: mod_folders.as_ref().to_vec(),
     };
     serde_sjson::to_string(&info).wrap_err("Failed to serizalize deployment data")
 }

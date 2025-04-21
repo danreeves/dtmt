@@ -91,14 +91,14 @@ async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
         eyre::bail!("couldn't find 'boot_script' field");
     };
 
-    f.write_all(settings[0..i].as_bytes()).await?;
+    f.write_all(&settings.as_bytes()[0..i]).await?;
     f.write_all(b"boot_script = \"scripts/mod_main\"").await?;
 
     let Some(j) = settings[i..].find('\n') else {
         eyre::bail!("couldn't find end of 'boot_script' field");
     };
 
-    f.write_all(settings[(i + j)..].as_bytes()).await?;
+    f.write_all(&settings.as_bytes()[(i + j)..]).await?;
 
     Ok(())
 }
@@ -208,7 +208,7 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
 
     for p in paths {
         let path = bundle_dir.join(p);
-        let backup = bundle_dir.join(&format!("{}.bak", p));
+        let backup = bundle_dir.join(format!("{}.bak", p));
 
         let res = async {
             tracing::debug!(

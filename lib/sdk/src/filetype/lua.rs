@@ -125,7 +125,7 @@ pub fn compile(name: impl Into<IdString64>, code: impl AsRef<str>) -> Result<Bun
     tracing::trace!(
         "Compiling '{}', {} bytes of code",
         name.display(),
-        code.as_bytes().len()
+        code.len()
     );
 
     let bytecode = unsafe {
@@ -156,10 +156,10 @@ pub fn compile(name: impl Into<IdString64>, code: impl AsRef<str>) -> Result<Bun
             }
             _ => unreachable!(),
         }
-        lua::lua_setglobal(state, b"fn\0".as_ptr() as _);
+        lua::lua_setglobal(state, c"fn".as_ptr());
 
-        let run = b"return string.dump(fn, false)\0";
-        match lua::luaL_loadstring(state, run.as_ptr() as _) as u32 {
+        let run = c"return string.dump(fn, false)";
+        match lua::luaL_loadstring(state, run.as_ptr()) as u32 {
             lua::LUA_OK => {}
             lua::LUA_ERRSYNTAX => {
                 let err = lua::lua_tostring(state, -1);

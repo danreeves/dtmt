@@ -28,10 +28,14 @@ impl Language {
 #[derive(serde::Serialize)]
 pub struct Strings(HashMap<String, HashMap<Language, String>>);
 
+#[inline(always)]
 fn read_string<R>(r: R) -> Result<String>
 where
     R: Read,
 {
+    // We can safely ignore the warning here, as all data is already in memory, and no additional
+    // `BufReader` should be needed.
+    #[allow(clippy::unbuffered_bytes)]
     r.bytes()
         .take_while(|b| b.as_ref().map(|b| *b != 0).unwrap_or(false))
         .map(|b| b.map_err(Report::new))
@@ -41,7 +45,7 @@ where
 
 impl Strings {
     #[tracing::instrument(skip_all, fields(languages = variants.len()))]
-    pub fn from_variants(ctx: &crate::Context, variants: &Vec<BundleFileVariant>) -> Result<Self> {
+    pub fn from_variants(ctx: &crate::Context, variants: &[BundleFileVariant]) -> Result<Self> {
         let mut map: HashMap<String, HashMap<Language, String>> = HashMap::new();
 
         for (i, variant) in variants.iter().enumerate() {
@@ -76,7 +80,7 @@ impl Strings {
 }
 
 #[tracing::instrument(skip_all)]
-pub fn decompile(ctx: &crate::Context, variants: &Vec<BundleFileVariant>) -> Result<Vec<UserFile>> {
+pub fn decompile(ctx: &crate::Context, variants: &[BundleFileVariant]) -> Result<Vec<UserFile>> {
     let strings = Strings::from_variants(ctx, variants)?;
     let content = strings.to_sjson()?;
 

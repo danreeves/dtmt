@@ -6,7 +6,6 @@ members = [
     "lib/dtmt-shared",
     "lib/oodle",
     "lib/sdk",
-    "lib/serde_sjson",
     "lib/luajit2-sys",
     "lib/color-eyre",
 ]
@@ -35,7 +34,7 @@ glob = "0.3.0"
 interprocess = "2.1.0"
 lazy_static = "1.4.0"
 luajit2-sys = { path = "lib/luajit2-sys" }
-minijinja = { version = "2.0.1", default-features = false }
+minijinja = { version = "2.0.1", default-features = false, features = ["serde"] }
 nanorand = "0.7.0"
 nexusmods = { path = "lib/nexusmods" }
 notify = "8.0.0"
@@ -47,7 +46,7 @@ pin-project-lite = "0.2.9"
 promptly = "0.3.1"
 sdk = { path = "lib/sdk" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }
-serde_sjson = { path = "lib/serde_sjson" }
+serde_sjson = "1.2.1"
 steamlocate = "2.0.0-beta.2"
 strip-ansi-escapes = "0.2.0"
 time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-offset", "formatting", "macros"] }

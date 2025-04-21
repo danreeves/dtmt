@@ -54,17 +54,11 @@ impl<'a> ShellParser<'a> {
                     }
                     _ => {}
                 },
-                ParserState::SingleQuote => match c {
-                    b'\'' => {
-                        return Some(&self.bytes[start..(self.offset - 1)]);
-                    }
-                    _ => {}
+                ParserState::SingleQuote => if c == b'\'' {
+                    return Some(&self.bytes[start..(self.offset - 1)]);
                 },
-                ParserState::DoubleQuote => match c {
-                    b'"' => {
-                        return Some(&self.bytes[start..(self.offset - 1)]);
-                    }
-                    _ => {}
+                ParserState::DoubleQuote => if c == b'"' {
+                    return Some(&self.bytes[start..(self.offset - 1)]);
                 },
             }
         }

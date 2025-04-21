@@ -150,7 +150,7 @@ async fn parse_command_line_template(tmpl: &String) -> Result<CmdLine> {
             String::from_utf8_unchecked(bytes.to_vec())
         });
 
-        while let Some(arg) = parsed.next() {
+        for arg in parsed.by_ref() {
             // Safety: See above.
             cmd.arg(unsafe { String::from_utf8_unchecked(arg.to_vec()) });
         }

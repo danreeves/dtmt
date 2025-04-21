@@ -1,6 +1,3 @@
-[submodule "lib/serde_sjson"]
-	path = lib/serde_sjson
-	url = https://git.sclu1034.dev/lucas/serde_sjson.git
 [submodule "lib/luajit2-sys"]
 	path = lib/luajit2-sys
 	url = https://github.com/sclu1034/luajit2-sys.git

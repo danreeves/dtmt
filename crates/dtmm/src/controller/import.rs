@@ -397,7 +397,7 @@ fn extract_legacy_mod<R: Read + Seek>(
             tracing::trace!("Writing file '{}'", name.display());
             let mut out = std::fs::OpenOptions::new()
                 .write(true)
-                .create(true)
+                .truncate(true)
                 .open(&name)
                 .wrap_err_with(|| format!("Failed to open file '{}'", name.display()))?;
 

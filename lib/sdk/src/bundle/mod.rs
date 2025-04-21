@@ -237,7 +237,7 @@ impl Bundle {
 
         // Ceiling division (or division toward infinity) to calculate
         // the number of chunks required to fit the unpacked data.
-        let num_chunks = (unpacked_data.len() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        let num_chunks = unpacked_data.len().div_ceil(CHUNK_SIZE);
         tracing::trace!(num_chunks);
         w.write_u32(num_chunks as u32)?;
 
