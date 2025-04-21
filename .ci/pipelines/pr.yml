@@ -22,14 +22,14 @@ resources:
 - name: repo
   type: git
   source:
-    uri: http://git.sclu1034.dev/bitsquid_dt/dtmt
+    uri: https://git.sclu1034.dev/bitsquid_dt/dtmt
     branch: ((pr.head.ref))
 
 - name: gitea-package
   type: gitea-package
   source:
     access_token: ((gitea_api_key))
-    url: http://git.sclu1034.dev
+    url: https://git.sclu1034.dev
     owner: bitsquid_dt
     type: generic
     name: dtmt
@@ -38,7 +38,7 @@ resources:
   type: gitea-status
   source:
     access_token: ((gitea_api_key))
-    url: http://git.sclu1034.dev
+    url: https://git.sclu1034.dev
     owner: bitsquid_dt
     repo: dtmt
     context: lint/clippy
@@ -48,7 +48,7 @@ resources:
   type: gitea-status
   source:
     access_token: ((gitea_api_key))
-    url: http://git.sclu1034.dev
+    url: https://git.sclu1034.dev
     owner: bitsquid_dt
     repo: dtmt
     context: build/msvc
@@ -58,7 +58,7 @@ resources:
   type: gitea-status
   source:
     access_token: ((gitea_api_key))
-    url: http://git.sclu1034.dev
+    url: https://git.sclu1034.dev
     owner: bitsquid_dt
     repo: dtmt
     context: build/linux
@@ -139,7 +139,7 @@ jobs:
     vars:
       target: msvc
       pr: ((pr))
-      gitea_url: http://git.sclu1034.dev
+      gitea_url: https://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
 
   - load_var: version_number
@@ -197,7 +197,7 @@ jobs:
     vars:
       target: linux
       pr: ((pr))
-      gitea_url: http://git.sclu1034.dev
+      gitea_url: https://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
 
   - load_var: version_number
