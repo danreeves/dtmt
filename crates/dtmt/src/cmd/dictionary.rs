@@ -227,9 +227,12 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
             let lookup = &ctx.lookup;
             let rows: Vec<_> = lookup.entries().iter().map(TableRow::from).collect();
 
-            print_stdout(rows.with_title())?;
-
-            Ok(())
+            match print_stdout(rows.with_title()) {
+                Ok(_) => Ok(()),
+                // Closing stdout prematurely is normal behavior with things like piping into `head`
+                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+                Err(err) => Err(err.into()),
+            }
         }
         _ => unreachable!(
             "clap is configured to require a subcommand, and they're all handled above"
