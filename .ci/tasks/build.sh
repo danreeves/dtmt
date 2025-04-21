@@ -24,7 +24,7 @@ PR=${PR:-}
 if [ -n "$PR" ]; then
     title "PR: $(echo "$PR" | jq '.number') - $(echo "$PR" | jq '.title')"
     ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short "$(cat .git/ref || echo "HEAD")" 2>/dev/null || echo 'manual')"
-elif [ -f ".git/branch"]; then
+elif [ -f ".git/branch" ]; then
     ref=$(cat .git/branch)-$(git rev-parse --short $ref)
 else
     ref=$(git rev-parse --short "$(cat .git/ref || echo "HEAD")")
