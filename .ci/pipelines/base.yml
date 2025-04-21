@@ -133,6 +133,8 @@ jobs:
     vars:
       pr: ""
       target: msvc
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 
   - load_var: version_number
     reveal: true
@@ -202,6 +204,8 @@ jobs:
       target: linux
       gitea_url: https://git.sclu1034.dev
       gitea_api_key: ((gitea_api_key))
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 
   - load_var: version_number
     reveal: true

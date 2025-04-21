@@ -18,6 +18,8 @@ jobs:
     file: repo/.ci/tasks/build.yml
     vars:
       target: msvc
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))
 - name: build-linux
   plan:
   - get: repo
@@ -26,3 +28,5 @@ jobs:
     file: repo/.ci/tasks/build.yml
     vars:
       target: linux
+      registry_user: ((registry_user))
+      registry_password: ((registry_password))

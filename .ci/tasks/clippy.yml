@@ -6,7 +6,9 @@ image_resource:
   name: dtmt-ci-base-linux
   type: registry-image
   source:
-    repository: registry.local:5000/dtmt-ci-base-linux
+    repository: registry.sclu1034.dev/dtmt-ci-base-linux
+    username: ((registry_user))
+    password: ((registry_password))
     tag: latest
 
 inputs:
