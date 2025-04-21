@@ -34,7 +34,7 @@ glob = "0.3.0"
 interprocess = "2.1.0"
 lazy_static = "1.4.0"
 luajit2-sys = { path = "lib/luajit2-sys" }
-minijinja = { version = "2.0.1", default-features = false }
+minijinja = { version = "2.0.1", default-features = false, features = ["serde"] }
 nanorand = "0.7.0"
 nexusmods = { path = "lib/nexusmods" }
 notify = "8.0.0"
