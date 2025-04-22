@@ -52,10 +52,14 @@ fn notify_nxm_download(
 
     tracing::debug!("Connected to main process at '{}'", IPC_ADDRESS);
 
-    bincode::serialize_into(&mut stream, uri.as_ref()).wrap_err("Failed to send URI")?;
+    let bincode_config = bincode::config::standard();
+
+    bincode::encode_into_std_write(uri.as_ref(), &mut stream, bincode_config)
+        .wrap_err("Failed to send URI")?;
 
     // We don't really care what the message is, we just need an acknowledgement.
-    let _: String = bincode::deserialize_from(&mut stream).wrap_err("Failed to receive reply")?;
+    let _: String = bincode::decode_from_std_read(&mut stream, bincode_config)
+        .wrap_err("Failed to receive reply")?;
 
     tracing::info!(
         "Notified DTMM with uri '{}'. Check the main window.",
@@ -160,22 +164,33 @@ fn main() -> Result<()> {
 
                     match res {
                         Ok(mut stream) => {
-                            let res = bincode::deserialize_from(&mut stream)
-                                .wrap_err("Failed to read message")
-                                .and_then(|uri: String| {
-                                    tracing::trace!(uri, "Received NXM uri");
+                            let res = bincode::decode_from_std_read(
+                                &mut stream,
+                                bincode::config::standard(),
+                            )
+                            .wrap_err("Failed to read message")
+                            .and_then(|uri: String| {
+                                tracing::trace!(uri, "Received NXM uri");
 
-                                    event_sink
-                                        .submit_command(ACTION_HANDLE_NXM, uri, druid::Target::Auto)
-                                        .wrap_err("Failed to start NXM download")
-                                });
+                                event_sink
+                                    .submit_command(ACTION_HANDLE_NXM, uri, druid::Target::Auto)
+                                    .wrap_err("Failed to start NXM download")
+                            });
                             match res {
                                 Ok(()) => {
-                                    let _ = bincode::serialize_into(&mut stream, "Ok");
+                                    let _ = bincode::encode_into_std_write(
+                                        "Ok",
+                                        &mut stream,
+                                        bincode::config::standard(),
+                                    );
                                 }
                                 Err(err) => {
                                     tracing::error!("{:?}", err);
-                                    let _ = bincode::serialize_into(&mut stream, "Error");
+                                    let _ = bincode::encode_into_std_write(
+                                        "Error",
+                                        &mut stream,
+                                        bincode::config::standard(),
+                                    );
                                 }
                             }
                         }
