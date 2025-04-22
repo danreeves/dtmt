@@ -20,14 +20,15 @@ install_artifact() {
 cd "repo"
 
 PR=${PR:-}
+ref=$(cat .git/ref || echo "HEAD")
 
 if [ -n "$PR" ]; then
     title "PR: $(echo "$PR" | jq '.number') - $(echo "$PR" | jq '.title')"
-    ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short "$(cat .git/ref || echo "HEAD")" 2>/dev/null || echo 'manual')"
+    ref="pr-$(echo "$PR" | jq '.number')-$(git rev-parse --short "$ref" 2>/dev/null || echo 'manual')"
 elif [ -f ".git/branch" ]; then
-    ref=$(cat .git/branch)-$(git rev-parse --short $ref)
+    ref=$(cat .git/branch)-$(git rev-parse --short "$ref")
 else
-    ref=$(git rev-parse --short "$(cat .git/ref || echo "HEAD")")
+    ref=$(git rev-parse --short "$ref")
 fi
 
 title "Version: '$ref'"
