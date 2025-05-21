@@ -20,6 +20,7 @@ struct BundleFileHeader {
     len_data_file_name: usize,
 }
 
+#[derive(Clone, Debug)]
 pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
@@ -109,9 +110,12 @@ bitflags! {
     #[derive(Default, Clone, Copy, Debug)]
     pub struct Properties: u32 {
         const DATA = 0b100;
+        // A custom flag used by DTMT to signify a file altered by mods.
+        const MODDED = 1 << 31;
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct BundleFile {
     file_type: BundleFileType,
     name: IdString64,
@@ -131,6 +135,18 @@ impl BundleFile {
 
     pub fn add_variant(&mut self, variant: BundleFileVariant) {
         self.variants.push(variant)
+    }
+
+    pub fn set_variants(&mut self, variants: Vec<BundleFileVariant>) {
+        self.variants = variants;
+    }
+
+    pub fn set_props(&mut self, props: Properties) {
+        self.props = props;
+    }
+
+    pub fn set_modded(&mut self, is_modded: bool) {
+        self.props.set(Properties::MODDED, is_modded);
     }
 
     #[tracing::instrument(name = "File::read", skip(ctx, r))]
@@ -299,14 +315,13 @@ impl BundleFile {
         s
     }
 
-    pub fn matches_name(&self, name: impl Into<IdString64>) -> bool {
-        let name = name.into();
-        if self.name == name {
+    pub fn matches_name(&self, name: &IdString64) -> bool {
+        if self.name == *name {
             return true;
         }
 
         if let IdString64::String(name) = name {
-            self.name(false, None) == name || self.name(true, None) == name
+            self.name(false, None) == *name || self.name(true, None) == *name
         } else {
             false
         }

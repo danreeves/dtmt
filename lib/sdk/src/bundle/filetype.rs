@@ -3,229 +3,144 @@ use serde::Serialize;
 
 use crate::murmur::Murmur64;
 
-#[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
-pub enum BundleFileType {
-    Animation,
-    AnimationCurves,
-    Apb,
-    BakedLighting,
-    Bik,
-    BlendSet,
-    Bones,
-    Chroma,
-    CommonPackage,
-    Config,
-    Crypto,
-    Data,
-    Entity,
-    Flow,
-    Font,
-    Ies,
-    Ini,
-    Input,
-    Ivf,
-    Keys,
-    Level,
-    Lua,
-    Material,
-    Mod,
-    MouseCursor,
-    NavData,
-    NetworkConfig,
-    OddleNet,
-    Package,
-    Particles,
-    PhysicsProperties,
-    RenderConfig,
-    RtPipeline,
-    Scene,
-    Shader,
-    ShaderLibrary,
-    ShaderLibraryGroup,
-    ShadingEnvionmentMapping,
-    ShadingEnvironment,
-    Slug,
-    SlugAlbum,
-    SoundEnvironment,
-    SpuJob,
-    StateMachine,
-    StaticPVS,
-    Strings,
-    SurfaceProperties,
-    Texture,
-    TimpaniBank,
-    TimpaniMaster,
-    Tome,
-    Ugg,
-    Unit,
-    Upb,
-    VectorField,
-    Wav,
-    WwiseBank,
-    WwiseDep,
-    WwiseEvent,
-    WwiseMetadata,
-    WwiseStream,
-    Xml,
+macro_rules! make_enum {
+    (
+        $( $variant:ident, $hash:expr, $ext:expr $(, $decompiled:expr)? ; )+
+    ) => {
+        #[derive(Debug, Hash, PartialEq, Eq, Copy, Clone)]
+        pub enum BundleFileType {
+            $(
+                $variant,
+            )+
+            Unknown(Murmur64),
+        }
 
-    Unknown(Murmur64),
+        impl BundleFileType {
+            pub fn ext_name(&self) -> String {
+                match self {
+                    $(
+                        Self::$variant => String::from($ext),
+                    )+
+                    Self::Unknown(s) => format!("{s:016X}"),
+                }
+            }
+
+            pub fn decompiled_ext_name(&self) -> String {
+                match self {
+                    $(
+                        $( Self::$variant => String::from($decompiled), )?
+                    )+
+                    _ => self.ext_name(),
+                }
+            }
+        }
+
+        impl std::str::FromStr for BundleFileType {
+            type Err = color_eyre::Report;
+            fn from_str(s: &str) -> Result<Self> {
+                match s {
+                    $(
+                        $ext => Ok(Self::$variant),
+                    )+
+                    s => eyre::bail!("Unknown type string '{}'", s),
+                }
+            }
+        }
+
+        impl From<u64> for BundleFileType {
+            fn from(h: u64) -> Self {
+                match h {
+                    $(
+                        $hash => Self::$variant,
+                    )+
+                    hash => Self::Unknown(hash.into()),
+                }
+            }
+        }
+
+        impl From<BundleFileType> for u64 {
+            fn from(t: BundleFileType) -> u64 {
+                match t {
+                    $(
+                        BundleFileType::$variant => $hash,
+                    )+
+                    BundleFileType::Unknown(hash) => hash.into(),
+                }
+            }
+        }
+    }
+}
+
+make_enum! {
+    AnimationCurves,          0xdcfb9e18fff13984, "animation_curves";
+    Animation,                0x931e336d7646cc26, "animation";
+    Apb,                      0x3eed05ba83af5090, "apb";
+    BakedLighting,            0x7ffdb779b04e4ed1, "baked_lighting";
+    Bik,                      0xaa5965f03029fa18, "bik";
+    BlendSet,                 0xe301e8af94e3b5a3, "blend_set";
+    Bones,                    0x18dead01056b72e9, "bones";
+    Chroma,                   0xb7893adf7567506a, "chroma";
+    CommonPackage,            0xfe9754bd19814a47, "common_package";
+    Config,                   0x82645835e6b73232, "config";
+    Crypto,                   0x69108ded1e3e634b, "crypto";
+    Data,                     0x8fd0d44d20650b68, "data";
+    Entity,                   0x9831ca893b0d087d, "entity";
+    Flow,                     0x92d3ee038eeb610d, "flow";
+    Font,                     0x9efe0a916aae7880, "font";
+    Ies,                      0x8f7d5a2c0f967655, "ies";
+    Ini,                      0xd526a27da14f1dc5, "ini";
+    Input,                    0x2bbcabe5074ade9e, "input";
+    Ivf,                      0xfa4a8e091a91201e, "ivf";
+    Keys,                     0xa62f9297dc969e85, "keys";
+    Level,                    0x2a690fd348fe9ac5, "level";
+    Lua,                      0xa14e8dfa2cd117e2, "lua";
+    Material,                 0xeac0b497876adedf, "material";
+    Mod,                      0x3fcdd69156a46417, "mod";
+    MouseCursor,              0xb277b11fe4a61d37, "mouse_cursor";
+    NavData,                  0x169de9566953d264, "nav_data";
+    NetworkConfig,            0x3b1fa9e8f6bac374, "network_config";
+    OddleNet,                 0xb0f2c12eb107f4d8, "oodle_net";
+    Package,                  0xad9c6d9ed1e5e77a, "package";
+    Particles,                0xa8193123526fad64, "particles";
+    PhysicsProperties,        0xbf21403a3ab0bbb1, "physics_properties";
+    RenderConfig,             0x27862fe24795319c, "render_config";
+    RtPipeline,               0x9ca183c2d0e76dee, "rt_pipeline";
+    Scene,                    0x9d0a795bfe818d19, "scene";
+    Shader,                   0xcce8d5b5f5ae333f, "shader";
+    ShaderLibrary,            0xe5ee32a477239a93, "shader_library";
+    ShaderLibraryGroup,       0x9e5c3cc74575aeb5, "shader_library_group";
+    ShadingEnvionmentMapping, 0x250e0a11ac8e26f8, "shading_envionment_mapping";
+    ShadingEnvironment,       0xfe73c7dcff8a7ca5, "shading_environment";
+    Slug,                     0xa27b4d04a9ba6f9e, "slug";
+    SlugAlbum,                0xe9fc9ea7042e5ec0, "slug_album";
+    SoundEnvironment,         0xd8b27864a97ffdd7, "sound_environment";
+    SpuJob,                   0xf97af9983c05b950, "spu_job";
+    StateMachine,             0xa486d4045106165c, "state_machine";
+    StaticPVS,                0xe3f0baa17d620321, "static_pvs";
+    Strings,                  0x0d972bab10b40fd3, "strings";
+    SurfaceProperties,        0xad2d3fa30d9ab394, "surface_properties";
+    Texture,                  0xcd4238c6a0c69e32, "texture",      "dds";
+    TimpaniBank,              0x99736be1fff739a4, "timpani_bank";
+    TimpaniMaster,            0x00a3e6c59a2b9c6c, "timpani_master";
+    Tome,                     0x19c792357c99f49b, "tome";
+    Ugg,                      0x712d6e3dd1024c9c, "ugg";
+    Unit,                     0xe0a48d0be9a7453f, "unit";
+    Upb,                      0xa99510c6e86dd3c2, "upb";
+    VectorField,              0xf7505933166d6755, "vector_field";
+    Wav,                      0x786f65c00a816b19, "wav";
+    WwiseBank,                0x535a7bd3e650d799, "wwise_bank",   "bnk";
+    WwiseDep,                 0xaf32095c82f2b070, "wwise_dep";
+    WwiseEvent,               0xaabdd317b58dfc8a, "wwise_event";
+    WwiseMetadata,            0xd50a8b7e1c82b110, "wwise_metadata";
+    WwiseStream,              0x504b55235d21440e, "wwise_stream", "ogg";
+    Xml,                      0x76015845a6003765, "xml";
+    Theme,                    0x38BB9442048A7FBD, "theme";
+    MissionThemes,            0x80F2DE893657F83A, "mission_themes";
 }
 
 impl BundleFileType {
-    pub fn ext_name(&self) -> String {
-        match self {
-            BundleFileType::AnimationCurves => String::from("animation_curves"),
-            BundleFileType::Animation => String::from("animation"),
-            BundleFileType::Apb => String::from("apb"),
-            BundleFileType::BakedLighting => String::from("baked_lighting"),
-            BundleFileType::Bik => String::from("bik"),
-            BundleFileType::BlendSet => String::from("blend_set"),
-            BundleFileType::Bones => String::from("bones"),
-            BundleFileType::Chroma => String::from("chroma"),
-            BundleFileType::CommonPackage => String::from("common_package"),
-            BundleFileType::Config => String::from("config"),
-            BundleFileType::Crypto => String::from("crypto"),
-            BundleFileType::Data => String::from("data"),
-            BundleFileType::Entity => String::from("entity"),
-            BundleFileType::Flow => String::from("flow"),
-            BundleFileType::Font => String::from("font"),
-            BundleFileType::Ies => String::from("ies"),
-            BundleFileType::Ini => String::from("ini"),
-            BundleFileType::Input => String::from("input"),
-            BundleFileType::Ivf => String::from("ivf"),
-            BundleFileType::Keys => String::from("keys"),
-            BundleFileType::Level => String::from("level"),
-            BundleFileType::Lua => String::from("lua"),
-            BundleFileType::Material => String::from("material"),
-            BundleFileType::Mod => String::from("mod"),
-            BundleFileType::MouseCursor => String::from("mouse_cursor"),
-            BundleFileType::NavData => String::from("nav_data"),
-            BundleFileType::NetworkConfig => String::from("network_config"),
-            BundleFileType::OddleNet => String::from("oodle_net"),
-            BundleFileType::Package => String::from("package"),
-            BundleFileType::Particles => String::from("particles"),
-            BundleFileType::PhysicsProperties => String::from("physics_properties"),
-            BundleFileType::RenderConfig => String::from("render_config"),
-            BundleFileType::RtPipeline => String::from("rt_pipeline"),
-            BundleFileType::Scene => String::from("scene"),
-            BundleFileType::ShaderLibraryGroup => String::from("shader_library_group"),
-            BundleFileType::ShaderLibrary => String::from("shader_library"),
-            BundleFileType::Shader => String::from("shader"),
-            BundleFileType::ShadingEnvionmentMapping => String::from("shading_environment_mapping"),
-            BundleFileType::ShadingEnvironment => String::from("shading_environment"),
-            BundleFileType::SlugAlbum => String::from("slug_album"),
-            BundleFileType::Slug => String::from("slug"),
-            BundleFileType::SoundEnvironment => String::from("sound_environment"),
-            BundleFileType::SpuJob => String::from("spu_job"),
-            BundleFileType::StateMachine => String::from("state_machine"),
-            BundleFileType::StaticPVS => String::from("static_pvs"),
-            BundleFileType::Strings => String::from("strings"),
-            BundleFileType::SurfaceProperties => String::from("surface_properties"),
-            BundleFileType::Texture => String::from("texture"),
-            BundleFileType::TimpaniBank => String::from("timpani_bank"),
-            BundleFileType::TimpaniMaster => String::from("timpani_master"),
-            BundleFileType::Tome => String::from("tome"),
-            BundleFileType::Ugg => String::from("ugg"),
-            BundleFileType::Unit => String::from("unit"),
-            BundleFileType::Upb => String::from("upb"),
-            BundleFileType::VectorField => String::from("vector_field"),
-            BundleFileType::Wav => String::from("wav"),
-            BundleFileType::WwiseBank => String::from("wwise_bank"),
-            BundleFileType::WwiseDep => String::from("wwise_dep"),
-            BundleFileType::WwiseEvent => String::from("wwise_event"),
-            BundleFileType::WwiseMetadata => String::from("wwise_metadata"),
-            BundleFileType::WwiseStream => String::from("wwise_stream"),
-            BundleFileType::Xml => String::from("xml"),
-
-            BundleFileType::Unknown(s) => format!("{s:016X}"),
-        }
-    }
-
-    pub fn decompiled_ext_name(&self) -> String {
-        match self {
-            BundleFileType::Texture => String::from("dds"),
-            BundleFileType::WwiseBank => String::from("bnk"),
-            BundleFileType::WwiseStream => String::from("ogg"),
-            _ => self.ext_name(),
-        }
-    }
-
     pub fn hash(&self) -> Murmur64 {
         Murmur64::from(*self)
-    }
-}
-
-impl std::str::FromStr for BundleFileType {
-    type Err = color_eyre::Report;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let val = match s {
-            "animation_curves" => BundleFileType::AnimationCurves,
-            "animation" => BundleFileType::Animation,
-            "apb" => BundleFileType::Apb,
-            "baked_lighting" => BundleFileType::BakedLighting,
-            "bik" => BundleFileType::Bik,
-            "blend_set" => BundleFileType::BlendSet,
-            "bones" => BundleFileType::Bones,
-            "chroma" => BundleFileType::Chroma,
-            "common_package" => BundleFileType::CommonPackage,
-            "config" => BundleFileType::Config,
-            "crypto" => BundleFileType::Crypto,
-            "data" => BundleFileType::Data,
-            "entity" => BundleFileType::Entity,
-            "flow" => BundleFileType::Flow,
-            "font" => BundleFileType::Font,
-            "ies" => BundleFileType::Ies,
-            "ini" => BundleFileType::Ini,
-            "input" => BundleFileType::Input,
-            "ivf" => BundleFileType::Ivf,
-            "keys" => BundleFileType::Keys,
-            "level" => BundleFileType::Level,
-            "lua" => BundleFileType::Lua,
-            "material" => BundleFileType::Material,
-            "mod" => BundleFileType::Mod,
-            "mouse_cursor" => BundleFileType::MouseCursor,
-            "nav_data" => BundleFileType::NavData,
-            "network_config" => BundleFileType::NetworkConfig,
-            "oodle_net" => BundleFileType::OddleNet,
-            "package" => BundleFileType::Package,
-            "particles" => BundleFileType::Particles,
-            "physics_properties" => BundleFileType::PhysicsProperties,
-            "render_config" => BundleFileType::RenderConfig,
-            "rt_pipeline" => BundleFileType::RtPipeline,
-            "scene" => BundleFileType::Scene,
-            "shader_library_group" => BundleFileType::ShaderLibraryGroup,
-            "shader_library" => BundleFileType::ShaderLibrary,
-            "shader" => BundleFileType::Shader,
-            "shading_environment_mapping" => BundleFileType::ShadingEnvionmentMapping,
-            "shading_environment" => BundleFileType::ShadingEnvironment,
-            "slug_album" => BundleFileType::SlugAlbum,
-            "slug" => BundleFileType::Slug,
-            "sound_environment" => BundleFileType::SoundEnvironment,
-            "spu_job" => BundleFileType::SpuJob,
-            "state_machine" => BundleFileType::StateMachine,
-            "static_pvs" => BundleFileType::StaticPVS,
-            "strings" => BundleFileType::Strings,
-            "surface_properties" => BundleFileType::SurfaceProperties,
-            "texture" => BundleFileType::Texture,
-            "timpani_bank" => BundleFileType::TimpaniBank,
-            "timpani_master" => BundleFileType::TimpaniMaster,
-            "tome" => BundleFileType::Tome,
-            "ugg" => BundleFileType::Ugg,
-            "unit" => BundleFileType::Unit,
-            "upb" => BundleFileType::Upb,
-            "vector_field" => BundleFileType::VectorField,
-            "wav" => BundleFileType::Wav,
-            "wwise_bank" => BundleFileType::WwiseBank,
-            "wwise_dep" => BundleFileType::WwiseDep,
-            "wwise_event" => BundleFileType::WwiseEvent,
-            "wwise_metadata" => BundleFileType::WwiseMetadata,
-            "wwise_stream" => BundleFileType::WwiseStream,
-            "xml" => BundleFileType::Xml,
-            s => eyre::bail!("Unknown type string '{}'", s),
-        };
-
-        Ok(val)
     }
 }
 
@@ -245,147 +160,6 @@ impl From<Murmur64> for BundleFileType {
     }
 }
 
-impl From<u64> for BundleFileType {
-    fn from(hash: u64) -> BundleFileType {
-        match hash {
-            0x931e336d7646cc26 => BundleFileType::Animation,
-            0xdcfb9e18fff13984 => BundleFileType::AnimationCurves,
-            0x3eed05ba83af5090 => BundleFileType::Apb,
-            0x7ffdb779b04e4ed1 => BundleFileType::BakedLighting,
-            0xaa5965f03029fa18 => BundleFileType::Bik,
-            0xe301e8af94e3b5a3 => BundleFileType::BlendSet,
-            0x18dead01056b72e9 => BundleFileType::Bones,
-            0xb7893adf7567506a => BundleFileType::Chroma,
-            0xfe9754bd19814a47 => BundleFileType::CommonPackage,
-            0x82645835e6b73232 => BundleFileType::Config,
-            0x69108ded1e3e634b => BundleFileType::Crypto,
-            0x8fd0d44d20650b68 => BundleFileType::Data,
-            0x9831ca893b0d087d => BundleFileType::Entity,
-            0x92d3ee038eeb610d => BundleFileType::Flow,
-            0x9efe0a916aae7880 => BundleFileType::Font,
-            0x8f7d5a2c0f967655 => BundleFileType::Ies,
-            0xd526a27da14f1dc5 => BundleFileType::Ini,
-            0x2bbcabe5074ade9e => BundleFileType::Input,
-            0xfa4a8e091a91201e => BundleFileType::Ivf,
-            0xa62f9297dc969e85 => BundleFileType::Keys,
-            0x2a690fd348fe9ac5 => BundleFileType::Level,
-            0xa14e8dfa2cd117e2 => BundleFileType::Lua,
-            0xeac0b497876adedf => BundleFileType::Material,
-            0x3fcdd69156a46417 => BundleFileType::Mod,
-            0xb277b11fe4a61d37 => BundleFileType::MouseCursor,
-            0x169de9566953d264 => BundleFileType::NavData,
-            0x3b1fa9e8f6bac374 => BundleFileType::NetworkConfig,
-            0xb0f2c12eb107f4d8 => BundleFileType::OddleNet,
-            0xad9c6d9ed1e5e77a => BundleFileType::Package,
-            0xa8193123526fad64 => BundleFileType::Particles,
-            0xbf21403a3ab0bbb1 => BundleFileType::PhysicsProperties,
-            0x27862fe24795319c => BundleFileType::RenderConfig,
-            0x9ca183c2d0e76dee => BundleFileType::RtPipeline,
-            0x9d0a795bfe818d19 => BundleFileType::Scene,
-            0xcce8d5b5f5ae333f => BundleFileType::Shader,
-            0xe5ee32a477239a93 => BundleFileType::ShaderLibrary,
-            0x9e5c3cc74575aeb5 => BundleFileType::ShaderLibraryGroup,
-            0x250e0a11ac8e26f8 => BundleFileType::ShadingEnvionmentMapping,
-            0xfe73c7dcff8a7ca5 => BundleFileType::ShadingEnvironment,
-            0xa27b4d04a9ba6f9e => BundleFileType::Slug,
-            0xe9fc9ea7042e5ec0 => BundleFileType::SlugAlbum,
-            0xd8b27864a97ffdd7 => BundleFileType::SoundEnvironment,
-            0xf97af9983c05b950 => BundleFileType::SpuJob,
-            0xa486d4045106165c => BundleFileType::StateMachine,
-            0xe3f0baa17d620321 => BundleFileType::StaticPVS,
-            0x0d972bab10b40fd3 => BundleFileType::Strings,
-            0xad2d3fa30d9ab394 => BundleFileType::SurfaceProperties,
-            0xcd4238c6a0c69e32 => BundleFileType::Texture,
-            0x99736be1fff739a4 => BundleFileType::TimpaniBank,
-            0x00a3e6c59a2b9c6c => BundleFileType::TimpaniMaster,
-            0x19c792357c99f49b => BundleFileType::Tome,
-            0x712d6e3dd1024c9c => BundleFileType::Ugg,
-            0xe0a48d0be9a7453f => BundleFileType::Unit,
-            0xa99510c6e86dd3c2 => BundleFileType::Upb,
-            0xf7505933166d6755 => BundleFileType::VectorField,
-            0x786f65c00a816b19 => BundleFileType::Wav,
-            0x535a7bd3e650d799 => BundleFileType::WwiseBank,
-            0xaf32095c82f2b070 => BundleFileType::WwiseDep,
-            0xaabdd317b58dfc8a => BundleFileType::WwiseEvent,
-            0xd50a8b7e1c82b110 => BundleFileType::WwiseMetadata,
-            0x504b55235d21440e => BundleFileType::WwiseStream,
-            0x76015845a6003765 => BundleFileType::Xml,
-
-            _ => BundleFileType::Unknown(Murmur64::from(hash)),
-        }
-    }
-}
-
-impl From<BundleFileType> for u64 {
-    fn from(t: BundleFileType) -> u64 {
-        match t {
-            BundleFileType::Animation => 0x931e336d7646cc26,
-            BundleFileType::AnimationCurves => 0xdcfb9e18fff13984,
-            BundleFileType::Apb => 0x3eed05ba83af5090,
-            BundleFileType::BakedLighting => 0x7ffdb779b04e4ed1,
-            BundleFileType::Bik => 0xaa5965f03029fa18,
-            BundleFileType::BlendSet => 0xe301e8af94e3b5a3,
-            BundleFileType::Bones => 0x18dead01056b72e9,
-            BundleFileType::Chroma => 0xb7893adf7567506a,
-            BundleFileType::CommonPackage => 0xfe9754bd19814a47,
-            BundleFileType::Config => 0x82645835e6b73232,
-            BundleFileType::Crypto => 0x69108ded1e3e634b,
-            BundleFileType::Data => 0x8fd0d44d20650b68,
-            BundleFileType::Entity => 0x9831ca893b0d087d,
-            BundleFileType::Flow => 0x92d3ee038eeb610d,
-            BundleFileType::Font => 0x9efe0a916aae7880,
-            BundleFileType::Ies => 0x8f7d5a2c0f967655,
-            BundleFileType::Ini => 0xd526a27da14f1dc5,
-            BundleFileType::Input => 0x2bbcabe5074ade9e,
-            BundleFileType::Ivf => 0xfa4a8e091a91201e,
-            BundleFileType::Keys => 0xa62f9297dc969e85,
-            BundleFileType::Level => 0x2a690fd348fe9ac5,
-            BundleFileType::Lua => 0xa14e8dfa2cd117e2,
-            BundleFileType::Material => 0xeac0b497876adedf,
-            BundleFileType::Mod => 0x3fcdd69156a46417,
-            BundleFileType::MouseCursor => 0xb277b11fe4a61d37,
-            BundleFileType::NavData => 0x169de9566953d264,
-            BundleFileType::NetworkConfig => 0x3b1fa9e8f6bac374,
-            BundleFileType::OddleNet => 0xb0f2c12eb107f4d8,
-            BundleFileType::Package => 0xad9c6d9ed1e5e77a,
-            BundleFileType::Particles => 0xa8193123526fad64,
-            BundleFileType::PhysicsProperties => 0xbf21403a3ab0bbb1,
-            BundleFileType::RenderConfig => 0x27862fe24795319c,
-            BundleFileType::RtPipeline => 0x9ca183c2d0e76dee,
-            BundleFileType::Scene => 0x9d0a795bfe818d19,
-            BundleFileType::Shader => 0xcce8d5b5f5ae333f,
-            BundleFileType::ShaderLibrary => 0xe5ee32a477239a93,
-            BundleFileType::ShaderLibraryGroup => 0x9e5c3cc74575aeb5,
-            BundleFileType::ShadingEnvionmentMapping => 0x250e0a11ac8e26f8,
-            BundleFileType::ShadingEnvironment => 0xfe73c7dcff8a7ca5,
-            BundleFileType::Slug => 0xa27b4d04a9ba6f9e,
-            BundleFileType::SlugAlbum => 0xe9fc9ea7042e5ec0,
-            BundleFileType::SoundEnvironment => 0xd8b27864a97ffdd7,
-            BundleFileType::SpuJob => 0xf97af9983c05b950,
-            BundleFileType::StateMachine => 0xa486d4045106165c,
-            BundleFileType::StaticPVS => 0xe3f0baa17d620321,
-            BundleFileType::Strings => 0x0d972bab10b40fd3,
-            BundleFileType::SurfaceProperties => 0xad2d3fa30d9ab394,
-            BundleFileType::Texture => 0xcd4238c6a0c69e32,
-            BundleFileType::TimpaniBank => 0x99736be1fff739a4,
-            BundleFileType::TimpaniMaster => 0x00a3e6c59a2b9c6c,
-            BundleFileType::Tome => 0x19c792357c99f49b,
-            BundleFileType::Ugg => 0x712d6e3dd1024c9c,
-            BundleFileType::Unit => 0xe0a48d0be9a7453f,
-            BundleFileType::Upb => 0xa99510c6e86dd3c2,
-            BundleFileType::VectorField => 0xf7505933166d6755,
-            BundleFileType::Wav => 0x786f65c00a816b19,
-            BundleFileType::WwiseBank => 0x535a7bd3e650d799,
-            BundleFileType::WwiseDep => 0xaf32095c82f2b070,
-            BundleFileType::WwiseEvent => 0xaabdd317b58dfc8a,
-            BundleFileType::WwiseMetadata => 0xd50a8b7e1c82b110,
-            BundleFileType::WwiseStream => 0x504b55235d21440e,
-            BundleFileType::Xml => 0x76015845a6003765,
-
-            BundleFileType::Unknown(hash) => hash.into(),
-        }
-    }
-}
 impl From<BundleFileType> for Murmur64 {
     fn from(t: BundleFileType) -> Murmur64 {
         let hash: u64 = t.into();

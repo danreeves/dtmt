@@ -36,9 +36,20 @@ struct GlobalConfig {
 }
 
 #[tokio::main]
-#[tracing::instrument]
+#[tracing::instrument(level = "error", fields(cmd_line = tracing::field::Empty))]
 async fn main() -> Result<()> {
     color_eyre::install()?;
+
+    {
+        let span = tracing::Span::current();
+        if !span.is_disabled() {
+            let cmdline: String = std::env::args_os().fold(String::new(), |mut s, arg| {
+                s.push_str(&arg.to_string_lossy());
+                s
+            });
+            span.record("cmd_line", cmdline);
+        }
+    }
 
     let matches = command!()
         .subcommand_required(true)
