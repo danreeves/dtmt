@@ -22,7 +22,7 @@ clap = { version = "4.0.15", features = ["color", "derive", "std", "cargo", "str
 cli-table = { version = "0.5.0", default-features = false, features = ["derive"] }
 color-eyre = { path = "lib/color-eyre" }
 colors-transform = "0.2.11"
-confy = "0.6.1"
+confy = "1.0.0"
 csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
 druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "bmp", "webp", "svg"] }
 druid-widget-nursery = "0.1"
