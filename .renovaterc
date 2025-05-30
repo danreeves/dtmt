@@ -3,8 +3,7 @@
   "extends": [
     "config:recommended",
     ":combinePatchMinorReleases",
-    ":enableVulnerabilityAlerts",
-    ":rebaseStalePrs"
+    ":enableVulnerabilityAlerts"
   ],
   "prConcurrentLimit": 10,
   "branchPrefix": "renovate/",
