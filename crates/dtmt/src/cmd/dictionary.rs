@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueEnum};
 use cli_table::{print_stdout, WithTitle};
@@ -156,6 +157,8 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
                 BufReader::new(Box::new(f))
             };
 
+            let lookup = Arc::make_mut(&mut ctx.lookup);
+
             let group = sdk::murmur::HashGroup::from(*group);
 
             let mut added = 0;
@@ -165,15 +168,15 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
             let total = {
                 for line in lines.into_iter() {
                     let value = line?;
-                    if ctx.lookup.find(&value, group).is_some() {
+                    if lookup.find(&value, group).is_some() {
                         skipped += 1;
                     } else {
-                        ctx.lookup.add(value, group);
+                        lookup.add(value, group);
                         added += 1;
                     }
                 }
 
-                ctx.lookup.len()
+                lookup.len()
             };
 
             let out_path = matches
@@ -190,7 +193,7 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
                 })
                 .with_section(|| out_path.display().to_string().header("Path:"))?;
 
-            ctx.lookup
+            lookup
                 .to_csv(f)
                 .await
                 .wrap_err("Failed to write dictionary to disk")?;

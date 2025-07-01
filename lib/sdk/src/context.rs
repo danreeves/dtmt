@@ -1,8 +1,11 @@
+use std::ffi::OsString;
+use std::path::PathBuf;
 use std::process::Command;
-use std::{ffi::OsString, path::PathBuf};
+use std::sync::Arc;
 
 use crate::murmur::{Dictionary, HashGroup, IdString64, Murmur32, Murmur64};
 
+#[derive(Clone)]
 pub struct CmdLine {
     cmd: OsString,
     args: Vec<OsString>,
@@ -52,7 +55,7 @@ impl From<&CmdLine> for Command {
 }
 
 pub struct Context {
-    pub lookup: Dictionary,
+    pub lookup: Arc<Dictionary>,
     pub ljd: Option<CmdLine>,
     pub revorb: Option<String>,
     pub ww2ogg: Option<String>,
@@ -62,7 +65,7 @@ pub struct Context {
 impl Context {
     pub fn new() -> Self {
         Self {
-            lookup: Dictionary::new(),
+            lookup: Arc::new(Dictionary::new()),
             ljd: None,
             revorb: None,
             ww2ogg: None,
