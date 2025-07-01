@@ -1,4 +1,5 @@
-use color_eyre::{eyre, Result};
+use color_eyre::eyre;
+use color_eyre::Result;
 use serde::Serialize;
 
 use crate::murmur::Murmur64;

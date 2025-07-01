@@ -162,6 +162,7 @@ impl Bundle {
                 // TODO: Optimize to not reallocate?
                 let mut raw_buffer = oodle::decompress(
                     &compressed_buffer,
+                    oodle::CHUNK_SIZE,
                     OodleLZ_FuzzSafe::No,
                     OodleLZ_CheckCRC::No,
                 )
@@ -359,6 +360,7 @@ where
         // TODO: Optimize to not reallocate?
         let mut raw_buffer = oodle::decompress(
             &compressed_buffer,
+            oodle::CHUNK_SIZE,
             OodleLZ_FuzzSafe::No,
             OodleLZ_CheckCRC::No,
         )?;
