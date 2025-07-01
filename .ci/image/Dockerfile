@@ -1,6 +1,7 @@
 # https://jake-shadle.github.io/xwin/
-FROM debian:bullseye-slim as xwin
+FROM debian:bullseye-slim AS xwin
 
+# renovate: datasource=github-releases depName=xwin packageName=Jake-Shadle/xwin
 ARG XWIN_VERSION=0.5.2
 ARG XWIN_PREFIX="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
 ADD https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$XWIN_PREFIX.tar.gz /root/$XWIN_PREFIX.tar.gz
@@ -31,7 +32,7 @@ RUN set -eux; \
     # And to keep that to a minimum, we still delete the stuff we don't need.
     rm -rf /root/.xwin-cache;
 
-FROM rust:slim-bullseye as linux
+FROM rust:slim-bullseye AS linux
 
 RUN set -eux; \
     apt-get update; \
@@ -58,8 +59,9 @@ WORKDIR /src/dtmt
 
 COPY lib/oodle/*.so lib/oodle/*.a /src/
 
-FROM linux as msvc
+FROM linux AS msvc
 
+# renovate: datasource=github-releases depName=llvm packageName=llvm/llvm-project
 ARG LLVM_VERSION=18
 ENV KEYRINGS /usr/local/share/keyrings
 
