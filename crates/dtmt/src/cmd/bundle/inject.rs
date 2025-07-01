@@ -202,14 +202,12 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
     let bundle_name = Bundle::get_name_from_path(&ctx, bundle_path);
     let mut bundle = {
-        let binary = fs::read(bundle_path).await?;
-        Bundle::from_binary(&ctx, bundle_name.clone(), binary)
+        fs::read(bundle_path)
+            .await
+            .map_err(From::from)
+            .and_then(|binary| Bundle::from_binary(&ctx, bundle_name.clone(), binary))
             .wrap_err_with(|| format!("Failed to open bundle '{}'", bundle_path.display()))?
     };
-
-    if op == "copy" {
-        unimplemented!("Implement copying a file from one bundle to the other.");
-    }
 
     let output_bundle = match op {
         "replace" => {
@@ -279,6 +277,9 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
         }
         "add" => {
             unimplemented!("Implement adding a new file to the bundle.");
+        }
+        "copy" => {
+            unimplemented!("Implement copying a file from one bundle to the other.");
         }
         _ => unreachable!("no other operations exist"),
     };
