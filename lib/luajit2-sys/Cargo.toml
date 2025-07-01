@@ -12,9 +12,9 @@ documentation = "https://docs.rs/luajit2-sys"
 links = "luajit"
 
 [dependencies]
-libc = "0.2"
+libc = { workspace = true }
 
 [build-dependencies]
-bindgen = "0.70.1"
-cc = "1"
-fs_extra = "1.1.0"
+bindgen = { workspace = true }
+cc = { workspace = true }
+fs_extra = { workspace = true }
