@@ -108,20 +108,19 @@ impl std::fmt::Debug for AsyncAction {
         match self {
             AsyncAction::DeployMods(_) => write!(f, "AsyncAction::DeployMods(_state)"),
             AsyncAction::ResetDeployment(_) => write!(f, "AsyncAction::ResetDeployment(_state)"),
-            AsyncAction::AddMod(_, info) => write!(f, "AsyncAction::AddMod(_state, {:?})", info),
+            AsyncAction::AddMod(_, info) => write!(f, "AsyncAction::AddMod(_state, {info:?})"),
             AsyncAction::DeleteMod(_, info) => {
-                write!(f, "AsyncAction::DeleteMod(_state, {:?})", info)
+                write!(f, "AsyncAction::DeleteMod(_state, {info:?})")
             }
             AsyncAction::SaveSettings(_) => write!(f, "AsyncAction::SaveSettings(_state)"),
             AsyncAction::CheckUpdates(_) => write!(f, "AsyncAction::CheckUpdates(_state)"),
             AsyncAction::LoadInitial((path, is_default)) => write!(
                 f,
-                "AsyncAction::LoadInitial(({:?}, {:?}))",
-                path, is_default
+                "AsyncAction::LoadInitial(({path:?}, {is_default:?}))"
             ),
             AsyncAction::Log(_) => write!(f, "AsyncAction::Log(_)"),
             AsyncAction::NxmDownload(_, uri) => {
-                write!(f, "AsyncAction::NxmDownload(_state, {})", uri)
+                write!(f, "AsyncAction::NxmDownload(_state, {uri})")
             }
         }
     }
@@ -448,7 +447,7 @@ impl AppDelegate<State> for Delegate {
                 if let Err(err) = open::that_detached(Arc::as_ref(url)) {
                     tracing::error!(
                         "{:?}",
-                        Report::new(err).wrap_err(format!("Failed to open url '{}'", url))
+                        Report::new(err).wrap_err(format!("Failed to open url '{url}'"))
                     );
                 }
 

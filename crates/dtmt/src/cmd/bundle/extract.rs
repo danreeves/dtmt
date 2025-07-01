@@ -473,7 +473,7 @@ where
                 }
             }
             Err(err) => {
-                let err = err.wrap_err(format!("Failed to decompile file {}", name));
+                let err = err.wrap_err(format!("Failed to decompile file {name}"));
                 tracing::error!("{:?}", err);
             }
         };

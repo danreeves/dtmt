@@ -247,7 +247,7 @@ pub mod sync {
     fn read_string_len(mut r: impl Read, len: usize) -> Result<String> {
         let mut buf = vec![0; len];
         r.read_exact(&mut buf)
-            .wrap_err_with(|| format!("Failed to read {} bytes", len))?;
+            .wrap_err_with(|| format!("Failed to read {len} bytes"))?;
 
         let res = match CStr::from_bytes_until_nul(&buf) {
             Ok(s) => {
@@ -259,6 +259,6 @@ pub mod sync {
 
         res.wrap_err("Invalid binary for UTF8 string")
             .with_section(|| format!("{}", String::from_utf8_lossy(&buf)).header("ASCI:"))
-            .with_section(|| format!("{:x?}", buf).header("Bytes:"))
+            .with_section(|| format!("{buf:x?}").header("Bytes:"))
     }
 }

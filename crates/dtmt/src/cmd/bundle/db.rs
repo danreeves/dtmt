@@ -94,10 +94,10 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
                     match bundle_name {
                         IdString64::String(name) => {
-                            println!("{:016x} {}", bundle_hash, name);
+                            println!("{bundle_hash:016x} {name}");
                         }
                         IdString64::Hash(hash) => {
-                            println!("{:016x}", hash);
+                            println!("{hash:016x}");
                         }
                     }
 
@@ -110,7 +110,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                                 println!("\t{:016x}.{:<12} {}", file.name, extension, name);
                             }
                             IdString64::Hash(hash) => {
-                                println!("\t{:016x}.{}", hash, extension);
+                                println!("\t{hash:016x}.{extension}");
                             }
                         }
                     }
@@ -127,10 +127,10 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
                 match bundle_name {
                     IdString64::String(name) => {
-                        println!("{:016x} {}", bundle_hash, name);
+                        println!("{bundle_hash:016x} {name}");
                     }
                     IdString64::Hash(hash) => {
-                        println!("{:016x}", hash);
+                        println!("{hash:016x}");
                     }
                 }
             }
@@ -158,7 +158,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
             for bundle in bundles {
                 found = true;
-                println!("{:016x}", bundle);
+                println!("{bundle:016x}");
             }
 
             if !found {

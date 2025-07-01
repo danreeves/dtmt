@@ -99,7 +99,7 @@ impl Api {
 
     #[tracing::instrument(skip(self))]
     pub async fn mods_id(&self, id: u64) -> Result<Mod> {
-        let url = BASE_URL_GAME.join(&format!("mods/{}.json", id))?;
+        let url = BASE_URL_GAME.join(&format!("mods/{id}.json"))?;
         let req = self.client.get(url);
         self.send(req).await
     }

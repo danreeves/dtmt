@@ -164,7 +164,7 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         .iter()
         .map(|(path_tmpl, content_tmpl)| {
             env.render_str(path_tmpl, &render_ctx)
-                .wrap_err_with(|| format!("Failed to render template: {}", path_tmpl))
+                .wrap_err_with(|| format!("Failed to render template: {path_tmpl}"))
                 .and_then(|path| {
                     env.render_named_str(&path, content_tmpl, &render_ctx)
                         .wrap_err_with(|| format!("Failed to render template '{}'", &path))
