@@ -117,6 +117,26 @@ impl BundleFileVariant {
     }
 }
 
+impl std::fmt::Debug for BundleFileVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("BundleFileVariant");
+        out.field("property", &self.property);
+
+        if self.data.len() <= 5 {
+            out.field("data", &format!("{:x?}", &self.data));
+        } else {
+            out.field(
+                "data",
+                &format!("{:x?}.. ({} bytes)", &self.data[..5], &self.data.len()),
+            );
+        }
+
+        out.field("data_file_name", &self.data_file_name)
+            .field("external", &self.external)
+            .finish()
+    }
+}
+
 bitflags! {
     #[derive(Default, Clone, Copy, Debug)]
     pub struct Properties: u32 {
@@ -215,6 +235,7 @@ impl BundleFile {
                     let s = r
                         .read_string_len(header.len_data_file_name)
                         .wrap_err("Failed to read data file name")?;
+
                     Some(s)
                 } else {
                     None
@@ -371,18 +392,16 @@ impl BundleFile {
         Ok(files)
     }
 
-    #[tracing::instrument(name = "File::decompiled", skip_all)]
+    #[tracing::instrument(
+        name = "File::decompiled",
+        skip_all,
+        fields(file = self.name(false, None), file_type = self.file_type().ext_name(), variants = self.variants.len())
+    )]
     pub async fn decompiled(&self, ctx: &crate::Context) -> Result<Vec<UserFile>> {
         let file_type = self.file_type();
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                name = self.name(true, None),
-                variants = self.variants.len(),
-                "Attempting to decompile"
-            );
-        }
-
+        // The `Strings` type handles all variants combined.
+        // For the other ones, each variant will be its own file.
         if file_type == BundleFileType::Strings {
             return strings::decompile(ctx, &self.variants);
         }
