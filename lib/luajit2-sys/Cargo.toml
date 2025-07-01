@@ -1,0 +1,20 @@
+[package]
+name = "luajit2-sys"
+version = "0.0.2"
+description = "LuaJIT-2.1 FFI Bindings"
+authors = ["Aaron Loucks <aloucks@cofront.net>"]
+edition = "2021"
+keywords = ["lua", "luajit", "script"]
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/aloucks/luajit2-sys"
+documentation = "https://docs.rs/luajit2-sys"
+links = "luajit"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+bindgen = "0.70.1"
+cc = "1"
+fs_extra = "1.1.0"
