@@ -44,10 +44,10 @@ impl<T: FromBinary> FromBinary for Vec<T> {
 
 pub mod sync {
     use std::ffi::CStr;
-    use std::io::{self, Read, Seek, SeekFrom};
+    use std::io::{self, Read, Seek, SeekFrom, Write};
 
     use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-    use color_eyre::eyre::WrapErr;
+    use color_eyre::eyre::{self, WrapErr};
     use color_eyre::{Help, Report, Result, SectionExt};
 
     macro_rules! make_read {
@@ -123,7 +123,7 @@ pub mod sync {
         };
     }
 
-    pub trait ReadExt: ReadBytesExt + Seek {
+    pub trait ReadExt: Read + Seek {
         fn read_u8(&mut self) -> io::Result<u8> {
             ReadBytesExt::read_u8(self)
         }
@@ -131,7 +131,6 @@ pub mod sync {
         make_read!(read_u32, read_u32_le, u32);
         make_read!(read_u64, read_u64_le, u64);
 
-        make_skip!(skip_u8, read_u8, u8);
         make_skip!(skip_u32, read_u32, u32);
 
         // Implementation based on https://en.wikipedia.com/wiki/LEB128
@@ -181,15 +180,27 @@ pub mod sync {
                 res
             }
         }
+
+        fn read_bool(&mut self) -> Result<bool> {
+            match ReadExt::read_u8(self)? {
+                0 => Ok(false),
+                1 => Ok(true),
+                v => eyre::bail!("Invalid value for boolean '{}'", v),
+            }
+        }
     }
 
-    pub trait WriteExt: WriteBytesExt + Seek {
+    pub trait WriteExt: Write + Seek {
         fn write_u8(&mut self, val: u8) -> io::Result<()> {
             WriteBytesExt::write_u8(self, val)
         }
 
         make_write!(write_u32, write_u32_le, u32);
         make_write!(write_u64, write_u64_le, u64);
+
+        fn write_bool(&mut self, val: bool) -> io::Result<()> {
+            WriteBytesExt::write_u8(self, if val { 1 } else { 0 })
+        }
 
         fn write_padding(&mut self) -> io::Result<usize> {
             let pos = self.stream_position()?;
@@ -207,8 +218,8 @@ pub mod sync {
         }
     }
 
-    impl<R: ReadBytesExt + Seek + ?Sized> ReadExt for R {}
-    impl<W: WriteBytesExt + Seek + ?Sized> WriteExt for W {}
+    impl<R: Read + Seek + ?Sized> ReadExt for R {}
+    impl<W: Write + Seek + ?Sized> WriteExt for W {}
 
     pub(crate) fn _read_up_to<R>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize>
     where
