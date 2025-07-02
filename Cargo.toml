@@ -16,7 +16,7 @@ ansi-parser = "0.9.1"
 ansi_term = "0.12.1"
 async-recursion = "1.0.5"
 bincode = "2.0.0"
-bindgen = "0.70.1"
+bindgen = "0.72.0"
 bitflags = "2.5.0"
 byteorder = "1.4.3"
 cc = { version = "1.2.27", features = ["parallel"] }
