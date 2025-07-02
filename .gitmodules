@@ -1,11 +1,11 @@
-[submodule "lib/luajit2-sys"]
-	path = lib/luajit2-sys
-	url = https://github.com/sclu1034/luajit2-sys.git
 [submodule "lib/color-eyre"]
 	path = lib/color-eyre
 	url = https://github.com/sclu1034/color-eyre.git
-    branch = "fork"
+	branch = "fork"
 [submodule "lib/ansi-parser"]
 	path = lib/ansi-parser
 	url = https://gitlab.com/lschwiderski/ansi-parser.git
-    branch = "issue/outdated-nom"
+	branch = "issue/outdated-nom"
+[submodule "lib/luajit2-sys/luajit"]
+	path = lib/luajit2-sys/luajit
+	url = https://github.com/LuaJIT/LuaJIT.git

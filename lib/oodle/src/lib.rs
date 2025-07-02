@@ -52,6 +52,7 @@ impl From<OodleLZ_CheckCRC> for bindings::OodleLZ_CheckCRC {
 #[tracing::instrument(skip(data))]
 pub fn decompress<I>(
     data: I,
+    out_size: usize,
     fuzz_safe: OodleLZ_FuzzSafe,
     check_crc: OodleLZ_CheckCRC,
 ) -> Result<Vec<u8>>
@@ -59,7 +60,7 @@ where
     I: AsRef<[u8]>,
 {
     let data = data.as_ref();
-    let mut out = vec![0; CHUNK_SIZE];
+    let mut out = vec![0; out_size];
 
     let verbosity = if tracing::enabled!(tracing::Level::INFO) {
         bindings::OodleLZ_Verbosity_OodleLZ_Verbosity_Minimal

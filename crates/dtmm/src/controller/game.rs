@@ -208,7 +208,7 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
 
     for p in paths {
         let path = bundle_dir.join(p);
-        let backup = bundle_dir.join(format!("{}.bak", p));
+        let backup = bundle_dir.join(format!("{p}.bak"));
 
         let res = async {
             tracing::debug!(

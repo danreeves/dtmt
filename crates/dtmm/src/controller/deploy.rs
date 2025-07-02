@@ -469,7 +469,7 @@ async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Re
     }
     .instrument(tracing::trace_span!("read boot bundle"))
     .await
-    .wrap_err_with(|| format!("Failed to read bundle '{}'", BOOT_BUNDLE_NAME))?;
+    .wrap_err_with(|| format!("Failed to read bundle '{BOOT_BUNDLE_NAME}'"))?;
 
     {
         tracing::trace!("Adding mod package file to boot bundle");

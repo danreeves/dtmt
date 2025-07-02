@@ -34,9 +34,9 @@ pub fn error<T: Data>(err: Report, _parent: WindowHandle) -> WindowDesc<T> {
                 // The second to last one, the context to the root cause
                 let context = err.chain().nth(count - 2).unwrap();
 
-                (format!("{first}!"), format!("{}: {}", context, root))
+                (format!("{first}!"), format!("{context}: {root}"))
             } else {
-                ("An error occurred!".to_string(), format!("{}: {}", first, root))
+                ("An error occurred!".to_string(), format!("{first}: {root}"))
             }
         }
     };

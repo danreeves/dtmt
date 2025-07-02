@@ -5,6 +5,7 @@ use druid::{
 
 use crate::state::{State, ACTION_SET_DIRTY, ACTION_START_SAVE_SETTINGS};
 
+#[allow(dead_code)]
 pub struct DisabledButtonController;
 
 impl<T: Data> Controller<T, Button<T>> for DisabledButtonController {

@@ -10,5 +10,35 @@
   "baseBranches": [
     "$default",
     "/^release\\/.*/"
+  ],
+  "ignorePaths": [
+    "lib/color_eyre/**",
+    "lib/ansi-parser/**",
+    "lib/luajit2-sys/**",
+    "**/target/**"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update _VERSION variables in Dockerfiles",
+      "fileMatch": [
+        "(^|/|\\.)Dockerfile$",
+        "(^|/)Dockerfile\\.[^/]*$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+?)(?: depName=(?<depName>.+?))? packageName=(?<packageName>.+?)(?: versioning=(?<versioning>[a-z-]+?))?\\s(?:ENV|ARG) .+?_VERSION=(?<currentValue>.+?)\\s"
+      ]
+    }
+  ],
+  "packageRules": [
+    {
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "llvm/llvm-project"
+      ],
+      "extractVersion": "^llvmorg-(?<version>\\d+)\\.\\d+\\.\\d+$"
+    }
   ]
 }

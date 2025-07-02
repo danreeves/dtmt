@@ -19,7 +19,7 @@ pub const TIME_FORMAT: &[FormatItem] = format_description!("[hour]:[minute]:[sec
 
 pub fn format_fields(w: &mut Writer<'_>, field: &Field, val: &dyn std::fmt::Debug) -> Result {
     if field.name() == "message" {
-        write!(w, "{:?}", val)
+        write!(w, "{val:?}")
     } else {
         Ok(())
     }
@@ -70,7 +70,7 @@ where
             writer,
             "[{}] [{:>5}] ",
             time,
-            color.bold().paint(format!("{}", level))
+            color.bold().paint(format!("{level}"))
         )?;
 
         ctx.field_format().format_fields(writer.by_ref(), event)?;

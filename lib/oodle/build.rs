@@ -11,7 +11,7 @@ fn main() {
         } else {
             "oo2core_win64"
         };
-        println!("cargo:rustc-link-lib=static={}", lib_name);
+        println!("cargo:rustc-link-lib=static={lib_name}");
     } else {
         println!("cargo:rustc-link-lib=static=oo2corelinux64");
         println!("cargo:rustc-link-lib=stdc++");

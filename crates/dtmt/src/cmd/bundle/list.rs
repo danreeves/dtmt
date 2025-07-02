@@ -38,7 +38,7 @@ enum OutputFormat {
 
 fn format_byte_size(size: usize) -> String {
     if size < 1024 {
-        format!("{} Bytes", size)
+        format!("{size} Bytes")
     } else if size < 1024 * 1024 {
         format!("{} kB", size / 1024)
     } else if size < 1024 * 1024 * 1024 {

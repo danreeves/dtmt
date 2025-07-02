@@ -48,6 +48,7 @@ struct Row {
     group: HashGroup,
 }
 
+#[derive(Clone)]
 pub struct Entry {
     value: String,
     long: Murmur64,
@@ -73,6 +74,7 @@ impl Entry {
     }
 }
 
+#[derive(Clone)]
 pub struct Dictionary {
     entries: Vec<Entry>,
 }
@@ -88,10 +90,12 @@ impl Dictionary {
         Self { entries: vec![] }
     }
 
-    pub async fn from_csv<R>(&mut self, r: R) -> Result<()>
+    pub async fn from_csv<R>(r: R) -> Result<Self>
     where
         R: AsyncRead + std::marker::Unpin + std::marker::Send,
     {
+        let mut entries = vec![];
+
         let r = AsyncDeserializer::from_reader(r);
         let mut records = r.into_deserialize::<Row>();
 
@@ -112,10 +116,10 @@ impl Dictionary {
                 group: record.group,
             };
 
-            self.entries.push(entry);
+            entries.push(entry);
         }
 
-        Ok(())
+        Ok(Self { entries })
     }
 
     pub async fn to_csv<W>(&self, w: W) -> Result<()>
@@ -161,7 +165,7 @@ impl Dictionary {
         self.entries.push(entry);
     }
 
-    pub fn find(&mut self, value: &String, group: HashGroup) -> Option<&Entry> {
+    pub fn find(&self, value: &String, group: HashGroup) -> Option<&Entry> {
         self.entries
             .iter()
             .find(|e| e.value == *value && e.group == group)

@@ -287,6 +287,34 @@ where
     P1: AsRef<Path> + std::fmt::Debug,
     P2: AsRef<Path> + std::fmt::Debug,
 {
+    let ctx = if ctx.game_dir.is_some() {
+        tracing::debug!(
+            "Got game directory from config: {}",
+            ctx.game_dir.as_ref().unwrap().display()
+        );
+
+        ctx
+    } else {
+        let game_dir = path
+            .as_ref()
+            .parent()
+            .and_then(|parent| parent.parent())
+            .map(|p| p.to_path_buf());
+
+        tracing::info!(
+            "No game directory configured, guessing from bundle path: {:?}",
+            game_dir
+        );
+
+        Arc::new(sdk::Context {
+            game_dir,
+            lookup: Arc::clone(&ctx.lookup),
+            ljd: ctx.ljd.clone(),
+            revorb: ctx.revorb.clone(),
+            ww2ogg: ctx.ww2ogg.clone(),
+        })
+    };
+
     let bundle = {
         let data = fs::read(path.as_ref()).await?;
         let name = Bundle::get_name_from_path(&ctx, path.as_ref());
@@ -445,7 +473,7 @@ where
                 }
             }
             Err(err) => {
-                let err = err.wrap_err(format!("Failed to decompile file {}", name));
+                let err = err.wrap_err(format!("Failed to decompile file {name}"));
                 tracing::error!("{:?}", err);
             }
         };

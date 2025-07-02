@@ -363,7 +363,7 @@ fn extract_legacy_mod<R: Read + Seek>(
     for i in 0..file_count {
         let mut f = archive
             .by_index(i)
-            .wrap_err_with(|| format!("Failed to get file at index {}", i))?;
+            .wrap_err_with(|| format!("Failed to get file at index {i}"))?;
 
         let Some(name) = f.enclosed_name().map(|p| p.to_path_buf()) else {
             let err = eyre::eyre!("File name in archive is not a safe path value.").suggestion(
@@ -426,7 +426,7 @@ pub(crate) async fn import_from_file(state: ActionState, info: FileInfo) -> Resu
             let mod_info = api
                 .mods_id(id)
                 .await
-                .wrap_err_with(|| format!("Failed to query mod {} from Nexus", id))?;
+                .wrap_err_with(|| format!("Failed to query mod {id} from Nexus"))?;
 
             let version = match api.file_version(id, timestamp).await {
                 Ok(version) => version,
@@ -461,13 +461,13 @@ pub(crate) async fn import_from_file(state: ActionState, info: FileInfo) -> Resu
 pub(crate) async fn import_from_nxm(state: ActionState, uri: String) -> Result<ModInfo> {
     let url = uri
         .parse()
-        .wrap_err_with(|| format!("Invalid Uri '{}'", uri))?;
+        .wrap_err_with(|| format!("Invalid Uri '{uri}'"))?;
 
     let api = NexusApi::new(state.nexus_api_key.to_string())?;
     let (mod_info, file_info, data) = api
         .handle_nxm(url)
         .await
-        .wrap_err_with(|| format!("Failed to download mod from NXM uri '{}'", uri))?;
+        .wrap_err_with(|| format!("Failed to download mod from NXM uri '{uri}'"))?;
 
     let nexus = NexusInfo::from(mod_info);
     import_mod(state, Some((nexus, file_info.version)), data).await
@@ -524,7 +524,7 @@ pub(crate) async fn import_mod(
         let data = api
             .picture(url)
             .await
-            .wrap_err_with(|| format!("Failed to download Nexus image from '{}'", url))?;
+            .wrap_err_with(|| format!("Failed to download Nexus image from '{url}'"))?;
 
         let img = image_data_to_buffer(&data)?;
 

@@ -47,7 +47,7 @@ fn notify_nxm_download(
             .to_ns_name::<GenericNamespaced>()
             .expect("Invalid socket name"),
     )
-    .wrap_err_with(|| format!("Failed to connect to '{}'", IPC_ADDRESS))
+    .wrap_err_with(|| format!("Failed to connect to '{IPC_ADDRESS}'"))
     .suggestion("Make sure the main window is open.")?;
 
     tracing::debug!("Connected to main process at '{}'", IPC_ADDRESS);
@@ -159,7 +159,7 @@ fn main() -> Result<()> {
 
                 loop {
                     let res = server.accept().wrap_err_with(|| {
-                        format!("IPC server failed to listen on '{}'", IPC_ADDRESS)
+                        format!("IPC server failed to listen on '{IPC_ADDRESS}'")
                     });
 
                     match res {

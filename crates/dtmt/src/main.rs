@@ -1,6 +1,5 @@
 #![feature(io_error_more)]
 #![feature(let_chains)]
-#![feature(result_flattening)]
 #![feature(test)]
 #![windows_subsystem = "console"]
 
@@ -12,6 +11,7 @@ use clap::value_parser;
 use clap::{command, Arg};
 use color_eyre::eyre;
 use color_eyre::eyre::{Context, Result};
+use sdk::murmur::Dictionary;
 use serde::{Deserialize, Serialize};
 use tokio::fs::File;
 use tokio::io::BufReader;
@@ -107,8 +107,9 @@ async fn main() -> Result<()> {
 
             let r = BufReader::new(f);
             let mut ctx = ctx.write().await;
-            if let Err(err) = ctx.lookup.from_csv(r).await {
-                tracing::error!("{:#}", err);
+            match Dictionary::from_csv(r).await {
+                Ok(lookup) => ctx.lookup = Arc::new(lookup),
+                Err(err) => tracing::error!("{:#}", err),
             }
         })
     };

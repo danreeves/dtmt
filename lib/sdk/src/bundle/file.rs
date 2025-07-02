@@ -15,17 +15,18 @@ use super::filetype::BundleFileType;
 #[derive(Debug)]
 struct BundleFileHeader {
     variant: u32,
-    unknown_1: u8,
+    external: bool,
     size: usize,
+    unknown_1: u8,
     len_data_file_name: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
     data_file_name: Option<String>,
-    // Seems to be related to whether there is a data path.
+    external: bool,
     unknown_1: u8,
 }
 
@@ -39,6 +40,7 @@ impl BundleFileVariant {
             property: 0,
             data: Vec::new(),
             data_file_name: None,
+            external: false,
             unknown_1: 0,
         }
     }
@@ -63,21 +65,30 @@ impl BundleFileVariant {
         self.data_file_name.as_ref()
     }
 
+    pub fn external(&self) -> bool {
+        self.external
+    }
+
+    pub fn unknown_1(&self) -> u8 {
+        self.unknown_1
+    }
+
     #[tracing::instrument(skip_all)]
     fn read_header<R>(r: &mut R) -> Result<BundleFileHeader>
     where
         R: Read + Seek,
     {
         let variant = r.read_u32()?;
-        let unknown_1 = r.read_u8()?;
+        let external = r.read_bool()?;
         let size = r.read_u32()? as usize;
-        r.skip_u8(1)?;
+        let unknown_1 = r.read_u8()?;
         let len_data_file_name = r.read_u32()? as usize;
 
         Ok(BundleFileHeader {
             size,
-            unknown_1,
+            external,
             variant,
+            unknown_1,
             len_data_file_name,
         })
     }
@@ -88,7 +99,7 @@ impl BundleFileVariant {
         W: Write + Seek,
     {
         w.write_u32(self.property)?;
-        w.write_u8(self.unknown_1)?;
+        w.write_bool(self.external)?;
 
         let len_data_file_name = self.data_file_name.as_ref().map(|s| s.len()).unwrap_or(0);
 
@@ -103,6 +114,26 @@ impl BundleFileVariant {
         }
 
         Ok(())
+    }
+}
+
+impl std::fmt::Debug for BundleFileVariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("BundleFileVariant");
+        out.field("property", &self.property);
+
+        if self.data.len() <= 5 {
+            out.field("data", &format!("{:x?}", &self.data));
+        } else {
+            out.field(
+                "data",
+                &format!("{:x?}.. ({} bytes)", &self.data[..5], &self.data.len()),
+            );
+        }
+
+        out.field("data_file_name", &self.data_file_name)
+            .field("external", &self.external)
+            .finish()
     }
 }
 
@@ -204,6 +235,7 @@ impl BundleFile {
                     let s = r
                         .read_string_len(header.len_data_file_name)
                         .wrap_err("Failed to read data file name")?;
+
                     Some(s)
                 } else {
                     None
@@ -216,6 +248,7 @@ impl BundleFile {
                 property: header.variant,
                 data,
                 data_file_name,
+                external: header.external,
                 unknown_1: header.unknown_1,
             };
 
@@ -243,7 +276,7 @@ impl BundleFile {
 
         for variant in self.variants.iter() {
             w.write_u32(variant.property())?;
-            w.write_u8(variant.unknown_1)?;
+            w.write_bool(variant.external)?;
 
             let len_data_file_name = variant.data_file_name().map(|s| s.len()).unwrap_or(0);
 
@@ -359,18 +392,16 @@ impl BundleFile {
         Ok(files)
     }
 
-    #[tracing::instrument(name = "File::decompiled", skip_all)]
+    #[tracing::instrument(
+        name = "File::decompiled",
+        skip_all,
+        fields(file = self.name(false, None), file_type = self.file_type().ext_name(), variants = self.variants.len())
+    )]
     pub async fn decompiled(&self, ctx: &crate::Context) -> Result<Vec<UserFile>> {
         let file_type = self.file_type();
 
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            tracing::debug!(
-                name = self.name(true, None),
-                variants = self.variants.len(),
-                "Attempting to decompile"
-            );
-        }
-
+        // The `Strings` type handles all variants combined.
+        // For the other ones, each variant will be its own file.
         if file_type == BundleFileType::Strings {
             return strings::decompile(ctx, &self.variants);
         }

@@ -348,7 +348,7 @@ fn build_mod_details_info() -> impl Widget<State> {
             let nexus_link = Maybe::or_empty(|| {
                 let link = Label::raw().lens(NexusInfo::id.map(
                     |id| {
-                        let url = format!("https://nexusmods.com/warhammer40kdarktide/mods/{}", id);
+                        let url = format!("https://nexusmods.com/warhammer40kdarktide/mods/{id}");
                         let mut builder = RichTextBuilder::new();
                         builder
                             .push("Open on Nexusmods")

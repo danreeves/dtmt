@@ -147,7 +147,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
 
     let patch_number = matches
         .get_one::<u16>("patch")
-        .map(|num| format!("{:03}", num));
+        .map(|num| format!("{num:03}"));
 
     let output_path = matches
         .get_one::<PathBuf>("output")
@@ -156,7 +156,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             let mut output_path = bundle_path.clone();
 
             if let Some(patch_number) = patch_number.as_ref() {
-                output_path.set_extension(format!("patch_{:03}", patch_number));
+                output_path.set_extension(format!("patch_{patch_number:03}"));
             }
 
             output_path
@@ -196,7 +196,7 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             span.record("output_path", output_path.display().to_string());
             span.record("raw", sub_matches.get_flag("raw"));
             span.record("target_name", target_name.display().to_string());
-            span.record("file_type", format!("{:?}", file_type));
+            span.record("file_type", format!("{file_type:?}"));
         }
     }
 
