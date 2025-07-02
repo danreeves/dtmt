@@ -82,6 +82,11 @@ const LUAJIT_SRC: [&str; 65] = [
 
 fn build_gcc(src_dir: &str) {
     let mut buildcmd = Command::new("make");
+    if let Ok(flags) = env::var("CARGO_MAKEFLAGS") {
+        buildcmd.env("MAKEFLAGS", flags);
+    } else {
+        buildcmd.arg("-j8");
+    }
     buildcmd.current_dir(src_dir);
     buildcmd.stderr(Stdio::inherit());
     buildcmd.arg("--no-silent");
@@ -102,14 +107,10 @@ fn build_gcc(src_dir: &str) {
 
     let mut child = buildcmd.spawn().expect("failed to run make");
 
-    if !child
+    child
         .wait()
         .map(|status| status.success())
-        .map_err(|_| false)
-        .unwrap_or(false)
-    {
-        panic!("Failed to build luajit");
-    }
+        .expect("Failed to build LuaJIT");
 }
 
 fn build_msvc(src_dir: &str, out_dir: &str) {
