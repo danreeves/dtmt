@@ -62,7 +62,7 @@ COPY lib/oodle/*.so lib/oodle/*.a /src/
 FROM linux AS msvc
 
 # renovate: datasource=github-releases depName=llvm packageName=llvm/llvm-project
-ARG LLVM_VERSION=18
+ARG LLVM_VERSION=20
 ENV KEYRINGS /usr/local/share/keyrings
 
 ADD https://apt.llvm.org/llvm-snapshot.gpg.key /root/llvm-snapshot.gpg.key
