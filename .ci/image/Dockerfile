@@ -2,7 +2,7 @@
 FROM debian:bullseye-slim AS xwin
 
 # renovate: datasource=github-releases depName=xwin packageName=Jake-Shadle/xwin
-ARG XWIN_VERSION=0.5.2
+ARG XWIN_VERSION=0.6.6
 ARG XWIN_PREFIX="xwin-$XWIN_VERSION-x86_64-unknown-linux-musl"
 ADD https://github.com/Jake-Shadle/xwin/releases/download/$XWIN_VERSION/$XWIN_PREFIX.tar.gz /root/$XWIN_PREFIX.tar.gz
 
