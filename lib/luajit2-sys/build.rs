@@ -114,7 +114,7 @@ fn build_gcc(src_dir: &str) {
 
 fn build_msvc(src_dir: &str, out_dir: &str) {
     let mut cc = Build::new();
-    // cc can't handle many of the `cland-dl`-specific flags, so
+    // cc can't handle many of the `clang-dl`-specific flags, so
     // we need to port them manually from a `make -n` run.
     cc.out_dir(out_dir)
         // `llvm-as` (which the clang-based toolchain for MSVC would use to compile `lj_vm.S`
@@ -145,7 +145,7 @@ fn build_msvc(src_dir: &str, out_dir: &str) {
 fn main() {
     let luajit_dir = format!("{}/luajit", env!("CARGO_MANIFEST_DIR"));
     let out_dir = env::var("OUT_DIR").unwrap();
-    let src_dir = format!("{}/luajit/src", out_dir);
+    let src_dir = format!("{out_dir}/luajit/src");
 
     dbg!(&luajit_dir);
     dbg!(&out_dir);
@@ -164,20 +164,20 @@ fn main() {
     // sources to re-compile just the library.
     if env::var("CARGO_CFG_WINDOWS").is_ok() {
         build_msvc(&src_dir, &out_dir);
-        println!("cargo:rustc-link-search={}", out_dir);
+        println!("cargo:rustc-link-search={out_dir}");
     } else {
-        println!("cargo:rustc-link-search=native={}", src_dir);
+        println!("cargo:rustc-link-search=native={src_dir}");
     }
 
-    println!("cargo:lib-name={}", LIB_NAME);
-    println!("cargo:include={}", src_dir);
-    println!("cargo:rustc-link-lib=static={}", LIB_NAME);
+    println!("cargo:lib-name={LIB_NAME}");
+    println!("cargo:include={src_dir}");
+    println!("cargo:rustc-link-lib=static={LIB_NAME}");
 
     let mut bindings = bindgen::Builder::default();
 
     for header in LUAJIT_HEADERS {
-        println!("cargo:rerun-if-changed={}/src/{}", luajit_dir, header);
-        bindings = bindings.header(format!("{}/src/{}", luajit_dir, header));
+        println!("cargo:rerun-if-changed={luajit_dir}/src/{header}");
+        bindings = bindings.header(format!("{luajit_dir}/src/{header}"));
     }
 
     let bindings = bindings
