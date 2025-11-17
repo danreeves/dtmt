@@ -1,7 +1,7 @@
 [package]
 name = "dtmm"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["Lucas Schwiderski <lucas@lschwiderski.de>"]
 description = "DTMM is a GUI application to install and manage mods for the game."
 documentation = "https://git.sclu1034.dev/bitsquid_dt/dtmt/wiki"

@@ -1,5 +1,4 @@
 #![feature(io_error_more)]
-#![feature(let_chains)]
 #![feature(test)]
 #![windows_subsystem = "console"]
 
