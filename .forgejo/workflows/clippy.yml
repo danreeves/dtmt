@@ -10,15 +10,6 @@ jobs:
     container:
       image: code.forgejo.org/oci/node:24-trixie
     steps:
-      - name: Install zstd
-        run: |
-          if ! command -v zstd >/dev/null; then
-            apt-get update
-            apt-get install -y --no-install-recommends zstd
-          else
-            echo "zstd already present"
-          fi
-
       - name: actions/checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
@@ -28,17 +19,11 @@ jobs:
         uses: ./.forgejo/actions/apt-cached
         with:
           packages: |
-            build-essential
-            cmake
-            jq
             libatk1.0-dev
             libclang-19-dev
-            libglib2.0-dev
             libgtk-3-dev
-            libpango1.0-dev
             libssl-dev
-            libzstd-dev
-            pkg-config
+            zstd
 
       - name: actions/setup-rust-toolchain
         uses: actions/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0

@@ -47,4 +47,5 @@ runs:
         apt-get install -y --no-install-recommends --download-only $(echo "${{ inputs.packages }}" | tr '\n' ' ')
 
     - name: Install downloaded packages
-      run: dpkg -i /var/cache/apt/archives/*.deb
+      run: |
+        apt-get install -y --no-install-recommends $(echo "${{ inputs.packages }}" | tr '\n' ' ')
