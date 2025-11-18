@@ -36,6 +36,22 @@ jobs:
           # Not currently supported by Forgejo
           matcher: false
 
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            jq \
+            libatk1.0-dev \
+            libclang-13-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libpango1.0-dev \
+            libssl-dev \
+            libzstd-dev \
+            pkg-config
+
       - name: Download Oodle library
         run: |
           cd ./lib/oodle/
@@ -101,6 +117,22 @@ jobs:
           cache-on-failure: "true"
           # Not currently supported by Forgejo
           matcher: false
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            jq \
+            libatk1.0-dev \
+            libclang-13-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libpango1.0-dev \
+            libssl-dev \
+            libzstd-dev \
+            pkg-config
 
       - name: Download Oodle library
         run: |
