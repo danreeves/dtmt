@@ -1,16 +1,16 @@
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
-use clap::{value_parser, Arg, ArgMatches, Command};
-use color_eyre::eyre::{Context, Result};
+use clap::{Arg, ArgMatches, Command, value_parser};
 use color_eyre::Help;
+use color_eyre::eyre::{Context, Result};
 use dtmt_shared::ModConfig;
 use path_slash::{PathBufExt, PathExt};
 use tokio::fs;
-use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
-use zip::write::SimpleFileOptions;
+use tokio_stream::wrappers::ReadDirStream;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::cmd::build::read_project_config;
 

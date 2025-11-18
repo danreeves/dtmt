@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use color_eyre::eyre::{OptionExt as _, WrapErr as _};
 use color_eyre::Result;
+use color_eyre::eyre::{OptionExt as _, WrapErr as _};
 use serde::{Deserialize, Serialize};
 use steamlocate::SteamDir;
 use time::OffsetDateTime;

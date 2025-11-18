@@ -3,12 +3,12 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, value_parser};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report};
 use dtmt_shared::ModConfig;
-use futures::future::try_join_all;
 use futures::StreamExt;
+use futures::future::try_join_all;
 use path_slash::PathExt;
 use sdk::filetype::package::Package;
 use sdk::murmur::IdString64;

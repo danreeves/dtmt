@@ -1,19 +1,19 @@
 use std::fmt::Result;
 
 use ansi_term::Color;
+use time::OffsetDateTime;
 use time::format_description::FormatItem;
 use time::macros::format_description;
-use time::OffsetDateTime;
 use tracing::field::Field;
 use tracing::{Event, Level, Metadata, Subscriber};
 use tracing_error::ErrorLayer;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::FilterFn;
-use tracing_subscriber::fmt::format::{debug_fn, Writer};
+use tracing_subscriber::fmt::format::{Writer, debug_fn};
 use tracing_subscriber::fmt::{self, FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::EnvFilter;
 
 pub const TIME_FORMAT: &[FormatItem] = format_description!("[hour]:[minute]:[second]");
 

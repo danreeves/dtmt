@@ -4,7 +4,7 @@ use std::path::Path;
 
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report, SectionExt};
-use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe, CHUNK_SIZE};
+use oodle::{CHUNK_SIZE, OodleLZ_CheckCRC, OodleLZ_FuzzSafe};
 
 use crate::binary::sync::*;
 use crate::murmur::{HashGroup, IdString64, Murmur64};

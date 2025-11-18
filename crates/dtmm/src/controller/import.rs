@@ -20,11 +20,10 @@ fn find_archive_file<R: Read + Seek>(
     archive: &ZipArchive<R>,
     name: impl AsRef<str>,
 ) -> Option<String> {
-    let path = archive
+    archive
         .file_names()
         .find(|path| path.ends_with(name.as_ref()))
-        .map(|s| s.to_string());
-    path
+        .map(|s| s.to_string())
 }
 
 fn image_data_to_buffer(data: impl AsRef<[u8]>) -> Result<ImageBuf> {

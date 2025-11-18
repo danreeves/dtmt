@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use clap::{value_parser, Arg, ArgMatches, Command};
+use clap::{Arg, ArgMatches, Command, value_parser};
 use color_eyre::eyre::Result;
 
 use sdk::decompress;

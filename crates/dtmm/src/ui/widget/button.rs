@@ -1,6 +1,6 @@
+use druid::WidgetPod;
 use druid::widget::prelude::*;
 use druid::widget::{Click, ControllerHost, Label, LabelText};
-use druid::WidgetPod;
 use druid::{Affine, WidgetExt};
 
 use crate::ui::theme;

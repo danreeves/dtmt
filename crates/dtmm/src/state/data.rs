@@ -9,16 +9,11 @@ use nexusmods::Mod as NexusMod;
 
 use super::SelectedModLens;
 
-#[derive(Copy, Clone, Data, Debug, PartialEq)]
+#[derive(Copy, Clone, Data, Debug, PartialEq, Default)]
 pub(crate) enum View {
+    #[default]
     Mods,
     Settings,
-}
-
-impl Default for View {
-    fn default() -> Self {
-        Self::Mods
-    }
 }
 
 #[derive(Clone, Data, Debug, PartialEq)]

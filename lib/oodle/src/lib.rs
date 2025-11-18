@@ -4,7 +4,7 @@
 
 use std::ptr;
 
-use color_eyre::{eyre, Result};
+use color_eyre::{Result, eyre};
 
 #[allow(dead_code)]
 #[allow(clippy::identity_op)]

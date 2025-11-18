@@ -3,13 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
-use color_eyre::{eyre, Result};
+use color_eyre::{Result, eyre};
 use sdk::murmur::Murmur64;
 use tokio::fs::{self};
 use tokio::io::AsyncWriteExt;
 
 use crate::controller::deploy::{
-    DeploymentData, BOOT_BUNDLE_NAME, BUNDLE_DATABASE_NAME, DEPLOYMENT_DATA_PATH,
+    BOOT_BUNDLE_NAME, BUNDLE_DATABASE_NAME, DEPLOYMENT_DATA_PATH, DeploymentData,
 };
 use crate::state::ActionState;
 

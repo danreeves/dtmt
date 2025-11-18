@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, SectionExt};
 use futures::StreamExt;

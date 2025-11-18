@@ -1,7 +1,7 @@
 use std::{io::Cursor, path::PathBuf};
 
-use clap::{value_parser, Arg, ArgMatches, Command};
-use color_eyre::{eyre::Context as _, Result};
+use clap::{Arg, ArgMatches, Command, value_parser};
+use color_eyre::{Result, eyre::Context as _};
 use sdk::murmur::{HashGroup, IdString64, Murmur64};
 use sdk::{BundleDatabase, FromBinary as _};
 use tokio::fs;

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use clap::parser::ValueSource;
 use clap::value_parser;
-use clap::{command, Arg};
+use clap::{Arg, command};
 use color_eyre::eyre;
 use color_eyre::eyre::{Context, Result};
 use sdk::murmur::Dictionary;

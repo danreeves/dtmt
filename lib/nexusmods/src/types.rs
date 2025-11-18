@@ -110,17 +110,12 @@ pub struct UpdateInfo {
     pub latest_mod_activity: OffsetDateTime,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum UpdatePeriod {
     Day,
+    #[default]
     Week,
     Month,
-}
-
-impl Default for UpdatePeriod {
-    fn default() -> Self {
-        Self::Week
-    }
 }
 
 impl Serialize for UpdatePeriod {
