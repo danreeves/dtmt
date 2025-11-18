@@ -4,10 +4,6 @@ on:
 
 env:
   MANIFEST_VERSION: 16
-  # renovate: datasource=github-releases depName=xwin packageName=Jake-Shadle/xwin
-  XWIN_VERSION: 0.6.7
-  # renovate: datasource=github-releases depName=llvm packageName=llvm/llvm-project
-  LLVM_VERSION: 20
   DEBIAN_FRONTEND: noninteractive
 
 jobs:
