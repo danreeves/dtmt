@@ -1,6 +1,7 @@
 set positional-arguments
 
-fly_target := "main"
+repo := `git_url=$(git remote get-url origin 2>/dev/null || git remote | sed -n '1p'); \
+         printf '%s\n' "$git_url" | sed -n 's/\.git$//; s/.*[:\/]\([[:alnum:]._-]\{1,\}\/[[:alnum:]._-]\{1,\}\)$/\1/p'`
 
 build-perf-dtmt:
     cargo build --profile perf --bin dtmt
@@ -35,27 +36,13 @@ ci-image:
     docker push registry.sclu1034.dev/dtmt-ci-base-msvc
     docker push registry.sclu1034.dev/dtmt-ci-base-linux
 
-set-base-pipeline:
-    fly -t {{fly_target}} set-pipeline \
-        --pipeline dtmt \
-        --config .ci/pipelines/base.yml \
-        -v gitea_api_key=${GITEA_API_KEY} \
-        -v registry_user=${REGISTRY_USER} \
-        -v registry_password=${REGISTRY_PASSWORD} \
-        -v owner=bitsquid_dt \
-        -v repo=dtmt
-
-set-pr-pipeline pr:
-    curl \
-        -H "Authorization: ${GITEA_API_KEY}" \
-        -H 'Accept: application/json' \
-        'https://git.sclu1034.dev/api/v1/repos/bitsquid_dt/dtmt/pulls/{{pr}}' \
-        | yq -y '.' - > 'pr-{{pr}}.yaml'
-    fly -t main set-pipeline \
-        --pipeline dtmt-pr \
-        --config .ci/pipelines/pr.yml \
-        -v gitea_api_key=${GITEA_API_KEY} \
-        -i number={{pr}} \
-        -y branch="$(yq -y '.head.ref' 'pr-{{pr}}.yaml')" \
-        -y pr="$(cat 'pr-{{pr}}.yaml')"
-
+actions workflow *args='':
+    forgejo-runner exec \
+        -W .forgejo/workflows/{{ workflow }}.yml \
+        --container-opts "--volume='${XDG_CACHE_HOME:-$HOME/.local/cache}/forgejo-runner-cache:/cache'" \
+        --forgejo-instance {{ env('FORGEJO_SERVER_URL') }} \
+        --default-actions-url {{ env('FORGEJO_SERVER_URL') }} \
+        --secret RELEASE_TOKEN={{ env('FORGEJO_RELEASE_TOKEN') }} \
+        --secret DOWNLOAD_TOKEN={{ env('LIB_FILE_DOWNLOAD_TOKEN') }} \
+        --env GITHUB_REPOSITORY={{ repo }} \
+        {{ args }}
