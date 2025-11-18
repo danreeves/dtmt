@@ -1,6 +1,11 @@
 on:
   push:
     branches: [master]
+    paths:
+      - crates/
+      - lib/
+      - Cargo.*
+      - .forgejo/workflows/build.yml
 
 env:
   MANIFEST_VERSION: 16
