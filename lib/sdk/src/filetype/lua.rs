@@ -6,9 +6,9 @@ use std::io::Read;
 use std::io::Write;
 use std::process::Command;
 
+use color_eyre::Result;
 use color_eyre::eyre;
 use color_eyre::eyre::Context;
-use color_eyre::Result;
 use luajit2_sys as lua;
 use tokio::fs;
 

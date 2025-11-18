@@ -114,10 +114,9 @@ impl std::fmt::Debug for AsyncAction {
             }
             AsyncAction::SaveSettings(_) => write!(f, "AsyncAction::SaveSettings(_state)"),
             AsyncAction::CheckUpdates(_) => write!(f, "AsyncAction::CheckUpdates(_state)"),
-            AsyncAction::LoadInitial((path, is_default)) => write!(
-                f,
-                "AsyncAction::LoadInitial(({path:?}, {is_default:?}))"
-            ),
+            AsyncAction::LoadInitial((path, is_default)) => {
+                write!(f, "AsyncAction::LoadInitial(({path:?}, {is_default:?}))")
+            }
             AsyncAction::Log(_) => write!(f, "AsyncAction::Log(_)"),
             AsyncAction::NxmDownload(_, uri) => {
                 write!(f, "AsyncAction::NxmDownload(_state, {uri})")

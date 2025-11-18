@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::eyre::{Context, Result};
 use dtmt_shared::ModConfig;
 use notify::{Event, Watcher};
@@ -160,10 +160,8 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
 
         tracing::trace!(?res, ignored, "Received file system event");
 
-        if !ignored {
-            if let Err(err) = tx.send(res) {
-                tracing::error!("Failed to send file system event: {:?}", err);
-            }
+        if !ignored && let Err(err) = tx.send(res) {
+            tracing::error!("Failed to send file system event: {:?}", err);
         }
     })
     .wrap_err("failed to create file system watcher")?;

@@ -1,12 +1,12 @@
 use clap::ValueEnum;
 use tokio::sync::mpsc::UnboundedSender;
 use tracing_error::ErrorLayer;
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::FilterFn;
 use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::debug_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum LogLevel {

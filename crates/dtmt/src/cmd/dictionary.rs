@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command, ValueEnum};
-use cli_table::{print_stdout, WithTitle};
+use clap::{Arg, ArgAction, ArgMatches, Command, ValueEnum, value_parser};
+use cli_table::{WithTitle, print_stdout};
 use color_eyre::eyre::{Context, Result};
 use color_eyre::{Help, SectionExt};
 use sdk::murmur::{IdString64, Murmur32, Murmur64};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio_stream::wrappers::LinesStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::LinesStream;
 
 #[derive(Copy, Clone, PartialEq, ValueEnum)]
 pub enum HashGroup {

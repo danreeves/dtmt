@@ -3,7 +3,7 @@ use druid::{
     Data, Env, Event, EventCtx, ImageBuf, LifeCycle, LifeCycleCtx, Rect, UpdateCtx, Widget,
 };
 
-use crate::state::{State, ACTION_SET_DIRTY, ACTION_START_SAVE_SETTINGS};
+use crate::state::{ACTION_SET_DIRTY, ACTION_START_SAVE_SETTINGS, State};
 
 #[allow(dead_code)]
 pub struct DisabledButtonController;

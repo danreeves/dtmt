@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use clap::{Arg, ArgMatches, Command};
-use color_eyre::eyre::{self, Context, Result};
 use color_eyre::Help;
+use color_eyre::eyre::{self, Context, Result};
 use futures::{StreamExt, TryStreamExt};
 use minijinja::Environment;
 use tokio::fs::{self, DirBuilder};

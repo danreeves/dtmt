@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::{self, Context, OptionExt, Result};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::Help;
+use color_eyre::eyre::{self, Context, OptionExt, Result};
 use path_slash::PathBufExt as _;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};

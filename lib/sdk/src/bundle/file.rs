@@ -3,7 +3,7 @@ use std::path::Path;
 
 use bitflags::bitflags;
 use color_eyre::eyre::Context;
-use color_eyre::{eyre, Result};
+use color_eyre::{Result, eyre};
 use futures::future::join_all;
 
 use crate::binary::sync::*;

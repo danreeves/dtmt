@@ -7,28 +7,28 @@ use druid::widget::{
     Checkbox, CrossAxisAlignment, Either, Flex, Image, Label, LineBreaking, List,
     MainAxisAlignment, Maybe, Scroll, SizedBox, Split, Svg, SvgData, TextBox, ViewSwitcher,
 };
-use druid::{lens, Env};
 use druid::{
     Color, FileDialogOptions, FileSpec, FontDescriptor, FontFamily, LensExt, SingleUse, Widget,
     WidgetExt, WindowDesc, WindowId,
 };
 use druid::{Data, ImageBuf, LifeCycleCtx};
+use druid::{Env, lens};
 use druid_widget_nursery::WidgetExt as _;
 use lazy_static::lazy_static;
 
 use crate::state::{
-    ModInfo, NexusInfo, NexusInfoLens, State, View, ACTION_ADD_MOD, ACTION_OPEN_LINK,
-    ACTION_SELECTED_MOD_DOWN, ACTION_SELECTED_MOD_UP, ACTION_SELECT_MOD, ACTION_SET_WINDOW_HANDLE,
-    ACTION_START_CHECK_UPDATE, ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY,
-    ACTION_START_RESET_DEPLOYMENT,
+    ACTION_ADD_MOD, ACTION_OPEN_LINK, ACTION_SELECT_MOD, ACTION_SELECTED_MOD_DOWN,
+    ACTION_SELECTED_MOD_UP, ACTION_SET_WINDOW_HANDLE, ACTION_START_CHECK_UPDATE,
+    ACTION_START_DELETE_SELECTED_MOD, ACTION_START_DEPLOY, ACTION_START_RESET_DEPLOYMENT, ModInfo,
+    NexusInfo, NexusInfoLens, State, View,
 };
-use crate::ui::theme::{self, ColorExt, COLOR_GREEN_LIGHT};
+use crate::ui::theme::{self, COLOR_GREEN_LIGHT, ColorExt};
+use crate::ui::widget::PathBufFormatter;
 use crate::ui::widget::border::Border;
 use crate::ui::widget::button::Button;
 use crate::ui::widget::controller::{
     AutoScrollController, DirtyStateController, ImageLensController,
 };
-use crate::ui::widget::PathBufFormatter;
 
 lazy_static! {
     pub static ref WINDOW_ID: WindowId = WindowId::next();

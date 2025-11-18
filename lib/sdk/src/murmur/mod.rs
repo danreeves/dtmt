@@ -20,7 +20,7 @@ pub use dictionary::{Dictionary, Entry, HashGroup};
 pub use idstring32::*;
 pub use idstring64::*;
 pub use murmurhash64::hash;
-pub use murmurhash64::hash32;
 pub use murmurhash64::hash_inverse as inverse;
+pub use murmurhash64::hash32;
 
 pub use types::*;

@@ -1,17 +1,19 @@
-use color_eyre::{eyre::Context, Help, Result, SectionExt};
+use color_eyre::{Help, Result, SectionExt, eyre::Context};
 use csv_async::{AsyncDeserializer, AsyncSerializer};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_stream::StreamExt;
 
-use super::{murmurhash64, Murmur32, Murmur64, SEED};
+use super::{Murmur32, Murmur64, SEED, murmurhash64};
 
 #[derive(Copy, Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum HashGroup {
     Filename,
     Filetype,
     Strings,
+    #[default]
     Other,
 }
 
@@ -29,12 +31,6 @@ impl std::fmt::Display for HashGroup {
             HashGroup::Strings => write!(f, "strings"),
             HashGroup::Other => write!(f, "other"),
         }
-    }
-}
-
-impl Default for HashGroup {
-    fn default() -> Self {
-        Self::Other
     }
 }
 

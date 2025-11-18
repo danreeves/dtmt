@@ -1,26 +1,26 @@
 use std::sync::Arc;
 
-use color_eyre::eyre::Context;
 use color_eyre::Help;
 use color_eyre::Report;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use druid::{ExtEventSink, SingleUse, Target};
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 
-use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::controller::app::*;
 use crate::controller::deploy::deploy_mods;
 use crate::controller::game::*;
 use crate::controller::import::*;
-use crate::state::AsyncAction;
 use crate::state::ACTION_FINISH_CHECK_UPDATE;
 use crate::state::ACTION_FINISH_LOAD_INITIAL;
 use crate::state::ACTION_FINISH_SAVE_SETTINGS;
 use crate::state::ACTION_SHOW_ERROR_DIALOG;
+use crate::state::AsyncAction;
 use crate::state::{
     ACTION_FINISH_ADD_MOD, ACTION_FINISH_DELETE_SELECTED_MOD, ACTION_FINISH_DEPLOY,
     ACTION_FINISH_RESET_DEPLOYMENT, ACTION_LOG,

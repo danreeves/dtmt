@@ -2,11 +2,11 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::{value_parser, Arg, ArgAction, ArgMatches, Command};
-use color_eyre::eyre::{self, bail, Context, Result};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
+use color_eyre::eyre::{self, Context, Result, bail};
 use color_eyre::{Help, Report};
-use futures::future::try_join_all;
 use futures::StreamExt;
+use futures::future::try_join_all;
 use glob::Pattern;
 use sdk::{Bundle, BundleFile, CmdLine};
 use tokio::fs;

@@ -4,14 +4,14 @@ use std::io::Read;
 use std::io::Seek;
 use std::io::Write;
 
-use color_eyre::eyre;
 use color_eyre::Result;
+use color_eyre::eyre;
 
-use crate::binary::sync::*;
+use crate::Bundle;
 use crate::binary::FromBinary;
 use crate::binary::ToBinary;
+use crate::binary::sync::*;
 use crate::murmur::Murmur64;
-use crate::Bundle;
 
 use super::filetype::BundleFileType;
 

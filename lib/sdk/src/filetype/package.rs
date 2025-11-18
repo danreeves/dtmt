@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use async_recursion::async_recursion;
-use color_eyre::eyre::{self, Context};
 use color_eyre::Result;
+use color_eyre::eyre::{self, Context};
 use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
@@ -300,8 +300,8 @@ mod test {
 
     use crate::bundle::filetype::BundleFileType;
 
-    use super::resolve_wildcard;
     use super::Package;
+    use super::resolve_wildcard;
 
     #[test]
     fn to_binary_empty_package() {

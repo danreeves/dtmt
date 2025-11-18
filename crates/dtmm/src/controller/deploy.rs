@@ -4,9 +4,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
-use color_eyre::{eyre, Help, Report, Result};
+use color_eyre::{Help, Report, Result, eyre};
 use futures::StreamExt;
-use futures::{stream, TryStreamExt};
+use futures::{TryStreamExt, stream};
 use minijinja::Environment;
 use sdk::filetype::lua;
 use sdk::filetype::package::Package;
@@ -660,44 +660,43 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
 
     tracing::debug!(?game_info, ?deployment_info);
 
-    if let Some(game_info) = game_info {
-        if deployment_info
+    if let Some(game_info) = game_info
+        && deployment_info
             .as_ref()
             .map(|i| game_info.last_updated > i.timestamp)
             .unwrap_or(false)
-        {
-            tracing::warn!(
-                "Game was updated since last mod deployment. \
+    {
+        tracing::warn!(
+            "Game was updated since last mod deployment. \
                     Attempting to reconcile game files."
-            );
+        );
 
-            tokio::try_join!(
-                async {
-                    let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
-                    let backup_path = path.with_extension("data.bak");
+        tokio::try_join!(
+            async {
+                let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
+                let backup_path = path.with_extension("data.bak");
 
-                    fs::copy(&path, &backup_path)
-                        .await
-                        .wrap_err("Failed to re-create backup for bundle database.")
-                },
-                async {
-                    let path = bundle_dir.join(boot_bundle_path);
-                    let backup_path = path.with_extension("bak");
+                fs::copy(&path, &backup_path)
+                    .await
+                    .wrap_err("Failed to re-create backup for bundle database.")
+            },
+            async {
+                let path = bundle_dir.join(boot_bundle_path);
+                let backup_path = path.with_extension("bak");
 
-                    fs::copy(&path, &backup_path)
-                        .await
-                        .wrap_err("Failed to re-create backup for boot bundle")
-                }
-            )
-            .with_suggestion(|| {
-                "Reset the game using 'Reset Game', then verify game files.".to_string()
-            })?;
+                fs::copy(&path, &backup_path)
+                    .await
+                    .wrap_err("Failed to re-create backup for boot bundle")
+            }
+        )
+        .with_suggestion(|| {
+            "Reset the game using 'Reset Game', then verify game files.".to_string()
+        })?;
 
-            tracing::info!(
-                "Successfully re-created game file backups. \
+        tracing::info!(
+            "Successfully re-created game file backups. \
                     Continuing mod deployment."
-            );
-        }
+        );
     }
 
     check_mod_order(&state)?;

@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Help, Report, Result};
-use druid::im::Vector;
 use druid::ImageBuf;
+use druid::im::Vector;
 use dtmt_shared::ModConfig;
 use nexusmods::Api as NexusApi;
 use tokio::fs::{self, DirEntry, File};
-use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReadDirStream;
 
 use crate::state::{ActionState, InitialLoadResult, ModInfo, ModOrder, NexusInfo, PackageInfo};
 use crate::util;
