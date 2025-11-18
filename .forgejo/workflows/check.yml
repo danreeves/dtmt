@@ -38,19 +38,19 @@ jobs:
           matcher: false
 
       - name: Install dependencies
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential \
-            cmake \
-            jq \
-            libatk1.0-dev \
-            libclang-19-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libpango1.0-dev \
-            libssl-dev \
-            libzstd-dev \
+        uses: ./.forgejo/actions/apt-cached
+        with:
+          packages: |
+            build-essential
+            cmake
+            jq
+            libatk1.0-dev
+            libclang-19-dev
+            libglib2.0-dev
+            libgtk-3-dev
+            libpango1.0-dev
+            libssl-dev
+            libzstd-dev
             pkg-config
 
       - name: Download Oodle library
