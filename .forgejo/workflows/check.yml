@@ -103,7 +103,7 @@ jobs:
         # with Forgejo
         uses: https://code.forgejo.org/forgejo/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
-          name: linux-amd64.zip
+          name: linux-amd64
           path: |
             target/release-lto/dtmt
             target/release-lto/dtmm
@@ -172,7 +172,7 @@ jobs:
         # with Forgejo
         uses: https://code.forgejo.org/forgejo/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
         with:
-          name: windows-x86_64.zip
+          name: windows-x86_64
           path: |
             target/x86_64-pc-windows-msvc/release/dtmt.exe
             target/x86_64-pc-windows-msvc/release/dtmm.exe
