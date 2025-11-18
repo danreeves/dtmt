@@ -168,5 +168,5 @@ jobs:
         with:
           name: windows
           path: |
-            target/x86_64-pc-windows-msvc/dtmt.exe
-            target/x86_64-pc-windows-msvc/dtmm.exe
+            target/x86_64-pc-windows-msvc/release/dtmt.exe
+            target/x86_64-pc-windows-msvc/release/dtmm.exe

@@ -128,7 +128,7 @@ jobs:
           cargo build --color always --locked --release --target x86_64-pc-windows-msvc -Zbuild-std
 
       - name: Test
-        run: wine ./target/x86_64-pc-windows-msvc/dtmt.exe --version
+        run: wine ./target/x86_64-pc-windows-msvc/release/dtmt.exe --version
 
       - name: Upload artifact
         # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
@@ -137,8 +137,8 @@ jobs:
         with:
           name: windows
           path: |
-            target/x86_64-pc-windows-msvc/dtmt.exe
-            target/x86_64-pc-windows-msvc/dtmm.exe
+            target/x86_64-pc-windows-msvc/release/dtmt.exe
+            target/x86_64-pc-windows-msvc/release/dtmm.exe
 
   package:
     runs-on: docker
