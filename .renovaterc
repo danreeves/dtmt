@@ -13,7 +13,6 @@
   ],
   "ignorePaths": [
     "lib/color_eyre/**",
-    "lib/ansi-parser/**",
     "lib/luajit2-sys/**",
     "**/target/**"
   ],
