@@ -1,0 +1,151 @@
+on:
+  push:
+    tags: ["v.*"]
+
+env:
+  MANIFEST_VERSION: 16
+  # renovate: datasource=github-releases depName=xwin packageName=Jake-Shadle/xwin
+  XWIN_VERSION: 0.6.7
+  # renovate: datasource=github-releases depName=llvm packageName=llvm/llvm-project
+  LLVM_VERSION: 20
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build-linux:
+    runs-on: docker
+    container:
+      image: code.forgejo.org/oci/node:24-trixie
+    steps:
+      - name: Install zstd
+        run: |
+          if ! command -v zstd >/dev/null; then
+            apt-get update
+            apt-get install -y --no-install-recommends zstd
+          else
+            echo "zstd already present"
+          fi
+
+      - name: actions/checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: actions/setup-rust-toolchain
+        uses: actions/setup-rust-toolchain@fb51252c7ba57d633bc668f941da052e410add48 # v1.13.0
+        with:
+          # Not currently supported by Forgejo
+          matcher: false
+
+      - name: Download Oodle library
+        run: |
+          cd ./lib/oodle/
+          curl -LO https://download.sclu1034.dev/hidden/${{ secrets.DOWNLOAD_TOKEN }}/liboo2corelinux64.a
+
+      - name: Run build
+        run: cargo build --color always --locked --profile release-lto
+
+      - name: Test
+        run: ./target/release-lto/dtmt --version
+
+      - name: Upload artifact
+        # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
+        # with Forgejo
+        uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e
+        with:
+          name: linux
+          path: |
+            target/release-lto/dtmt
+            target/release-lto/dtmm
+
+  build-windows:
+    runs-on: docker
+    container:
+      image: git.sclu1034.dev/lucas/rust-xwin:1.91.1-20
+    steps:
+      - name: Create cache directory
+        run: |
+          mkdir -p /cache
+
+      - name: Cache xwin output
+        if: ${{ forgejo.actions }}
+        id: cache-xwin-data
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            /cache/xwin
+            /xwin
+          key: xwin-data-${{ env.MANIFEST_VERSION }}
+
+      - name: Download Windows SDK
+        if: steps.cache-xwin-data.outputs.cache-hit != 'true'
+        run: |
+          xwin \
+            --log-level info \
+            --cache-dir /cache/xwin \
+            --manifest-version ${{ env.MANIFEST_VERSION }} \
+            --accept-license \
+            splat \
+            --copy \
+            --output /xwin
+          # Print an empty line to fix the last line being overwritten in TTYs
+          echo ""
+
+      - name: actions/checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: actions/rust-cache
+        uses: actions/rust-cache@f13886b937689c021905a6b90929199931d60db1 #v2.8.1
+        with:
+          cache-on-failure: "true"
+          # Not currently supported by Forgejo
+          matcher: false
+
+      - name: Download Oodle library
+        run: |
+          cd ./lib/oodle/
+          curl -LO https://download.sclu1034.dev/hidden/${{ secrets.DOWNLOAD_TOKEN }}/oo2core_win64.lib
+
+      - name: Run build
+        run: |
+          cargo build --color always --locked --release --target x86_64-pc-windows-msvc -Zbuild-std
+
+      - name: Test
+        run: wine ./target/x86_64-pc-windows-msvc/dtmt.exe --version
+
+      - name: Upload artifact
+        # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
+        # with Forgejo
+        uses: https://code.forgejo.org/forgejo/upload-artifact@16871d9e8cfcf27ff31822cac382bbb5450f1e1e
+        with:
+          name: windows
+          path: |
+            target/x86_64-pc-windows-msvc/dtmt.exe
+            target/x86_64-pc-windows-msvc/dtmm.exe
+
+  package:
+    runs-on: docker
+    container:
+      image: code.forgejo.org/oci/node:24-trixie
+    needs:
+      - build-linux
+      - build-windows
+    steps:
+      - name: Download artifacts
+        # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
+        # with Forgejo
+        uses: https://code.forgejo.org/forgejo/download-artifact@d8d0a99033603453ad2255e58720b460a0555e1e
+        with:
+          path: release
+
+      - name: Verify artifacts exist
+        working-directory: release
+        run: |
+          for f in dtmt dtmm dtmt.exe dtmm.exe; do
+            test -f $f
+            sha256sum $f > $f.sha256
+          done
+
+      - name: Create release
+        uses: https://code.forgejo.org/actions/forgejo-release@fc0488c944626f9265d87fbc4dd6c08f78014c63 # v2.7.3
+        with:
+          direction: upload
+          token: ${{ secrets.RELEASE_TOKEN }}
+          dir: ./release
