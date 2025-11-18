@@ -1,5 +1,4 @@
 #![recursion_limit = "256"]
-#![feature(let_chains)]
 #![feature(iterator_try_collect)]
 #![windows_subsystem = "windows"]
 
@@ -7,15 +6,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::parser::ValueSource;
-use clap::{command, value_parser, Arg};
+use clap::{Arg, command, value_parser};
 use color_eyre::eyre::{self, Context};
 use color_eyre::{Report, Result, Section};
 use druid::AppLauncher;
-use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions};
+use interprocess::local_socket::{GenericNamespaced, ListenerOptions, prelude::*};
 use tokio::sync::RwLock;
 
 use crate::controller::worker::work_thread;
-use crate::state::{AsyncAction, ACTION_HANDLE_NXM};
+use crate::state::{ACTION_HANDLE_NXM, AsyncAction};
 use crate::state::{Delegate, State};
 use crate::ui::theme;
 use crate::util::log::LogLevel;
