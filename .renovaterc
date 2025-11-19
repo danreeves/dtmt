@@ -44,8 +44,8 @@
         "patch",
         "minor"
       ],
-      "matchDatasources": [
-        "crate"
+      "matchManagers": [
+        "cargo"
       ],
       "automerge": true
     }
