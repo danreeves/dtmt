@@ -60,7 +60,7 @@ tracing = { version = "0.1.37", features = ["async-await"] }
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
 usvg = "0.25.0"
-zip = { version = "4.0.0", default-features = false, features = ["deflate", "bzip2", "zstd", "time"] }
+zip = { version = "6.0.0", default-features = false, features = ["deflate", "bzip2", "zstd", "time"] }
 
 [profile.dev.package.backtrace]
 opt-level = 3
