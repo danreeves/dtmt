@@ -68,7 +68,7 @@ jobs:
       - name: Upload artifact
         # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
         # with Forgejo
-        uses: https://code.forgejo.org/forgejo/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: linux-amd64
           path: |
@@ -137,7 +137,7 @@ jobs:
       - name: Upload artifact
         # Currently pinned to a custom fork, as the official `actions/cache` doesn't work
         # with Forgejo
-        uses: https://code.forgejo.org/forgejo/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        uses: https://code.forgejo.org/forgejo/upload-artifact@v4
         with:
           name: windows-x86_64
           path: |
