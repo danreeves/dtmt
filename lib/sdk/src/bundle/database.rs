@@ -69,7 +69,10 @@ impl BundleDatabase {
 
     pub fn add_bundle(&mut self, bundle: &Bundle) {
         let hash = bundle.name().to_murmur64();
-        let name = hash.to_string();
+        // The game stores these names as lower-case hex. Using the `Murmur64`
+        // `Display` impl would produce upper-case, which does not match the
+        // existing entry and causes a duplicate to be appended.
+        let name = format!("{:016x}", u64::from(hash));
         let stream = format!("{}.stream", &name);
 
         tracing::trace!(

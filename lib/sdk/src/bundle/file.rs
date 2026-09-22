@@ -26,6 +26,11 @@ pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
     data_file_name: Option<String>,
+    /// Declared byte length of the data file name field in the bundle. The game
+    /// stores the name in a slot that can be longer than the string itself,
+    /// padding it with NUL bytes. `read_string_len` strips that padding, so the
+    /// original length is kept here to write the field back byte-for-byte.
+    data_file_name_len: usize,
     /// Contents of the external data file referenced by `data_file_name`.
     /// Not part of the serialized bundle; used to carry streamed data files
     /// from compilation to the build/deploy step.
@@ -44,10 +49,26 @@ impl BundleFileVariant {
             property: 0,
             data: Vec::new(),
             data_file_name: None,
+            data_file_name_len: 0,
             external_data: None,
             external: false,
             unknown_1: 0,
         }
+    }
+
+    /// The data file name padded with NUL bytes up to the length the bundle
+    /// declares for the field. Writing only the trimmed string would shift all
+    /// following file data and corrupt the bundle.
+    fn data_file_name_bytes(&self) -> Vec<u8> {
+        let Some(name) = &self.data_file_name else {
+            return Vec::new();
+        };
+
+        let mut bytes = name.as_bytes().to_vec();
+        if bytes.len() < self.data_file_name_len {
+            bytes.resize(self.data_file_name_len, 0);
+        }
+        bytes
     }
 
     pub fn set_data(&mut self, data: Vec<u8>) {
@@ -70,9 +91,20 @@ impl BundleFileVariant {
         self.data_file_name.as_ref()
     }
 
+    /// Byte length the bundle declares for the data file name field, including
+    /// any NUL padding.
+    pub fn data_file_name_len(&self) -> usize {
+        if self.data_file_name.is_some() {
+            self.data_file_name_len
+        } else {
+            0
+        }
+    }
+
     /// Sets the name and contents of the external data file this variant
     /// references. The contents are written out separately from the bundle.
     pub fn set_external_data_file(&mut self, name: String, data: Vec<u8>) {
+        self.data_file_name_len = name.len();
         self.data_file_name = Some(name);
         self.external_data = Some(data);
     }
@@ -122,7 +154,11 @@ impl BundleFileVariant {
         w.write_u32(self.property)?;
         w.write_bool(self.external)?;
 
-        let len_data_file_name = self.data_file_name.as_ref().map(|s| s.len()).unwrap_or(0);
+        let len_data_file_name = if self.data_file_name.is_some() {
+            self.data_file_name_len
+        } else {
+            0
+        };
 
         if props.contains(Properties::DATA) {
             w.write_u32(len_data_file_name as u32)?;
@@ -240,13 +276,13 @@ impl BundleFile {
             );
             let _enter = span.enter();
 
-            let (data, data_file_name) = if props.contains(Properties::DATA) {
+            let (data, data_file_name, data_file_name_len) = if props.contains(Properties::DATA) {
                 let data = vec![];
                 let s = r
                     .read_string_len(header.size)
                     .wrap_err("Failed to read data file name")?;
 
-                (data, Some(s))
+                (data, Some(s), header.size)
             } else {
                 let mut data = vec![0; header.size];
                 r.read_exact(&mut data)
@@ -262,13 +298,14 @@ impl BundleFile {
                     None
                 };
 
-                (data, data_file_name)
+                (data, data_file_name, header.len_data_file_name)
             };
 
             let variant = BundleFileVariant {
                 property: header.variant,
                 data,
                 data_file_name,
+                data_file_name_len,
                 external_data: None,
                 external: header.external,
                 unknown_1: header.unknown_1,
@@ -300,7 +337,7 @@ impl BundleFile {
             w.write_u32(variant.property())?;
             w.write_bool(variant.external)?;
 
-            let len_data_file_name = variant.data_file_name().map(|s| s.len()).unwrap_or(0);
+            let len_data_file_name = variant.data_file_name_len();
 
             if self.props.contains(Properties::DATA) {
                 w.write_u32(len_data_file_name as u32)?;
@@ -315,9 +352,7 @@ impl BundleFile {
 
         for variant in self.variants.iter() {
             w.write_all(&variant.data)?;
-            if let Some(s) = &variant.data_file_name {
-                w.write_all(s.as_bytes())?;
-            }
+            w.write_all(&variant.data_file_name_bytes())?;
         }
 
         Ok(w.into_inner())

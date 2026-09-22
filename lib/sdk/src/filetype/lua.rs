@@ -1,6 +1,4 @@
 use std::env;
-use std::ffi::CStr;
-use std::ffi::CString;
 use std::io::Cursor;
 use std::io::Read;
 use std::io::Write;
@@ -9,7 +7,6 @@ use std::process::Command;
 use color_eyre::Result;
 use color_eyre::eyre;
 use color_eyre::eyre::Context;
-use luajit2_sys as lua;
 use tokio::fs;
 
 use crate::binary::sync::ReadExt;
@@ -29,12 +26,12 @@ where
     let length = {
         let mut r = Cursor::new(data);
         // The first u32 is always zero, the second is the length of the
-        // magic + bytecode section.
+        // payload that follows the 24-byte header.
         r.skip_u32(0)?;
         r.read_u32()? as usize
     };
 
-    // The game wraps LuaJIT bytecode in a 24-byte header (see `compile`).
+    // The game wraps Lua files in a 24-byte header (see `compile`).
     let content = &data[24..];
     eyre::ensure!(
         content.len() == length,
@@ -42,6 +39,16 @@ where
         length,
         content.len()
     );
+
+    // Lua files may contain plain source instead of LuaJIT bytecode. Those can
+    // simply be written out as-is.
+    let is_bytecode = content.len() >= 4
+        && u32::from_le_bytes([content[0], content[1], content[2], content[3]])
+            == BITSQUID_LUAJIT_HEADER;
+
+    if !is_bytecode {
+        return Ok(vec![UserFile::new(content.to_vec())]);
+    }
 
     let name = {
         let mut r = Cursor::new(content);
@@ -131,99 +138,19 @@ pub fn compile(name: impl Into<IdString64>, code: impl AsRef<str>) -> Result<Bun
         code.len()
     );
 
-    let bytecode = unsafe {
-        let state = lua::luaL_newstate();
-        lua::luaL_openlibs(state);
-
-        let name = CString::new(format!("@{}", name.display()).into_bytes())
-            .wrap_err_with(|| format!("Cannot convert name into CString: {}", name.display()))?;
-        match lua::luaL_loadbuffer(
-            state,
-            code.as_ptr() as _,
-            code.len() as _,
-            name.as_ptr() as _,
-        ) as u32
-        {
-            lua::LUA_OK => {}
-            lua::LUA_ERRSYNTAX => {
-                let err = lua::lua_tostring(state, -1);
-                let err = CStr::from_ptr(err).to_string_lossy().to_string();
-
-                lua::lua_close(state);
-
-                eyre::bail!("Invalid syntax: {}", err);
-            }
-            lua::LUA_ERRMEM => {
-                lua::lua_close(state);
-                eyre::bail!("Failed to allocate sufficient memory to compile LuaJIT bytecode")
-            }
-            _ => unreachable!(),
-        }
-        lua::lua_setglobal(state, c"fn".as_ptr());
-
-        let run = c"return string.dump(fn, false)";
-        match lua::luaL_loadstring(state, run.as_ptr()) as u32 {
-            lua::LUA_OK => {}
-            lua::LUA_ERRSYNTAX => {
-                let err = lua::lua_tostring(state, -1);
-                let err = CStr::from_ptr(err).to_string_lossy().to_string();
-
-                lua::lua_close(state);
-
-                eyre::bail!("Invalid syntax: {}", err);
-            }
-            lua::LUA_ERRMEM => {
-                lua::lua_close(state);
-                eyre::bail!("Failed to allocate sufficient memory to compile LuaJIT bytecode")
-            }
-            _ => unreachable!(),
-        }
-
-        match lua::lua_pcall(state, 0, 1, 0) as u32 {
-            lua::LUA_OK => {
-                // The binary data is pretty much guaranteed to contain NUL bytes,
-                // so we can't rely on `lua_tostring` and `CStr` here. Instead we have to
-                // explicitely query the string length and build our vector from that.
-                // However, on the bright side, we don't have to go through any string types anymore,
-                // and can instead treat it as raw bytes immediately.
-                let mut len = 0;
-                let data = lua::lua_tolstring(state, -1, &mut len) as *const u8;
-                let data = std::slice::from_raw_parts(data, len).to_vec();
-
-                lua::lua_close(state);
-
-                data
-            }
-            lua::LUA_ERRRUN => {
-                let err = lua::lua_tostring(state, -1);
-                let err = CStr::from_ptr(err).to_string_lossy().to_string();
-
-                lua::lua_close(state);
-
-                eyre::bail!("Failed to compile LuaJIT bytecode: {}", err);
-            }
-            lua::LUA_ERRMEM => {
-                lua::lua_close(state);
-                eyre::bail!("Failed to allocate sufficient memory to compile LuaJIT bytecode")
-            }
-            // We don't use an error handler function, so this should be unreachable
-            lua::LUA_ERRERR => unreachable!(),
-            _ => unreachable!(),
-        }
-    };
-
-    // The game wraps LuaJIT bytecode in a 24-byte header.
-    let mut data = Cursor::new(Vec::with_capacity(bytecode.len() + 24));
+    // The game's Lua loader also accepts plain source files (this is what DML
+    // ships in its patch bundle), which avoids having to match Fatshark's
+    // LuaJIT bytecode version. So we store the source directly instead of
+    // pre-compiling it to bytecode.
+    let mut data = Cursor::new(Vec::with_capacity(code.len() + 24));
     data.write_u32(0)?;
-    data.write_u32(bytecode.len() as u32)?;
+    data.write_u32(code.len() as u32)?;
     // TODO: Figure out what these values are
-    data.write_u32(0x28)?;
+    data.write_u32(0x1c)?;
     data.write_u32(0x2)?;
     data.write_u32(0x0)?;
-    data.write_u32((bytecode.len() + 0x28) as u32)?;
-    // Use Fatshark's custom magic bytes
-    data.write_all(&[0x1b, 0x46, 0x53, 0x82])?;
-    data.write_all(&bytecode[4..])?;
+    data.write_u32(0x0)?;
+    data.write_all(code.as_bytes())?;
 
     let mut file = BundleFile::new(name, BundleFileType::Lua);
     let mut variant = BundleFileVariant::new();

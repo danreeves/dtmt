@@ -96,6 +96,18 @@ fn main() -> Result<()> {
                 .help("An `nxm://` URI to download")
                 .required(false),
         )
+        .arg(
+            Arg::new("deploy")
+                .long("deploy")
+                .action(clap::ArgAction::SetTrue)
+                .help("Deploy all enabled mods and exit (headless)"),
+        )
+        .arg(
+            Arg::new("reset")
+                .long("reset")
+                .action(clap::ArgAction::SetTrue)
+                .help("Reset the mod deployment and exit (headless)"),
+        )
         .get_matches();
 
     let level = if matches.value_source("log-level") == Some(ValueSource::DefaultValue) {
@@ -106,6 +118,55 @@ fn main() -> Result<()> {
 
     if let Some(uri) = matches.get_one::<String>("nxm") {
         return notify_nxm_download(uri, level).wrap_err("Failed to send NXM Uri to main window.");
+    }
+
+    if matches.get_flag("deploy") || matches.get_flag("reset") {
+        let reset = matches.get_flag("reset");
+
+        util::log::create_tracing_subscriber(level, None);
+
+        let config_path = matches
+            .get_one::<PathBuf>("config")
+            .cloned()
+            .expect("argument has default value");
+        let is_config_default = matches.value_source("config") == Some(ValueSource::DefaultValue);
+
+        let rt = tokio::runtime::Runtime::new()?;
+
+        return rt.block_on(async move {
+            let (config, mods) = crate::controller::app::load_initial(config_path, is_config_default)
+                .await
+                .wrap_err("Failed to load config")?;
+
+            let data_dir = config.data_dir.clone();
+
+            let state = crate::state::ActionState {
+                mods,
+                game_dir: Arc::new(config.game_dir.unwrap_or_default()),
+                mod_dir: Arc::new(config.data_dir.join("mods")),
+                data_dir: Arc::new(config.data_dir),
+                config_path: Arc::new(config.path),
+                ctx: Arc::new(sdk::Context::new()),
+                nexus_api_key: Arc::new(config.nexus_api_key.unwrap_or_default()),
+                is_io_enabled: config.unsafe_io,
+            };
+
+            let result = if reset {
+                crate::controller::game::reset_mod_deployment(state).await
+            } else {
+                crate::controller::deploy::deploy_mods(state).await
+            };
+
+            let status = match &result {
+                Ok(()) => "OK".to_string(),
+                Err(err) => format!("{err:?}"),
+            };
+            let _ = std::fs::write(data_dir.join("deploy-result.txt"), status);
+
+            result.wrap_err("Headless deploy/reset failed")?;
+
+            Ok(())
+        });
     }
 
     let (log_tx, log_rx) = tokio::sync::mpsc::unbounded_channel();
