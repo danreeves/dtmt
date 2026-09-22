@@ -113,8 +113,9 @@ log("mod_main", "'scripts/main' loaded")
 -- (created by `boot_state_init_managers`) and the game's foundation scripts
 -- are available (`boot_state_load_boot_assets` already ran).
 --
--- The engine still looks for `scripts/mod_main` -- a leftover from the mod
--- manager Fatshark removed -- which is what lets us run this at all. Note that
+-- DTMM points `boot_script` in `bundle/application_settings/settings_common.ini`
+-- at this file (the game ships `scripts/main` there), so the engine loads it
+-- during startup, and this file then requires the real `scripts/main`. Note that
 -- `IS_MODDED` is derived from the `Mods` global in `boot_state_set_globals`,
 -- so setting it above is what marks the session as modded.
 local BOOT_STATE_LOAD_MODS_PATH = "scripts/mods/boot_state_load_mods"
