@@ -1,0 +1,6 @@
+# The project requires a nightly toolchain: the crates use unstable features
+# (see the `#![feature(...)]` attributes) and `rust-toolchain.toml` requests
+# `nightly`. mise's `rust` tool sets `RUSTUP_TOOLCHAIN`, which would override
+# that file, so pin the toolchain here as well.
+[tools]
+rust = "nightly"

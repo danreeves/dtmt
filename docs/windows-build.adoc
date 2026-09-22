@@ -1,0 +1,89 @@
+= Building on Windows
+:idprefix:
+:idseparator:
+:toc: macro
+:toclevels: 2
+
+Building the project natively on Windows requires a nightly Rust toolchain, a
+MinGW-w64 C toolchain, and the proprietary Oodle compression library. The
+sections below cover each of them.
+
+toc::[]
+
+== Rust toolchain
+
+The crates use unstable features (see the `#![feature(...)]` attributes), so a
+nightly toolchain is required. This is already declared in `rust-toolchain.toml`,
+but tools such as https://mise.jdx.dev[mise] set `RUSTUP_TOOLCHAIN`, which
+overrides that file. The repository therefore also ships a `.mise.toml` that
+pins the toolchain:
+
+[source,console]
+----
+$ rustup toolchain install nightly
+$ mise install
+----
+
+== C toolchain (MinGW-w64)
+
+`lib/luajit2-sys` builds LuaJIT from source. On Windows, `build.rs` first uses a
+MinGW-w64 host compiler (invoked as `gcc` and `x86_64-w64-mingw32-gcc`) to build
+LuaJIT's tools and `lj_vm.o`, and then compiles the library itself with MSVC.
+
+https://github.com/skeeto/w64devkit[w64devkit] provides a self-contained
+toolchain (GCC, `make`, and BusyBox `uname`/`sh`). Extract it and put its `bin`
+directory on `PATH` for the build:
+
+[source,console]
+----
+$ export PATH="$HOME/w64devkit/w64devkit/bin:$PATH"
+----
+
+NOTE: w64devkit does not need to be installed system-wide. Running the build from
+a shell that has its `bin` directory on `PATH` is enough.
+
+== Oodle
+
+`lib/oodle` links against RAD's Oodle compression library, which is not
+redistributable and therefore not checked into the repository. It expects an
+import or static library named `oo2core_win64.lib` (release) or
+`oo2core_win64_debug.lib` (debug) in `lib/oodle/`.
+
+The CI downloads the library from the project's download server:
+
+[source,console]
+----
+$ cd lib/oodle
+$ curl -LO https://download.sclu1034.dev/hidden/$LIB_FILE_DOWNLOAD_TOKEN/oo2core_win64.lib
+----
+
+Alternatively, an import library can be generated from the game's
+`oo2core_9_win64.dll`, which ships with Darktide in its `binaries` directory:
+
+[source,powershell]
+----
+$dll   = "E:\SteamLibrary\steamapps\common\Warhammer 40,000 DARKTIDE\binaries\oo2core_9_win64.dll"
+$vcbin = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\<version>\bin\HostX64\x64"
+
+$exports = & "$vcbin\dumpbin.exe" /exports $dll |
+  Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
+  ForEach-Object { $_.Matches[0].Groups[1].Value }
+
+$def = @("LIBRARY oo2core_9_win64.dll", "EXPORTS") + ($exports | ForEach-Object { "    $_" })
+Set-Content oo2core_9_win64.def $def
+
+& "$vcbin\lib.exe" /nologo /def:oo2core_9_win64.def /machine:x64 /out:lib\oodle\oo2core_win64.lib
+Copy-Item lib\oodle\oo2core_win64.lib lib\oodle\oo2core_win64_debug.lib
+----
+
+The generated library references the game's DLL, so `oo2core_9_win64.dll` must be
+on `PATH` (or next to the executable) for the resulting binaries to run.
+
+== Building
+
+[source,console]
+----
+$ cargo build
+----
+
+Both `dtmt.exe` and `dtmm.exe` are written to `target/debug/`.
