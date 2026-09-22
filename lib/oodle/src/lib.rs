@@ -106,8 +106,9 @@ where
     let mut raw = Vec::from(data.as_ref());
     raw.resize(CHUNK_SIZE, 0);
 
-    // TODO: Query oodle for buffer size
-    let mut out = vec![0u8; CHUNK_SIZE];
+    // Bundle chunks are padded to `CHUNK_SIZE`, but their compressed form may be
+    // slightly larger for incompressible data, so leave headroom.
+    let mut out = vec![0u8; CHUNK_SIZE + CHUNK_SIZE / 4 + 0x10000];
 
     let ret = unsafe {
         bindings::OodleLZ_Compress(
@@ -144,10 +145,11 @@ where
 
     // Unlike bundle chunks, textures are stored as a single Oodle block whose
     // decompressed length must be preserved exactly. So we neither pad nor
-    // truncate the input, and let Oodle tell us how large the output may get.
-    let out_size =
-        unsafe { bindings::OodleLZ_GetCompressedBufferSizeNeeded(COMPRESSOR, raw.len() as isize) };
-    let out_size = usize::try_from(out_size).unwrap_or(0);
+    // truncate the input.
+    //
+    // Oodle's own `GetCompressedBufferSizeNeeded` does not reliably match the
+    // runtime library, so use a conservative bound instead.
+    let out_size = raw.len() + raw.len() / 4 + 0x10000;
 
     let mut out = vec![0u8; out_size];
 
