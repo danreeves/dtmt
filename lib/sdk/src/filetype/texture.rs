@@ -873,34 +873,42 @@ pub async fn compile(
 
     let mut variant = BundleFileVariant::new();
 
-    // Fast path: an inline texture without discards can be stored as-is,
-    // which also supports uncompressed formats.
-    if !output.streamable && !apply_discards {
-        let mut r = Cursor::new(&dds);
-        let header = dds::DDSHeader::from_binary(&mut r).wrap_err("Failed to parse DDS header")?;
+    // Block-compressed textures are parsed so that we can normalize the DDS
+    // header to DX10 and describe every mipmap in the texture header.
+    // Uncompressed formats (which the parser does not handle) are stored as-is.
+    let image = match DdsImage::parse(&dds) {
+        Ok(image) => image,
+        Err(err) => {
+            if output.streamable || apply_discards {
+                return Err(err).wrap_err("Failed to parse DDS image");
+            }
 
-        let texture = Texture {
-            header: TextureHeader {
-                flags,
-                n_streamable_mipmaps: 0,
-                width: header.width,
-                height: header.height,
-                mip_infos: [TextureHeaderMipInfo::default(); 16],
-                meta_size: 0,
-            },
-            data: dds,
-            stream: None,
-            stream_chunk_ends: Vec::new(),
-            category,
-        };
+            let mut r = Cursor::new(&dds);
+            let header =
+                dds::DDSHeader::from_binary(&mut r).wrap_err("Failed to parse DDS header")?;
 
-        let mut wrapper = Cursor::new(Vec::new());
-        texture.to_binary(&mut wrapper)?;
+            let texture = Texture {
+                header: TextureHeader {
+                    flags,
+                    n_streamable_mipmaps: 0,
+                    width: header.width,
+                    height: header.height,
+                    mip_infos: [TextureHeaderMipInfo::default(); 16],
+                    meta_size: 0,
+                },
+                data: dds,
+                stream: None,
+                stream_chunk_ends: Vec::new(),
+                category,
+            };
 
-        return Ok(external_texture_file(name, wrapper.into_inner()));
-    }
+            let mut wrapper = Cursor::new(Vec::new());
+            texture.to_binary(&mut wrapper)?;
 
-    let image = DdsImage::parse(&dds).wrap_err("Failed to parse DDS image")?;
+            return Ok(external_texture_file(name, wrapper.into_inner()));
+        }
+    };
+
     let block_bytes = image.block_bytes;
 
     // Apply the requested mipmap discards.
