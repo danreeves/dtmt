@@ -110,15 +110,14 @@ async fn compile_file(
     let file_data = fs::read(&path)
         .await
         .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
-    let _sjson = String::from_utf8(file_data)
+    let sjson = String::from_utf8(file_data)
         .wrap_err_with(|| format!("Invalid UTF8 data in '{}'", path.display()))?;
 
-    let _root = path.parent().ok_or_eyre("File path has no parent")?;
+    let root = path.parent().ok_or_eyre("File path has no parent")?;
 
-    eyre::bail!(
-        "Compilation for type '{}' is not implemented, yet",
-        file_type
-    )
+    BundleFile::from_sjson(name.into(), file_type, sjson, root)
+        .await
+        .wrap_err_with(|| format!("Failed to compile file '{}'", path.display()))
 }
 
 #[tracing::instrument(
@@ -270,7 +269,6 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                 } else {
                     *file = bundle_file;
 
-                    dbg!(&file);
                     bundle
                 }
             }
@@ -291,6 +289,31 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     fs::write(&output_path, &data)
         .await
         .wrap_err_with(|| format!("Failed to write data to '{}'", output_path.display()))?;
+
+    // Write any external data files (such as streamed texture mipmaps) next to
+    // the bundle, so that they end up in the game's `bundle/data` directory.
+    if let Some(parent) = output_path.parent() {
+        for file in output_bundle.files() {
+            for variant in file.variants() {
+                let (Some(name), Some(data)) = (variant.data_file_name(), variant.external_data())
+                else {
+                    continue;
+                };
+
+                let path = parent.join(name);
+                if let Some(dir) = path.parent() {
+                    fs::create_dir_all(dir)
+                        .await
+                        .wrap_err_with(|| format!("Failed to create '{}'", dir.display()))?;
+                }
+
+                fs::write(&path, data)
+                    .await
+                    .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+                tracing::info!("Wrote data file '{}'", path.display());
+            }
+        }
+    }
 
     tracing::info!("Modified bundle written to '{}'", output_path.display());
 

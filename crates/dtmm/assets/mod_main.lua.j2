@@ -106,36 +106,35 @@ end
 require("scripts/main")
 log("mod_main", "'scripts/main' loaded")
 
--- We need to inject two states into two different state machines:
--- First, we inject one into the `"Main"` state machine at a specific location, so that we're
--- still early in the process, but right after `StateRequireScripts` where most game files
--- are already available to `require` and hook.
--- This is where the `ModLoader` is created initially.
--- Then, we inject into the very first position of the `"Game"` state machine. This runs right
--- after `StateGame._init_managers`, at which point all the parts needed for DMF and other mods
--- have been initialized.
--- This is where `ModLoader` will finally start loading mods.
+-- Darktide drives its startup through `state_boot.lua`, which `require`s a
+-- list of boot state modules (`start_params.boot_state_paths`) and runs them
+-- in order. We inject one more state, right after
+-- `boot_state_require_game_scripts`: at that point the package manager exists
+-- (created by `boot_state_init_managers`) and the game's foundation scripts
+-- are available (`boot_state_load_boot_assets` already ran).
+--
+-- DTMM points `boot_script` in `bundle/application_settings/settings_common.ini`
+-- at this file (the game ships `scripts/main` there), so the engine loads it
+-- during startup, and this file then requires the real `scripts/main`. Note that
+-- `IS_MODDED` is derived from the `Mods` global in `boot_state_set_globals`,
+-- so setting it above is what marks the session as modded.
+local BOOT_STATE_LOAD_MODS_PATH = "scripts/mods/boot_state_load_mods"
+
 local function patch_mod_loading_state()
-    local StateBootLoadDML = class("StateBootLoadDML", "StateBootSubStateBase")
-    local StateGameLoadMods = class("StateGameLoadMods")
+    local StateBootSubStateBase = require("scripts/game_states/boot/state_boot_sub_state_base")
 
-    StateBootLoadDML.on_enter = function(self, parent, params)
-        log("StateBootLoadDML", "Entered")
-        StateBootLoadDML.super.on_enter(self, parent, params)
+    local BootStateLoadMods = class("BootStateLoadMods", "StateBootSubStateBase")
 
-        local state_params = self:_state_params()
-        local package_manager = state_params.package_manager
+    BootStateLoadMods.on_enter = function(self, ...)
+        BootStateLoadMods.super.on_enter(self, ...)
 
-        self._package_manager = package_manager
-        self._package_handles = {
-            ["packages/mods"] = package_manager:load("packages/mods", "StateBootLoadDML", nil),
-        }
+        log("BootStateLoadMods", "Entered")
+
+        self._package_handle = Managers.package:load("packages/mods", "BootStateLoadMods", nil)
     end
 
-    StateBootLoadDML._state_update = function(self, _)
-        local package_manager = self._package_manager
-
-        if package_manager:update() then
+    BootStateLoadMods._state_update = function(self, _)
+        if Managers.package:update() then
             local mod_data = require("scripts/mods/mod_data")
 
             local create_mod_loader = require("scripts/mods/init")
@@ -143,72 +142,51 @@ local function patch_mod_loading_state()
 
             Managers.mod = mod_loader
 
-            log("StateBootLoadDML", "DML loaded, exiting")
-            return true, false
+            log("BootStateLoadMods", "Mod loader initialized")
+            return true
         end
 
-        return false, false
+        return false
     end
 
-
-    function StateGameLoadMods:on_enter(_, params)
-        log("StateGameLoadMods", "Entered")
-        self._next_state = require("scripts/game_states/game/state_splash")
-        self._next_state_params = params
-    end
-
-    function StateGameLoadMods:update(_)
-        -- We're relying on the fact that DML internally makes sure
-        -- that `Managers.mod:update()` is being called appropriately.
-        -- The implementation as of this writing is to hook `StateGame.update`.
-        if Managers.mod:all_mods_loaded() then
-            Log.info("StateGameLoadMods", "Mods loaded, exiting")
-            return self._next_state, self._next_state_params
+    BootStateLoadMods._state_cleanup = function(self, on_shutdown)
+        if on_shutdown and self._package_handle then
+            Managers.package:release(self._package_handle)
+            self._package_handle = nil
         end
+    end
+
+    -- `state_boot.lua` resolves every path with `require`, so expose our class
+    -- under that path rather than shipping another file in the boot bundle.
+    package.preload[BOOT_STATE_LOAD_MODS_PATH] = function()
+        return BootStateLoadMods
     end
 
     local GameStateMachine = require("scripts/foundation/utilities/game_state_machine")
     local GameStateMachine_init = GameStateMachine.init
-    GameStateMachine.init = function(self, parent, start_state, params, creation_context, state_change_callbacks, name)
-        if name == "Main" then
-            log("mod_main", "Injecting StateBootLoadDML")
 
-            -- Hardcoded position after `StateRequireScripts`.
-            -- We need to wait until then to even begin most of our stuff,
-            -- so that most of the game's core systems are at least loaded and can be hooked,
-            -- even if they aren't running, yet.
-            local pos = 4
-            table.insert(params.states, pos, {
-                StateBootLoadDML,
-                {
-                    package_manager = params.package_manager,
-                },
-            })
+    GameStateMachine.init = function(self, parent, start_state, params, optional_creation_context, state_change_callbacks, parent_name, name, log_breadcrumbs)
+        if name == "Main" and params and params.boot_state_paths then
+            local insert_at = #params.boot_state_paths + 1
 
-            GameStateMachine_init(self, parent, start_state, params, creation_context, state_change_callbacks, name)
-        elseif name == "Game" then
-            log("mod_main", "Injection StateGameLoadMods")
-            -- The second time around, we want to be the first, so we pass our own
-            -- 'start_state'.
-            -- We can't just have the state machine be initialized and then change its `_next_state`, as by the end of
-            -- `init`, a bunch of stuff will already be initialized.
-            GameStateMachine_init(self, parent, StateGameLoadMods, params, creation_context, state_change_callbacks, name)
-            -- And since we're done now, we can revert the function to its original
-            GameStateMachine.init = GameStateMachine_init
-        else
-            -- In all other cases, simply call the original
-            GameStateMachine_init(self, parent, start_state, params, creation_context, state_change_callbacks, name)
+            for i, path in ipairs(params.boot_state_paths) do
+                if path == "scripts/game_states/boot/boot_state_require_game_scripts" then
+                    insert_at = i + 1
+                    break
+                end
+            end
+
+            log("mod_main", "Injecting BootStateLoadMods at boot step %d", insert_at)
+            table.insert(params.boot_state_paths, insert_at, BOOT_STATE_LOAD_MODS_PATH)
         end
+
+        GameStateMachine_init(self, parent, start_state, params, optional_creation_context, state_change_callbacks, parent_name, name, log_breadcrumbs)
     end
 end
 
 -- Override `init` to run our injection
 function init()
     patch_mod_loading_state()
-
-    -- As requested by Fatshark
-    local StateRequireScripts = require("scripts/game_states/boot/state_require_scripts")
-    StateRequireScripts._get_is_modded = function() return true end
 
     Main:init()
 end

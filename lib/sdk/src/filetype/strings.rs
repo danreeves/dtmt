@@ -55,7 +55,10 @@ impl Strings {
             let count = r.read_u32()? as usize;
 
             for _ in 0..count {
-                let name = ctx.lookup_hash_short(r.read_u32()?, HashGroup::Strings);
+                let name = ctx
+                    .lookup_hash_short(r.read_u32()?, HashGroup::Strings)
+                    .display()
+                    .to_string();
                 let address = r.read_u32()? as u64;
 
                 let pos = r.position();

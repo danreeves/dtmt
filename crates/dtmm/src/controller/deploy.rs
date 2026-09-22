@@ -36,6 +36,11 @@ pub const DEPLOYMENT_DATA_PATH: &str = "dtmm-deployment.sjson";
 pub struct DeploymentData {
     pub bundles: Vec<String>,
     pub mod_folders: Vec<String>,
+    /// Game files under `bundle/` (other than the bundles and database above)
+    /// that a deployment overwrote, relative to `bundle/`. Their originals are
+    /// kept next to them with a `.bak` suffix so a reset can put them back.
+    #[serde(default)]
+    pub data_files: Vec<String>,
     #[serde(with = "time::serde::iso8601")]
     pub timestamp: OffsetDateTime,
 }
@@ -316,13 +321,14 @@ fn build_mod_data_lua(state: Arc<ActionState>) -> Result<String> {
 }
 
 #[tracing::instrument(skip_all)]
-async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
+async fn build_bundles(state: Arc<ActionState>) -> Result<(Vec<Bundle>, Vec<String>)> {
     let mut mod_bundle = Bundle::new(MOD_BUNDLE_NAME.to_string());
     let mut tasks = Vec::new();
 
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
 
     let mut bundles = Vec::new();
+    let mut data_files = Vec::new();
 
     let mut add_lua_asset = |name: &str, data: &str| {
         let span = tracing::info_span!("Compiling Lua", name, data_len = data.len());
@@ -428,6 +434,20 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 
             tasks.push(task);
         }
+
+        // Deploy the mod's external data files, if it has any.
+        let data_src = mod_dir.join("data");
+        if data_src.is_dir() {
+            tracing::trace!("Copying external data files for mod '{}'", mod_info.name);
+
+            for path in copy_dir_all(&data_src, &bundle_dir.join("data")).await? {
+                if let Some(relative) = relative_bundle_path(bundle_dir.as_path(), &path)
+                    && !data_files.contains(&relative)
+                {
+                    data_files.push(relative);
+                }
+            }
+        }
     }
 
     tracing::debug!("Copying {} mod bundles", tasks.len());
@@ -445,15 +465,24 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         fs::write(&path, mod_bundle.to_binary()?)
             .await
             .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
+
+        for path in write_external_data_files(&mod_bundle, &bundle_dir).await? {
+            if !data_files.contains(&path) {
+                data_files.push(path);
+            }
+        }
     }
 
     bundles.push(mod_bundle);
 
-    Ok(bundles)
+    Ok((bundles, data_files))
 }
 
 #[tracing::instrument(skip_all)]
-async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Result<Vec<Bundle>> {
+async fn patch_boot_bundle(
+    state: Arc<ActionState>,
+    deployment_info: &str,
+) -> Result<(Vec<Bundle>, Vec<String>)> {
     let bundle_dir = Arc::new(state.game_dir.join("bundle"));
     let bundle_path = bundle_dir.join(format!("{:x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes())));
 
@@ -520,20 +549,187 @@ async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Re
         boot_bundle.add_file(file);
     }
 
-    async {
+    let data_files = async {
         let bin = boot_bundle
             .to_binary()
             .wrap_err("Failed to serialize boot bundle")?;
         fs::write(&bundle_path, bin)
             .await
-            .wrap_err_with(|| format!("Failed to write main bundle: {}", bundle_path.display()))
+            .wrap_err_with(|| format!("Failed to write main bundle: {}", bundle_path.display()))?;
+
+        write_external_data_files(&boot_bundle, &bundle_dir)
+            .await
+            .wrap_err("Failed to write boot bundle data files")
     }
     .instrument(tracing::trace_span!("write boot bundle"))
     .await?;
 
+    // The boot bundle itself is protected by its own `.bak` sibling, so it is
+    // not listed in `data_files`.
     bundles.push(boot_bundle);
 
-    Ok(bundles)
+    Ok((bundles, data_files))
+}
+
+/// Returns the path a file's backup is stored at. Backups append a `.bak`
+/// suffix instead of replacing the extension, because the game's streamed data
+/// files (e.g. `data/f7/f7b841c5068f2d40`) have no extension.
+pub(crate) fn backup_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".bak");
+    PathBuf::from(name)
+}
+
+/// Copies `path` to its `.bak` sibling unless a backup already exists, so the
+/// original game file survives however many times we overwrite it. Returns
+/// whether a backup is available afterwards.
+async fn backup_file(path: &Path) -> Result<bool> {
+    let backup = backup_path_for(path);
+
+    if fs::metadata(&backup).await.is_ok() {
+        return Ok(true);
+    }
+
+    // Nothing to back up: the file does not exist yet, so a reset only has to
+    // delete it again.
+    if fs::metadata(path).await.is_err() {
+        return Ok(false);
+    }
+
+    fs::copy(path, &backup).await.wrap_err_with(|| {
+        format!(
+            "Failed to back up '{}' to '{}'. Refusing to overwrite a game file \
+             without a backup; verify your game files and try again.",
+            path.display(),
+            backup.display()
+        )
+    })?;
+
+    tracing::debug!("Backed up '{}' to '{}'", path.display(), backup.display());
+
+    Ok(true)
+}
+
+/// Whether `relative` is a plain, safe relative path: not absolute and without
+/// any parent-directory components, so joining it to the bundle directory can
+/// never escape it.
+fn is_safe_relative_path(relative: &str) -> bool {
+    let path = Path::new(relative);
+
+    !path.is_absolute()
+        && path.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+}
+
+/// The path a written file is recorded under, relative to the bundle directory
+/// and with forward slashes so the deployment data stays readable. Returns
+/// `None` for paths that would escape the bundle directory.
+fn relative_bundle_path(bundle_dir: &Path, path: &Path) -> Option<String> {
+    let relative = path.strip_prefix(bundle_dir).ok()?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+
+    if is_safe_relative_path(&relative) {
+        Some(relative)
+    } else {
+        tracing::warn!("Ignoring unsafe data file path '{}'", path.display());
+        None
+    }
+}
+
+/// Writes any external data files referenced by a bundle's variants, such as
+/// streamed texture mipmaps, into the game's `bundle` directory.
+///
+/// Every file that already exists is backed up first. The overwritten paths are
+/// returned so they can be recorded in the deployment data and restored on
+/// reset.
+async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result<Vec<String>> {
+    let mut written = Vec::new();
+
+    for file in bundle.files() {
+        for variant in file.variants() {
+            let (Some(name), Some(data)) = (variant.data_file_name(), variant.external_data())
+            else {
+                continue;
+            };
+
+            if !is_safe_relative_path(name) {
+                eyre::bail!(
+                    "Refusing to write streamed data file with unsafe name '{name}'. \
+                     This mod would write outside the game's bundle directory."
+                );
+            }
+
+            let path = bundle_dir.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).await.wrap_err_with(|| {
+                    format!("Failed to create directory '{}'", parent.display())
+                })?;
+            }
+
+            backup_file(&path).await?;
+
+            tracing::trace!("Writing external data file to '{}'", path.display());
+            fs::write(&path, data)
+                .await
+                .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+
+            if let Some(relative) = relative_bundle_path(bundle_dir, &path)
+                && !written.contains(&relative)
+            {
+                written.push(relative);
+            }
+        }
+    }
+
+    Ok(written)
+}
+
+/// Recursively copies a directory, used to deploy a mod's external data files
+/// (such as streamed texture mipmaps) into the game's `bundle` directory.
+///
+/// Any destination file that already exists is backed up first. The written
+/// destination paths are returned so a reset can restore the originals.
+fn copy_dir_all<'a>(
+    src: &'a Path,
+    dst: &'a Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<PathBuf>>> + Send + 'a>> {
+    Box::pin(async move {
+        fs::create_dir_all(dst)
+            .await
+            .wrap_err_with(|| format!("Failed to create '{}'", dst.display()))?;
+
+        let mut written = Vec::new();
+        let mut entries = fs::read_dir(src)
+            .await
+            .wrap_err_with(|| format!("Failed to read '{}'", src.display()))?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+
+            if entry.file_type().await?.is_dir() {
+                written.extend(copy_dir_all(&path, &dest).await?);
+            } else {
+                backup_file(&dest).await?;
+
+                fs::copy(&path, &dest).await.wrap_err_with(|| {
+                    format!(
+                        "Failed to copy '{}' to '{}'",
+                        path.display(),
+                        dest.display()
+                    )
+                })?;
+
+                written.push(dest);
+            }
+        }
+
+        Ok(written)
+    })
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
@@ -578,6 +774,7 @@ where
 fn build_deployment_data(
     bundles: impl AsRef<[Bundle]>,
     mod_folders: impl AsRef<[String]>,
+    data_files: impl AsRef<[String]>,
 ) -> Result<String> {
     let info = DeploymentData {
         timestamp: OffsetDateTime::now_utc(),
@@ -588,6 +785,7 @@ fn build_deployment_data(
             .collect(),
         // TODO:
         mod_folders: mod_folders.as_ref().to_vec(),
+        data_files: data_files.as_ref().to_vec(),
     };
     serde_sjson::to_string(&info).wrap_err("Failed to serizalize deployment data")
 }
@@ -713,18 +911,31 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         .wrap_err("Failed to copy mod folders")?;
 
     tracing::info!("Build mod bundles");
-    let mut bundles = build_bundles(state.clone())
+    let (mut bundles, mut data_files) = build_bundles(state.clone())
         .await
         .wrap_err("Failed to build mod bundles")?;
 
-    let new_deployment_info = build_deployment_data(&bundles, &mod_folders)
+    // Rendered into the boot script as a record of what is being deployed.
+    let script_deployment_info = build_deployment_data(&bundles, &mod_folders, &data_files)
         .wrap_err("Failed to build new deployment data")?;
 
     tracing::info!("Patch boot bundle");
-    let mut boot_bundles = patch_boot_bundle(state.clone(), &new_deployment_info)
-        .await
-        .wrap_err("Failed to patch boot bundle")?;
+    let (mut boot_bundles, boot_data_files) =
+        patch_boot_bundle(state.clone(), &script_deployment_info)
+            .await
+            .wrap_err("Failed to patch boot bundle")?;
     bundles.append(&mut boot_bundles);
+
+    for path in boot_data_files {
+        if !data_files.contains(&path) {
+            data_files.push(path);
+        }
+    }
+
+    // Every file has been written by now, so record the complete deployment for
+    // the reset path to undo.
+    let new_deployment_info = build_deployment_data(&bundles, &mod_folders, &data_files)
+        .wrap_err("Failed to build new deployment data")?;
 
     if let Some(info) = &deployment_info {
         let bundle_dir = Arc::new(bundle_dir);

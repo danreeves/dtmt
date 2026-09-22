@@ -2,6 +2,41 @@ local StateGame = require("scripts/game_states/state_game")
 local StateSplash = require("scripts/game_states/game/state_splash")
 local GameStateMachine = require("scripts/foundation/utilities/game_state_machine")
 
+-- DTMT's generated `mod_data.lua` historically relied on `new_mod`, which is
+-- provided by Darktide Mod Framework. To let those mods load without DMF
+-- installed, provide a minimal equivalent here: it loads the mod's scripts and
+-- registers the resulting object so `get_mod(id)` keeps working. If DMF is
+-- installed it will simply redefine these globals with its own implementation.
+local loaded_mods = {}
+
+function get_mod(id)
+    return loaded_mods[id]
+end
+
+function new_mod(id, options)
+    local mod = {
+        id = id,
+        name = options.name,
+        version = options.version,
+    }
+
+    if options.mod_localization then
+        mod.localization = require(options.mod_localization)
+    end
+
+    if options.mod_data then
+        mod.data = require(options.mod_data)
+    end
+
+    loaded_mods[id] = mod
+
+    if options.mod_script then
+        require(options.mod_script)
+    end
+
+    return mod
+end
+
 local function hook(obj, fn_name, cb)
     local orig = obj[fn_name]
 

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use crate::murmur::{Dictionary, HashGroup, IdString64, Murmur32, Murmur64};
+use crate::murmur::{Dictionary, HashGroup, IdString32, IdString64, Murmur32, Murmur64};
 
 #[derive(Clone)]
 pub struct CmdLine {
@@ -87,17 +87,17 @@ impl Context {
         }
     }
 
-    pub fn lookup_hash_short<M>(&self, hash: M, group: HashGroup) -> String
+    pub fn lookup_hash_short<M>(&self, hash: M, group: HashGroup) -> IdString32
     where
         M: Into<Murmur32>,
     {
         let hash = hash.into();
         if let Some(s) = self.lookup.lookup_short(hash, group) {
             tracing::debug!(%hash, string = s, "Murmur32 lookup successful");
-            s.to_owned()
+            s.to_string().into()
         } else {
             tracing::debug!(%hash, "Murmur32 lookup failed");
-            format!("{hash:08X}")
+            hash.into()
         }
     }
 }

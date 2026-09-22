@@ -106,8 +106,9 @@ where
     let mut raw = Vec::from(data.as_ref());
     raw.resize(CHUNK_SIZE, 0);
 
-    // TODO: Query oodle for buffer size
-    let mut out = vec![0u8; CHUNK_SIZE];
+    // Bundle chunks are padded to `CHUNK_SIZE`, but their compressed form may be
+    // slightly larger for incompressible data, so leave headroom.
+    let mut out = vec![0u8; CHUNK_SIZE + CHUNK_SIZE / 4 + 0x10000];
 
     let ret = unsafe {
         bindings::OodleLZ_Compress(
@@ -125,6 +126,53 @@ where
     };
 
     tracing::debug!(compressed_size = ret, "Compressed chunk");
+
+    if ret == 0 {
+        eyre::bail!("Compression failed");
+    }
+
+    out.resize(ret as usize, 0);
+
+    Ok(out)
+}
+
+#[tracing::instrument(skip(data))]
+pub fn compress_exact<I>(data: I) -> Result<Vec<u8>>
+where
+    I: AsRef<[u8]>,
+{
+    let raw = data.as_ref();
+
+    // Unlike bundle chunks, textures are stored as a single Oodle block whose
+    // decompressed length must be preserved exactly. So we neither pad nor
+    // truncate the input.
+    //
+    // Oodle's own `GetCompressedBufferSizeNeeded` does not reliably match the
+    // runtime library, so use a conservative bound instead.
+    let out_size = raw.len() + raw.len() / 4 + 0x10000;
+
+    let mut out = vec![0u8; out_size];
+
+    let ret = unsafe {
+        bindings::OodleLZ_Compress(
+            COMPRESSOR,
+            raw.as_ptr() as *const _,
+            raw.len() as isize,
+            out.as_mut_ptr() as *mut _,
+            LEVEL,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+
+    tracing::debug!(
+        raw_size = raw.len(),
+        compressed_size = ret,
+        "Compressed data as a single block"
+    );
 
     if ret == 0 {
         eyre::bail!("Compression failed");

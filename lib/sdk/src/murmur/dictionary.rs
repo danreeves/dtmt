@@ -13,13 +13,20 @@ pub enum HashGroup {
     Filename,
     Filetype,
     Strings,
+    TextureCategory,
     #[default]
     Other,
 }
 
 impl HashGroup {
-    pub fn all() -> [Self; 3] {
-        [Self::Filename, Self::Filetype, Self::Other]
+    pub fn all() -> [Self; 5] {
+        [
+            Self::Filename,
+            Self::Filetype,
+            Self::Strings,
+            Self::TextureCategory,
+            Self::Other,
+        ]
     }
 }
 
@@ -29,6 +36,7 @@ impl std::fmt::Display for HashGroup {
             HashGroup::Filename => write!(f, "filename"),
             HashGroup::Filetype => write!(f, "filetype"),
             HashGroup::Strings => write!(f, "strings"),
+            HashGroup::TextureCategory => write!(f, "texture-category"),
             HashGroup::Other => write!(f, "other"),
         }
     }

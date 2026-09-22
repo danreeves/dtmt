@@ -181,6 +181,39 @@ async fn build_package(
     Ok(bundle)
 }
 
+/// Writes any external data files referenced by the bundle's variants, such as
+/// streamed texture mipmaps, relative to the given base directory.
+#[tracing::instrument(skip_all, fields(base = %base.as_ref().display()))]
+async fn write_external_data_files(
+    bundle: &Bundle,
+    base: impl AsRef<Path> + std::fmt::Debug,
+) -> Result<()> {
+    let base = base.as_ref();
+
+    for file in bundle.files() {
+        for variant in file.variants() {
+            let (Some(name), Some(data)) = (variant.data_file_name(), variant.external_data())
+            else {
+                continue;
+            };
+
+            let path = base.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .await
+                    .wrap_err_with(|| format!("Failed to create '{}'", parent.display()))?;
+            }
+
+            tracing::trace!(path = %path.display(), "Writing external data file");
+            fs::write(&path, data)
+                .await
+                .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Cleans the path of internal parent (`../`) or self (`./`) components,
 /// and ensures that it is relative.
 fn normalize_file_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
@@ -332,6 +365,8 @@ where
                 .await
                 .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
 
+            write_external_data_files(&bundle, out_path).await?;
+
             if let Some(game_dir) = game_dir.as_ref() {
                 let path = game_dir.as_ref().join(&name);
 
@@ -343,6 +378,8 @@ where
                 fs::write(&path, &data)
                     .await
                     .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
+
+                write_external_data_files(&bundle, game_dir.as_ref()).await?;
             }
 
             Ok(())

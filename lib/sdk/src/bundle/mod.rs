@@ -208,6 +208,18 @@ impl Bundle {
 
     #[tracing::instrument(skip_all)]
     pub fn to_binary(&self) -> Result<Vec<u8>> {
+        // The game binary-searches a bundle's file entries, so they have to be
+        // ordered by (type, name). `add_file` appends, which leaves the list
+        // unsorted, so sort a view of the files here. The data blocks below are
+        // written in the same order, keeping header entries and data aligned.
+        let mut files: Vec<&BundleFile> = self.files.iter().collect();
+        files.sort_by_key(|f| {
+            (
+                u64::from(f.file_type().hash()),
+                u64::from(f.base_name().to_murmur64()),
+            )
+        });
+
         let mut w = Cursor::new(Vec::new());
         w.write_u32(self.format.into())?;
         // TODO: Find out what this is.
@@ -218,7 +230,7 @@ impl Bundle {
             w.write_u64((*prop).into())?;
         }
 
-        for file in self.files.iter() {
+        for file in files.iter() {
             w.write_u64(file.file_type().into())?;
             w.write_u64(file.base_name().to_murmur64().into())?;
             w.write_u32(file.props().bits())?;
@@ -229,7 +241,7 @@ impl Bundle {
             let _enter = span.enter();
             tracing::trace!(num_files = self.files.len());
 
-            self.files.iter().try_fold(Vec::new(), |mut data, file| {
+            files.iter().try_fold(Vec::new(), |mut data, file| {
                 data.append(&mut file.to_binary()?);
                 Ok::<_, Report>(data)
             })?

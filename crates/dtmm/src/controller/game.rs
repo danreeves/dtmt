@@ -13,7 +13,7 @@ use crate::controller::deploy::{
 };
 use crate::state::ActionState;
 
-use super::deploy::SETTINGS_FILE_PATH;
+use super::deploy::{SETTINGS_FILE_PATH, backup_path_for};
 
 #[tracing::instrument]
 async fn read_file_with_backup<P>(path: P) -> Result<Vec<u8>>
@@ -194,7 +194,7 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
         serde_sjson::from_str(&data).wrap_err("Invalid SJSON in deployment data")?
     };
 
-    for name in info.bundles {
+    for name in &info.bundles {
         let path = bundle_dir.join(name);
 
         match fs::remove_file(&path).await {
@@ -237,6 +237,60 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
             tracing::error!(
                 "Failed to restore '{}' from backup. You may need to verify game files. Error: {:?}",
                 &p,
+                err
+            );
+        }
+    }
+
+    // Restore the game files under `bundle/` that this deployment overwrote,
+    // such as streamed texture mipmaps. Each file that already existed was
+    // backed up next to itself as `<name>.bak` before it was first written.
+    for relative in &info.data_files {
+        let path = bundle_dir.join(relative);
+        let backup = backup_path_for(&path);
+
+        let res = async {
+            if fs::metadata(&backup).await.is_ok() {
+                tracing::debug!(
+                    "Restoring '{}' from backup '{}'",
+                    path.display(),
+                    backup.display()
+                );
+
+                fs::copy(&backup, &path).await.wrap_err_with(|| {
+                    format!(
+                        "Failed to restore '{}' from '{}'",
+                        path.display(),
+                        backup.display()
+                    )
+                })?;
+
+                fs::remove_file(&backup)
+                    .await
+                    .wrap_err_with(|| format!("Failed to remove backup '{}'", backup.display()))?;
+            } else {
+                // Without a backup the file did not exist before this
+                // deployment, so it belongs to us and can simply be removed.
+                tracing::debug!("Removing deployed file '{}'", path.display());
+
+                match fs::remove_file(&path).await {
+                    Ok(_) => {}
+                    Err(err) if err.kind() == ErrorKind::NotFound => {}
+                    Err(err) => {
+                        return Err(err)
+                            .wrap_err_with(|| format!("Failed to remove '{}'", path.display()))
+                    }
+                }
+            }
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(err) = res {
+            tracing::error!(
+                "Failed to restore '{}'. You may need to verify game files. Error: {:?}",
+                relative,
                 err
             );
         }
