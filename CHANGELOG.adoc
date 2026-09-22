@@ -32,6 +32,8 @@
 - all: force unix path separators for engine values
 - dtmt: fix extracing files with non-flattened file names
 - oodle: fix static linking
+- sdk: write the game's current 24-byte Lua file header instead of the old
+  12-byte one, which made the game crash with a UTF-8 error on startup
 - dtmm: quote mod versions in the generated `mod_data.lua`, so SemVer strings
   like `0.1.0` are not parsed as malformed Lua numbers
 

@@ -28,11 +28,14 @@ where
     let data = data.as_ref();
     let length = {
         let mut r = Cursor::new(data);
+        // The first u32 is always zero, the second is the length of the
+        // magic + bytecode section.
+        r.skip_u32(0)?;
         r.read_u32()? as usize
     };
 
-    // This skips the unknown bytes 5..12
-    let content = &data[12..];
+    // The game wraps LuaJIT bytecode in a 24-byte header (see `compile`).
+    let content = &data[24..];
     eyre::ensure!(
         content.len() == length,
         "Content length doesn't match. Expected {}, got {}",
@@ -209,11 +212,15 @@ pub fn compile(name: impl Into<IdString64>, code: impl AsRef<str>) -> Result<Bun
         }
     };
 
-    let mut data = Cursor::new(Vec::with_capacity(bytecode.len() + 12));
+    // The game wraps LuaJIT bytecode in a 24-byte header.
+    let mut data = Cursor::new(Vec::with_capacity(bytecode.len() + 24));
+    data.write_u32(0)?;
     data.write_u32(bytecode.len() as u32)?;
-    // TODO: Figure out what these two values are
+    // TODO: Figure out what these values are
+    data.write_u32(0x28)?;
     data.write_u32(0x2)?;
     data.write_u32(0x0)?;
+    data.write_u32((bytecode.len() + 0x28) as u32)?;
     // Use Fatshark's custom magic bytes
     data.write_all(&[0x1b, 0x46, 0x53, 0x82])?;
     data.write_all(&bytecode[4..])?;
