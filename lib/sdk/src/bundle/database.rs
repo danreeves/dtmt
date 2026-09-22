@@ -22,6 +22,9 @@ pub struct BundleFile {
     pub name: String,
     pub stream: String,
     pub platform_specific: bool,
+    /// Unknown 20-byte field that the game populates for each stored file.
+    /// It must be preserved when rewriting the database.
+    pub unknown: [u8; 20],
     pub file_time: u64,
 }
 
@@ -86,6 +89,7 @@ impl BundleDatabase {
                 stream,
                 file_time: 0,
                 platform_specific: false,
+                unknown: [0; 20],
             };
 
             entry.push(file);
@@ -166,14 +170,10 @@ impl FromBinary for BundleDatabase {
 
                 let platform_specific = r.read_u8()? != 0;
 
-                // TODO: Unknown what this is. In VT2's SDK, it's simply ignored,
-                // and always written as `0`, but in DT, it seems to be used.
-                let mut buffer = [0; 20];
-                r.read_exact(&mut buffer)?;
-
-                if cfg!(debug_assertions) && buffer.iter().any(|b| *b != 0) {
-                    tracing::warn!("Unknown value in 20-byte buffer: {:?}", buffer);
-                }
+                // Unknown what this is. In VT2's SDK, it's simply ignored,
+                // but in DT it is populated and must be preserved.
+                let mut unknown = [0; 20];
+                r.read_exact(&mut unknown)?;
 
                 let file_time = r.read_u64()?;
 
@@ -181,6 +181,7 @@ impl FromBinary for BundleDatabase {
                     name,
                     stream,
                     platform_specific,
+                    unknown,
                     file_time,
                 };
 
@@ -252,9 +253,7 @@ impl ToBinary for BundleDatabase {
 
                     w.write_u8(if f.platform_specific { 1 } else { 0 })?;
 
-                    // TODO: Don't know what goes here
-                    let buffer = [0; 20];
-                    w.write_all(&buffer)?;
+                    w.write_all(&f.unknown)?;
 
                     w.write_u64(f.file_time)?;
                 }
