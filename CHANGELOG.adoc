@@ -26,6 +26,12 @@
 - sdk: compile textures from `.texture` definitions and DDS files
 - sdk: store non-streamed textures as external data files, matching the game
 - dtmm: deploy a mod's external data files (streamed texture mipmaps, etc.)
+- dtmt: inject a `BootStateLoadMods` step into Darktide's boot state list, so
+  mods load on the current Darktide build
+- dtmm: provide DMF-free `new_mod`/`get_mod` helpers so mods no longer need to
+  depend on the Mod Framework
+- dtmm: add headless `--deploy` and `--reset` flags for scripted deployments
+- dtmm: back up every game file a deployment overwrites and restore it on reset
 
 === Fixed
 
@@ -36,6 +42,18 @@
   12-byte one, which made the game crash with a UTF-8 error on startup
 - dtmm: quote mod versions in the generated `mod_data.lua`, so SemVer strings
   like `0.1.0` are not parsed as malformed Lua numbers
+- sdk: sort a bundle's file entries by `(type, name)` when writing, since the
+  engine binary-searches them. Unsorted entries crashed the game with a UTF-8
+  error once a bundle contained more than one file
+- sdk: preserve the NUL-padded length a bundle declares for an external data
+  file name, instead of writing only the trimmed string and shifting every
+  following file entry
+- sdk: pad newly written external data file names to the engine's slot size.
+  Darktide stores a `data/xx/<hash>` name as 24 bytes of text in a 30-byte
+  NUL-padded slot; writing 24 bytes corrupted the next file entry and crashed
+  the game with a UTF-8 error when a bundle had two or more external files
+- dtmm: reject external data file names that would escape the game's `bundle`
+  directory
 
 == 2023-03-01
 

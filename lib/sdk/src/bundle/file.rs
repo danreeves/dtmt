@@ -104,7 +104,12 @@ impl BundleFileVariant {
     /// Sets the name and contents of the external data file this variant
     /// references. The contents are written out separately from the bundle.
     pub fn set_external_data_file(&mut self, name: String, data: Vec<u8>) {
-        self.data_file_name_len = name.len();
+        // The engine stores the data file name in a NUL-padded slot that is six
+        // bytes longer than the name itself. For the usual `data/ab/<16 hex>`
+        // form that means 24 bytes of text in a 30-byte slot. The declared
+        // length has to match, otherwise the engine mis-reads every file entry
+        // that follows this one (which is what corrupted the bundle).
+        self.data_file_name_len = name.len() + 6;
         self.data_file_name = Some(name);
         self.external_data = Some(data);
     }
