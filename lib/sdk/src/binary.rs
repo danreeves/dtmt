@@ -217,6 +217,7 @@ pub mod sync {
             WriteBytesExt::write_u8(self, val)
         }
 
+        make_write!(write_u16, write_u16_le, u16);
         make_write!(write_u32, write_u32_le, u32);
         make_write!(write_u64, write_u64_le, u64);
 

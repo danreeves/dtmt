@@ -219,6 +219,24 @@ impl std::fmt::Display for DXGIFormat {
     }
 }
 
+impl DXGIFormat {
+    /// Returns the number of bytes per 4x4 block if this is a block-compressed
+    /// format, or `None` for uncompressed formats.
+    pub fn block_bytes(&self) -> Option<usize> {
+        use DXGIFormat::*;
+
+        match self {
+            BC1_TYPELESS | BC1_UNORM | BC1_UNORM_SRGB | BC4_TYPELESS | BC4_UNORM | BC4_SNORM => {
+                Some(8)
+            }
+            BC2_TYPELESS | BC2_UNORM | BC2_UNORM_SRGB | BC3_TYPELESS | BC3_UNORM
+            | BC3_UNORM_SRGB | BC5_TYPELESS | BC5_UNORM | BC5_SNORM | BC6H_TYPELESS | BC6H_UF16
+            | BC6H_SF16 | BC7_TYPELESS | BC7_UNORM | BC7_UNORM_SRGB => Some(16),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Dx10Header {
     /// Resource data formats, including fully-typed and typeless formats.
@@ -278,7 +296,9 @@ impl Dx10Header {
 pub enum FourCC {
     Empty = u32::MAX,
     DXT1 = 0x31545844,
-    DXT2 = 0x33545844,
+    DXT2 = 0x32545844,
+    DXT3 = 0x33545844,
+    DXT4 = 0x34545844,
     DXT5 = 0x35545844,
     AXI1 = 0x31495441,
     AXI2 = 0x32495441,
@@ -290,6 +310,17 @@ pub enum FourCC {
     D3D_R32F = 0x72,
     D3D_G32R32F = 0x73,
     D3D_A32B32G32R32F = 0x74,
+}
+
+impl FourCC {
+    /// Number of bytes per 4x4 block for legacy block-compressed FourCCs.
+    pub fn block_bytes(&self) -> Option<usize> {
+        match self {
+            FourCC::DXT1 => Some(8),
+            FourCC::DXT2 | FourCC::DXT3 | FourCC::DXT4 | FourCC::DXT5 => Some(16),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for FourCC {

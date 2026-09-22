@@ -269,7 +269,6 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                 } else {
                     *file = bundle_file;
 
-                    dbg!(&file);
                     bundle
                 }
             }
@@ -290,6 +289,31 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
     fs::write(&output_path, &data)
         .await
         .wrap_err_with(|| format!("Failed to write data to '{}'", output_path.display()))?;
+
+    // Write any external data files (such as streamed texture mipmaps) next to
+    // the bundle, so that they end up in the game's `bundle/data` directory.
+    if let Some(parent) = output_path.parent() {
+        for file in output_bundle.files() {
+            for variant in file.variants() {
+                let (Some(name), Some(data)) = (variant.data_file_name(), variant.external_data())
+                else {
+                    continue;
+                };
+
+                let path = parent.join(name);
+                if let Some(dir) = path.parent() {
+                    fs::create_dir_all(dir)
+                        .await
+                        .wrap_err_with(|| format!("Failed to create '{}'", dir.display()))?;
+                }
+
+                fs::write(&path, data)
+                    .await
+                    .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+                tracing::info!("Wrote data file '{}'", path.display());
+            }
+        }
+    }
 
     tracing::info!("Modified bundle written to '{}'", output_path.display());
 

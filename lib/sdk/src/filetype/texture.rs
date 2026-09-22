@@ -16,6 +16,13 @@ use crate::{BundleFile, BundleFileType, BundleFileVariant, binary};
 
 mod dds;
 
+/// Size of a single Oodle-compressed chunk in a streamed texture data file.
+const STREAM_CHUNK_SIZE: usize = 0x10000;
+/// Number of 4x4 block rows a single stream chunk covers (256 pixels).
+const CHUNK_ROWS: usize = 64;
+/// Number of bytes covered by one row of a stream chunk.
+const CHUNK_ROW_SIZE: usize = 0x400;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct TextureDefinition {
     common: TextureDefinitionPlatform,
@@ -43,13 +50,23 @@ struct TextureDefinitionOutput {
     srgb: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     streamable: bool,
-    // All other Stingray texture options (format, mipmap settings, ...) are
-    // accepted but currently ignored. Serde drops unknown fields by default.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    mipmap_num_largest_steps_to_discard: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    mipmap_num_smallest_steps_to_discard: u32,
+    // All other Stingray texture options (format, apply_processing, cut_alpha_threshold,
+    // mipmap_filter, mipmap_filter_wrap_mode, mipmap_keep_original, ...) are accepted but
+    // currently ignored. Serde drops unknown fields by default.
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 bitflags! {
@@ -149,7 +166,10 @@ impl TextureHeader {
 struct Texture {
     header: TextureHeader,
     data: Vec<u8>,
+    /// Decompressed streamed mipmap data (only set when decompiling).
     stream: Option<Vec<u8>>,
+    /// Cumulative, compressed end offsets of the stream chunks (only set when compiling).
+    stream_chunk_ends: Vec<u32>,
     category: IdString32,
 }
 
@@ -159,21 +179,21 @@ impl std::fmt::Debug for Texture {
         out.field("header", &self.header);
 
         if self.data.len() <= 5 {
-            out.field("data", &format!("{:x?}", &self.data));
+            out.field("data", &format!("{:x?}", self.data));
         } else {
             out.field(
                 "data",
-                &format!("{:x?}.. ({} bytes)", &self.data[..5], &self.data.len()),
+                &format!("{:x?}.. ({} bytes)", &self.data[..5], self.data.len()),
             );
         }
 
         if let Some(stream) = self.stream.as_ref() {
             if stream.len() <= 5 {
-                out.field("stream", &format!("{:x?}", &stream));
+                out.field("stream", &format!("{:x?}", stream));
             } else {
                 out.field(
                     "stream",
-                    &format!("{:x?}.. ({} bytes)", &stream[..5], &stream.len()),
+                    &format!("{:x?}.. ({} bytes)", &stream[..5], stream.len()),
                 );
             }
         } else {
@@ -184,14 +204,180 @@ impl std::fmt::Debug for Texture {
     }
 }
 
+/// A single mipmap level of a DDS image.
+#[derive(Copy, Clone, Debug)]
+struct Mip {
+    offset: usize,
+    size: usize,
+    width: usize,
+    height: usize,
+}
+
+/// A parsed DDS image, including the location and size of every mipmap.
+struct DdsImage {
+    header: dds::DDSHeader,
+    dx10: dds::Dx10Header,
+    data_offset: usize,
+    block_bytes: usize,
+    mips: Vec<Mip>,
+}
+
+/// Size in bytes of a single block-compressed mipmap level.
+fn mip_size(width: usize, height: usize, block_bytes: usize) -> usize {
+    width.div_ceil(4).max(1) * height.div_ceil(4).max(1) * block_bytes
+}
+
+/// Number of chunk rows, i.e. 4x4 blocks, a single chunk is wide.
+fn chunk_width_blocks(block_bytes: usize) -> usize {
+    match block_bytes {
+        8 => 128,
+        16 => 64,
+        other => unreachable!("unsupported block size {other}"),
+    }
+}
+
+/// Number of stream chunks required for a mipmap of the given dimensions.
+fn chunks_per_mip(width: usize, height: usize, block_bytes: usize) -> usize {
+    let blocks_wide = width.div_ceil(4).max(1);
+    let blocks_high = height.div_ceil(4).max(1);
+
+    let chunks_wide = blocks_wide.div_ceil(chunk_width_blocks(block_bytes));
+    let chunks_high = blocks_high.div_ceil(CHUNK_ROWS);
+
+    chunks_wide * chunks_high
+}
+
+fn dds_block_bytes(header: &dds::DDSHeader, dx10: &dds::Dx10Header) -> Result<usize> {
+    if header.pixel_format.flags.contains(dds::DDPF::FOURCC) {
+        if header.pixel_format.four_cc == dds::FourCC::DX10 {
+            return dx10.dxgi_format.block_bytes().ok_or_else(|| {
+                eyre::eyre!(
+                    "Streamed textures require a block-compressed format, but got {}",
+                    dx10.dxgi_format
+                )
+            });
+        }
+
+        return header.pixel_format.four_cc.block_bytes().ok_or_else(|| {
+            eyre::eyre!(
+                "Streamed textures require a block-compressed format, but got {}",
+                header.pixel_format.four_cc
+            )
+        });
+    }
+
+    eyre::bail!("Streamed uncompressed textures are not supported")
+}
+
+impl DdsImage {
+    #[tracing::instrument(skip(data))]
+    fn parse(data: &[u8]) -> Result<Self> {
+        let mut r = Cursor::new(data);
+
+        let mut header = dds::DDSHeader::from_binary(&mut r).wrap_err("Invalid DDS header")?;
+
+        // Normalize legacy DXT formats to their DX10 equivalent, since that is
+        // what the engine uses.
+        let dx10 = if header.pixel_format.four_cc == dds::FourCC::DX10 {
+            dds::Dx10Header::from_binary(&mut r).wrap_err("Invalid DX10 header")?
+        } else {
+            let format = match header.pixel_format.four_cc {
+                dds::FourCC::DXT1 => dds::DXGIFormat::BC1_UNORM,
+                dds::FourCC::DXT2 | dds::FourCC::DXT3 => dds::DXGIFormat::BC2_UNORM,
+                dds::FourCC::DXT4 | dds::FourCC::DXT5 => dds::DXGIFormat::BC3_UNORM,
+                other => {
+                    eyre::bail!("Unsupported FourCC for a streamed texture: {other}")
+                }
+            };
+
+            header.pixel_format.four_cc = dds::FourCC::DX10;
+
+            dds::Dx10Header {
+                dxgi_format: format,
+                resource_dimension: dds::D3D10ResourceDimension::Texture2D,
+                misc_flag: dds::DdsResourceMiscFlags::empty(),
+                array_size: 1,
+                misc_flags2: 0,
+            }
+        };
+
+        let data_offset = r.position() as usize;
+
+        let block_bytes = dds_block_bytes(&header, &dx10)?;
+
+        let count = header.mipmap_count.max(1);
+        let mut mips = Vec::with_capacity(count);
+
+        let mut width = header.width;
+        let mut height = header.height;
+        let mut offset = data_offset;
+
+        for _ in 0..count {
+            let size = mip_size(width, height, block_bytes);
+            mips.push(Mip {
+                offset,
+                size,
+                width,
+                height,
+            });
+
+            offset += size;
+            width = (width / 2).max(1);
+            height = (height / 2).max(1);
+        }
+
+        eyre::ensure!(
+            offset <= data.len(),
+            "DDS file is too small for its mipmap chain (needs at least {offset} bytes, got {})",
+            data.len()
+        );
+
+        Ok(Self {
+            header,
+            dx10,
+            data_offset,
+            block_bytes,
+            mips,
+        })
+    }
+
+    /// Writes a DDS header for a mipmap chain starting at the given dimensions.
+    fn write_header(
+        &self,
+        w: &mut impl WriteExt,
+        width: usize,
+        height: usize,
+        mip_count: usize,
+    ) -> Result<()> {
+        let mut header = self.header;
+        header.width = width;
+        header.height = height;
+        header.mipmap_count = mip_count;
+        header.pitch_or_linear_size = width.div_ceil(4).max(1) * self.block_bytes;
+
+        if mip_count > 1 {
+            header.flags |= dds::DDSD::MIPMAPCOUNT;
+        } else {
+            header.flags &= !dds::DDSD::MIPMAPCOUNT;
+        }
+
+        header
+            .to_binary(&mut *w)
+            .wrap_err("Failed to write DDS header")?;
+        self.dx10
+            .to_binary(&mut *w)
+            .wrap_err("Failed to write DX10 header")?;
+
+        Ok(())
+    }
+}
+
 impl Texture {
     #[tracing::instrument(skip(data, chunks))]
     fn decompress_stream_data(mut data: impl Read, chunks: impl AsRef<[usize]>) -> Result<Vec<u8>> {
-        const RAW_SIZE: usize = 0x10000;
-
         let chunks = chunks.as_ref();
 
-        let max_size = chunks.iter().max().copied().unwrap_or(RAW_SIZE);
+        let max_size = chunks.iter().max().copied().unwrap_or(STREAM_CHUNK_SIZE);
         let mut read_buf = vec![0; max_size];
 
         let mut stream_raw = Vec::with_capacity(chunks.iter().sum());
@@ -212,10 +398,15 @@ impl Texture {
             data.read_exact(buf)
                 .wrap_err("Failed to read chunk from stream file")?;
 
-            let raw = oodle::decompress(buf, RAW_SIZE, OodleLZ_FuzzSafe::No, OodleLZ_CheckCRC::No)
-                .wrap_err("Failed to decompress stream chunk")?;
+            let raw = oodle::decompress(
+                buf,
+                STREAM_CHUNK_SIZE,
+                OodleLZ_FuzzSafe::No,
+                OodleLZ_CheckCRC::No,
+            )
+            .wrap_err("Failed to decompress stream chunk")?;
             eyre::ensure!(
-                raw.len() == RAW_SIZE,
+                raw.len() == STREAM_CHUNK_SIZE,
                 "Invalid chunk length after decompression"
             );
 
@@ -226,51 +417,38 @@ impl Texture {
         Ok(stream_raw)
     }
 
-    #[tracing::instrument(skip(data), fields(data_len = data.as_ref().len()))]
-    fn reorder_stream_mipmap(
-        data: impl AsRef<[u8]>,
-        num_chunks: usize,
-        bits_per_block: usize,
-        bytes_per_block: usize,
-        block_size: usize,
-        pitch: usize,
+    /// Reassembles a single mipmap from its stream chunks (column-major bands).
+    #[tracing::instrument(skip(data), fields(data_len = data.len()))]
+    fn reorder_mip(
+        data: &[u8],
+        width: usize,
+        height: usize,
+        block_bytes: usize,
     ) -> Result<Vec<u8>> {
-        const CHUNK_SIZE: usize = 0x10000;
-        let data = data.as_ref();
+        let chunks = chunks_per_mip(width, height, block_bytes);
+        let pitch = width.div_ceil(4).max(1) * block_bytes;
+        let chunks_wide = chunks_per_mip(width, 4, block_bytes);
 
-        // The stream contains up to `n_streamable_mipmaps` mipmaps. We only
-        // reassemble the largest one, which is stored as bands of
-        // `bytes_per_block` chunks (each covering the full width and 256 pixels
-        // of height) in column-major order.
-        let mut out = Vec::with_capacity(num_chunks * CHUNK_SIZE);
-        let mut window = vec![0u8; pitch * 64];
+        let mut out = Vec::with_capacity(mip_size(width, height, block_bytes));
+        let mut window = vec![0u8; pitch * CHUNK_ROWS];
 
-        let row_size = bits_per_block * block_size;
-        tracing::Span::current().record("row_size", row_size);
-
+        let needed = chunks * STREAM_CHUNK_SIZE;
         eyre::ensure!(
-            data.len() >= num_chunks * CHUNK_SIZE,
-            "Stream data is too small for the expected number of chunks"
+            data.len() >= needed,
+            "Stream data is too small for its mipmaps (needs {needed} bytes, got {})",
+            data.len()
         );
 
-        for (i, chunk) in data[..num_chunks * CHUNK_SIZE]
-            .chunks_exact(CHUNK_SIZE)
-            .enumerate()
-        {
-            let chunk_x = (i % bytes_per_block) * row_size;
-
-            let span = tracing::trace_span!("chunk", i, chunk_x = chunk_x);
-            let _guard = span.enter();
-
-            if i > 0 && i % bytes_per_block == 0 {
+        for (i, chunk) in data[..needed].chunks_exact(STREAM_CHUNK_SIZE).enumerate() {
+            if i > 0 && i % chunks_wide == 0 {
                 out.extend_from_slice(&window);
             }
 
-            for (j, row) in chunk.chunks_exact(row_size).enumerate() {
+            let chunk_x = (i % chunks_wide) * CHUNK_ROW_SIZE;
+
+            for (j, row) in chunk.chunks_exact(CHUNK_ROW_SIZE).enumerate() {
                 let start = chunk_x + j * pitch;
-                let end = start + row_size;
-                tracing::trace!("{i}/{j} at {start}:{end}");
-                window[start..end].copy_from_slice(row);
+                window[start..start + CHUNK_ROW_SIZE].copy_from_slice(row);
             }
         }
 
@@ -278,6 +456,33 @@ impl Texture {
         out.extend_from_slice(&window);
 
         Ok(out)
+    }
+
+    /// Splits a single mipmap into its stream chunks (column-major bands).
+    fn chunk_mip(data: &[u8], width: usize, height: usize, block_bytes: usize) -> Vec<Vec<u8>> {
+        let pitch = width.div_ceil(4).max(1) * block_bytes;
+        let chunks_wide = chunks_per_mip(width, 4, block_bytes);
+        let chunks_high = height.div_ceil(4).max(1).div_ceil(CHUNK_ROWS);
+
+        let mut chunks = Vec::with_capacity(chunks_wide * chunks_high);
+
+        for band in 0..chunks_high {
+            for column in 0..chunks_wide {
+                let mut chunk = vec![0u8; STREAM_CHUNK_SIZE];
+
+                for row in 0..CHUNK_ROWS {
+                    let block_row = band * CHUNK_ROWS + row;
+                    let src = block_row * pitch + column * CHUNK_ROW_SIZE;
+                    let dst = row * CHUNK_ROW_SIZE;
+                    chunk[dst..dst + CHUNK_ROW_SIZE]
+                        .copy_from_slice(&data[src..src + CHUNK_ROW_SIZE]);
+                }
+
+                chunks.push(chunk);
+            }
+        }
+
+        chunks
     }
 
     #[tracing::instrument(
@@ -337,6 +542,7 @@ impl Texture {
                     header: TextureHeader::default(),
                     data,
                     stream: None,
+                    stream_chunk_ends: Vec::new(),
                     category,
                 });
             }
@@ -416,6 +622,7 @@ impl Texture {
             header,
             data: out_buf,
             stream,
+            stream_chunk_ends: Vec::new(),
         })
     }
 
@@ -436,6 +643,17 @@ impl Texture {
 
         self.header.to_binary(&mut w)?;
 
+        if self.header.meta_size > 0 {
+            let num_chunks = self.stream_chunk_ends.len();
+            w.write_u32(num_chunks as u32)?;
+            w.write_u16(0)?;
+            w.write_u16(num_chunks as u16)?;
+
+            for end in &self.stream_chunk_ends {
+                w.write_u32(*end)?;
+            }
+        }
+
         w.write_u32(self.category.to_murmur32().into())?;
         Ok(())
     }
@@ -449,112 +667,54 @@ impl Texture {
                     category: Some(self.category.display().to_string()),
                     srgb: self.header.flags.contains(TextureFlags::SRGB),
                     streamable: self.header.flags.contains(TextureFlags::STREAMABLE),
+                    mipmap_num_largest_steps_to_discard: 0,
+                    mipmap_num_smallest_steps_to_discard: 0,
                 },
             },
         };
         serde_sjson::to_string(&texture).wrap_err("Failed to serialize texture definition")
     }
 
-    #[tracing::instrument(fields(
-        dds_header = tracing::field::Empty,
-        dx10_header = tracing::field::Empty,
-        image_format = tracing::field::Empty,
-    ))]
+    /// Rebuilds a complete DDS image (all mipmaps) from the inline data and the
+    /// streamed mipmaps.
+    #[tracing::instrument(skip(self), fields(name = %name))]
     fn create_dds_user_file(&self, name: String) -> Result<UserFile> {
         // Without a stream file, the bundle already contains a complete DDS
         // image, which we can emit as-is.
-        if self.stream.is_none() {
+        let Some(stream) = self.stream.as_ref() else {
             return Ok(UserFile::with_name(self.data.clone(), name));
-        }
-
-        let mut data = Cursor::new(&self.data);
-        let mut dds_header =
-            dds::DDSHeader::from_binary(&mut data).wrap_err("Failed to read DDS header")?;
-
-        {
-            let span = tracing::Span::current();
-            span.record("dds_header", format!("{dds_header:?}"));
-        }
-
-        if !dds_header.pixel_format.flags.contains(dds::DDPF::FOURCC) {
-            tracing::debug!("Found DDS without FourCC. Dumping raw data");
-            return Ok(UserFile::with_name(self.data.clone(), name));
-        }
-
-        let dx10_header =
-            dds::Dx10Header::from_binary(&mut data).wrap_err("Failed to read DX10 header")?;
-
-        {
-            let span = tracing::Span::current();
-            span.record("dx10_header", format!("{dx10_header:?}"));
-        }
-
-        let stingray_image_format = dds::stripped_format_from_header(&dds_header, &dx10_header)?;
-        {
-            let span = tracing::Span::current();
-            span.record("image_format", format!("{stingray_image_format:?}"));
-        }
-
-        let block_size = 4 * dds_header.pitch_or_linear_size / dds_header.width;
-        let bits_per_block: usize = match block_size {
-            8 => 128,
-            16 => 64,
-            block_size => eyre::bail!("Unsupported block size {block_size}"),
         };
 
-        let pitch = self.header.width / 4 * block_size;
-        let bytes_per_block = self.header.width / bits_per_block / 4;
+        let image = DdsImage::parse(&self.data).wrap_err("Failed to parse inline DDS image")?;
+        let block_bytes = image.block_bytes;
 
-        tracing::debug!(
-            "block_size = {} | pitch = {} | bits_per_block = {} | bytes_per_block = {}",
-            block_size,
-            pitch,
-            bits_per_block,
-            bytes_per_block
-        );
+        let inline_mips = image.header.mipmap_count.max(1);
+        let total_mips = self.header.n_streamable_mipmaps + inline_mips;
 
-        let mut out_data = Cursor::new(Vec::with_capacity(self.data.len()));
-
-        // Currently, we only extract the largest mipmap,
-        // so we need to set the dimensions accordingly, and remove the
-        // flag.
-        dds_header.width = self.header.width;
-        dds_header.height = self.header.height;
-        dds_header.mipmap_count = 0;
-        dds_header.flags &= !dds::DDSD::MIPMAPCOUNT;
-
-        dds_header
-            .to_binary(&mut out_data)
+        let mut out = Cursor::new(Vec::new());
+        image
+            .write_header(&mut out, self.header.width, self.header.height, total_mips)
             .wrap_err("Failed to write DDS header")?;
 
-        dx10_header
-            .to_binary(&mut out_data)
-            .wrap_err("Failed to write DX10 header")?;
+        let mut offset = 0;
+        let mut width = self.header.width;
+        let mut height = self.header.height;
 
-        // We returned early above when there is no stream, so this is always set.
-        let stream = self.stream.as_ref().expect("stream presence checked above");
+        for _ in 0..self.header.n_streamable_mipmaps {
+            let raw = Self::reorder_mip(&stream[offset..], width, height, block_bytes)
+                .wrap_err("Failed to reassemble streamed mipmap")?;
+            out.write_all(&raw)
+                .wrap_err("Failed to write streamed mipmap")?;
 
-        // The largest mipmap consists of one band (256px tall) per 256 pixels of
-        // height, with each band made up of `bytes_per_block` chunks.
-        let num_bands = self.header.height.div_ceil(256);
-        let num_chunks = num_bands * bytes_per_block;
-        tracing::debug!(num_bands, num_chunks, "Reassembling largest mipmap");
+            offset += chunks_per_mip(width, height, block_bytes) * STREAM_CHUNK_SIZE;
+            width = (width / 2).max(1);
+            height = (height / 2).max(1);
+        }
 
-        let data = Self::reorder_stream_mipmap(
-            stream,
-            num_chunks,
-            bits_per_block,
-            bytes_per_block,
-            block_size,
-            pitch,
-        )
-        .wrap_err("Failed to reorder stream chunks")?;
+        out.write_all(&self.data[image.data_offset..])
+            .wrap_err("Failed to write inline mipmaps")?;
 
-        out_data
-            .write_all(&data)
-            .wrap_err("Failed to write streamed mipmap data")?;
-
-        Ok(UserFile::with_name(out_data.into_inner(), name))
+        Ok(UserFile::with_name(out.into_inner(), name))
     }
 
     #[tracing::instrument(skip(self))]
@@ -570,39 +730,13 @@ impl Texture {
             files.push(UserFile::with_name(data, name));
         }
 
-        // For debugging purposes, also extract the raw files
-        if cfg!(debug_assertions) {
-            if let Some(stream) = &self.stream {
-                let stream_name = PathBuf::from(&name).with_extension("stream");
-                files.push(UserFile::with_name(
-                    stream.clone(),
-                    stream_name.display().to_string(),
-                ));
-            }
-
-            let name = PathBuf::from(&name)
-                .with_extension("raw.dds")
-                .display()
-                .to_string();
-            files.push(UserFile::with_name(self.data.clone(), name));
-        }
-
         match self
             .create_dds_user_file(name)
             .wrap_err("Failed to create DDS file")
         {
             Ok(dds) => files.push(dds),
             Err(err) => {
-                if cfg!(debug_assertions) {
-                    tracing::error!(
-                        "{:?}",
-                        err.with_section(|| {
-                            "Running in debug mode, continuing to produce raw files".header("Note:")
-                        })
-                    );
-                } else {
-                    return Err(err);
-                }
+                return Err(err);
             }
         };
 
@@ -700,15 +834,6 @@ pub async fn compile(
             .wrap_err_with(|| format!("Failed to read DDS file '{}'", path.display()))?
     };
 
-    let (width, height) = {
-        let mut r = Cursor::new(&dds);
-        let header = dds::DDSHeader::from_binary(&mut r).wrap_err("Failed to read DDS header")?;
-
-        (header.width, header.height)
-    };
-
-    let mut w = Cursor::new(Vec::new());
-
     // Unknown categories are decompiled as 8-digit hex hashes, so we need to
     // turn those back into a hash instead of hashing the hex string itself.
     let category = {
@@ -719,37 +844,182 @@ pub async fn compile(
         }
     };
 
+    let output = &definitions.common.output;
+
     let mut flags = TextureFlags::empty();
-    if definitions.common.output.srgb {
+    if output.srgb {
         flags |= TextureFlags::SRGB;
     }
 
-    if definitions.common.output.streamable {
-        tracing::warn!(
-            "Texture '{}' is marked streamable, but streamed mipmaps cannot be compiled yet. \
-             Compiling the mipmaps inline instead.",
-            name.display()
-        );
-    }
-
-    let texture = Texture {
-        header: TextureHeader {
-            // As long as we can't handle mipmaps, these need be `0`
-            flags,
-            n_streamable_mipmaps: 0,
-            width,
-            height,
-            mip_infos: [TextureHeaderMipInfo::default(); 16],
-            meta_size: 0,
-        },
-        data: dds,
-        stream: None,
-        category,
-    };
-    texture.to_binary(&mut w)?;
+    let apply_discards = output.mipmap_num_largest_steps_to_discard > 0
+        || output.mipmap_num_smallest_steps_to_discard > 0;
 
     let mut variant = BundleFileVariant::new();
-    variant.set_data(w.into_inner());
+
+    // Fast path: an inline texture without discards can be stored as-is,
+    // which also supports uncompressed formats.
+    if !output.streamable && !apply_discards {
+        let mut r = Cursor::new(&dds);
+        let header = dds::DDSHeader::from_binary(&mut r).wrap_err("Failed to parse DDS header")?;
+
+        let texture = Texture {
+            header: TextureHeader {
+                flags,
+                n_streamable_mipmaps: 0,
+                width: header.width,
+                height: header.height,
+                mip_infos: [TextureHeaderMipInfo::default(); 16],
+                meta_size: 0,
+            },
+            data: dds,
+            stream: None,
+            stream_chunk_ends: Vec::new(),
+            category,
+        };
+
+        let mut wrapper = Cursor::new(Vec::new());
+        texture.to_binary(&mut wrapper)?;
+        variant.set_data(wrapper.into_inner());
+
+        let mut file = BundleFile::new(name, BundleFileType::Texture);
+        file.add_variant(variant);
+        return Ok(file);
+    }
+
+    let image = DdsImage::parse(&dds).wrap_err("Failed to parse DDS image")?;
+    let block_bytes = image.block_bytes;
+
+    // Apply the requested mipmap discards.
+    let start = (output.mipmap_num_largest_steps_to_discard as usize).min(image.mips.len() - 1);
+    let end = image
+        .mips
+        .len()
+        .saturating_sub(output.mipmap_num_smallest_steps_to_discard as usize)
+        .max(start + 1);
+
+    let mips = &image.mips[start..end];
+    tracing::debug!(
+        total_mips = image.mips.len(),
+        kept_mips = mips.len(),
+        width = mips[0].width,
+        height = mips[0].height,
+        "Compiling texture"
+    );
+
+    // Like the engine, stream every mipmap that is at least one full stream
+    // chunk in size, and keep the rest inline.
+    let n_streamable = if output.streamable {
+        mips.iter()
+            .take_while(|mip| mip.size >= STREAM_CHUNK_SIZE)
+            .count()
+            // The engine always keeps at least the smallest mipmap inline.
+            .min(mips.len().saturating_sub(1))
+    } else {
+        0
+    };
+
+    let mut mip_infos = [TextureHeaderMipInfo::default(); 16];
+    let mut stream_raster_offset = 0;
+    let mut inline_raster_offset = 0;
+
+    for (i, mip) in mips.iter().enumerate() {
+        if i < n_streamable {
+            mip_infos[i] = TextureHeaderMipInfo {
+                offset: stream_raster_offset,
+                size: mip.size,
+            };
+            stream_raster_offset += mip.size;
+        } else {
+            mip_infos[i] = TextureHeaderMipInfo {
+                offset: inline_raster_offset,
+                size: mip.size,
+            };
+            inline_raster_offset += mip.size;
+        }
+    }
+
+    if n_streamable == 0 {
+        // Fully inline texture assembled from the selected mipmaps.
+        let mut data = Cursor::new(Vec::new());
+        image.write_header(&mut data, mips[0].width, mips[0].height, mips.len())?;
+
+        for mip in mips {
+            data.write_all(&dds[mip.offset..mip.offset + mip.size])?;
+        }
+
+        let texture = Texture {
+            header: TextureHeader {
+                flags,
+                n_streamable_mipmaps: 0,
+                width: mips[0].width,
+                height: mips[0].height,
+                mip_infos,
+                meta_size: 0,
+            },
+            data: data.into_inner(),
+            stream: None,
+            stream_chunk_ends: Vec::new(),
+            category,
+        };
+
+        let mut wrapper = Cursor::new(Vec::new());
+        texture.to_binary(&mut wrapper)?;
+        variant.set_data(wrapper.into_inner());
+    } else {
+        // Streamed texture: compress the large mipmaps into a data file and
+        // keep the small ones inline.
+        let mut stream = Vec::new();
+        let mut chunk_ends = Vec::new();
+
+        for mip in &mips[..n_streamable] {
+            let chunks = Texture::chunk_mip(
+                &dds[mip.offset..mip.offset + mip.size],
+                mip.width,
+                mip.height,
+                block_bytes,
+            );
+
+            for chunk in chunks {
+                let compressed =
+                    oodle::compress_exact(&chunk).wrap_err("Failed to compress stream chunk")?;
+                stream.extend_from_slice(&compressed);
+                chunk_ends.push(stream.len() as u32);
+            }
+        }
+
+        let mut data = Cursor::new(Vec::new());
+        let inline = &mips[n_streamable..];
+        image.write_header(&mut data, inline[0].width, inline[0].height, inline.len())?;
+
+        for mip in inline {
+            data.write_all(&dds[mip.offset..mip.offset + mip.size])?;
+        }
+
+        let texture = Texture {
+            header: TextureHeader {
+                flags: flags | TextureFlags::STREAMABLE,
+                n_streamable_mipmaps: n_streamable,
+                width: mips[0].width,
+                height: mips[0].height,
+                mip_infos,
+                // 8 bytes for the chunk count fields plus one u32 per chunk.
+                meta_size: 8 + chunk_ends.len() * 4,
+            },
+            data: data.into_inner(),
+            stream: None,
+            stream_chunk_ends: chunk_ends,
+            category,
+        };
+
+        let mut wrapper = Cursor::new(Vec::new());
+        texture.to_binary(&mut wrapper)?;
+        variant.set_data(wrapper.into_inner());
+
+        // Name the data file after the resource, so it is unique and stable.
+        let hash = format!("{:016x}", u64::from(name.to_murmur64()));
+        let data_file_name = format!("data/{}/{}.stream", &hash[..2], hash);
+        variant.set_external_data_file(data_file_name, stream);
+    }
 
     let mut file = BundleFile::new(name, BundleFileType::Texture);
     file.add_variant(variant);

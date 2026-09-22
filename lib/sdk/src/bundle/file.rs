@@ -26,6 +26,10 @@ pub struct BundleFileVariant {
     property: u32,
     data: Vec<u8>,
     data_file_name: Option<String>,
+    /// Contents of the external data file referenced by `data_file_name`.
+    /// Not part of the serialized bundle; used to carry streamed data files
+    /// from compilation to the build/deploy step.
+    external_data: Option<Vec<u8>>,
     external: bool,
     unknown_1: u8,
 }
@@ -40,6 +44,7 @@ impl BundleFileVariant {
             property: 0,
             data: Vec::new(),
             data_file_name: None,
+            external_data: None,
             external: false,
             unknown_1: 0,
         }
@@ -63,6 +68,18 @@ impl BundleFileVariant {
 
     pub fn data_file_name(&self) -> Option<&String> {
         self.data_file_name.as_ref()
+    }
+
+    /// Sets the name and contents of the external data file this variant
+    /// references. The contents are written out separately from the bundle.
+    pub fn set_external_data_file(&mut self, name: String, data: Vec<u8>) {
+        self.data_file_name = Some(name);
+        self.external_data = Some(data);
+    }
+
+    /// The contents of the external data file, if this variant carries one.
+    pub fn external_data(&self) -> Option<&Vec<u8>> {
+        self.external_data.as_ref()
     }
 
     pub fn external(&self) -> bool {
@@ -248,6 +265,7 @@ impl BundleFile {
                 property: header.variant,
                 data,
                 data_file_name,
+                external_data: None,
                 external: header.external,
                 unknown_1: header.unknown_1,
             };

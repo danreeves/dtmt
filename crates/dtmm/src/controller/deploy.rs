@@ -445,6 +445,8 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
         fs::write(&path, mod_bundle.to_binary()?)
             .await
             .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
+
+        write_external_data_files(&mod_bundle, &bundle_dir).await?;
     }
 
     bundles.push(mod_bundle);
@@ -526,7 +528,11 @@ async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Re
             .wrap_err("Failed to serialize boot bundle")?;
         fs::write(&bundle_path, bin)
             .await
-            .wrap_err_with(|| format!("Failed to write main bundle: {}", bundle_path.display()))
+            .wrap_err_with(|| format!("Failed to write main bundle: {}", bundle_path.display()))?;
+
+        write_external_data_files(&boot_bundle, &bundle_dir)
+            .await
+            .wrap_err("Failed to write boot bundle data files")
     }
     .instrument(tracing::trace_span!("write boot bundle"))
     .await?;
@@ -534,6 +540,33 @@ async fn patch_boot_bundle(state: Arc<ActionState>, deployment_info: &str) -> Re
     bundles.push(boot_bundle);
 
     Ok(bundles)
+}
+
+/// Writes any external data files referenced by a bundle's variants, such as
+/// streamed texture mipmaps, into the game's `bundle` directory.
+async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result<()> {
+    for file in bundle.files() {
+        for variant in file.variants() {
+            let (Some(name), Some(data)) = (variant.data_file_name(), variant.external_data())
+            else {
+                continue;
+            };
+
+            let path = bundle_dir.join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).await.wrap_err_with(|| {
+                    format!("Failed to create directory '{}'", parent.display())
+                })?;
+            }
+
+            tracing::trace!("Writing external data file to '{}'", path.display());
+            fs::write(&path, data)
+                .await
+                .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]
