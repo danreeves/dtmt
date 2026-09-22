@@ -428,6 +428,13 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<Vec<Bundle>> {
 
             tasks.push(task);
         }
+
+        // Deploy the mod's external data files, if it has any.
+        let data_src = mod_dir.join("data");
+        if data_src.is_dir() {
+            tracing::trace!("Copying external data files for mod '{}'", mod_info.name);
+            copy_dir_all(&data_src, &bundle_dir.join("data")).await?;
+        }
     }
 
     tracing::debug!("Copying {} mod bundles", tasks.len());
@@ -567,6 +574,42 @@ async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result
     }
 
     Ok(())
+}
+
+/// Recursively copies a directory, used to deploy a mod's external data files
+/// (such as streamed texture mipmaps) into the game's `bundle` directory.
+fn copy_dir_all<'a>(
+    src: &'a Path,
+    dst: &'a Path,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    Box::pin(async move {
+        fs::create_dir_all(dst)
+            .await
+            .wrap_err_with(|| format!("Failed to create '{}'", dst.display()))?;
+
+        let mut entries = fs::read_dir(src)
+            .await
+            .wrap_err_with(|| format!("Failed to read '{}'", src.display()))?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let dest = dst.join(entry.file_name());
+
+            if entry.file_type().await?.is_dir() {
+                copy_dir_all(&path, &dest).await?;
+            } else {
+                fs::copy(&path, &dest).await.wrap_err_with(|| {
+                    format!(
+                        "Failed to copy '{}' to '{}'",
+                        path.display(),
+                        dest.display()
+                    )
+                })?;
+            }
+        }
+
+        Ok(())
+    })
 }
 
 #[tracing::instrument(skip_all, fields(bundles = bundles.as_ref().len()))]

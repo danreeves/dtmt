@@ -24,6 +24,8 @@
 - dtmt: Implement command to search for files
 - sdk: decompile textures, including streamed mipmaps
 - sdk: compile textures from `.texture` definitions and DDS files
+- sdk: store non-streamed textures as external data files, matching the game
+- dtmm: deploy a mod's external data files (streamed texture mipmaps, etc.)
 
 === Fixed
 

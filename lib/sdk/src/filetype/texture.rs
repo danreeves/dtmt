@@ -12,7 +12,7 @@ use tokio::fs;
 use crate::binary::sync::{ReadExt, WriteExt};
 use crate::bundle::file::UserFile;
 use crate::murmur::{HashGroup, IdString32, IdString64};
-use crate::{BundleFile, BundleFileType, BundleFileVariant, binary};
+use crate::{BundleFile, BundleFileType, BundleFileVariant, Properties, binary};
 
 mod dds;
 
@@ -809,6 +809,23 @@ pub(crate) async fn decompile(
     }
 }
 
+/// Builds a texture bundle file that stores its data in an external `data/`
+/// file, which is how the engine stores textures that are not streamed.
+fn external_texture_file(name: IdString64, wrapper: Vec<u8>) -> BundleFile {
+    let hash = format!("{:016x}", u64::from(name.to_murmur64()));
+    let data_file_name = format!("data/{}/{}", &hash[..2], hash);
+
+    let mut variant = BundleFileVariant::new();
+    variant.set_external(true);
+    variant.set_external_data_file(data_file_name, wrapper);
+
+    let mut file = BundleFile::new(name, BundleFileType::Texture);
+    file.set_props(Properties::DATA);
+    file.add_variant(variant);
+
+    file
+}
+
 #[tracing::instrument(skip(sjson, root), fields(sjson_len = sjson.as_ref().len()))]
 pub async fn compile(
     name: IdString64,
@@ -879,11 +896,8 @@ pub async fn compile(
 
         let mut wrapper = Cursor::new(Vec::new());
         texture.to_binary(&mut wrapper)?;
-        variant.set_data(wrapper.into_inner());
 
-        let mut file = BundleFile::new(name, BundleFileType::Texture);
-        file.add_variant(variant);
-        return Ok(file);
+        return Ok(external_texture_file(name, wrapper.into_inner()));
     }
 
     let image = DdsImage::parse(&dds).wrap_err("Failed to parse DDS image")?;
@@ -964,7 +978,8 @@ pub async fn compile(
 
         let mut wrapper = Cursor::new(Vec::new());
         texture.to_binary(&mut wrapper)?;
-        variant.set_data(wrapper.into_inner());
+
+        return Ok(external_texture_file(name, wrapper.into_inner()));
     } else {
         // Streamed texture: compress the large mipmaps into a data file and
         // keep the small ones inline.

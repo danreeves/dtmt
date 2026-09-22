@@ -77,6 +77,10 @@ impl BundleFileVariant {
         self.external_data = Some(data);
     }
 
+    pub fn set_external(&mut self, external: bool) {
+        self.external = external;
+    }
+
     /// The contents of the external data file, if this variant carries one.
     pub fn external_data(&self) -> Option<&Vec<u8>> {
         self.external_data.as_ref()
