@@ -42,6 +42,26 @@ impl<T: FromBinary> FromBinary for Vec<T> {
     }
 }
 
+pub fn flags_from_bits<T: bitflags::Flags>(bits: T::Bits) -> T
+where
+    <T as bitflags::Flags>::Bits: std::fmt::Binary,
+{
+    if let Some(flags) = T::from_bits(bits) {
+        flags
+    } else {
+        let unknown = bits & !T::all().bits();
+
+        tracing::warn!(
+            "Unknown bits found for '{}': known = {:0b}, unknown = {:0b}",
+            std::any::type_name::<T>(),
+            T::all().bits(),
+            unknown
+        );
+
+        T::from_bits_truncate(bits)
+    }
+}
+
 pub mod sync {
     use std::ffi::CStr;
     use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -128,9 +148,11 @@ pub mod sync {
             ReadBytesExt::read_u8(self)
         }
 
+        make_read!(read_u16, read_u16_le, u16);
         make_read!(read_u32, read_u32_le, u32);
         make_read!(read_u64, read_u64_le, u64);
 
+        make_skip!(skip_u16, read_u16, u16);
         make_skip!(skip_u32, read_u32, u32);
 
         // Implementation based on https://en.wikipedia.com/wiki/LEB128

@@ -110,15 +110,14 @@ async fn compile_file(
     let file_data = fs::read(&path)
         .await
         .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
-    let _sjson = String::from_utf8(file_data)
+    let sjson = String::from_utf8(file_data)
         .wrap_err_with(|| format!("Invalid UTF8 data in '{}'", path.display()))?;
 
-    let _root = path.parent().ok_or_eyre("File path has no parent")?;
+    let root = path.parent().ok_or_eyre("File path has no parent")?;
 
-    eyre::bail!(
-        "Compilation for type '{}' is not implemented, yet",
-        file_type
-    )
+    BundleFile::from_sjson(name.into(), file_type, sjson, root)
+        .await
+        .wrap_err_with(|| format!("Failed to compile file '{}'", path.display()))
 }
 
 #[tracing::instrument(

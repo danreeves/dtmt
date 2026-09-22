@@ -16,6 +16,7 @@ pub enum HashGroup {
     Filename,
     Filetype,
     Strings,
+    TextureCategory,
     Other,
 }
 
@@ -25,6 +26,7 @@ impl From<HashGroup> for sdk::murmur::HashGroup {
             HashGroup::Filename => sdk::murmur::HashGroup::Filename,
             HashGroup::Filetype => sdk::murmur::HashGroup::Filetype,
             HashGroup::Strings => sdk::murmur::HashGroup::Strings,
+            HashGroup::TextureCategory => sdk::murmur::HashGroup::TextureCategory,
             HashGroup::Other => sdk::murmur::HashGroup::Other,
         }
     }
@@ -36,6 +38,7 @@ impl std::fmt::Display for HashGroup {
             HashGroup::Filename => write!(f, "filename"),
             HashGroup::Filetype => write!(f, "filetype"),
             HashGroup::Strings => write!(f, "strings"),
+            HashGroup::TextureCategory => write!(f, "texture-category"),
             HashGroup::Other => write!(f, "other"),
         }
     }

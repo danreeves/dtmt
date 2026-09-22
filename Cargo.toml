@@ -30,6 +30,7 @@ druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "b
 druid-widget-nursery = "0.1"
 dtmt-shared = { path = "lib/dtmt-shared" }
 fastrand = "2.1.0"
+flate2 = "1.0.30"
 fs_extra = "1.1.0"
 futures = "0.3.25"
 futures-util = "0.3.24"
@@ -42,6 +43,8 @@ minijinja = { version = "2.0.1", default-features = false, features = ["serde"] 
 nanorand = "0.8.0"
 nexusmods = { path = "lib/nexusmods" }
 notify = "8.0.0"
+num-derive = "0.4.2"
+num-traits = "0.2.19"
 oodle = { path = "lib/oodle" }
 open = "5.0.1"
 path-clean = "1.0.1"

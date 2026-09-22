@@ -22,6 +22,8 @@
 - dtmm: Add button to open mod on nexusmods.com
 - dtmt: Implement commands to list bundles and contents
 - dtmt: Implement command to search for files
+- sdk: decompile textures, including streamed mipmaps
+- sdk: compile textures from `.texture` definitions and DDS files
 
 === Fixed
 
