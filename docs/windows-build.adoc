@@ -79,6 +79,79 @@ Copy-Item lib\oodle\oo2core_win64.lib lib\oodle\oo2core_win64_debug.lib
 The generated library references the game's DLL, so `oo2core_9_win64.dll` must be
 on `PATH` (or next to the executable) for the resulting binaries to run.
 
+== Quick start (PowerShell)
+
+Everything above can be set up per shell. This is the exact environment the
+project is developed in:
+
+[source,powershell]
+----
+# Game install (provides oo2core_9_win64.dll at runtime)
+$game = "E:\SteamLibrary\steamapps\common\Warhammer 40,000 DARKTIDE"
+
+# MinGW-w64 (w64devkit) first for the LuaJIT build, then the game's binaries
+# so the Oodle DLL is found when running the tools.
+$env:PATH = "$game\binaries;C:\Users\<you>\w64devkit\w64devkit\bin;$env:PATH"
+
+# Required by some build scripts and by the nightly toolchain.
+$env:OS = "Windows_NT"
+$env:RUSTUP_TOOLCHAIN = "nightly"
+
+cargo build
+----
+
+== Workspace layout
+
+|===
+| Path | Crate | What it is
+
+| `crates/dtmt` | `dtmt` | CLI: builds mod projects, inspects and edits bundles
+| `crates/dtmm` | `dtmm` | GUI: installs and manages mods, patches the game
+| `lib/sdk` | `sdk` | Core library: bundle/filetype parsing, compilation, the bundle database
+| `lib/oodle` | `oodle` | Safe wrapper around RAD's Oodle (loaded from the game)
+| `lib/luajit2-sys` | `luajit2-sys` | LuaJIT bindings, built from source
+| `lib/dtmt-shared` | `dtmt-shared` | Small shared helpers used by both binaries
+| `lib/color-eyre` | `color-eyre` | Vendored error-reporting fork (excluded from the workspace)
+|===
+
+`cargo build` at the repository root builds all of them. Individual parts can be
+built and run on their own:
+
+[source,console]
+----
+# CLI
+$ cargo build -p dtmt
+$ cargo run -p dtmt -- --help
+$ cargo run -p dtmt -- build /path/to/mod
+
+# GUI
+$ cargo build -p dtmm
+$ cargo run -p dtmm
+
+# Core library
+$ cargo build -p sdk
+$ cargo test -p sdk
+
+# Oodle wrapper
+$ cargo build -p oodle
+----
+
+A debug build writes `dtmt.exe` and `dtmm.exe` to `target/debug/`. Both are
+`#[windows_subsystem = "windows"]`, so launching them from a script needs
+`Start-Process -Wait` (or a console attached) to capture their output and exit
+code.
+
+`dtmm` also accepts headless flags, which is handy for scripted deployments:
+
+[source,console]
+----
+$ dtmm.exe --deploy   # deploy the currently enabled mods
+$ dtmm.exe --reset    # restore the game to its pre-deployment state
+----
+
+Both write their result to `%APPDATA%\dtmm\deploy-result.txt` and set the exit
+code accordingly.
+
 == Building
 
 [source,console]
