@@ -20,11 +20,19 @@ Other things of note:
 
 ### Formats
 
-Formats observed so far:
+Formats observed so far, all via a `DX10` FourCC:
 
 | FourCC | DXGI |
 |---------|-------|
-| `DX10` | `BC5_UNORM` |
+| `DX10` | `BC1_UNORM` (71) |
+| `DX10` | `BC4_UNORM` (80) |
+| `DX10` | `BC5_UNORM` (83) |
+| `DX10` | `BC7_UNORM` (98) |
+
+The initial sample only contained `BC5_UNORM`; the list above comes from a
+wider scan of `bundle/data/`. See
+[File Type - Texture.-](File%20Type%20-%20Texture.-.md) for the full layout and
+the stream chunking rules.
 
 
 ## Decompiling
