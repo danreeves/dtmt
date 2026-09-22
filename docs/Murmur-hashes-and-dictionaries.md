@@ -1,0 +1,9 @@
+Fatshark heavily utilizes hashing to turn arbitrary strings into fixed-size data types. Specifically, they use Murmur in its 64-bit variant, which is very fast to calculate, while still producing a decent uniformity (inverse likelihood of producing duplicates). Depending on the situation, they either use the full 64-bit output of the hash function, or, when they don't need as much data, they cut it and only use the first 32 bits. While Murmur does have a "proper" 32-bit variant, Fatshark does not seem to use that anywhere.
+
+However, to be able to do things like loading packages or finding a specific file, we need to know the original string values. The Dictionary (`dictionary.csv` by default) is a collection of known (or guessed) strings. It maps these back to their hash values, so that whenever a hash value is found in the game files, it can be looked up and matched in the dictionary.
+
+But the dictionary is far from complete, and likely never will be. Therefore, DTMT will fall back to producing the hash value itself whenever it encounters a Murmur hash that cannot be found in the dictionary. It is important to note that because of this, decompiling and re-compiling a file is not always idempotent, as the stringified hash value will produce a different hash than the original string.
+
+CSV format for the dictionary: `string,murmur64,murmur32,group`.
+
+The `group` is one of several (see `dtmt dictionary add --help`), which segment hashes by their usage in the engine. While uniformity for Murmur is decent, Fatshark's compilation pipeline only ensures unique hashes within their respective usage groups. E.g. hashes for file names are ensured to be unique among themselves, but may overlap with the ones for localization IDs in `.strings` files. Therefore, DTMT has to respect the same groups to avoid false-positive matches during decompilation.
