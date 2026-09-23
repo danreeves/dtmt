@@ -85,7 +85,7 @@ async fn compile(
     game_dir: Arc<Option<impl AsRef<Path> + std::fmt::Debug>>,
 ) -> Result<()> {
     let out_path = out_path.as_ref();
-    build(cfg, out_path, game_dir)
+    build(cfg, out_path, game_dir, false)
         .await
         .wrap_err("Failed to build bundles")?;
     package(cfg, out_path, archive_path)

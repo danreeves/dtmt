@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{Cursor, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -352,6 +353,8 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<(Vec<Bundle>, Vec<Stri
 
     tracing::trace!("Preparing tasks to deploy bundle files");
 
+    let previously = previously_deployed_data_files(&bundle_dir).await;
+
     for mod_info in state.mods.iter().filter(|m| m.enabled && m.bundled) {
         let span = tracing::trace_span!("building mod packages", name = mod_info.name);
         let _enter = span.enter();
@@ -440,7 +443,14 @@ async fn build_bundles(state: Arc<ActionState>) -> Result<(Vec<Bundle>, Vec<Stri
         if data_src.is_dir() {
             tracing::trace!("Copying external data files for mod '{}'", mod_info.name);
 
-            for path in copy_dir_all(&data_src, &bundle_dir.join("data")).await? {
+            for path in copy_dir_all(
+                &data_src,
+                &bundle_dir.join("data"),
+                &bundle_dir,
+                &previously,
+            )
+            .await?
+            {
                 if let Some(relative) = relative_bundle_path(bundle_dir.as_path(), &path)
                     && !data_files.contains(&relative)
                 {
@@ -583,7 +593,12 @@ pub(crate) fn backup_path_for(path: &Path) -> PathBuf {
 /// Copies `path` to its `.bak` sibling unless a backup already exists, so the
 /// original game file survives however many times we overwrite it. Returns
 /// whether a backup is available afterwards.
-async fn backup_file(path: &Path) -> Result<bool> {
+///
+/// `mod_owned` marks files that a previous deployment wrote and that were never
+/// backed up (because they did not exist before). Backing those up now would
+/// capture modded content as if it were the original, which would then be
+/// restored on reset.
+async fn backup_file(path: &Path, mod_owned: bool) -> Result<bool> {
     let backup = backup_path_for(path);
 
     if fs::metadata(&backup).await.is_ok() {
@@ -593,6 +608,14 @@ async fn backup_file(path: &Path) -> Result<bool> {
     // Nothing to back up: the file does not exist yet, so a reset only has to
     // delete it again.
     if fs::metadata(path).await.is_err() {
+        return Ok(false);
+    }
+
+    if mod_owned {
+        tracing::debug!(
+            "Not backing up '{}'; it was written by a previous deployment",
+            path.display()
+        );
         return Ok(false);
     }
 
@@ -608,6 +631,21 @@ async fn backup_file(path: &Path) -> Result<bool> {
     tracing::debug!("Backed up '{}' to '{}'", path.display(), backup.display());
 
     Ok(true)
+}
+
+/// Relative paths (to the game's `bundle` directory) that the active
+/// deployment wrote. Used to distinguish mod-owned files from game files when
+/// backing up before an overwrite.
+async fn previously_deployed_data_files(bundle_dir: &Path) -> HashSet<String> {
+    let Some(root) = bundle_dir.parent() else {
+        return HashSet::new();
+    };
+
+    let path = root.join(DEPLOYMENT_DATA_PATH);
+    match read_sjson_file::<_, DeploymentData>(&path).await {
+        Ok(data) => data.data_files.into_iter().collect(),
+        Err(_) => HashSet::new(),
+    }
 }
 
 /// Whether `relative` is a plain, safe relative path: not absolute and without
@@ -648,6 +686,7 @@ fn relative_bundle_path(bundle_dir: &Path, path: &Path) -> Option<String> {
 /// reset.
 async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result<Vec<String>> {
     let mut written = Vec::new();
+    let previously = previously_deployed_data_files(bundle_dir).await;
 
     for file in bundle.files() {
         for variant in file.variants() {
@@ -670,7 +709,7 @@ async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result
                 })?;
             }
 
-            backup_file(&path).await?;
+            backup_file(&path, previously.contains(name)).await?;
 
             tracing::trace!("Writing external data file to '{}'", path.display());
             fs::write(&path, data)
@@ -696,6 +735,8 @@ async fn write_external_data_files(bundle: &Bundle, bundle_dir: &Path) -> Result
 fn copy_dir_all<'a>(
     src: &'a Path,
     dst: &'a Path,
+    bundle_dir: &'a Path,
+    previously: &'a HashSet<String>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<PathBuf>>> + Send + 'a>> {
     Box::pin(async move {
         fs::create_dir_all(dst)
@@ -712,9 +753,12 @@ fn copy_dir_all<'a>(
             let dest = dst.join(entry.file_name());
 
             if entry.file_type().await?.is_dir() {
-                written.extend(copy_dir_all(&path, &dest).await?);
+                written.extend(copy_dir_all(&path, &dest, bundle_dir, previously).await?);
             } else {
-                backup_file(&dest).await?;
+                let mod_owned = relative_bundle_path(bundle_dir, &dest)
+                    .map(|relative| previously.contains(&relative))
+                    .unwrap_or(false);
+                backup_file(&dest, mod_owned).await?;
 
                 fs::copy(&path, &dest).await.wrap_err_with(|| {
                     format!(

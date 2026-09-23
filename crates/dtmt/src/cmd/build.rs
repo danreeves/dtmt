@@ -3,7 +3,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use clap::{Arg, ArgMatches, Command, value_parser};
+use clap::{Arg, ArgAction, ArgMatches, Command, value_parser};
 use color_eyre::eyre::{self, Context, Result};
 use color_eyre::{Help, Report};
 use dtmt_shared::ModConfig;
@@ -18,8 +18,54 @@ use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 const PROJECT_CONFIG_NAME: &str = "dtmt.cfg";
+/// Marker file written by DTMM while a mod deployment is active.
+const DEPLOYMENT_MARKER: &str = "dtmm-deployment.sjson";
 
 type FileIndexMap = HashMap<String, HashSet<String>>;
+
+/// Path of the `.bak` sibling that keeps the original of a deployed file.
+fn backup_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(".bak");
+    PathBuf::from(name)
+}
+
+/// Backs up `path` before it gets overwritten, unless a backup already exists.
+///
+/// The backup is never replaced, so however many times a file is deployed, the
+/// original game file stays recoverable. Files that do not exist yet need no
+/// backup (a reset can simply delete them again).
+async fn backup_file(path: &Path) -> Result<bool> {
+    let backup = backup_path_for(path);
+
+    if fs::try_exists(&backup).await? {
+        return Ok(true);
+    }
+
+    if !fs::try_exists(path).await? {
+        return Ok(false);
+    }
+
+    fs::copy(path, &backup).await.wrap_err_with(|| {
+        format!(
+            "Failed to back up '{}' to '{}' before overwriting it",
+            path.display(),
+            backup.display()
+        )
+    })?;
+
+    tracing::info!("Backed up '{}' to '{}'", path.display(), backup.display());
+    Ok(true)
+}
+
+/// Writes a deployed file, backing up the previous contents first.
+async fn write_deployed_file(path: &Path, data: &[u8]) -> Result<()> {
+    backup_file(path).await?;
+
+    fs::write(path, data)
+        .await
+        .wrap_err_with(|| format!("Failed to write '{}'", path.display()))
+}
 
 pub(crate) fn command_definition() -> Command {
     Command::new("build")
@@ -51,6 +97,16 @@ pub(crate) fn command_definition() -> Command {
                         deploy the newly built bundles. \
                         This will not adjust the bundle database or package files, so if files are \
                         added or removed, you will have to import into DTMM and re-deploy there.",
+                ),
+        )
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .action(ArgAction::SetTrue)
+                .help(
+                    "Deploy even when a mod deployment is already active. \
+                        This can overwrite files that were already modified, so prefer \
+                        running `dtmm --reset` first.",
                 ),
         )
 }
@@ -183,10 +239,14 @@ async fn build_package(
 
 /// Writes any external data files referenced by the bundle's variants, such as
 /// streamed texture mipmaps, relative to the given base directory.
-#[tracing::instrument(skip_all, fields(base = %base.as_ref().display()))]
+///
+/// When `backup` is set (deploying into the game), existing files are backed up
+/// to a `.bak` sibling before being overwritten, so a deployment can be undone.
+#[tracing::instrument(skip_all, fields(base = %base.as_ref().display(), backup))]
 async fn write_external_data_files(
     bundle: &Bundle,
     base: impl AsRef<Path> + std::fmt::Debug,
+    backup: bool,
 ) -> Result<()> {
     let base = base.as_ref();
 
@@ -205,9 +265,14 @@ async fn write_external_data_files(
             }
 
             tracing::trace!(path = %path.display(), "Writing external data file");
-            fs::write(&path, data)
-                .await
-                .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+
+            if backup {
+                write_deployed_file(&path, data).await?;
+            } else {
+                fs::write(&path, data)
+                    .await
+                    .wrap_err_with(|| format!("Failed to write '{}'", path.display()))?;
+            }
         }
     }
 
@@ -301,11 +366,32 @@ pub(crate) async fn build<P>(
     cfg: &ModConfig,
     out_path: impl AsRef<Path> + std::fmt::Debug,
     game_dir: Arc<Option<P>>,
+    force: bool,
 ) -> Result<()>
 where
     P: AsRef<Path> + std::fmt::Debug,
 {
     let out_path = out_path.as_ref();
+
+    if let Some(dir) = game_dir.as_ref() {
+        let dir = dir.as_ref();
+        let marker = dir.parent().map(|parent| parent.join(DEPLOYMENT_MARKER));
+
+        if !force
+            && let Some(marker) = marker
+            && fs::try_exists(&marker).await.unwrap_or(false)
+        {
+            return Err(eyre::eyre!(
+                "A mod deployment is already active (found '{}')",
+                marker.display()
+            ))
+            .with_suggestion(|| {
+                "Run `dtmm --reset` first so originals are restored before deploying \
+                 again, or pass --force to deploy anyway."
+                    .to_string()
+            });
+        }
+    }
 
     fs::create_dir_all(out_path)
         .await
@@ -365,7 +451,7 @@ where
                 .await
                 .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
 
-            write_external_data_files(&bundle, out_path).await?;
+            write_external_data_files(&bundle, out_path, false).await?;
 
             if let Some(game_dir) = game_dir.as_ref() {
                 let path = game_dir.as_ref().join(&name);
@@ -375,11 +461,9 @@ where
                     bundle.name().display(),
                     path.display()
                 );
-                fs::write(&path, &data)
-                    .await
-                    .wrap_err_with(|| format!("Failed to write bundle to '{}'", path.display()))?;
+                write_deployed_file(&path, &data).await?;
 
-                write_external_data_files(&bundle, game_dir.as_ref()).await?;
+                write_external_data_files(&bundle, game_dir.as_ref(), true).await?;
             }
 
             Ok(())
@@ -441,11 +525,13 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
         .get_one::<PathBuf>("out")
         .expect("parameter should have default value");
 
+    let force = matches.get_flag("force");
+
     tracing::debug!(?cfg, ?game_dir, ?out_path);
 
     let game_dir = Arc::new(game_dir);
 
-    build(&cfg, out_path, game_dir).await?;
+    build(&cfg, out_path, game_dir, force).await?;
 
     Ok(())
 }
