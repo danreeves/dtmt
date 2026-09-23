@@ -214,33 +214,24 @@ only carries the value and its offset inside the material's own `variable_data`.
    without a `style_id` gets `style_id_<pass index>` instead, so resolving the
    style through `widget.passes` is the robust way.
 
-Only variables that the shader's variable table lists can be driven this way, so a
-new name means adding a record to that table:
+Only variables that the shader's variable table lists can be driven this way.
+The engine resolves a variable by looking its name hash up in the shader's
+group data tables, which map the name to a cbuffer offset. Adding a *new* name
+means appending a record to those tables, and reusing a shipped name means
+aliasing its slot. Both were prototyped and validated in game (an appended
+`mod_tint` record renders and Lua-drives correctly), but aliasing a shipped
+variable is the prudent choice, so nothing shipped in DTMT edits the tables:
+`dev_wireframe_color` (a debug variable at offset 224 that the UI shader never
+reads) is the general purpose slot, and exactly what shipping mod parameters
+should fall back to until the wrapper is decoded for real.
 
-```shell
-cargo run -p sdk --example shader43 -- --add-variable \
-    --table dev_wireframe_color --name mod_tint --offset 224 --type float4 \
-    materials/mods/snoopymod/ui_default_base.material
-```
-
-`--table` is a variable the table already contains (which picks that cbuffer's
-tables in the right place in the group data), `--name` is the new variable,
-`--offset` is where its value has to land in the cbuffer and `--type` is `float`,
-`float2`, `float3`, `float4` or `float4x4`. The tool appends the record to every
-copy of the table (the UI shader's group data holds twelve groups, each
-serialized twice) and moves the sections after the group data, so the shader
-stays consistent. The offset has to be a slot the custom shader reads, so the decompiled cbuffer is
-the way to find one; `dev_wireframe_color` (a debug variable at offset 224 that
-the UI shader never reads) is the usual choice.
-
-Growing the per-object cbuffer itself does not work as an alternative slot
-source: with the recompiled shader declaring 256 bytes instead of 240, the
-engine still reads zeros in the new slot even though all three places that carry
-the size were patched — the program tails' cbuffer entries, the `{240, 64, count}`
-headers before the group data's viewport tables, and the recompiled containers'
-own statistics. The engine's per-object buffer allocation must come from
-somewhere else in the data, so a custom variable currently has to live in an
-existing, unused slot.
+For the record, the experiment showed every copy of a table has to change (the
+UI shader's group data serializes its per-object table 36 times for 12 groups),
+and that growing the per-object cbuffer does not work as a new-slot source: the
+recompiled shader can declare 256 bytes, every encoded size (the tail entries,
+the `{240, 64, count}` group data headers and the containers' statistics) can be
+patched into agreement, and the engine still reads zeros in the new slot. The
+buffer allocation therefore has another input somewhere in the format.
 
 ## Status
 

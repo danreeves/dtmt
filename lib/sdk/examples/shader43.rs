@@ -8,9 +8,6 @@
 //!       <material data file>...
 //!   cargo run -p sdk --example shader43 -- --decompile <dir> \
 //!       [--dxil-spirv <exe>] [--spirv-cross <exe>] <material data file>...
-//!   cargo run -p sdk --example shader43 -- --add-variable \
-//!       --table <existing name> --name <new name> --offset <bytes> \
-//!       [--type <type>] <material.sjson>
 //!   shader43 --tail <program index> <material data file>
 //!
 //! `dtmt build` performs the same replacement automatically for shader sources
@@ -26,7 +23,7 @@ use std::process::Command;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
 use sdk::murmur;
-use sdk::murmur::{Dictionary, Murmur32};
+use sdk::murmur::Dictionary;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -37,12 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dxil_spirv: Option<PathBuf> = None;
     let mut spirv_cross: Option<PathBuf> = None;
     let mut program_filter: Option<usize> = None;
-    let mut add_variable = false;
     let mut tail_index: Option<usize> = None;
-    let mut table_name: Option<String> = None;
-    let mut variable_name: Option<String> = None;
-    let mut variable_offset: Option<u32> = None;
-    let mut variable_kind: Option<u32> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -106,7 +98,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .expect("--program must be a number"),
                 );
             }
-            "--add-variable" => add_variable = true,
             "--tail" => {
                 i += 1;
                 tail_index = Some(
@@ -115,29 +106,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .parse()
                         .expect("--tail must be a number"),
                 );
-            }
-            "--table" => {
-                i += 1;
-                table_name = Some(args.get(i).expect("--table needs a variable name").clone());
-            }
-            "--name" => {
-                i += 1;
-                variable_name = Some(args.get(i).expect("--name needs a variable name").clone());
-            }
-            "--offset" => {
-                i += 1;
-                variable_offset = Some(
-                    args.get(i)
-                        .expect("--offset needs a number")
-                        .parse()
-                        .expect("--offset must be a number"),
-                );
-            }
-            "--type" => {
-                i += 1;
-                variable_kind = Some(parse_variable_kind(
-                    args.get(i).expect("--type needs a type"),
-                ));
             }
             other => files.push(PathBuf::from(other)),
         }
@@ -152,32 +120,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              shader43 --variables <dictionary.csv> <material data file>...\n       \
              shader43 --decompile <dir> [--program <index>] [--dxil-spirv <exe>] \
              [--spirv-cross <exe>] <material data file>...\n       \
-             shader43 --tail <program index> <material data file>\n       \
-             shader43 --add-variable --table <existing name> --name <new name> \
-             --offset <bytes> [--type <type>] <material.sjson>..."
+             shader43 --tail <program index> <material data file>..."
         );
         std::process::exit(1);
     }
 
     if let Some(index) = tail_index {
         return tail(&files[0], index);
-    }
-
-    if add_variable {
-        let table = table_name.as_deref().expect("--add-variable needs --table");
-        let name = variable_name
-            .as_deref()
-            .expect("--add-variable needs --name");
-        let offset = variable_offset.expect("--add-variable needs --offset");
-        let kind = variable_kind.unwrap_or(3);
-
-        for path in &files {
-            if let Err(err) = add_shader_variable(path, table, name, offset, kind) {
-                eprintln!("{}: {err}", path.display());
-            }
-        }
-
-        return Ok(());
     }
 
     let variable_names = match &variables_dict {
@@ -418,148 +367,6 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
     }
 
     Ok(())
-}
-
-/// Adds a variable to a decompiled material's shader variable table, so the
-/// engine writes the value of a material variable with that name into the
-/// cbuffer at `offset`.
-fn add_shader_variable(
-    path: &Path,
-    table_name: &str,
-    name: &str,
-    offset: u32,
-    kind: u32,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let size = match kind {
-        0 => 4,
-        1 => 8,
-        2 => 12,
-        3 => 16,
-        4 => 64,
-        other => return Err(format!("unsupported variable type {other}").into()),
-    };
-
-    let text = fs::read_to_string(path)?;
-    let shader = from_hex(&find_hex_field(&text, "shader_data")?)?;
-
-    let table_hash = u32::from(Murmur32::hash(table_name));
-    let updated = shader::add_variable(
-        &shader,
-        table_hash,
-        shader::GroupVariable {
-            kind,
-            flags: 0,
-            name_hash: u32::from(Murmur32::hash(name)),
-            offset,
-            size,
-        },
-    )?;
-
-    let text = replace_hex_field(&text, "shader_data", &to_hex(&updated))?;
-    let text = replace_number_field(&text, "shader_size", updated.len())?;
-    fs::write(path, text)?;
-
-    println!("=== {} ===", path.display());
-    println!(
-        "  added {name} (type={kind} offset={offset} size={size}) to every table \
-         holding {table_name}"
-    );
-
-    Ok(())
-}
-
-/// Maps a variable type name or number to the group data type.
-fn parse_variable_kind(value: &str) -> u32 {
-    match value {
-        "float" | "scalar" => 0,
-        "float2" | "vector2" => 1,
-        "float3" | "vector3" => 2,
-        "float4" | "vector4" => 3,
-        "float4x4" | "matrix4" => 4,
-        other => other
-            .parse()
-            .expect("--type must be a type name or a number from 0 to 4"),
-    }
-}
-
-/// Returns the value of a `field = "..."` field of a decompiled material.
-fn find_hex_field(text: &str, field: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let needle = format!("{field} = \"");
-    let start = text
-        .find(&needle)
-        .ok_or_else(|| format!("no '{field}' field in the material"))?
-        + needle.len();
-    let end = text[start..]
-        .find('"')
-        .ok_or_else(|| format!("unterminated '{field}' field"))?
-        + start;
-
-    Ok(text[start..end].to_string())
-}
-
-/// Replaces the value of a `field = "..."` field of a decompiled material.
-fn replace_hex_field(
-    text: &str,
-    field: &str,
-    value: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let needle = format!("{field} = \"");
-    let start = text
-        .find(&needle)
-        .ok_or_else(|| format!("no '{field}' field in the material"))?
-        + needle.len();
-    let end = text[start..]
-        .find('"')
-        .ok_or_else(|| format!("unterminated '{field}' field"))?
-        + start;
-
-    Ok(format!("{}{}{}", &text[..start], value, &text[end..]))
-}
-
-/// Replaces the value of a `field = <number>` field of a decompiled material.
-fn replace_number_field(
-    text: &str,
-    field: &str,
-    value: usize,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let needle = format!("{field} = ");
-    let start = text
-        .find(&needle)
-        .ok_or_else(|| format!("no '{field}' field in the material"))?
-        + needle.len();
-    let end = text[start..]
-        .find(|next: char| !next.is_ascii_digit())
-        .ok_or_else(|| format!("unterminated '{field}' field"))?
-        + start;
-
-    Ok(format!("{}{}{}", &text[..start], value, &text[end..]))
-}
-
-/// Decodes a hex string, as stored in decompiled materials.
-fn from_hex(hex: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    if hex.len() % 2 != 0 {
-        return Err("hex string has an odd length".into());
-    }
-
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks(2) {
-        let pair = std::str::from_utf8(pair)?;
-        bytes.push(u8::from_str_radix(pair, 16)?);
-    }
-
-    Ok(bytes)
-}
-
-/// Encodes bytes as a hex string, as stored in decompiled materials.
-fn to_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-
-    let mut hex = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(hex, "{byte:02X}");
-    }
-
-    hex
 }
 
 /// Entry point name a decompiled shader should use.

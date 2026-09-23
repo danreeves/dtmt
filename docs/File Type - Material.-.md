@@ -269,12 +269,11 @@ program can be translated back to editable HLSL; see
 3. **Decode group data / the binding layout.** The engine supplies the root
    signature, so a shader can only use bindings the cloned layout provides until
    this is understood.
-4. ~~**Extend the shader variable table.**~~ Done for existing slots:
-   `shader::add_variable` appends a record to every copy of the table it is
-   asked for, bumps the counts and moves the sections after the group data
-   (`shader43 --add-variable`, see `shaders/README.md`), so a mod can add its own
-   material variables. Two limits remain: the variable has to live in an
-   existing per-object slot that the shader does not use (growing the cbuffer
-   was tried and fails even with the tail sizes and group-data trios patched),
-   and decoding the binding layout (item 3) is still needed to understand where
-   the engine's per-object buffer size really comes from.
+4. ~~**Extend the shader variable table.**~~ Researched: variable records are
+   `{type, flags, name_hash, cbuffer_offset, size}` runs preceded by a count,
+   stored in many copies per group; a prototype that appended a record to every
+   copy and relocated the section was validated in game. Deliberately kept out
+   of the tooling: aliasing an existing slot is the safer modding path (the mod
+   uses the shipped `dev_wireframe_color`), and growing the per-object cbuffer
+   for a genuinely new slot fails even with every encoded size patched, so the
+   farmgate for that is the binding layout (item 3).
