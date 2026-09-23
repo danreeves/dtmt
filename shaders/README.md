@@ -229,9 +229,18 @@ tables in the right place in the group data), `--name` is the new variable,
 `float2`, `float3`, `float4` or `float4x4`. The tool appends the record to every
 copy of the table (the UI shader's group data holds twelve groups, each
 serialized twice) and moves the sections after the group data, so the shader
-stays consistent. The offset has to be a slot the custom shader reads, so the
-decompiled cbuffer is the way to find one; `dev_wireframe_color` (a debug
-variable at offset 224 that the UI shader never reads) is the usual choice.
+stays consistent. The offset has to be a slot the custom shader reads, so the decompiled cbuffer is
+the way to find one; `dev_wireframe_color` (a debug variable at offset 224 that
+the UI shader never reads) is the usual choice.
+
+Growing the per-object cbuffer itself does not work as an alternative slot
+source: with the recompiled shader declaring 256 bytes instead of 240, the
+engine still reads zeros in the new slot even though all three places that carry
+the size were patched — the program tails' cbuffer entries, the `{240, 64, count}`
+headers before the group data's viewport tables, and the recompiled containers'
+own statistics. The engine's per-object buffer allocation must come from
+somewhere else in the data, so a custom variable currently has to live in an
+existing, unused slot.
 
 ## Status
 
