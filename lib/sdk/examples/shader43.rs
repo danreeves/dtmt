@@ -9,6 +9,8 @@
 //!   cargo run -p sdk --example shader43 -- --decompile <dir> \
 //!       [--dxil-spirv <exe>] [--spirv-cross <exe>] <material data file>...
 //!   shader43 --tail <program index> <material data file>
+//!   shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>]
+//!       <material data file>
 //!
 //! `dtmt build` performs the same replacement automatically for shader sources
 //! that sit next to a material (`<name>.hlsl`, `<name>.ps.hlsl`,
@@ -31,6 +33,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut rebuild_dir: Option<PathBuf> = None;
     let mut decompile_dir: Option<PathBuf> = None;
     let mut variables_dict: Option<PathBuf> = None;
+    let mut slots_dict: Option<PathBuf> = None;
+    let mut hlsl_dir: Option<PathBuf> = None;
     let mut dxil_spirv: Option<PathBuf> = None;
     let mut spirv_cross: Option<PathBuf> = None;
     let mut program_filter: Option<usize> = None;
@@ -69,6 +73,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 variables_dict = Some(PathBuf::from(
                     args.get(i).expect("--variables needs a dictionary"),
+                ));
+            }
+            "--slots" => {
+                i += 1;
+                slots_dict = Some(PathBuf::from(
+                    args.get(i).expect("--slots needs a dictionary"),
+                ));
+            }
+            "--hlsl" => {
+                i += 1;
+                hlsl_dir = Some(PathBuf::from(
+                    args.get(i).expect("--hlsl needs a directory"),
                 ));
             }
             "--decompile" => {
@@ -120,13 +136,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              shader43 --variables <dictionary.csv> <material data file>...\n       \
              shader43 --decompile <dir> [--program <index>] [--dxil-spirv <exe>] \
              [--spirv-cross <exe>] <material data file>...\n       \
-             shader43 --tail <program index> <material data file>..."
+             shader43 --tail <program index> <material data file>\n       \
+             shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>] \
+             <material data file>..."
         );
         std::process::exit(1);
     }
 
     if let Some(index) = tail_index {
         return tail(&files[0], index);
+    }
+
+    if let Some(dict) = &slots_dict {
+        let names = load_dictionary(dict)?;
+        for path in &files {
+            if let Err(err) = slots(path, &names, hlsl_dir.as_deref(), program_filter) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
     }
 
     let variable_names = match &variables_dict {
@@ -667,6 +695,317 @@ fn rebuild(
         data.len(),
         new_data.len()
     );
+
+    Ok(())
+}
+
+/// One cbuffer of a program, as listed in its metadata tail: 24 byte entries
+/// whose `{name_hash, size}` sit at `+4`/`+12`, listing the cbuffers in
+/// register order.
+#[derive(Clone, Debug)]
+struct TailCbuffer {
+    name: Option<String>,
+    size: u32,
+}
+
+fn tail_cbuffers(tail: &[u8], names: &HashMap<u32, String>) -> Vec<TailCbuffer> {
+    let mut cbuffers = Vec::new();
+    let mut at = 0;
+
+    while at + 24 <= tail.len() {
+        let hash = u32_at(tail, at + 4);
+        let size = u32_at(tail, at + 12);
+
+        if hash == 0 || size == 0 || size >= 8192 || size % 16 != 0 {
+            break;
+        }
+        let Some(..) = names.get(&hash) else {
+            break;
+        };
+
+        cbuffers.push(TailCbuffer {
+            name: names.get(&hash).cloned(),
+            size,
+        });
+        at += 24;
+    }
+
+    cbuffers
+}
+
+/// Reads a 20 byte group data variable record, if the bytes look like one.
+/// Returns `(kind, flags, name_hash, cbuffer_offset, size)`.
+fn read_variable(group: &[u8], at: usize) -> Option<(u32, u32, u32, u32, u32)> {
+    const SIZES: [(u32, u32); 5] = [(0, 4), (1, 8), (2, 12), (3, 16), (4, 64)];
+
+    if at + 20 > group.len() {
+        return None;
+    }
+
+    let kind = u32_at(group, at);
+    let flags = u32_at(group, at + 4);
+    let hash = u32_at(group, at + 8);
+    let offset = u32_at(group, at + 12);
+    let size = u32_at(group, at + 16);
+
+    if kind > 12 || flags > 3 || offset > 4096 {
+        return None;
+    }
+    if let Some(&(.., expected)) = SIZES.iter().find(|(code, ..)| *code == kind)
+        && size != expected
+    {
+        return None;
+    }
+
+    Some((kind, flags, hash, offset, size))
+}
+
+/// Returns the variable tables of a group data blob: runs of valid records
+/// whose preceding word is their record count.
+fn variable_tables(group: &[u8]) -> Vec<Vec<(u32, u32, u32, u32, u32)>> {
+    let mut tables = Vec::new();
+    let mut at = 0;
+
+    while at + 20 <= group.len() {
+        let mut count = 0;
+        while read_variable(group, at + count * 20).is_some() {
+            count += 1;
+        }
+
+        if count >= 3 && at >= 4 && u32_at(group, at - 4) as usize == count {
+            tables.push(
+                (0..count)
+                    .filter_map(|index| read_variable(group, at + index * 20))
+                    .collect(),
+            );
+        }
+
+        at += 1;
+    }
+
+    tables
+}
+
+/// One cbuffer declaration of a decompiled program's HLSL.
+struct HlslCbuffer {
+    register: u32,
+    array: String,
+    float4_count: u32,
+}
+
+/// Parses `cbuffer _x : register(bN, ...) { float4 _x_m0[NN] ... }` blocks from
+/// decompiled HLSL, which is where the decompiler lands the engine's cbuffers.
+fn hlsl_cbuffers(hlsl: &str) -> Vec<HlslCbuffer> {
+    let mut cbuffers = Vec::new();
+
+    for index in 0..hlsl.matches("register(b").count() {
+        let at = hlsl
+            .match_indices("register(b")
+            .nth(index)
+            .map(|(position, ..)| position)
+            .expect("index out of range");
+
+        let after = &hlsl[at + "register(b".len()..];
+        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+        let register: u32 = digits.parse().unwrap_or(0);
+
+        // The engine lands the cbuffer arrays as `float4 <name>_m0[NN]` a few
+        // lines after the register.
+        let block = after.find('}').map(|end| &after[..end]).unwrap_or(after);
+        let Some(array_start) = block.find("_m0[") else {
+            continue;
+        };
+        let after_array = &block[array_start + 4..];
+        let count: String = after_array
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let name_start = block[..array_start]
+            .rfind(|next: char| next.is_whitespace())
+            .map_or(0, |position| position + 1);
+        let array = &block[name_start..array_start + 3];
+
+        cbuffers.push(HlslCbuffer {
+            register,
+            array: array.to_string(),
+            float4_count: count.parse().unwrap_or(0),
+        });
+    }
+
+    cbuffers
+}
+
+/// Prints which decompiled array and slot a shader's variables land in.
+///
+/// A program's tail lists its cbuffers in register order as
+/// `{name_hash, flag, size, ?, ?}` entries; the group data's variable tables
+/// are matched to them by size, and HLSL files from `--decompile` (given with
+/// `--hlsl <dir>`) supply the local array names, like `_25_m0[14]`.
+fn slots(
+    path: &Path,
+    names: &HashMap<u32, String>,
+    hlsl_dir: Option<&Path>,
+    program_filter: Option<usize>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const VARIABLE_KINDS: [(u32, &str); 6] = [
+        (0, "float"),
+        (1, "float2"),
+        (2, "float3"),
+        (3, "float4"),
+        (4, "float4x4"),
+        (5, "uint"),
+    ];
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let group_offset = u32_at(shader, 32) as usize;
+    let group_size = u32_at(shader, 36) as usize;
+    let group = shader
+        .get(group_offset..group_offset + group_size)
+        .ok_or("group data is out of range")?;
+    let tables = variable_tables(group);
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+
+    let decompiled: HashMap<usize, String> = match hlsl_dir {
+        Some(dir) => (0..programs.len())
+            .filter_map(|index| {
+                fs::read_to_string(dir.join(format!("{stem}_p{index:02}.hlsl")))
+                    .ok()
+                    .map(|text| (index, text))
+            })
+            .collect(),
+        None => HashMap::new(),
+    };
+
+    let selected: Vec<&shader::Program> = match program_filter {
+        Some(index) => vec![
+            programs
+                .get(index)
+                .ok_or_else(|| format!("no program {index} (of {})", programs.len()))?,
+        ],
+        None => {
+            let mut picked: Vec<&shader::Program> = Vec::new();
+            for program in &programs {
+                if !picked.iter().any(|picked| picked.stage == program.stage) {
+                    picked.push(program);
+                }
+            }
+            picked
+        }
+    };
+
+    // Dedupe table copies by size and first/last record hashes.
+    let mut printed = std::collections::HashSet::new();
+
+    for program in &selected {
+        let tail_start = program.meta_pos + 16;
+        let tail_end = programs
+            .iter()
+            .find(|next| next.pos > tail_start)
+            .map(|next| next.pos)
+            .unwrap_or_else(|| device.len());
+        let tail = &device[tail_start..tail_end];
+        let cbuffers = tail_cbuffers(tail, names);
+
+        println!(
+            "=== {} program {} ({:?}) ===",
+            path.display(),
+            program.index,
+            program.stage
+        );
+        if cbuffers.is_empty() {
+            println!("  (the tail's cbuffer entries could not be read)");
+        }
+        for (index, cbuffer) in cbuffers.iter().enumerate() {
+            let name = cbuffer.name.as_deref().unwrap_or("(unknown hash)");
+            println!("  b{index} {name} ({} bytes)", cbuffer.size);
+        }
+
+        for table in &tables {
+            let extent = table
+                .iter()
+                .map(|(.., offset, size)| *offset + *size)
+                .max()
+                .unwrap_or(0);
+            let key = format!(
+                "{}:{}:{}:{}",
+                table.len(),
+                extent,
+                table.first().map(|record| record.2).unwrap_or(0),
+                table.last().map(|record| record.2).unwrap_or(0)
+            );
+            if !printed.insert(key) {
+                continue;
+            }
+
+            println!("  table of {} records, offsets 0..{extent}:", table.len());
+
+            // The smallest tail cbuffer the table fits into is its likely owner.
+            let owner = cbuffers
+                .iter()
+                .enumerate()
+                .filter(|(.., cbuffer)| cbuffer.size >= extent && extent > 0)
+                .min_by_key(|(index, cbuffer)| (cbuffer.size, *index as u32))
+                .map(|(index, ..)| index);
+
+            let declarations = decompiled
+                .get(&program.index)
+                .map(|text| hlsl_cbuffers(text))
+                .unwrap_or_default();
+
+            for (kind, hash, offset, size) in table
+                .iter()
+                .copied()
+                .map(|(kind, _flags, hash, offset, size)| (kind, hash, offset, size))
+            {
+                let name = names
+                    .get(&hash)
+                    .cloned()
+                    .unwrap_or_else(|| format!("hash_0x{hash:08X}"));
+                let kind_name = VARIABLE_KINDS
+                    .iter()
+                    .find(|(code, ..)| *code == kind)
+                    .map_or("?", |(.., name)| *name);
+
+                let target = match owner {
+                    Some(index) => declarations
+                        .iter()
+                        .find(|declaration| declaration.register as usize == index)
+                        .map(|declaration| {
+                            let slot = offset / 16;
+                            let component = (offset % 16) / 4;
+                            match component {
+                                0 => format!("{}[{slot}]", declaration.array),
+                                _ => format!(
+                                    "{}[{slot}].{}",
+                                    declaration.array,
+                                    ['x', 'y', 'z', 'w'][component as usize]
+                                ),
+                            }
+                        })
+                        .unwrap_or_else(|| format!("b{index}[{}]", offset / 16)),
+                    None => format!("@{offset}"),
+                };
+
+                println!(
+                    "    {name:<32} {kind_name:<8} @{offset:<5} ({size:>3} bytes) -> {target}"
+                );
+            }
+        }
+    }
 
     Ok(())
 }
