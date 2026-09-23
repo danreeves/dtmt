@@ -103,3 +103,44 @@ cargo run -p sdk --example shader43 -- --rebuild out\ --replace-ps out\gui_tint.
 The rebuilt data file still has to be deployed as the material's stream (for
 example by updating `shader_data` in the material's SJSON and running
 `dtmt build`).
+
+## Applying a material from Lua
+
+Pointing a widget at a custom material is done at runtime:
+
+```lua
+local LoadingView = require("scripts/ui/views/loading_view/loading_view")
+
+local MATERIAL = "materials/mods/example/loading_screen_background"
+
+local function set_texture_material(view, widget_name, material)
+    local widget = view._widgets_by_name and view._widgets_by_name[widget_name]
+    if not widget then
+        return
+    end
+    for _, pass in ipairs(widget.passes or {}) do
+        if pass.pass_type == "texture" then
+            widget.content[pass.value_id] = material
+        end
+    end
+end
+
+local original_on_enter = LoadingView.on_enter
+LoadingView.on_enter = function (self)
+    original_on_enter(self)
+    set_texture_material(self, "background", MATERIAL)
+end
+
+-- Also patch `update`: DTMT can inject the mod's Lua *after* a view has already
+-- been created and entered (for example the title view during the
+-- splash -> title transition). `on_enter` alone would never run for that
+-- instance, while a patched `update` reaches it on the next frame.
+local original_update = LoadingView.update
+LoadingView.update = function (self, ...)
+    original_update(self, ...)
+    set_texture_material(self, "background", MATERIAL)
+end
+```
+
+Only assign when the value actually changes if you apply it from `update`, so
+the widget is not marked dirty every frame.
