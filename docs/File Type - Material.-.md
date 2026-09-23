@@ -265,7 +265,8 @@ root signature, and binds the material's texture/sampler descriptors through
 3. **Decode group data / the binding layout.** The engine supplies the root
    signature, so a shader can only use bindings the cloned layout provides until
    this is understood.
-4. **Expose shader parameters to Lua.** UI texture passes already support
-   `style.material_values` (applied with `Material.set_scalar`/`set_vector*`),
-   so the remaining work is declaring the variable in the cbuffer the UI
-   renderer populates.
+4. **Extend the shader variable table.** Lua can drive the variables a shipped
+   shader already exposes (see `shaders/README.md`); adding *new* variables means
+   adding records to the group data's variable table, whose entries are
+   `{type, flags, name_hash, cbuffer_offset, size}` and are one per program
+   group.

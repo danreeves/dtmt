@@ -145,6 +145,70 @@ end
 Only assign when the value actually changes if you apply it from `update`, so
 the widget is not marked dirty every frame.
 
+## Driving shader parameters from Lua
+
+Shipped shaders expose a fixed set of material variables: the UI shader has the
+float4 `dev_wireframe_color`, HUD shaders have `ui_scale` and `distortion`, and
+so on. A custom shader can read one of those as its own parameter, and Lua can
+write it through the UI pass' `material_values`.
+
+1. Read the variable in the shader, at the offset the shipped variable table
+   uses (inspect the shipped container to find it):
+
+   ```hlsl
+   struct PerObject {
+       ...
+       float4 dev_wireframe_color;   // the UI shader exposes this at offset 224
+   };
+
+   ...
+   c.rgb *= c_per_object.dev_wireframe_color.rgb;
+   ```
+
+2. Declare it on the material so it has storage and a default:
+
+   ```sjson
+   variables = {
+     dev_wireframe_color = {
+       type = "vector4"
+       value = [1, 1, 1, 1]
+       offset = 0
+     }
+   }
+   ```
+
+3. Drive it from Lua. `UIPasses.texture.draw` applies `ui_style.material_values`
+   with `Material.set_scalar`/`set_vector2`/`set_vector3`/`set_vector4`, so the
+   table has to be the one the pass draws with — the pass style itself, or the
+   whole widget style when the pass has no `style_id`:
+
+   ```lua
+   local function set_material_value(widget, name, value)
+       local style = widget.style
+       if not style then
+           return false
+       end
+       for _, pass in ipairs(widget.passes or {}) do
+           if pass.pass_type == "texture" then
+               local pass_style = (pass.style_id and style[pass.style_id]) or style
+               pass_style.material_values = pass_style.material_values or {}
+               pass_style.material_values[name] = value
+               return true
+           end
+       end
+       return false
+   end
+   ```
+
+   The shipped HUD passes set `style_id = "texture"` in their definitions, which
+   is why the game's examples use `widget.style.texture.material_values`. A pass
+   without a `style_id` gets `style_id_<pass index>` instead, so resolving the
+   style through `widget.passes` is the robust way.
+
+Only variables that the shipped shader already lists in its variable table can
+be driven this way. Adding new ones means extending the group data; that is one
+of the open items in `docs/File Type - Material.-.md`.
+
 ## Status
 
 Working:
@@ -164,5 +228,6 @@ unknowns behind these):
 - shader libraries with several of our own programs and permutation selection
 - binding layouts other than the cloned one (the engine supplies the root
   signature)
-- driving shader parameters from Lua (`style.material_values` on a UI texture
-  pass is the intended path)
+- adding *new* shader parameters: Lua can drive the variables a shipped shader
+  already exposes, but new variable entries would have to be added to the group
+  data

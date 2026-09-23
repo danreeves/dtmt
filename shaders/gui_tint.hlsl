@@ -101,6 +101,9 @@ struct PerObject {
     float4x4 view_proj;
     float4x4 world_view_proj;
     float4x4 world;
+    // The shipped shader's variable table already exposes this float4 as a
+    // material variable (offset 224), so Lua can drive it through
+    // `widget.style.texture.material_values.dev_wireframe_color`.
     float4 dev_wireframe_color;
 };
 ConstantBuffer<PerObject> c_per_object : register(b1);
@@ -112,10 +115,6 @@ struct PS_INPUT {
     float3 extra : CUSTOM2;
 };
 
-// Tint applied to the sampled texture. The pulse uses the engine's shader clock
-// so the change is obviously live.
-static const float3 TINT = float3(1.0, 0.3, 0.3);
-
 float4 ps_main(PS_INPUT input) : SV_Target0 {
     uint sampler_index = c_per_object.bindless_sampler_texture_map;
     uint texture_index = c_per_object.bindless_tex2d_texture_map.x;
@@ -124,10 +123,12 @@ float4 ps_main(PS_INPUT input) : SV_Target0 {
     Texture2D<float4> tex = global_texture2D[NonUniformResourceIndex(texture_index)];
 
     float4 c = tex.Sample(samp, input.uv);
-    c.rgb *= TINT;
 
+    // A slow brightness pulse from the engine's shader clock, and a tint that
+    // comes from the material variable set by Lua.
     float pulse = 0.5 + 0.5 * cos(global_viewport.time * 4.0);
     c.rgb *= 0.75 + 0.25 * pulse;
+    c.rgb *= c_per_object.dev_wireframe_color.rgb;
 
     float alpha = c.a * input.color.a;
     return float4(c.rgb * input.color.rgb * alpha, alpha);
