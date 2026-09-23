@@ -218,6 +218,10 @@ root signature, and binds the material's texture/sampler descriptors through
 `c_per_object`; the shader samples them through the bindless arrays
 (`global_texture2D[]` at `t0, space2`, `global_samplers[]` at `s0, space2`).
 
+To modify an existing shader instead of writing one from scratch, its compiled
+program can be translated back to editable HLSL; see
+[Shader Decompilation](Shader%20Decompilation.md).
+
 ## Status and open questions
 
 ### Implemented

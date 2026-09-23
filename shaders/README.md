@@ -41,6 +41,10 @@ indices into `c_per_object`. Two examples for the UI shader
 - `gui_wave.hlsl` — vertex shader: same interface as the shipped vertex stage
   with a small wave in clip space.
 
+To modify an *existing* shader instead of writing one, its compiled program can
+be translated back to editable HLSL; see
+[Shader Decompilation](../docs/Shader%20Decompilation.md).
+
 The pixel shader example:
 
 ```hlsl
@@ -219,6 +223,9 @@ Working:
 - Replacements are checked against the shipped interface (stage and both
   signature layouts); unreplaced programs are preserved byte-for-byte.
 - Both stages can be replaced, so no shipped program code has to remain.
+- Existing shaders can be translated back to editable HLSL with `dxil-spirv`
+  and `SPIRV-Cross` (see `docs/Shader Decompilation.md`); the generated code
+  needs its entry point and semantics restored from the shipped signatures.
 
 Not implemented yet (see `docs/File Type - Material.-.md` for the format
 unknowns behind these):
