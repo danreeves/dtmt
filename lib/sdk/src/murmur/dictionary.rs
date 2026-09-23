@@ -6,7 +6,7 @@ use tokio_stream::StreamExt;
 
 use super::{Murmur32, Murmur64, SEED, murmurhash64};
 
-#[derive(Copy, Clone, Deserialize, PartialEq, Serialize)]
+#[derive(Copy, Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum HashGroup {

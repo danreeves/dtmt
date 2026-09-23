@@ -164,6 +164,16 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
 
             let group = sdk::murmur::HashGroup::from(*group);
 
+            // Building a set of existing entries up front keeps this O(n) for
+            // the large (hundreds of thousands of entries) community
+            // dictionaries. `Dictionary::find` is a linear scan, which made
+            // adding a full dictionary file take hours.
+            let mut seen: std::collections::HashSet<(String, sdk::murmur::HashGroup)> = lookup
+                .entries()
+                .iter()
+                .map(|e| (e.value().clone(), e.group()))
+                .collect();
+
             let mut added = 0;
             let mut skipped = 0;
 
@@ -171,7 +181,7 @@ pub(crate) async fn run(mut ctx: sdk::Context, matches: &ArgMatches) -> Result<(
             let total = {
                 for line in lines.into_iter() {
                     let value = line?;
-                    if lookup.find(&value, group).is_some() {
+                    if !seen.insert((value.clone(), group)) {
                         skipped += 1;
                     } else {
                         lookup.add(value, group);
