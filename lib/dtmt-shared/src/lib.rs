@@ -70,6 +70,11 @@ pub struct ModConfig {
     pub bundled: bool,
     #[serde(default)]
     pub name_overrides: HashMap<String, String>,
+    /// Path to `dxc.exe`, used to compile custom shader sources that sit next
+    /// to a material (`<name>.hlsl`, `<name>.vs.hlsl`, `<name>.ps.hlsl`).
+    /// Defaults to the newest Windows SDK installation, then `DTMT_DXC`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dxc: Option<PathBuf>,
 }
 
 pub const STEAMAPP_ID: u32 = 1361210;

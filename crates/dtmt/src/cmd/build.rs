@@ -10,9 +10,10 @@ use dtmt_shared::ModConfig;
 use futures::StreamExt;
 use futures::future::try_join_all;
 use path_slash::PathExt;
+use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::murmur::IdString64;
-use sdk::{Bundle, BundleFile};
+use sdk::{Bundle, BundleFile, BundleFileType};
 use tokio::fs::{self, File};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
@@ -159,6 +160,128 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     Ok(cfg)
 }
 
+/// Finds `dxc.exe`: the config option, then `DTMT_DXC`, then the newest Windows
+/// SDK installation.
+fn find_dxc(cfg: &ModConfig) -> Option<PathBuf> {
+    if let Some(path) = &cfg.dxc {
+        return Some(path.clone());
+    }
+    if let Ok(path) = std::env::var("DTMT_DXC") {
+        return Some(PathBuf::from(path));
+    }
+    if !cfg!(windows) {
+        return None;
+    }
+
+    let kits = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(kits)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path().join("x64").join("dxc.exe"))
+        .filter(|path| path.exists())
+        .collect();
+    candidates.sort();
+    candidates.pop()
+}
+
+/// Compiles one HLSL entry point to a DXBC/DXIL container.
+#[tracing::instrument(skip_all, fields(source = %source.display(), entry, target))]
+async fn compile_hlsl(dxc: &Path, source: &Path, entry: &str, target: &str) -> Result<Vec<u8>> {
+    let file_stem = source.file_stem().unwrap_or_default().to_string_lossy();
+    let out_path = std::env::temp_dir().join(format!(
+        "dtmt-shader-{}-{file_stem}-{target}.dxbc",
+        std::process::id()
+    ));
+
+    let output = tokio::process::Command::new(dxc)
+        .arg("-T")
+        .arg(target)
+        .arg("-E")
+        .arg(entry)
+        .arg("-Fo")
+        .arg(&out_path)
+        .arg(source)
+        .output()
+        .await
+        .wrap_err_with(|| format!("Failed to run '{}'", dxc.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eyre::bail!(
+            "Failed to compile '{}' as {target}/{entry}:\n{}",
+            source.display(),
+            stderr.trim()
+        );
+    }
+
+    let data = fs::read(&out_path)
+        .await
+        .wrap_err("Failed to read the compiled shader")?;
+    let _ = fs::remove_file(&out_path).await;
+
+    tracing::info!(
+        "Compiled '{}' ({target}/{entry}, {} bytes)",
+        source.display(),
+        data.len()
+    );
+
+    Ok(data)
+}
+
+/// Looks for shader sources next to a material and compiles them.
+///
+/// The supported layouts are a single `<name>.hlsl` containing `vs_main`
+/// and/or `ps_main`, or separate `<name>.vs.hlsl` / `<name>.ps.hlsl` files.
+async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option<ShaderOverrides>> {
+    let stem = path.with_extension("");
+    let combined = stem.with_extension("hlsl");
+    let vs_path = stem.with_extension("vs.hlsl");
+    let ps_path = stem.with_extension("ps.hlsl");
+
+    if !combined.exists() && !vs_path.exists() && !ps_path.exists() {
+        return Ok(None);
+    }
+
+    let dxc = find_dxc(cfg).ok_or_else(|| {
+        eyre::eyre!(
+            "'{}' has shader sources, but no dxc.exe was found. Set `dxc` in \
+             {PROJECT_CONFIG_NAME} or the DTMT_DXC environment variable.",
+            stem.display()
+        )
+    })?;
+
+    let mut overrides = ShaderOverrides::default();
+
+    if combined.exists() {
+        let source = fs::read_to_string(&combined)
+            .await
+            .wrap_err_with(|| format!("Failed to read '{}'", combined.display()))?;
+
+        if source.contains("vs_main") {
+            overrides.vertex = Some(compile_hlsl(&dxc, &combined, "vs_main", "vs_6_0").await?);
+        }
+        if source.contains("ps_main") {
+            overrides.pixel = Some(compile_hlsl(&dxc, &combined, "ps_main", "ps_6_0").await?);
+        }
+
+        if overrides.is_empty() {
+            eyre::bail!(
+                "'{}' defines neither 'vs_main' nor 'ps_main'",
+                combined.display()
+            );
+        }
+    }
+
+    if vs_path.exists() {
+        overrides.vertex = Some(compile_hlsl(&dxc, &vs_path, "vs_main", "vs_6_0").await?);
+    }
+    if ps_path.exists() {
+        overrides.pixel = Some(compile_hlsl(&dxc, &ps_path, "ps_main", "ps_6_0").await?);
+    }
+
+    Ok(Some(overrides))
+}
+
 /// Iterate over the paths in the given `Package` and
 /// compile each file by its file type.
 #[tracing::instrument(skip_all)]
@@ -196,7 +319,15 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
             } else {
                 IdString64::from(name.clone())
             };
-            BundleFile::from_sjson(name, file_type, sjson, root.as_ref()).await
+            let mut file = BundleFile::from_sjson(name, file_type, sjson, root.as_ref()).await?;
+
+            if file_type == BundleFileType::Material
+                && let Some(overrides) = compile_shader_overrides(&path, cfg).await?
+            {
+                material::apply_shader_overrides(&mut file, &overrides)?;
+            }
+
+            Ok(file)
         });
 
     let results = futures::stream::iter(tasks)

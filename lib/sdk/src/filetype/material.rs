@@ -87,7 +87,7 @@ use tokio::fs;
 
 use crate::binary::sync::{ReadExt, WriteExt};
 use crate::bundle::file::UserFile;
-use crate::murmur::{HashGroup, IdString32, IdString64, Murmur32, Murmur64};
+use crate::murmur::{HashGroup, IdString32, IdString64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant, Properties};
 
 const EXPECTED_VERSIONS: [u32; 2] = [60, 61];
@@ -1164,6 +1164,88 @@ pub fn compile(name: IdString64, sjson: impl AsRef<str>) -> Result<BundleFile> {
     let data = material.to_binary()?;
 
     Ok(external_material_file(name, data))
+}
+
+/// DXBC containers used to replace a base material's shader programs.
+///
+/// Programs are matched by shader stage; programs whose stage has no
+/// replacement are preserved byte for byte. The frame is re-compressed with
+/// Oodle and the frame key, device data size and default data offset are
+/// updated automatically.
+#[derive(Default, Clone)]
+pub struct ShaderOverrides {
+    pub vertex: Option<Vec<u8>>,
+    pub pixel: Option<Vec<u8>>,
+}
+
+impl ShaderOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.vertex.is_none() && self.pixel.is_none()
+    }
+}
+
+/// Replaces the shader programs of a material stream with the given DXBC
+/// containers.
+pub fn replace_shader_programs(data: &[u8], overrides: &ShaderOverrides) -> Result<Vec<u8>> {
+    if data.len() < 28 {
+        bail!("Material stream is too small");
+    }
+
+    let shader_offset = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
+    let shader_size = u32::from_le_bytes(data[16..20].try_into().unwrap()) as usize;
+    let unk2_offset = u32::from_le_bytes(data[20..24].try_into().unwrap()) as usize;
+    let unk2_size = u32::from_le_bytes(data[24..28].try_into().unwrap()) as usize;
+
+    if shader_size == 0 {
+        bail!("Material has no embedded shader to replace");
+    }
+
+    let shader = data
+        .get(shader_offset..shader_offset + shader_size)
+        .ok_or_else(|| color_eyre::eyre::eyre!("Shader section is out of range"))?;
+    let unk2 = data
+        .get(unk2_offset..unk2_offset + unk2_size)
+        .ok_or_else(|| color_eyre::eyre::eyre!("Trailing section is out of range"))?;
+
+    let new_shader = crate::filetype::shader::rebuild(shader, |program| match program.stage {
+        crate::filetype::shader::Stage::Vertex => overrides.vertex.clone(),
+        crate::filetype::shader::Stage::Pixel => overrides.pixel.clone(),
+        _ => None,
+    })?;
+
+    let mut out = Vec::with_capacity(shader_offset + new_shader.len() + unk2.len());
+    out.extend_from_slice(&data[..shader_offset]);
+    out.extend_from_slice(&new_shader);
+    let new_unk2_offset = out.len();
+    out.extend_from_slice(unk2);
+
+    out[16..20].copy_from_slice(&(new_shader.len() as u32).to_le_bytes());
+    out[20..24].copy_from_slice(&(new_unk2_offset as u32).to_le_bytes());
+
+    Ok(out)
+}
+
+/// Applies shader overrides to every variant of a compiled base material.
+pub fn apply_shader_overrides(file: &mut BundleFile, overrides: &ShaderOverrides) -> Result<()> {
+    if overrides.is_empty() {
+        return Ok(());
+    }
+
+    for variant in file.variants_mut() {
+        let Some(data_file_name) = variant.data_file_name().cloned() else {
+            continue;
+        };
+        let Some(data) = variant.external_data().cloned() else {
+            continue;
+        };
+
+        let new_data = replace_shader_programs(&data, overrides)
+            .wrap_err_with(|| format!("Failed to replace shader programs in '{data_file_name}'"))?;
+
+        variant.set_external_data_file(data_file_name, new_data);
+    }
+
+    Ok(())
 }
 
 #[tracing::instrument(skip(ctx, variant))]
