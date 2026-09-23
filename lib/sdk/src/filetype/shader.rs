@@ -169,12 +169,19 @@ pub fn stage_of(container: &[u8]) -> Stage {
 }
 
 /// One semantic of an input or output signature.
-#[derive(Debug, PartialEq, Eq)]
-struct SignatureElement {
-    name: String,
-    index: u32,
-    register: u32,
-    mask: u8,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignatureElement {
+    pub name: String,
+    pub index: u32,
+    pub register: u32,
+    pub mask: u8,
+}
+
+/// Parses the input and output signatures of a DXBC container.
+pub fn signatures(container: &[u8]) -> Option<(Vec<SignatureElement>, Vec<SignatureElement>)> {
+    let input = find_chunk(container, b"ISG1").and_then(parse_signature)?;
+    let output = find_chunk(container, b"OSG1").and_then(parse_signature)?;
+    Some((input, output))
 }
 
 /// Parses an `ISG1`/`OSG1` signature chunk into its semantics.

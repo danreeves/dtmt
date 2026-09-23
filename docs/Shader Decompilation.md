@@ -67,9 +67,44 @@ The bindless resource arrays, the static sampler, both samples and the min-LOD
 clamp all survive. Vertex and pixel shaders from a sample of 20 base materials
 across several families all decompiled (20/20 VS, 20/20 PS).
 
+## One-command decompilation
+
+`shader43 --decompile` runs both tools for every program in a material and
+applies the mechanical fix-ups:
+
+```shell
+cargo run -p sdk --example shader43 -- --decompile out \
+    --dxil-spirv <dxil-spirv> --spirv-cross <spirv-cross> <material data file>...
+```
+
+It writes, per program, `<name>_pNN.original.dxbc` (the shipped container),
+`.spv` and `.hlsl`. `--program <index>` limits it to one program. The tools are
+looked up from `--dxil-spirv`/`--spirv-cross`, then `DXIL_SPIRV`/`SPIRV_CROSS`,
+then `PATH`.
+
+The HLSL is ready to compile:
+
+- the entry point is renamed to `vs_main` or `ps_main`,
+- the signature structs are rebuilt in the shipped register order with the
+  original names and indices, including elements the shader does not read
+  (`spirv-cross` drops them, which shifts the registers and fails the interface
+  check),
+- bindings, cbuffers and the shader body are left as generated.
+
+```shell
+dxc -T ps_6_0 -E ps_main <name>_pNN.hlsl -Fo <name>_pNN.dxbc
+cargo run -p sdk --example shader43 -- --rebuild out --replace-ps <name>_pNN.dxbc <material data file>
+```
+
+Or drop the `.hlsl` next to the material and let `dtmt build` compile it (see
+`docs/File Type - Material.-.md`). Every program of four sample materials
+(including a 96-program HUD library) compiled with `dxc` and passed the
+interface check, and the UI material rendered correctly in game.
+
 ## Fix-ups before you can compile
 
-The generated HLSL is a starting point, not the original source:
+The generated HLSL is a starting point, not the original source. `--decompile`
+does the first two for you; the rest is on you:
 
 - **Entry point**: `spirv-cross` calls it `main`; rename it to `ps_main` or
   `vs_main` (or compile with `-E main`).
