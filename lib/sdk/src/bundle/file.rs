@@ -375,6 +375,9 @@ impl BundleFile {
             BundleFileType::Texture => texture::compile(name, sjson, root)
                 .await
                 .wrap_err("Failed to compile Texture file"),
+            BundleFileType::Material => {
+                material::compile(name, sjson).wrap_err("Failed to compile Material file")
+            }
             BundleFileType::Unknown(_) => {
                 eyre::bail!("Unknown file type. Cannot compile from SJSON");
             }
@@ -483,6 +486,7 @@ impl BundleFile {
                 BundleFileType::Lua => lua::decompile(ctx, data).await,
                 BundleFileType::Package => package::decompile(ctx, name.clone(), data),
                 BundleFileType::Texture => texture::decompile(ctx, name.clone(), variant).await,
+                BundleFileType::Material => material::decompile(ctx, name.clone(), variant).await,
                 _ => {
                     tracing::debug!("Can't decompile, unknown file type");
                     Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])
