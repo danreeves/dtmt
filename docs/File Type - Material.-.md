@@ -183,14 +183,89 @@ section header. The replacement has to keep the shipped shader's interface; the
 build checks the stage and both signature layouts and fails otherwise. See
 `shaders/README.md` for the bindless resource layout and an example shader.
 
-## Status
+#### How the shader build works
 
-- Binary format: **Partial**. The header, material template and external data
-  file layout are known, and materials round trip byte-for-byte.
-  `unk1`/`unk2`/`unk3` are preserved but not understood.
-- Compilation: **Partial**. Instance materials and base materials (including
-  their embedded shader) are supported. Custom shader sources next to a material
-  are compiled with `dxc` and spliced into the shader section.
-- Decompilation: **Partial**. Base materials are decompiled including their
-  shader data, but the compiled shader programs are only decoded, not
-  reconstructed as HLSL.
+`shader_data` is the compiled baseline: the whole `shader43` section with its
+programs, per-program reflection, contexts, conditions, group data and default
+data. The `.hlsl` files are build-time inputs and are not shipped in the bundle.
+
+`dtmt build` performs these steps:
+
+1. **Compile.** Each shader source is compiled with `dxc` to a DXBC/DXIL
+   container: `<name>.hlsl` is probed for `vs_main` and `ps_main`, while
+   `<name>.vs.hlsl` and `<name>.ps.hlsl` use those entry points directly.
+2. **Parse.** `shader_data` is decoded, the device data is scanned for framed
+   programs (`envelope = 1`, `frame_length`, an Oodle frame starting with
+   `8c 06`, `metadata_kind = 5`), every frame is Oodle-decoded to a DXBC
+   container, and the shader stage is read from the `PSV0` chunk.
+3. **Check.** For every program whose stage has a replacement, the compiled
+   container's stage and `ISG1`/`OSG1` semantics (name, index, register, mask)
+   are compared with the original. A mismatch fails the build, because the other
+   stages and the engine's input layouts are unchanged.
+4. **Re-frame.** The new container is compressed with Oodle (Kraken) and the
+   program record is rewritten: `frame_length`, `decoded_dxbc_length` and
+   `frame_key = MurmurHash64A(frame, seed 0)`. The 16-byte metadata header is
+   replaced and the rest of the program's metadata (the engine's reflection) is
+   copied verbatim. Programs without a replacement are copied byte-for-byte.
+5. **Relocate.** `device_data_size` is updated, the default-data block is moved
+   after the device data with padding recomputed (4 bytes before the default
+   data, 16 bytes at the end), and the material stream's `shader_size` and
+   `unk2_offset` are updated.
+6. The material is compiled into a bundle as usual.
+
+At runtime the engine decodes the frames, creates pipeline states using its own
+root signature, and binds the material's texture/sampler descriptors through
+`c_per_object`; the shader samples them through the bindless arrays
+(`global_texture2D[]` at `t0, space2`, `global_samplers[]` at `s0, space2`).
+
+## Status and open questions
+
+### Implemented
+
+- Material streams (version 60/61) parse, decompile to SJSON and compile back.
+  Instance materials and base materials (including their embedded `shader_data`)
+  round trip byte-for-byte.
+- Base materials can be built as long as they carry a `shader_data` blob; the
+  shader section is preserved, or rebuilt when a shader override is applied.
+- Custom shader sources next to a material are compiled with `dxc` and spliced
+  into the shader section (`ShaderOverrides`). Programs of other stages and
+  unreplaced programs are preserved byte-for-byte, and a replacement's stage and
+  signature layout are checked against the original.
+
+### Material unknowns
+
+| Field | What is known | What is missing |
+| --- | --- | --- |
+| `unk1` | Shader texture channels, e.g. `texture_map` on the UI base | Whether values other than channel names appear |
+| `unk2` | `(IdString32, bool)` pairs; empty in every material observed | Meaning; probably shader flags/defines |
+| `unk3` | `(u32, u32)` pairs, e.g. `(6,0) (5,0)` on the UI base | Meaning; possibly program/variant selection |
+| `material_contexts` | 32-bit context names such as `surface_material = "bone"` | The full value set and how consumers use it |
+| Header `unk2_offset`/`unk2_size` | A small trailing blob (4 bytes on the UI base) | Contents |
+
+### Shader43 unknowns
+
+| Section | What is known | What is missing |
+| --- | --- | --- |
+| Header | All 12 words, and how to relocate device/default data | - |
+| Contexts | Variable-length `(hash, value)` records; the first context is identical across materials | Semantics; how conditions map to programs |
+| Conditions | Position and size | Structure and semantics (compiled permutation expressions) |
+| Dependencies | `(offset, count)`; 8 bytes for one dependency | What a dependency is |
+| Group data | Resource groups, buffer descriptors, associations and opaque state | Almost all of it; needed to change the binding layout |
+| Device data / programs | Record layout, Oodle frames, frame key, stage from `PSV0` | Nothing for reading and rebuilding |
+| Program metadata tails | Counted tables of hashes and small values; preserved verbatim | How to generate them for a shader with a different interface |
+| Default data | A self-relative table at the end of the section | Structure and contents |
+
+### Open work
+
+1. **Decode the program metadata tails.** Compare tails across shipped shaders
+   with different interfaces and correlate them with the DXIL `!dx.resources`
+   metadata, so replacements no longer have to keep the original interface.
+2. **Decode contexts and conditions.** Needed for a shader library that holds
+   several of our own programs and selects them per permutation.
+3. **Decode group data / the binding layout.** The engine supplies the root
+   signature, so a shader can only use bindings the cloned layout provides until
+   this is understood.
+4. **Expose shader parameters to Lua.** UI texture passes already support
+   `style.material_values` (applied with `Material.set_scalar`/`set_vector*`),
+   so the remaining work is declaring the variable in the cbuffer the UI
+   renderer populates.

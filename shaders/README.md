@@ -144,3 +144,25 @@ end
 
 Only assign when the value actually changes if you apply it from `update`, so
 the widget is not marked dirty every frame.
+
+## Status
+
+Working:
+
+- HLSL next to a material is compiled with `dxc` and spliced into the base
+  material's shader section; frames are re-compressed with Oodle and the section
+  header, sizes and frame keys are updated.
+- Replacements are checked against the shipped interface (stage and both
+  signature layouts); unreplaced programs are preserved byte-for-byte.
+- Both stages can be replaced, so no shipped program code has to remain.
+
+Not implemented yet (see `docs/File Type - Material.-.md` for the format
+unknowns behind these):
+
+- generating the per-program metadata (reflection) for a shader with a
+  different interface
+- shader libraries with several of our own programs and permutation selection
+- binding layouts other than the cloned one (the engine supplies the root
+  signature)
+- driving shader parameters from Lua (`style.material_values` on a UI texture
+  pass is the intended path)
