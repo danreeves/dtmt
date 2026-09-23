@@ -11,6 +11,7 @@
 //!   cargo run -p sdk --example shader43 -- --add-variable \
 //!       --table <existing name> --name <new name> --offset <bytes> \
 //!       [--type <type>] <material.sjson>
+//!   shader43 --tail <program index> <material data file>
 //!
 //! `dtmt build` performs the same replacement automatically for shader sources
 //! that sit next to a material (`<name>.hlsl`, `<name>.ps.hlsl`,
@@ -37,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut spirv_cross: Option<PathBuf> = None;
     let mut program_filter: Option<usize> = None;
     let mut add_variable = false;
+    let mut tail_index: Option<usize> = None;
     let mut table_name: Option<String> = None;
     let mut variable_name: Option<String> = None;
     let mut variable_offset: Option<u32> = None;
@@ -105,6 +107,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
             "--add-variable" => add_variable = true,
+            "--tail" => {
+                i += 1;
+                tail_index = Some(
+                    args.get(i)
+                        .expect("--tail needs an index")
+                        .parse()
+                        .expect("--tail must be a number"),
+                );
+            }
             "--table" => {
                 i += 1;
                 table_name = Some(args.get(i).expect("--table needs a variable name").clone());
@@ -141,10 +152,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              shader43 --variables <dictionary.csv> <material data file>...\n       \
              shader43 --decompile <dir> [--program <index>] [--dxil-spirv <exe>] \
              [--spirv-cross <exe>] <material data file>...\n       \
+             shader43 --tail <program index> <material data file>\n       \
              shader43 --add-variable --table <existing name> --name <new name> \
              --offset <bytes> [--type <type>] <material.sjson>..."
         );
         std::process::exit(1);
+    }
+
+    if let Some(index) = tail_index {
+        return tail(&files[0], index);
     }
 
     if add_variable {
@@ -193,6 +209,61 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
+}
+
+/// Dumps the metadata tail of one program: the counted tables and opaque words
+/// between its frame key and the next program's frame.
+fn tail(path: &Path, index: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+
+    let programs = shader::parse_programs(device)?;
+    let program = programs
+        .get(index)
+        .ok_or_else(|| format!("no program {index} (of {})", programs.len()))?;
+    let next_pos = programs
+        .get(index + 1)
+        .map(|next| next.pos)
+        .unwrap_or(device.len());
+
+    let tail = &device[program.meta_pos + 16..next_pos];
+    let start = program.meta_pos + 16;
+
+    let chunks = shader::chunks(&program.container)
+        .iter()
+        .map(|(name, size)| format!("{name}:{size}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    println!(
+        "=== {} program {} ({:?}) ===\n  record @{:#x}..{:#x}, tail is {} bytes \
+         (relative offsets are from the shader section)\n  chunks [{}]",
+        path.display(),
+        index,
+        program.stage,
+        program.pos,
+        next_pos,
+        tail.len(),
+        chunks
+    );
+
+    for at in (0..tail.len()).step_by(4) {
+        let value = u32_at(tail, at);
+        let mut words = format!("+{:04} @{:08x}: {value:12} 0x{value:08x}", at, start + at);
+        if at + 7 < tail.len() {
+            let qword = u64::from_le_bytes(tail[at..at + 8].try_into().unwrap());
+            words.push_str(&format!("   q={qword:016x}"));
+        }
+        println!("{words}");
+    }
+
+    Ok(())
 }
 
 /// Returns the shader section of a material stream.

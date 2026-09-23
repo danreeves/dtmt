@@ -256,7 +256,7 @@ program can be translated back to editable HLSL; see
 | Dependencies | `(offset, count)`; 8 bytes for one dependency | What a dependency is |
 | Group data | Variable tables: runs of `{type, flags, name_hash, cbuffer_offset, size}` records preceded by their count, one table per cbuffer per group, stored several times per group (the UI base has 36 copies of its per-object table). The rest is resource groups, buffer descriptors, associations and opaque state | The rest of the structure; needed to change the binding layout |
 | Device data / programs | Record layout, Oodle frames, frame key, stage from `PSV0` | Nothing for reading and rebuilding |
-| Program metadata tails | Counted tables of hashes and small values; preserved verbatim | How to generate them for a shader with a different interface |
+| Program metadata tails | The engine's per-program resource map, as murmur32 name hashes. Cbuffer entries carry the cbuffer's name (`global_viewport`, `c_per_object`) and its size in bytes; the VS tail lists its input signature names (`POSITION`, `COLOR`, `TEXCOORD`) as `(name_hash, semantic index, ordinal)`. Resource names like `global_texture2D`, `global_samplers` and `static_minlod_sampler` appear next to what look like space/register fields (`31` sits by `static_minlod_sampler`, which renders from space31). Resolvable with `dtmt murmur hash <name> --half` or the dictionary | Full record layout, fields around the hash lists, what an entry means for the engine's root signature and where the register/space pairs are encoded |
 | Default data | A self-relative table at the end of the section | Structure and contents |
 
 ### Open work
