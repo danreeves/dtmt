@@ -33,8 +33,15 @@ material's shader section. Programs of other stages are preserved byte for byte.
 ## Interface
 
 Shipped Darktide shaders use bindless resources; the material writes descriptor
-indices into `c_per_object`. `gui_tint.hlsl` is a minimal example for the UI
-shader (`content/ui/materials/base/ui_default_base`):
+indices into `c_per_object`. Two examples for the UI shader
+(`content/ui/materials/base/ui_default_base`) are included:
+
+- `gui_tint.hlsl` — pixel shader: samples the material texture through the
+  bindless arrays and tints it.
+- `gui_wave.hlsl` — vertex shader: same interface as the shipped vertex stage
+  with a small wave in clip space.
+
+The pixel shader example:
 
 ```hlsl
 Texture2D<float4> global_texture2D[] : register(t0, space2);
