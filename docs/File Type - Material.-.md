@@ -254,7 +254,7 @@ program can be translated back to editable HLSL; see
 | Contexts | Variable-length `(hash, value)` records; the first context is identical across materials | Semantics; how conditions map to programs |
 | Conditions | Position and size | Structure and semantics (compiled permutation expressions) |
 | Dependencies | `(offset, count)`; 8 bytes for one dependency | What a dependency is |
-| Group data | Resource groups, buffer descriptors, associations and opaque state | Almost all of it; needed to change the binding layout |
+| Group data | Variable tables: runs of `{type, flags, name_hash, cbuffer_offset, size}` records preceded by their count, one table per cbuffer per group, stored several times per group (the UI base has 36 copies of its per-object table). The rest is resource groups, buffer descriptors, associations and opaque state | The rest of the structure; needed to change the binding layout |
 | Device data / programs | Record layout, Oodle frames, frame key, stage from `PSV0` | Nothing for reading and rebuilding |
 | Program metadata tails | Counted tables of hashes and small values; preserved verbatim | How to generate them for a shader with a different interface |
 | Default data | A self-relative table at the end of the section | Structure and contents |
@@ -269,8 +269,10 @@ program can be translated back to editable HLSL; see
 3. **Decode group data / the binding layout.** The engine supplies the root
    signature, so a shader can only use bindings the cloned layout provides until
    this is understood.
-4. **Extend the shader variable table.** Lua can drive the variables a shipped
-   shader already exposes (see `shaders/README.md`); adding *new* variables means
-   adding records to the group data's variable table, whose entries are
-   `{type, flags, name_hash, cbuffer_offset, size}` and are one per program
-   group.
+4. ~~**Extend the shader variable table.**~~ Done: `shader::add_variable`
+   appends a record to every copy of the table it is asked for, bumps the
+   counts and moves the sections after the group data
+   (`shader43 --add-variable`, see `shaders/README.md`), so a mod can add its
+   own material variables. What is still missing is a way to *use* a new
+   variable without spending one of the existing per-object slots, which needs
+   the cbuffer/binding layout (item 3).

@@ -156,6 +156,11 @@ float4 `dev_wireframe_color`, HUD shaders have `ui_scale` and `distortion`, and
 so on. A custom shader can read one of those as its own parameter, and Lua can
 write it through the UI pass' `material_values`.
 
+The engine resolves the variable by name against the shader's own variable
+table, which lives in the shader's group data: that table maps the name hash to
+the cbuffer offset the value is written to. The material's `variables` block
+only carries the value and its offset inside the material's own `variable_data`.
+
 1. Read the variable in the shader, at the offset the shipped variable table
    uses (inspect the shipped container to find it):
 
@@ -209,9 +214,24 @@ write it through the UI pass' `material_values`.
    without a `style_id` gets `style_id_<pass index>` instead, so resolving the
    style through `widget.passes` is the robust way.
 
-Only variables that the shipped shader already lists in its variable table can
-be driven this way. Adding new ones means extending the group data; that is one
-of the open items in `docs/File Type - Material.-.md`.
+Only variables that the shader's variable table lists can be driven this way, so a
+new name means adding a record to that table:
+
+```shell
+cargo run -p sdk --example shader43 -- --add-variable \
+    --table dev_wireframe_color --name mod_tint --offset 224 --type float4 \
+    materials/mods/snoopymod/ui_default_base.material
+```
+
+`--table` is a variable the table already contains (which picks that cbuffer's
+tables in the right place in the group data), `--name` is the new variable,
+`--offset` is where its value has to land in the cbuffer and `--type` is `float`,
+`float2`, `float3`, `float4` or `float4x4`. The tool appends the record to every
+copy of the table (the UI shader's group data holds twelve groups, each
+serialized twice) and moves the sections after the group data, so the shader
+stays consistent. The offset has to be a slot the custom shader reads, so the
+decompiled cbuffer is the way to find one; `dev_wireframe_color` (a debug
+variable at offset 224 that the UI shader never reads) is the usual choice.
 
 ## Status
 

@@ -104,27 +104,26 @@ interface check, and the UI material rendered correctly in game.
 ### Using the output as a base
 
 The decompiled HLSL is ordinary HLSL, so custom effects are added to it the same
-way as to a hand-written shader. As a worked example, the tint and the clip-space
-wave from `shaders/gui_tint.hlsl` and `shaders/gui_wave.hlsl` were rebuilt on top
-of the decompiled `gui` programs by adding four lines:
+way as to a hand-written shader. As a worked example, the tint and the wave from
+`shaders/gui_tint.hlsl` and `shaders/gui_wave.hlsl` were rebuilt on top of the
+decompiled `gui` programs by adding four lines to `ps_main`:
 
 ```hlsl
-// ps_main, after frag_main()
-float pulse = 0.5 + 0.5 * cos(_20_m0[90u].x * 4.0);         // global_viewport.time
-SV_Target.rgb *= (0.75 + 0.25 * pulse) * _25_m0[14u].rgb;    // dev_wireframe_color
-
-// vs_main, after vert_main()
-gl_Position.x += sin(gl_Position.y * 12.0) * 0.03;
-gl_Position.y += sin(gl_Position.x * 12.0) * 0.03;
+float wave_time = _20_m0[90u].x;                                     // global_viewport.time
+CUSTOM_1.x += sin(CUSTOM_1.y * 30.0 + wave_time * 2.0) * 0.02;       // the wave
+CUSTOM_1.y += sin(CUSTOM_1.x * 30.0 + wave_time * 1.7) * 0.02;
+SV_Target.rgb *= (0.75 + 0.25 * cos(wave_time * 4.0)) * _25_m0[14u].rgb;  // mod_tint
 ```
 
 The slots come from the decompiled cbuffer arrays: `_20_m0[90].x` is
-`global_viewport.time` (b0, offset 1440) and `_25_m0[14]` is the
-`dev_wireframe_color` material variable (b1, offset 224). The decompiled
-cbuffers are flat `float4` arrays, so the offsets are `byte_offset / 16`; the
-shipped variable table is what tells you which offsets are settable material
-variables (`shader43 --variables <dictionary.csv> <material>`). Because the
-material variable is unchanged, Lua still drives it through
+`global_viewport.time` (b0, offset 1440) and `_25_m0[14]` is a material
+variable (b1, offset 224). The decompiled cbuffers are flat `float4` arrays, so
+the offsets are `byte_offset / 16`, and the shader's variable table says which
+of those offsets a material may set (`shader43 --variables <dictionary.csv>
+<material>`, or add your own record with `shader43 --add-variable`, see
+`shaders/README.md`). The wave lives in the pixel stage because the UI
+background is a single quad: a clip-space displacement in the vertex stage only
+moves its four corners. Lua drives the variable through
 `widget.style.texture.material_values`.
 
 ## Fix-ups before you can compile
