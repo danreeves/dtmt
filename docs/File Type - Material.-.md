@@ -164,12 +164,33 @@ as `shader_data`, and compiling that again reproduces the original blob
 byte-for-byte. Pointing the new instance material at the mod's own base material
 keeps the whole material graph owned by the mod.
 
+### Custom shaders
+
+A base material's `shader_data` is a `shader43` section containing framed DXBC
+programs (Oodle-compressed containers with a per-program frame key). Shader
+sources that sit next to a material are compiled and spliced in automatically:
+
+```text
+materials/mods/example/ui_base.material
+materials/mods/example/ui_base.hlsl        // vs_main and/or ps_main
+materials/mods/example/ui_base.ps.hlsl     // or a separate pixel shader
+materials/mods/example/ui_base.vs.hlsl     // or a separate vertex shader
+```
+
+`dtmt build` compiles them with `dxc`, replaces every program of that stage,
+re-compresses the frames with Oodle and updates the frame lengths, keys and the
+section header. The replacement has to keep the shipped shader's interface; the
+build checks the stage and both signature layouts and fails otherwise. See
+`shaders/README.md` for the bindless resource layout and an example shader.
+
 ## Status
 
 - Binary format: **Partial**. The header, material template and external data
-  file layout are known, and instance materials round trip byte-for-byte.
+  file layout are known, and materials round trip byte-for-byte.
   `unk1`/`unk2`/`unk3` are preserved but not understood.
-- Compilation: **Partial**. Instance materials only; embedded shaders are not
-  supported.
-- Decompilation: **Partial**. Base materials are decompiled for inspection but
-  cannot be re-compiled.
+- Compilation: **Partial**. Instance materials and base materials (including
+  their embedded shader) are supported. Custom shader sources next to a material
+  are compiled with `dxc` and spliced into the shader section.
+- Decompilation: **Partial**. Base materials are decompiled including their
+  shader data, but the compiled shader programs are only decoded, not
+  reconstructed as HLSL.
