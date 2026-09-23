@@ -37,9 +37,12 @@
 //!
 //! Materials that carry their own shader (`shader_size > 0`) are "base"
 //! materials. Everything else is an instance that inherits its shader through
-//! `material1`/`material2`. DTMT can only *compile* instance materials, since
-//! shaders are compiled DXBC blobs. It can still decompile base materials so
-//! that their variables and texture channels can be inspected.
+//! `material1`/`material2`.
+//!
+//! Base materials round trip through `shader_data`, which preserves their
+//! embedded shader byte for byte. Custom shader programs can be spliced in with
+//! [`ShaderOverrides`], which decodes and re-compresses the affected frames and
+//! updates the shader section header.
 //!
 //! The SJSON representation follows the Stingray source format also used by
 //! Vermintide 2, i.e. string values and map-style `textures`,
