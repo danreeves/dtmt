@@ -36,16 +36,19 @@ Both tools are open source and must be built locally:
   when Python is not installed.
 
 - [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross)
+  Use the patched `hlsl-minlod` branch of the
+  [danreeves/SPIRV-Cross fork](https://github.com/danreeves/SPIRV-Cross/tree/hlsl-minlod):
   ```shell
-  git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Cross
+  git clone --depth 1 -b hlsl-minlod https://github.com/danreeves/SPIRV-Cross
   cmake -B SPIRV-Cross/build -G "Visual Studio 17 2022" -A x64 \
       -DSPIRV_CROSS_CLI=ON -DSPIRV_CROSS_ENABLE_TESTS=OFF
   cmake --build SPIRV-Cross/build --config Release --target spirv-cross
   ```
-  Then apply `spirv-cross-minlod.patch` from this directory and rebuild. Without
-  it, the HLSL backend refuses the min-LOD clamp operand
-  (`MinLod texture operand not supported in HLSL`), which many shipped shaders
-  use. The patch emits HLSL's `Sample(sampler, uv, offset, clamp)` form instead.
+  Upstream refuses the min-LOD clamp operand (`MinLod texture operand not
+  supported in HLSL`), which many shipped shaders use. The branch emits HLSL's
+  `Sample(sampler, uv, offset, clamp)` form instead. Plain upstream works for
+  every shader that does not use the clamp; fall back to the fork only when the
+  decompiler rejects one.
 
 ## What the output looks like
 
@@ -84,6 +87,6 @@ The generated HLSL is a starting point, not the original source:
 - **No root signature**: the engine supplies it, so keep the registers and
   spaces that the decompiled code uses.
 - **Not everything translates**: some constructs have no HLSL backend support
-  (the patch above only handles the 2D implicit-LOD min-LOD case). If
+  (the fork's branch only adds the 2D implicit-LOD min-LOD case). If
   `dxil-spirv` or `spirv-cross` refuses a shader, fall back to the
   disassembly and reconstruct the part you need by hand.
