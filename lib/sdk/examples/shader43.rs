@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut spirv_cross: Option<PathBuf> = None;
     let mut program_filter: Option<usize> = None;
     let mut tail_index: Option<usize> = None;
+    let mut section: Option<String> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -86,6 +87,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 hlsl_dir = Some(PathBuf::from(
                     args.get(i).expect("--hlsl needs a directory"),
                 ));
+            }
+            "--section" => {
+                i += 1;
+                section = Some(args.get(i).expect("--section needs a name").clone());
             }
             "--decompile" => {
                 i += 1;
@@ -145,6 +150,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(index) = tail_index {
         return tail(&files[0], index);
+    }
+
+    if let Some(section) = &section {
+        for path in &files {
+            if let Err(err) = dump_section(path, section) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
     }
 
     if let Some(dict) = &slots_dict {
@@ -395,6 +409,81 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
     }
 
     Ok(())
+}
+
+/// Hex-dumps one section of a shader43 section: `header`, `contexts`,
+/// `conditions`, `dependencies`, `group`, `device` or `default`. The sections
+/// are located by the offsets in the header, so a section's end is the next
+/// section's start.
+fn dump_section(path: &Path, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let contexts = u32_at(shader, 8) as usize;
+    let conditions = u32_at(shader, 16) as usize;
+    let dependencies = u32_at(shader, 24) as usize;
+    let group = u32_at(shader, 32) as usize;
+    let group_size = u32_at(shader, 36) as usize;
+    let device = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let default = u32_at(shader, 20) as usize;
+
+    if name == "header" {
+        dump_bytes(shader, 0, contexts, path, "header");
+        return Ok(());
+    }
+
+    let sections: [(&str, usize, usize); 6] = [
+        ("contexts", contexts, conditions),
+        ("conditions", conditions, dependencies),
+        ("dependencies", dependencies, group),
+        ("group", group, group + group_size),
+        ("device", device, device + device_size),
+        ("default", default, shader.len()),
+    ];
+
+    let Some((section, start, end)) = sections.iter().find(|(section, ..)| *section == name) else {
+        return Err(format!(
+            "unknown section '{name}' (header, contexts, conditions, dependencies, group, \
+             device, default)"
+        )
+        .into());
+    };
+
+    dump_bytes(shader, *start, *end, path, section);
+    Ok(())
+}
+
+fn dump_bytes(shader: &[u8], start: usize, end: usize, path: &Path, name: &str) {
+    let end = end.min(shader.len());
+    let bytes = &shader[start.min(end)..end];
+
+    println!(
+        "=== {} {} ({} bytes at {:#x}) ===",
+        path.display(),
+        name,
+        bytes.len(),
+        start
+    );
+
+    for (row, chunk) in bytes.chunks(16).enumerate() {
+        let hex = chunk
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii: String = chunk
+            .iter()
+            .map(|byte| {
+                if (0x20..0x7F).contains(byte) {
+                    *byte as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        println!("  +{:#06x}: {hex:<47} {ascii}", row * 16);
+    }
 }
 
 /// Entry point name a decompiled shader should use.
