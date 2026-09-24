@@ -46,15 +46,19 @@ as the decode allows.
    what `Y` measures (0 for cbuffers, a small count for resources;
    `global_texture2D` is 5 in the UI base's first six groups and 1 in the last
    six, `41B1CFF8` 10 and 2) and the compact copies' exact record order.
-2. **Program tails from DXBC**: the tail is the per-program binding map. Decoded:
-   `{u32 cbuffer_count}` + 24 byte cbuffer entries (`{name_hash, size}` at
-   `+4`/`+12`, register order), then counted resource lists whose entries carry
-   `{name_hash, binding_index, register_index, ...}` with a material-wide binding
-   index (1-based, continues across programs, reused by repeat bindings),
-   `0xFFFFFFFF` for bindless, and 3 word signature lists for the vertex stage.
-   Still open: the trailing mask table and how the entry sizes vary with the
-   resource kind; then generate tails from the compiled container's reflection
-   and drop the preset's tails.
+2. **Program tails from DXBC**: the tail is the per-program binding map and it
+   is load-bearing - zeroing everything but the cbuffer entries crashes the game
+   at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
+   restoring them renders again. Decoded: `{u32 cbuffer_count}` + 24 byte
+   cbuffer entries (`{name_hash, size}` at `+4`/`+12`, register order), then
+   counted resource lists whose entries carry `{name_hash, binding_index,
+   register_index, ...}` with a material-wide binding index (1-based, continues
+   across programs, reused by repeat bindings), `0xFFFFFFFF` for bindless, and
+   3 word signature lists for the vertex stage. Still open: the trailing mask
+   table and how the entry sizes vary with the resource kind. Next step: dump
+   every program tail of a few hundred materials next to each container's
+   `PSV0`/signatures and fit the record model, then generate tails from our own
+   compiled containers.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
