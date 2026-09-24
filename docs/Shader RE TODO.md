@@ -56,8 +56,11 @@ as the decode allows.
    resource kind; then generate tails from the compiled container's reflection
    and drop the preset's tails.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
-   node bounds are known). Decide whether a generated shader can ship a single
-   group (and what contexts/conditions it needs) or must generate the tree.
+   node bounds are known). A material that does not permute anything needs no
+   conditions at all: the minimal two program material ships an empty conditions
+   section and a single `default` context pair `{query_id, 0xFFFFFFFF}`, with
+   the group header carrying that same query id. So this only has to be decoded
+   to support several groups/permutations in one material.
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry), then generate or
    shrink it to engine constants.
