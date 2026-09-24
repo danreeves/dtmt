@@ -50,23 +50,19 @@ as the decode allows.
    is load-bearing - zeroing everything but the cbuffer entries crashes the game
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
    restoring them renders again. Decoded: `{u32 cbuffer_count}` + 24 byte
-   cbuffer entries (`{name_hash, size}` at entry `+0`/`+8`, register order - full
-   bytes `+4`/`+12`), then counted lists (empty = one `0` word) where **list 3 =
-   SRVs, list 5 = UAVs, list 8 = input signature semantics** (3 word
-   `{semantic name hash, semantic index, ordinal}` entries; `POSITION`
-   `3FFEABD6`, `COLOR` `FCDCBA12`, `TEXCOORD` `B77A0F36`, `CUSTOM` `96B9600E`),
-   with 7 word resource entries `{name_hash, binding_index, register_index, 1, 0,
-   0, 0}` / `{name_hash, kind, 0, 0xFFFFFFFF, space, 0xFFFFFFFF, 0}`. The tail
-   ends with the shared block (the preamble's tail: `{1, query_count, 2}` + a
-   549 byte block on the UI base, where the pixel tails carry the block and use
-   252 bytes for their own records). `shader::Tail` parses/serialises the cbuffer
-   list and round-trips every sampled tail byte for byte, and patching a
-   cbuffer's size in every tail (240 -> 256 for a grown `c_per_object`) is
-   verified in game. Still open: the lists between and after those (the
-   `96B9600E` runs on pixel tails, the static-sampler-looking entries, the block
-   itself). Next step: a build-side way to derive the cbuffer sizes from the
-   compiled container (DXIL reflection) and to regenerate the lists, so tails no
-   longer need the preset's bytes.
+   cbuffer entries (`{name_hash, size}` at entry `+0`/`+8`, register order), then
+   counted lists (empty = one `0` word) carrying 7 word resource records
+   (textures, UAVs with kind 3 and `0xFFFFFFFF` bindless + space, samplers) and
+   3 word signature runs (`POSITION`/`COLOR`/`TEXCOORD`/`CUSTOM`/... resolved
+   hashes; the pixel program's interpolated-input run has no count of its own,
+   its length matching the container's `ISG1`), ending with the shared block
+   (the preamble's tail, 549 bytes on the UI base). `shader::Tail` parses and
+   serialises the cbuffer list and round-trips every sampled tail byte for byte,
+   `patch_tails` rewrites sizes in a preset (verified in game: 240 -> 256 for a
+   grown `c_per_object`). Next step: model the resource/signature lists (their
+   counts, kinds and how many words each kind uses) and the block, so a tail can
+   be generated from the compiled container's reflection instead of the
+   preset's bytes.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
