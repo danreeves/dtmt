@@ -532,6 +532,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut files = 0usize;
     let mut seen = 0usize;
+    let mut bounties = Bounties::default();
 
     for path in &paths {
         walk(path, &mut |file| {
@@ -547,6 +548,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut conditions,
                 &mut tails,
                 &names,
+                &mut bounties,
             ) {
                 Ok(true) => seen += 1,
                 Ok(false) => {}
@@ -574,9 +576,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     conditions.flush()?;
     tails.flush()?;
 
+    bounties.write(&out_dir)?;
+
     println!(
-        "wrote the dump of {seen} material(s) from {files} file(s) to {}",
-        out_dir.display()
+        "wrote the dump of {seen} material(s) from {files} file(s) to {} ({} known, {} unknown hashes)",
+        out_dir.display(),
+        bounties.known.len(),
+        bounties.unknown.len()
     );
 
     Ok(())
