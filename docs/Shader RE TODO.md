@@ -58,11 +58,22 @@ as the decode allows.
    its length matching the container's `ISG1`), ending with the shared block
    (the preamble's tail, 549 bytes on the UI base). `shader::Tail` parses and
    serialises the cbuffer list and round-trips every sampled tail byte for byte,
-   `patch_tails` rewrites sizes in a preset (verified in game: 240 -> 256 for a
-   grown `c_per_object`). Next step: model the resource/signature lists (their
-   counts, kinds and how many words each kind uses) and the block, so a tail can
-   be generated from the compiled container's reflection instead of the
-   preset's bytes.
+   `patch_tails` rewrites sizes in a preset (hygiene: a 256 byte shader cbuffer
+   with 240 byte tails still renders, so the size is not load-bearing). The
+   shared block is *byte packed*, not word aligned - `texture_map` sits at an odd
+   offset (501) inside it with `{u32 size = 4, u32 count = 1}` after it, so
+   modelling it needs the packed record stream, not u32 lists. Next step: model
+   the resource/signature lists (their counts, kinds and how many words each
+   kind uses) and the block, so a tail can be generated from the compiled
+   container's reflection instead of the preset's bytes.
+
+   Related finding: the engine's `name -> cbuffer offset` upload set is fixed by
+   its own compilation of the shipped shader. Moving a known variable's record to
+   new space (offset 240 in all 36 copies of the table, tails patched to 256, the
+   pixel shader reading the new slot) leaves the slot at zero, so our shaders can
+   only consume the values the engine already writes; pass extra values by
+   packing them into known `float4` slots. A new family can render our programs,
+   but its own new parameter slots will not be uploaded.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
