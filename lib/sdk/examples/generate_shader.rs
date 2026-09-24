@@ -62,6 +62,8 @@ struct Preset {
     conditions: Vec<u8>,
     dependencies: Vec<u8>,
     group_data: Vec<u8>,
+    /// The packed table before the first program record.
+    device_preamble: Vec<u8>,
     /// One entry per program of the template's device data, in order.
     programs: Vec<(String, Vec<u8>)>,
 }
@@ -102,6 +104,13 @@ fn extract_preset(data_path: &Path, out_path: &Path) -> Result<(), Box<dyn std::
         .ok_or("device data is out of range")?;
     let programs = shader::parse_programs(device)?;
 
+    // The first program record marks the end of the packed reflection table the
+    // device data starts with; keep it, the engine uses it to find programs.
+    let first_program = programs.first().map(|program| program.pos).unwrap_or(0);
+    let device_preamble = device
+        .get(..first_program)
+        .ok_or("device preamble is out of range")?;
+
     let mut text = String::new();
     text.push_str(&format!("version {}\n", u32_at(section, 0)));
     text.push_str(&format!("opaque {}\n", u32_at(section, 4)));
@@ -111,6 +120,7 @@ fn extract_preset(data_path: &Path, out_path: &Path) -> Result<(), Box<dyn std::
     text.push_str(&format!("conditions {}\n", to_hex(&conditions)));
     text.push_str(&format!("dependencies {}\n", to_hex(&dependencies)));
     text.push_str(&format!("group_data {}\n", to_hex(&group_data)));
+    text.push_str(&format!("device_preamble {}\n", to_hex(device_preamble)));
 
     for program in &programs {
         let tail_start = program.meta_pos + 16;
@@ -154,6 +164,7 @@ fn parse_preset(text: &str) -> Result<Preset, Box<dyn std::error::Error>> {
     let mut conditions = Vec::new();
     let mut dependencies = Vec::new();
     let mut group_data = Vec::new();
+    let mut device_preamble = Vec::new();
     let mut programs = Vec::new();
 
     for line in text.lines() {
@@ -180,6 +191,7 @@ fn parse_preset(text: &str) -> Result<Preset, Box<dyn std::error::Error>> {
             "conditions" => conditions = from_hex(value)?,
             "dependencies" => dependencies = from_hex(value)?,
             "group_data" => group_data = from_hex(value)?,
+            "device_preamble" => device_preamble = from_hex(value)?,
             other => return Err(format!("unknown preset key '{other}'").into()),
         }
     }
@@ -193,6 +205,7 @@ fn parse_preset(text: &str) -> Result<Preset, Box<dyn std::error::Error>> {
         conditions,
         dependencies,
         group_data,
+        device_preamble,
         programs,
     })
 }
@@ -203,7 +216,7 @@ fn build_device(
     preset: &Preset,
     containers: &HashMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let mut device = Vec::new();
+    let mut device = preset.device_preamble.clone();
 
     for (index, (stage, tail)) in preset.programs.iter().enumerate() {
         let container = containers
