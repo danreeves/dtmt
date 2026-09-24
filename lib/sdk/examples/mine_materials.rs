@@ -184,12 +184,6 @@ struct SectionStats {
     tables: usize,
 }
 
-fn inspect_file(path: &Path) -> Option<SectionStats> {
-    let data = fs::read(path).ok()?;
-    let shader = shader_section(&data)?;
-    Some(inspect(shader, u32_at(&data, 0)))
-}
-
 /// Collects the section statistics of a parsed shader section.
 fn inspect(shader: &[u8], version: u32) -> SectionStats {
     let mut stats = SectionStats {
