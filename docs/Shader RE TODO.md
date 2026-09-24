@@ -38,21 +38,26 @@ as the decode allows.
 
 ## Next steps
 
-1. **Group descriptors** (`{name_hash, flags, X, Y}`): decode `flags`/`X`/`Y`.
-   The corpus scan (`decode-descriptors.ps1` style analysis over `groups.csv`)
-   now filters variable records and shows e.g. `global_viewport` always
-   flags=0x101 with varying X, `fog_volume` always 0x10003, `linear_depth`
-   always 0x3, `c_per_object` always 0x0. X looks like an offset (varies per
-   family/unit), Y like a small count/index. Correlate X with the unit's table
-   offsets and Y with resource counts, then generate the descriptors from
-   declared variables/resources.
-2. **Conditions payload**: decode the u16 list per node (structure, names and
+1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
+   byte offset in the per-draw binding table, allocated in descriptor-list order
+   (24 bytes per constant buffer, 8 bytes per other resource) - decoded and
+   reproducible. `flags` keeps the space in bits 16+ and a small kind in the low
+   bits (0 material cbuffer, 1 engine cbuffer, 3 texture, 5 UAV). Still open:
+   what `Y` measures (0 for cbuffers, a small count for resources;
+   `global_texture2D` is 5 in the UI base's first six groups and 1 in the last
+   six, `41B1CFF8` 10 and 2) and the compact copies' exact record order.
+2. **Program tails from DXBC**: the tail is the per-program binding map. Decoded:
+   `{u32 cbuffer_count}` + 24 byte cbuffer entries (`{name_hash, size}` at
+   `+4`/`+12`, register order), then counted resource lists whose entries carry
+   `{name_hash, binding_index, register_index, ...}` with a material-wide binding
+   index (1-based, continues across programs, reused by repeat bindings),
+   `0xFFFFFFFF` for bindless, and 3 word signature lists for the vertex stage.
+   Still open: the trailing mask table and how the entry sizes vary with the
+   resource kind; then generate tails from the compiled container's reflection
+   and drop the preset's tails.
+3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). Decide whether a generated shader can ship a single
    group (and what contexts/conditions it needs) or must generate the tree.
-3. **Program tails from DXBC**: generate a tail from the compiled container's
-   reflection (cbuffer names/sizes, signature names, resource kinds/spaces) so
-   the tool no longer needs the template's tails. Remaining: the tail fields
-   around the resource records.
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry), then generate or
    shrink it to engine constants.

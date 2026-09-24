@@ -178,7 +178,8 @@ fn condition_hashes(shader: &[u8], offset: usize) -> Option<Vec<u32>> {
 
 /// One entry of the default data table.
 #[derive(Clone, Copy, Debug)]
-struct DefaultEntry {    name_hash: u32,
+struct DefaultEntry {
+    name_hash: u32,
     element_count: u32,
     blob_offset: u32,
 }
@@ -344,7 +345,8 @@ impl Bounties {
         let _ = writeln!(unknown, "# cannot name. One hash per line.");
         let _ = writeln!(unknown, "#");
 
-        let mut areas: std::collections::BTreeMap<&'static str, usize> = std::collections::BTreeMap::new();
+        let mut areas: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
         for areas_of_hash in self.unknown.values() {
             for area in areas_of_hash {
                 *areas.entry(area).or_default() += 1;
@@ -367,7 +369,8 @@ impl Bounties {
     }
 }
 
-fn name_of(names: &HashMap<u32, String>, hash: u32) -> String {    names
+fn name_of(names: &HashMap<u32, String>, hash: u32) -> String {
+    names
         .get(&hash)
         .cloned()
         .unwrap_or_else(|| format!("{hash:08X}"))
@@ -501,12 +504,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     row(
         &mut conditions,
-        &[
-            "file".into(),
-            "node".into(),
-            "hash".into(),
-            "name".into(),
-        ],
+        &["file".into(), "node".into(), "hash".into(), "name".into()],
     )?;
     row(
         &mut tails,

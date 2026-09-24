@@ -39,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut spirv_cross: Option<PathBuf> = None;
     let mut program_filter: Option<usize> = None;
     let mut tail_index: Option<usize> = None;
+    let mut tails_mode = false;
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
     let mut overrides = ShaderOverrides::default();
@@ -130,6 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .expect("--tail must be a number"),
                 );
             }
+            "--tails" => tails_mode = true,
             other => files.push(PathBuf::from(other)),
         }
         i += 1;
@@ -144,6 +146,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              shader43 --decompile <dir> [--program <index>] [--dxil-spirv <exe>] \
              [--spirv-cross <exe>] <material data file>...\n       \
              shader43 --tail <program index> <material data file>\n       \
+             shader43 --tails [--variables <dictionary.csv>] <material data file>\n       \
              shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>] \
              <material data file>..."
         );
@@ -152,6 +155,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(index) = tail_index {
         return tail(&files[0], index);
+    }
+
+    if tails_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = tails(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
     }
 
     if let Some(section) = &section {
@@ -263,6 +279,54 @@ fn tail(path: &Path, index: usize) -> Result<(), Box<dyn std::error::Error>> {
             words.push_str(&format!("   q={qword:016x}"));
         }
         println!("{words}");
+    }
+
+    Ok(())
+}
+
+/// Dumps the metadata tail of every program, four words per line, with words
+/// that the dictionary can name shown next to their value.
+fn tails(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+
+    let programs = shader::parse_programs(device)?;
+    for (index, program) in programs.iter().enumerate() {
+        let next_pos = programs
+            .get(index + 1)
+            .map(|next| next.pos)
+            .unwrap_or(device.len());
+        let start = program.meta_pos + 16;
+        let Some(tail) = device.get(start..next_pos) else {
+            continue;
+        };
+
+        println!(
+            "=== program {index} ({:?}), tail {} bytes ===",
+            program.stage,
+            tail.len()
+        );
+        for (row, chunk) in tail.chunks(16).enumerate() {
+            let mut line = format!("+{:04}:", row * 16);
+            for word in chunk.chunks_exact(4) {
+                let value = u32::from_le_bytes(word.try_into().unwrap());
+                let name = names
+                    .and_then(|names| names.get(&value))
+                    .map(|name| format!(" {name}"))
+                    .unwrap_or_default();
+                line.push_str(&format!(" {value:>10}{name}"));
+            }
+            println!("{line}");
+        }
     }
 
     Ok(())
@@ -424,10 +488,7 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
 
 /// Dumps the packed table the device data starts with, before the first program
 /// record: its size, the program positions, and the raw bytes.
-fn dump_preamble(
-    path: &Path,
-    dump_dir: Option<&Path>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn dump_preamble(path: &Path, dump_dir: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(path)?;
     let shader = shader_section(&data)?;
 
