@@ -2,5 +2,6 @@ pub mod lua;
 pub mod material;
 pub mod package;
 pub mod shader;
+pub mod shader_preset;
 pub mod strings;
 pub mod texture;

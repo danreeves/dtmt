@@ -62,7 +62,7 @@ fn u64_at(data: &[u8], offset: usize) -> u64 {
 }
 
 /// Shader stage of a DXBC container, read from its `PSV0` chunk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stage {
     Pixel,
     Vertex,

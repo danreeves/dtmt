@@ -5,34 +5,44 @@ data instead of splicing a shipped one. It collects what each section needs and
 marks what is still unknown. See `File Type - Material.-.md` for the field-level
 notes.
 
-## The `generate_shader` example
+## Target
 
-`lib/sdk/examples/generate_shader.rs` implements the template route:
+**Everything is defined in the mod and DTMT only compiles.** A mod should ship
+shader sources (`.hlsl`), the shader's declarations (which cbuffers, resources,
+variables and defaults it uses, and which material channels it answers), and the
+material SJSON - with **no `shader_data` at all**. `dtmt build` compiles the
+sources with `dxc` and generates the whole section: contexts, conditions, group
+data, program tails, device data and default data.
 
-```text
-# One-off: extract the wrapper (contexts, conditions, dependencies, group data,
-# one metadata tail per program) of a shipped base material.
-generate_shader --preset ui.preset.txt <material data file>
+Anything kept from a shipped shader must be reduced to genuinely engine-side
+constants that cannot be derived from the shader itself. The working candidates
+are:
 
-# Generate a base material SJSON: our compiled containers replace every
-# program, using that program's tail; everything else comes from the preset.
-generate_shader --generate ui.preset.txt <base.material> <out.material> \
-    --vs <container.dxbc> --ps <container.dxbc>
-```
+| Piece | Where it should come from |
+| --- | --- |
+| Program tails | The compiled DXBC: cbuffer names/sizes and the signature names are all in the container, so the tails can be generated (the tail's remaining, undecoded fields are the open question) |
+| Contexts / conditions | The mod's declared channels: the tree selects a group by which channels the material provides, so it can be generated for the mod's own channel set (the payload and the engine's query mechanism still have to be decoded) |
+| Group data | The mod's declared cbuffers/variables: the variable tables are built from the declarations, the resource descriptors from the DXBC reflection |
+| Default data | The mod's declared defaults (format decoded) |
+| Device preamble | Generated from the mod's variables if it is the reflection table it looks like; otherwise reduced to an engine-constant blob kept in the toolchain |
+| Header, pads, offsets | Recomputed |
 
-The preset is a small text file (a few hundred KB because the group data is
-hex): the family's engine-side wrapper. The generated material keeps the
-material-side fields of the file given as `<base.material>` (parent, textures,
-channels, `unk3`, ...) and replaces its `shader_data`/`shader_size`. No shipped
-shader blob is needed at generation time; the preset is the only input derived
-from the game.
+Engine constants are only acceptable where the engine genuinely requires data
+that cannot be derived from the shader - and even then the goal is to decode and
+shrink them to the smallest possible form, not to grow them into a preset.
 
-Status: **verified in game**. Generating from the UI base's preset with the mod's
-shaders produces a working section (96 programs, ~431 KB) that builds, deploys,
-and renders: the title screen tint follows the Lua-driven material value, and no
-shipped shader blob is present in the mod. The first attempt without the
-device-data preamble reached the title and then hit the engine's out-of-memory
-error, which is how the preamble's importance was found.
+## Status of the intermediate route
+
+While the synthesis above is being decoded, the SDK also has the template route
+(`lib/sdk/examples/generate_shader.rs`, `shader_preset` module): extracting a
+family's wrapper once and generating from it. It proved the pipeline end to end
+- a generated section (96 programs, ~431 KB, no shipped blob in the mod) builds,
+deploys and renders in game (the title screen tint follows Lua) - and it is the
+harness used to test each decoded piece. It is a stepping stone, not the target.
+
+The first attempt without the device-data preamble reached the title and then
+hit the engine's out-of-memory error, which is how the preamble's importance was
+found.
 
 ## What a material needs
 
