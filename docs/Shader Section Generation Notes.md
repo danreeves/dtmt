@@ -33,16 +33,23 @@ shrink them to the smallest possible form, not to grow them into a preset.
 
 ## Status of the intermediate route
 
-While the synthesis above is being decoded, the SDK also has the template route
-(`lib/sdk/examples/generate_shader.rs`, `shader_preset` module): extracting a
-family's wrapper once and generating from it. It proved the pipeline end to end
-- a generated section (96 programs, ~431 KB, no shipped blob in the mod) builds,
-deploys and renders in game (the title screen tint follows Lua) - and it is the
-harness used to test each decoded piece. It is a stepping stone, not the target.
+The mod-defined build flow is in place: a material can declare
+`shader_preset = "<name>.preset"` and ship no `shader_data` at all; `dtmt build`
+compiles the sibling shader sources and generates the section from them and the
+preset (byte-identical to the splice route), and snoopymod runs that way - its
+base material is a few hundred bytes, the preset is the only game-derived file.
+The preset holds the family's engine-side wrapper for now; shrinking it to only
+genuine engine constants (and generating the rest from the shader itself) is the
+remaining RE work listed above.
 
-The first attempt without the device-data preamble reached the title and then
-hit the engine's out-of-memory error, which is how the preamble's importance was
-found.
+The SDK also has the template route
+(`lib/sdk/examples/generate_shader.rs`, `shader_preset` module) used to extract
+the preset and as the harness for testing each decoded piece. It proved the
+pipeline end to end - a generated section (96 programs, ~431 KB, no shipped blob
+in the mod) builds, deploys and renders in game (the title screen tint follows
+Lua) - and the first attempt without the device-data preamble reached the title
+and then hit the engine's out-of-memory error, which is how the preamble's
+importance was found.
 
 ## What a material needs
 
