@@ -10,6 +10,7 @@
 //!
 //! - `materials.csv`: one row of section statistics per material,
 //! - `variables.csv`: one row per group data variable record,
+//! - `groups.csv`: one row per variable table, with the header words before it,
 //! - `defaults.csv`: one row per default data entry.
 //!
 //! Names are resolved through the dictionary when one is given; otherwise the
@@ -92,6 +93,8 @@ impl Variable {
 /// A run of variable records whose preceding word is their count.
 #[derive(Debug)]
 struct VariableTable {
+    /// Byte offset of the first record, relative to the group data.
+    start: usize,
     variables: Vec<Variable>,
 }
 
@@ -111,6 +114,7 @@ fn variable_tables(group: &[u8]) -> Vec<VariableTable> {
 
         if count >= 3 && at >= 4 && u32_at(group, at - 4) as usize == count {
             tables.push(VariableTable {
+                start: at,
                 variables: (0..count)
                     .filter_map(|index| Variable::read(group, at + index * 20))
                     .collect(),
@@ -322,6 +326,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&out_dir)?;
     let mut materials = BufWriter::new(fs::File::create(out_dir.join("materials.csv"))?);
     let mut variables = BufWriter::new(fs::File::create(out_dir.join("variables.csv"))?);
+    let mut groups = BufWriter::new(fs::File::create(out_dir.join("groups.csv"))?);
     let mut defaults = BufWriter::new(fs::File::create(out_dir.join("defaults.csv"))?);
 
     row(
@@ -359,6 +364,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
     row(
+        &mut groups,
+        &[
+            "file".into(),
+            "table".into(),
+            "start".into(),
+            "count".into(),
+            "before".into(),
+        ],
+    )?;
+    row(
         &mut defaults,
         &[
             "file".into(),
@@ -376,7 +391,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         walk(path, &mut |file| {
             files += 1;
 
-            match process(file, &mut materials, &mut variables, &mut defaults, &names) {
+            match process(
+                file,
+                &mut materials,
+                &mut variables,
+                &mut groups,
+                &mut defaults,
+                &names,
+            ) {
                 Ok(true) => seen += 1,
                 Ok(false) => {}
                 Err(err) => eprintln!("{}: {err}", file.display()),
@@ -386,6 +408,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("{files} files read, {seen} material(s) so far");
                 let _ = materials.flush();
                 let _ = variables.flush();
+                let _ = groups.flush();
                 let _ = defaults.flush();
             }
         });
@@ -393,6 +416,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     materials.flush()?;
     variables.flush()?;
+    groups.flush()?;
     defaults.flush()?;
 
     println!(
@@ -409,6 +433,7 @@ fn process(
     file: &Path,
     materials: &mut impl Write,
     variables: &mut impl Write,
+    groups: &mut impl Write,
     defaults: &mut impl Write,
     names: &HashMap<u32, String>,
 ) -> std::io::Result<bool> {
@@ -429,6 +454,34 @@ fn process(
     let mut variable_rows = 0usize;
     if let Some(group) = group {
         for (index, table) in variable_tables(group).iter().enumerate() {
+            // The words before the table's count word: the group header
+            // descriptors for a group's first table, the scaffolding around the
+            // compact copies for the others.
+            let before = table
+                .start
+                .checked_sub(4 + 24 * 4)
+                .map(|before_start| {
+                    group[before_start..table.start - 4]
+                        .chunks_exact(4)
+                        .map(|chunk| {
+                            format!("{:08X}", u32::from_le_bytes(chunk.try_into().unwrap()))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+
+            row(
+                groups,
+                &[
+                    file.display().to_string(),
+                    index.to_string(),
+                    table.start.to_string(),
+                    table.variables.len().to_string(),
+                    before,
+                ],
+            )?;
+
             for variable in &table.variables {
                 variable_rows += 1;
                 row(
