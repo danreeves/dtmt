@@ -51,14 +51,16 @@ as the decode allows.
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
    restoring them renders again. Decoded: `{u32 cbuffer_count}` + 24 byte
    cbuffer entries (`{name_hash, size}` at `+4`/`+12`, register order), then
-   counted resource lists whose entries carry `{name_hash, binding_index,
-   register_index, ...}` with a material-wide binding index (1-based, continues
-   across programs, reused by repeat bindings), `0xFFFFFFFF` for bindless, and
-   3 word signature lists for the vertex stage. Still open: the trailing mask
-   table and how the entry sizes vary with the resource kind. Next step: dump
-   every program tail of a few hundred materials next to each container's
-   `PSV0`/signatures and fit the record model, then generate tails from our own
-   compiled containers.
+   counted lists (empty = one `0` word) where **list 3 = SRVs, list 5 = UAVs,
+   list 8 = input signature semantics** (3 word entries), with 7 word resource
+   entries `{name_hash, binding_index, register_index, 1, 0, 0, 0}` /
+   `{name_hash, kind, 0, 0xFFFFFFFF, space, 0xFFFFFFFF, 0}` and a material-wide
+   binding index that continues across programs. Still open: the lists between
+   and after those (the PS `96B9600E` runs, the static-sampler-looking
+   `4B457E26` entry, the trailing shared block). Next step: run the tail fitting
+   script (`fit-tails.ps1`, `--tails` dumps) over a few hundred varied
+   materials with their `PSV0`/signatures and pin every list position and entry
+   size, then generate tails from our own compiled containers.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
