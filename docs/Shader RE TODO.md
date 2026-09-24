@@ -43,9 +43,7 @@ as the decode allows.
    (24 bytes per constant buffer, 8 bytes per other resource) - decoded and
    reproducible. `flags` keeps the space in bits 16+ and a small kind in the low
    bits (0 material cbuffer, 1 engine cbuffer, 3 texture, 5 UAV). Still open:
-   what `Y` measures (0 for cbuffers, a small count for resources;
-   `global_texture2D` is 5 in the UI base's first six groups and 1 in the last
-   six, `41B1CFF8` 10 and 2) and the compact copies' exact record order.
+   what `Y` measures - but its *shape* is now clear: it is a packed array of 16 two-bit fields (values 0..3). Vertex-data resources take exactly `1, 5, 21, 85, 341` = `sum(4^i)` (`bones`, `idata`, `hmap`), which is what "one count in each of 1, 2, 4, 5 slots" looks like, and the UI base's `41B1CFF8` reading 10 = `2 + 8` next to `global_texture2D`'s 5 = `1 + 4` is the same packing with the fields at 2. So a likely reading is "per program/pass, how many times the group binds this resource", saturating at 3 per field; the exact slot meaning is still to confirm. Also open: the compact copies' exact record order.
 2. **Program tails from DXBC**: the tail is the per-program binding map and it
    is load-bearing - zeroing everything but the cbuffer entries crashes the game
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
@@ -67,13 +65,17 @@ as the decode allows.
    kind uses) and the block, so a tail can be generated from the compiled
    container's reflection instead of the preset's bytes.
 
-   Related finding: the engine's `name -> cbuffer offset` upload set is fixed by
-   its own compilation of the shipped shader. Moving a known variable's record to
-   new space (offset 240 in all 36 copies of the table, tails patched to 256, the
-   pixel shader reading the new slot) leaves the slot at zero, so our shaders can
-   only consume the values the engine already writes; pass extra values by
-   packing them into known `float4` slots. A new family can render our programs,
-   but its own new parameter slots will not be uploaded.
+   Related finding, now settled in game: the engine's cbuffer upload layout comes
+   from its own compilation of the shipped shader. Moving a known variable's
+   record to new space in *every* representation (all 36 group-table records, the
+   material's own `offset` field, every tail's cbuffer size, the shader reading
+   the new slot) still leaves the slot at zero, and the byte-packed block is not
+   the source either (it holds only `texture_map`, no cbuffer variable names).
+   So our shaders can consume only the variables the shipped shader already has;
+   pass extra values by packing them into known `float4` slots. The block's own
+   role - a per-material, byte-packed *texture/parameter binding* stream
+   (`texture_map` at block offset 489 with `{size 4, count 1}`) - is still worth
+   decoding, since unlike the upload layout it is material data we control.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
