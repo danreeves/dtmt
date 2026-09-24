@@ -178,8 +178,7 @@ fn condition_hashes(shader: &[u8], offset: usize) -> Option<Vec<u32>> {
 
 /// One entry of the default data table.
 #[derive(Clone, Copy, Debug)]
-struct DefaultEntry {
-    name_hash: u32,
+struct DefaultEntry {    name_hash: u32,
     element_count: u32,
     blob_offset: u32,
 }
@@ -303,8 +302,72 @@ fn walk(path: &Path, visit: &mut impl FnMut(&Path)) {
     }
 }
 
-fn name_of(names: &HashMap<u32, String>, hash: u32) -> String {
-    names
+/// Collects the shader hash bounty lists while mining: names that resolved a
+/// hash seen in the shader data, and hashes that did not.
+#[derive(Default)]
+struct Bounties {
+    known: std::collections::BTreeSet<String>,
+    unknown: std::collections::BTreeMap<u32, std::collections::BTreeSet<&'static str>>,
+}
+
+impl Bounties {
+    fn add(&mut self, names: &HashMap<u32, String>, hash: u32, area: &'static str) {
+        match names.get(&hash) {
+            Some(name) => {
+                self.known.insert(name.clone());
+            }
+            None => {
+                self.unknown.entry(hash).or_default().insert(area);
+            }
+        }
+    }
+
+    /// Writes `known.txt` and `unknown.txt` next to the dump.
+    fn write(&self, dir: &Path) -> std::io::Result<()> {
+        use std::fmt::Write;
+
+        let mut known = String::new();
+        for name in &self.known {
+            let _ = writeln!(known, "{name}");
+        }
+        fs::write(dir.join("known.txt"), known)?;
+
+        let mut unknown = String::new();
+        let _ = writeln!(
+            unknown,
+            "# Hashes that occur in Darktide shader43 structures (contexts, conditions,"
+        );
+        let _ = writeln!(
+            unknown,
+            "# group data, program tails, variables, defaults) and that the dictionary"
+        );
+        let _ = writeln!(unknown, "# cannot name. One hash per line.");
+        let _ = writeln!(unknown, "#");
+
+        let mut areas: std::collections::BTreeMap<&'static str, usize> = std::collections::BTreeMap::new();
+        for areas_of_hash in self.unknown.values() {
+            for area in areas_of_hash {
+                *areas.entry(area).or_default() += 1;
+            }
+        }
+        let summary = areas
+            .into_iter()
+            .map(|(area, count)| format!("{area} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(unknown, "# Areas: {summary}");
+        let _ = writeln!(unknown, "#");
+
+        for hash in self.unknown.keys() {
+            let _ = writeln!(unknown, "{hash:08X}");
+        }
+        fs::write(dir.join("unknown.txt"), unknown)?;
+
+        Ok(())
+    }
+}
+
+fn name_of(names: &HashMap<u32, String>, hash: u32) -> String {    names
         .get(&hash)
         .cloned()
         .unwrap_or_else(|| format!("{hash:08X}"))
@@ -531,6 +594,7 @@ fn process(
     conditions: &mut impl Write,
     tails: &mut impl Write,
     names: &HashMap<u32, String>,
+    bounties: &mut Bounties,
 ) -> std::io::Result<bool> {
     let Some(data) = fs::read(file).ok() else {
         return Ok(false);
@@ -559,7 +623,11 @@ fn process(
                     group[before_start..table.start - 4]
                         .chunks_exact(4)
                         .map(|chunk| {
-                            format!("{:08X}", u32::from_le_bytes(chunk.try_into().unwrap()))
+                            let word = u32::from_le_bytes(chunk.try_into().unwrap());
+                            if word >= 0x0001_0000 && word != u32::MAX {
+                                bounties.add(names, word, "groups");
+                            }
+                            format!("{word:08X}")
                         })
                         .collect::<Vec<_>>()
                         .join(" ")
@@ -579,6 +647,7 @@ fn process(
 
             for variable in &table.variables {
                 variable_rows += 1;
+                bounties.add(names, variable.name_hash, "variables");
                 row(
                     variables,
                     &[
@@ -604,6 +673,7 @@ fn process(
     {
         for entry in &entries {
             default_rows += 1;
+            bounties.add(names, entry.name_hash, "defaults");
             row(
                 defaults,
                 &[
@@ -622,6 +692,8 @@ fn process(
     let mut seen_contexts = std::collections::HashSet::new();
     let mut seen_nodes = std::collections::HashSet::new();
     for (context, query, node) in &entries {
+        bounties.add(names, *context, "contexts");
+        bounties.add(names, *query, "contexts");
         if seen_contexts.insert((*context, *query, *node)) {
             row(
                 contexts,
