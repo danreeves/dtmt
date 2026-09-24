@@ -92,8 +92,6 @@ impl Variable {
 /// A run of variable records whose preceding word is their count.
 #[derive(Debug)]
 struct VariableTable {
-    /// Byte offset of the first record, relative to the group data.
-    start: usize,
     variables: Vec<Variable>,
 }
 
@@ -113,7 +111,6 @@ fn variable_tables(group: &[u8]) -> Vec<VariableTable> {
 
         if count >= 3 && at >= 4 && u32_at(group, at - 4) as usize == count {
             tables.push(VariableTable {
-                start: at,
                 variables: (0..count)
                     .filter_map(|index| Variable::read(group, at + index * 20))
                     .collect(),
@@ -185,8 +182,6 @@ struct SectionStats {
     vertex: usize,
     pixel: usize,
     tables: usize,
-    variables: usize,
-    defaults: usize,
 }
 
 fn inspect_file(path: &Path) -> Option<SectionStats> {
@@ -236,27 +231,6 @@ fn inspect(shader: &[u8], version: u32) -> SectionStats {
     }
 
     stats
-}
-
-fn collect_files(path: &Path, files: &mut Vec<PathBuf>) {
-    if path.is_file() {
-        files.push(path.to_path_buf());
-        return;
-    }
-
-    let Ok(entries) = fs::read_dir(path) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_files(&path, files);
-        } else if let Some(size) = entry.metadata().ok().map(|meta| meta.len())
-            && size >= 300
-        {
-            files.push(path);
-        }
-    }
 }
 
 /// Walks `path` and calls `visit` for every file, without collecting them all
@@ -408,13 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         walk(path, &mut |file| {
             files += 1;
 
-            match process(
-                file,
-                &mut materials,
-                &mut variables,
-                &mut defaults,
-                &names,
-            ) {
+            match process(file, &mut materials, &mut variables, &mut defaults, &names) {
                 Ok(true) => seen += 1,
                 Ok(false) => {}
                 Err(err) => eprintln!("{}: {err}", file.display()),
