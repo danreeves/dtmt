@@ -12,6 +12,8 @@ use futures::future::try_join_all;
 use path_slash::PathExt;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
+use sdk::filetype::shader::Stage;
+use sdk::filetype::shader_preset::Preset;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};
 use tokio::fs::{self, File};
@@ -282,6 +284,59 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
     Ok(Some(overrides))
 }
 
+/// Reads the `shader_preset = "..."` declaration of a material SJSON, if it has
+/// one. The field is DTMT's own; the material parser ignores it.
+fn shader_preset_path(sjson: &str) -> Option<String> {
+    for line in sjson.lines() {
+        let Some(rest) = line.trim().strip_prefix("shader_preset") else {
+            continue;
+        };
+        let rest = rest.trim_start().strip_prefix('=')?.trim();
+        let rest = rest.strip_prefix('"')?;
+        return rest.split('"').next().map(str::to_string);
+    }
+    None
+}
+
+/// Resolves a preset path next to the material, then against the mod root.
+fn resolve_preset_path(material: &Path, root: &Path, name: &str) -> PathBuf {
+    let sibling = material
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(name);
+    if sibling.exists() { sibling } else { root.join(name) }
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(text, "{byte:02X}");
+    }
+    text
+}
+
+/// Replaces a material's `shader_size`/`shader_data` fields with a generated
+/// section. The fields are dropped and appended, which keeps the rest of the
+/// SJSON (including comments) untouched.
+fn set_shader_data(sjson: &str, section: &[u8]) -> String {
+    let mut text = String::with_capacity(sjson.len() + section.len() * 2 + 64);
+
+    for line in sjson.lines() {
+        let key = line.trim_start();
+        if key.starts_with("shader_size") || key.starts_with("shader_data") {
+            continue;
+        }
+        text.push_str(line);
+        text.push('\n');
+    }
+
+    text.push_str(&format!("shader_size = {}\n", section.len()));
+    text.push_str(&format!("shader_data = \"{}\"\n", to_hex(section)));
+    text
+}
+
 /// Iterate over the paths in the given `Package` and
 /// compile each file by its file type.
 #[tracing::instrument(skip_all)]
@@ -304,9 +359,53 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
         })
         .map(|(file_type, name, root)| async move {
             let path = PathBuf::from(name);
-            let sjson = fs::read_to_string(&path)
+            let mut sjson = fs::read_to_string(&path)
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+
+            // A material can declare a shader preset and sibling shader sources;
+            // DTMT then generates its `shader_data` instead of the material
+            // carrying a compiled shader blob.
+            let mut generated = false;
+            if file_type == BundleFileType::Material
+                && let Some(preset_name) = shader_preset_path(&sjson)
+            {
+                let preset_path = resolve_preset_path(&path, root.as_ref(), &preset_name);
+                let preset_text = fs::read_to_string(&preset_path).await.wrap_err_with(|| {
+                    format!("Failed to read shader preset '{}'", preset_path.display())
+                })?;
+                let preset = Preset::from_text(&preset_text).wrap_err_with(|| {
+                    format!("Failed to parse shader preset '{}'", preset_path.display())
+                })?;
+
+                let overrides = compile_shader_overrides(&path, cfg).await?.ok_or_else(|| {
+                    eyre::eyre!(
+                        "'{}' declares shader preset '{}' but has no sibling shader sources",
+                        path.display(),
+                        preset_name
+                    )
+                })?;
+
+                let mut containers = HashMap::new();
+                if let Some(vertex) = overrides.vertex {
+                    containers.insert(Stage::Vertex, vertex);
+                }
+                if let Some(pixel) = overrides.pixel {
+                    containers.insert(Stage::Pixel, pixel);
+                }
+
+                let section = preset.generate(&containers).wrap_err_with(|| {
+                    format!("Failed to generate a shader section for '{}'", path.display())
+                })?;
+
+                tracing::info!(
+                    "Generated a {} byte shader section from '{}'",
+                    section.len(),
+                    preset_path.display()
+                );
+                sjson = set_shader_data(&sjson, &section);
+                generated = true;
+            }
 
             let name = path.with_extension("").to_slash_lossy().to_string();
             let name = if let Some(new_name) = name_overrides.get(&name) {
@@ -321,7 +420,8 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
             };
             let mut file = BundleFile::from_sjson(name, file_type, sjson, root.as_ref()).await?;
 
-            if file_type == BundleFileType::Material
+            if !generated
+                && file_type == BundleFileType::Material
                 && let Some(overrides) = compile_shader_overrides(&path, cfg).await?
             {
                 material::apply_shader_overrides(&mut file, &overrides)?;

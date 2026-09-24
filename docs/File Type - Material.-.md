@@ -189,7 +189,27 @@ build checks the stage and both signature layouts and fails otherwise. See
 programs, per-program reflection, contexts, conditions, group data and default
 data. The `.hlsl` files are build-time inputs and are not shipped in the bundle.
 
-`dtmt build` performs these steps:
+A material can also declare a **shader preset** and carry no `shader_data` at
+all:
+
+```sjson
+// ui_default_base.material
+shader_preset = "ui_default_base.preset"
+```
+
+`ui_default_base.preset` is a text file next to the material (or relative to the
+mod root) that holds the family's engine-side wrapper: contexts, conditions,
+dependencies, group data, the packed device preamble and one metadata tail per
+program. When the declaration is present, `dtmt build` compiles the sibling
+shader sources and generates the whole section from them and the preset, so the
+material source stays a few hundred bytes and no shipped shader blob is needed.
+The section is byte-identical to what the splice route produces for the same
+sources. `generate_shader --preset <out.txt> <material data file>` extracts a
+preset from a shipped base material once; shrinking the preset to only genuine
+engine constants is an open item (see
+[Shader Section Generation Notes](Shader%20Section%20Generation%20Notes.md)).
+
+Otherwise, `dtmt build` performs these steps:
 
 1. **Compile.** Each shader source is compiled with `dxc` to a DXBC/DXIL
    container: `<name>.hlsl` is probed for `vs_main` and `ps_main`, while

@@ -11,7 +11,11 @@
 //! - `materials.csv`: one row of section statistics per material,
 //! - `variables.csv`: one row per group data variable record,
 //! - `groups.csv`: one row per variable table, with the header words before it,
-//! - `defaults.csv`: one row per default data entry.
+//! - `defaults.csv`: one row per default data entry,
+//! - `contexts.csv`: one row per context entry (query id and condition node),
+//! - `conditions.csv`: one row per condition hash,
+//! - `tails.csv`: hash-like values in the program metadata tails, unique per
+//!   material, with their first position.
 //!
 //! Names are resolved through the dictionary when one is given; otherwise the
 //! short hashes are printed as they are.
@@ -125,6 +129,51 @@ fn variable_tables(group: &[u8]) -> Vec<VariableTable> {
     }
 
     tables
+}
+
+/// Walks the contexts section: `(context name hash, query hash, node offset)`
+/// per entry.
+fn context_entries(shader: &[u8]) -> Vec<(u32, u32, u32)> {
+    let mut entries = Vec::new();
+    let contexts_offset = u32_at(shader, 8) as usize;
+    let conditions_offset = u32_at(shader, 16) as usize;
+
+    let mut at = contexts_offset;
+    while at + 12 <= conditions_offset {
+        let context = u32_at(shader, at);
+        let count = u32_at(shader, at + 8) as usize;
+        if count > 512 || at + 12 + count * 8 > conditions_offset {
+            break;
+        }
+
+        for index in 0..count {
+            let entry = at + 12 + index * 8;
+            entries.push((context, u32_at(shader, entry), u32_at(shader, entry + 4)));
+        }
+
+        at += 12 + count * 8;
+    }
+
+    entries
+}
+
+/// Reads the condition hashes of the node at `offset` in the conditions section.
+fn condition_hashes(shader: &[u8], offset: usize) -> Option<Vec<u32>> {
+    let dependencies_offset = u32_at(shader, 24) as usize;
+    if offset + 8 > dependencies_offset {
+        return None;
+    }
+
+    let count = u16::from_le_bytes(shader[offset + 6..offset + 8].try_into().unwrap()) as usize;
+    if count > 64 || offset + 8 + count * 4 > dependencies_offset {
+        return None;
+    }
+
+    Some(
+        (0..count)
+            .map(|index| u32_at(shader, offset + 8 + index * 4))
+            .collect(),
+    )
 }
 
 /// One entry of the default data table.
@@ -328,6 +377,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut variables = BufWriter::new(fs::File::create(out_dir.join("variables.csv"))?);
     let mut groups = BufWriter::new(fs::File::create(out_dir.join("groups.csv"))?);
     let mut defaults = BufWriter::new(fs::File::create(out_dir.join("defaults.csv"))?);
+    let mut contexts = BufWriter::new(fs::File::create(out_dir.join("contexts.csv"))?);
+    let mut conditions = BufWriter::new(fs::File::create(out_dir.join("conditions.csv"))?);
+    let mut tails = BufWriter::new(fs::File::create(out_dir.join("tails.csv"))?);
 
     row(
         &mut materials,
@@ -374,6 +426,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
     row(
+        &mut contexts,
+        &[
+            "file".into(),
+            "context_hash".into(),
+            "context_name".into(),
+            "query_hash".into(),
+            "query_name".into(),
+            "node".into(),
+        ],
+    )?;
+    row(
+        &mut conditions,
+        &[
+            "file".into(),
+            "node".into(),
+            "hash".into(),
+            "name".into(),
+        ],
+    )?;
+    row(
+        &mut tails,
+        &[
+            "file".into(),
+            "program".into(),
+            "stage".into(),
+            "position".into(),
+            "hash".into(),
+            "name".into(),
+        ],
+    )?;
+    row(
         &mut defaults,
         &[
             "file".into(),
@@ -397,6 +480,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut variables,
                 &mut groups,
                 &mut defaults,
+                &mut contexts,
+                &mut conditions,
+                &mut tails,
                 &names,
             ) {
                 Ok(true) => seen += 1,
@@ -410,6 +496,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = variables.flush();
                 let _ = groups.flush();
                 let _ = defaults.flush();
+                let _ = contexts.flush();
+                let _ = conditions.flush();
+                let _ = tails.flush();
             }
         });
     }
@@ -418,6 +507,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     variables.flush()?;
     groups.flush()?;
     defaults.flush()?;
+    contexts.flush()?;
+    conditions.flush()?;
+    tails.flush()?;
 
     println!(
         "wrote the dump of {seen} material(s) from {files} file(s) to {}",
@@ -435,6 +527,9 @@ fn process(
     variables: &mut impl Write,
     groups: &mut impl Write,
     defaults: &mut impl Write,
+    contexts: &mut impl Write,
+    conditions: &mut impl Write,
+    tails: &mut impl Write,
     names: &HashMap<u32, String>,
 ) -> std::io::Result<bool> {
     let Some(data) = fs::read(file).ok() else {
@@ -519,6 +614,81 @@ fn process(
                     entry.blob_offset.to_string(),
                 ],
             )?;
+        }
+    }
+
+    // Contexts and their condition nodes.
+    let entries = context_entries(shader);
+    let mut seen_contexts = std::collections::HashSet::new();
+    let mut seen_nodes = std::collections::HashSet::new();
+    for (context, query, node) in &entries {
+        if seen_contexts.insert((*context, *query, *node)) {
+            row(
+                contexts,
+                &[
+                    file.display().to_string(),
+                    format!("{context:08X}"),
+                    name_of(names, *context),
+                    format!("{query:08X}"),
+                    name_of(names, *query),
+                    node.to_string(),
+                ],
+            )?;
+        }
+        if seen_nodes.insert(*node)
+            && let Some(hashes) = condition_hashes(shader, *node as usize)
+        {
+            for hash in hashes {
+                row(
+                    conditions,
+                    &[
+                        file.display().to_string(),
+                        node.to_string(),
+                        format!("{hash:08X}"),
+                        name_of(names, hash),
+                    ],
+                )?;
+            }
+        }
+    }
+
+    // Hash-like values anywhere in a program's metadata tail, one row per
+    // unique value per material.
+    let mut seen_tail = std::collections::HashSet::new();
+    if let Some(device) = {
+        let offset = u32_at(shader, 40) as usize;
+        let size = u32_at(shader, 44) as usize;
+        shader.get(offset..offset + size)
+    } && let Ok(programs) = shader::parse_programs(device)
+    {
+        for program in &programs {
+            let tail_start = program.meta_pos + 16;
+            let tail_end = programs
+                .iter()
+                .find(|next| next.pos > tail_start)
+                .map(|next| next.pos)
+                .unwrap_or(device.len());
+            let Some(tail) = device.get(tail_start..tail_end) else {
+                continue;
+            };
+
+            for (index, chunk) in tail.chunks_exact(4).enumerate() {
+                let value = u32::from_le_bytes(chunk.try_into().unwrap());
+                if value < 0x0001_0000 || value == u32::MAX || !seen_tail.insert(value) {
+                    continue;
+                }
+                row(
+                    tails,
+                    &[
+                        file.display().to_string(),
+                        program.index.to_string(),
+                        format!("{:?}", program.stage),
+                        (index * 4).to_string(),
+                        format!("{value:08X}"),
+                        name_of(names, value),
+                    ],
+                )?;
+            }
         }
     }
 
