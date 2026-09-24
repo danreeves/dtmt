@@ -40,6 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut program_filter: Option<usize> = None;
     let mut tail_index: Option<usize> = None;
     let mut section: Option<String> = None;
+    let mut preamble_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -92,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 section = Some(args.get(i).expect("--section needs a name").clone());
             }
+            "--preamble" => preamble_mode = true,
             "--decompile" => {
                 i += 1;
                 decompile_dir = Some(PathBuf::from(
@@ -155,6 +157,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(section) = &section {
         for path in &files {
             if let Err(err) = dump_section(path, section) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if preamble_mode {
+        for path in &files {
+            if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -406,6 +417,71 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
     }
     for (offset, (name, size, ty)) in &found {
         println!("  {name:<32} type={ty} offset={offset} size={size}");
+    }
+
+    Ok(())
+}
+
+/// Dumps the packed table the device data starts with, before the first program
+/// record: its size, the program positions, and the raw bytes.
+fn dump_preamble(
+    path: &Path,
+    dump_dir: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+
+    let first = programs.first().map(|program| program.pos).unwrap_or(0);
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+
+    println!(
+        "=== {} ===\n  {} program(s), first at {:#x}, preamble {} bytes",
+        path.display(),
+        programs.len(),
+        first,
+        preamble.len()
+    );
+
+    let positions = programs
+        .iter()
+        .take(12)
+        .map(|program| format!("{}:{:?}@{:#x}", program.index, program.stage, program.pos))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("  first programs: {positions}");
+
+    for (row, chunk) in preamble.chunks(16).enumerate() {
+        let hex = chunk
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii: String = chunk
+            .iter()
+            .map(|byte| {
+                if (0x20..0x7F).contains(byte) {
+                    *byte as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        println!("  +{:#06x}: {hex:<47} {ascii}", row * 16);
+    }
+
+    if let Some(dir) = dump_dir {
+        fs::create_dir_all(dir)?;
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        let out = dir.join(format!("{stem}_preamble.bin"));
+        fs::write(&out, preamble)?;
+        println!("  wrote {}", out.display());
     }
 
     Ok(())
