@@ -62,8 +62,13 @@ as the decode allows.
    the group header carrying that same query id. So this only has to be decoded
    to support several groups/permutations in one material.
 4. **Device preamble**: split the engine-constant middle from the per-material
-   suffix (two same-shader materials differ by one list entry), then generate or
-   shrink it to engine constants.
+   suffix (two same-shader materials differ by one list entry). Lead: the
+   preamble's first words track the material's contexts - `{1, query_count, 2, …}`
+   reads `{1, 1, 2, 0, …}` on the minimal one context material and `{1, 36, 2,
+   37, 30, …}` on the UI base (36 = 30 + 6 queries), and the tail of the
+   preamble holds the material's variable list (`texture_map` sits at `+0x1F4`).
+   Next step: dump the preamble of a few hundred varied materials next to their
+   contexts/conditions/programs and fit the table, then generate it.
 5. **Mod-side shader declaration**: a small file next to the material (entry
    points, channels, variables/defaults, which engine-constant file to use),
    wired into `dtmt build`; then a **new family** (new root shader material)
