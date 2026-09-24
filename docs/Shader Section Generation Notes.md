@@ -5,6 +5,32 @@ data instead of splicing a shipped one. It collects what each section needs and
 marks what is still unknown. See `File Type - Material.-.md` for the field-level
 notes.
 
+## The `generate_shader` example
+
+`lib/sdk/examples/generate_shader.rs` implements the template route:
+
+```text
+# One-off: extract the wrapper (contexts, conditions, dependencies, group data,
+# one metadata tail per program) of a shipped base material.
+generate_shader --preset ui.preset.txt <material data file>
+
+# Generate a base material SJSON: our compiled containers replace every
+# program, using that program's tail; everything else comes from the preset.
+generate_shader --generate ui.preset.txt <base.material> <out.material> \
+    --vs <container.dxbc> --ps <container.dxbc>
+```
+
+The preset is a small text file (a few hundred KB because the group data is
+hex): the family's engine-side wrapper. The generated material keeps the
+material-side fields of the file given as `<base.material>` (parent, textures,
+channels, `unk3`, ...) and replaces its `shader_data`/`shader_size`. No shipped
+shader blob is needed at generation time; the preset is the only input derived
+from the game.
+
+Status: generating from the UI base's preset with the mod's shaders produces a
+working section (96 programs, ~430 KB) that builds and deploys; in-game
+verification is noted in the log below.
+
 ## What a material needs
 
 A base material carries a `shader_data` blob (the `shader43` section) and a
