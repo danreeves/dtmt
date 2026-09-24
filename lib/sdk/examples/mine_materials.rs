@@ -192,9 +192,13 @@ struct SectionStats {
 fn inspect_file(path: &Path) -> Option<SectionStats> {
     let data = fs::read(path).ok()?;
     let shader = shader_section(&data)?;
+    Some(inspect(shader, u32_at(&data, 0)))
+}
 
+/// Collects the section statistics of a parsed shader section.
+fn inspect(shader: &[u8], version: u32) -> SectionStats {
     let mut stats = SectionStats {
-        version: u32_at(&data, 0),
+        version,
         shader_size: shader.len(),
         contexts: u32_at(shader, 12),
         conditions_offset: u32_at(shader, 16),
@@ -231,7 +235,7 @@ fn inspect_file(path: &Path) -> Option<SectionStats> {
         }
     }
 
-    Some(stats)
+    stats
 }
 
 fn collect_files(path: &Path, files: &mut Vec<PathBuf>) {
@@ -251,6 +255,29 @@ fn collect_files(path: &Path, files: &mut Vec<PathBuf>) {
             && size >= 300
         {
             files.push(path);
+        }
+    }
+}
+
+/// Walks `path` and calls `visit` for every file, without collecting them all
+/// first (the game's data directory has hundreds of thousands of files).
+fn walk(path: &Path, visit: &mut impl FnMut(&Path)) {
+    if path.is_file() {
+        visit(path);
+        return;
+    }
+
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk(&path, visit);
+        } else if let Some(size) = entry.metadata().ok().map(|meta| meta.len())
+            && size >= 300
+        {
+            visit(&path);
         }
     }
 }
@@ -374,94 +401,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     )?;
 
-    let mut files = Vec::new();
-    for path in &paths {
-        collect_files(path, &mut files);
-    }
-
+    let mut files = 0usize;
     let mut seen = 0usize;
-    for file in &files {
-        let Some(data) = fs::read(file).ok() else {
-            continue;
-        };
-        let Some(shader) = shader_section(&data) else {
-            continue;
-        };
-        let Some(stats) = inspect_file(file) else {
-            continue;
-        };
-        seen += 1;
 
-        let group = {
-            let offset = u32_at(shader, 32) as usize;
-            let size = u32_at(shader, 36) as usize;
-            shader.get(offset..offset + size)
-        };
+    for path in &paths {
+        walk(path, &mut |file| {
+            files += 1;
 
-        let mut variable_rows = 0usize;
-        if let Some(group) = group {
-            for (index, table) in variable_tables(group).iter().enumerate() {
-                for variable in &table.variables {
-                    variable_rows += 1;
-                    row(
-                        &mut variables,
-                        &[
-                            file.display().to_string(),
-                            index.to_string(),
-                            variable.kind.to_string(),
-                            variable.flags.to_string(),
-                            format!("{:08X}", variable.name_hash),
-                            name_of(&names, variable.name_hash),
-                            variable.offset.to_string(),
-                            variable.size.to_string(),
-                        ],
-                    )?;
-                }
+            match process(
+                file,
+                &mut materials,
+                &mut variables,
+                &mut defaults,
+                &names,
+            ) {
+                Ok(true) => seen += 1,
+                Ok(false) => {}
+                Err(err) => eprintln!("{}: {err}", file.display()),
             }
-        }
 
-        let mut default_rows = 0usize;
-        if let Some(block) = {
-            let offset = u32_at(shader, 20) as usize;
-            shader.get(offset..)
-        } && let Some((entries, _blob)) = default_data(block)
-        {
-            for entry in &entries {
-                default_rows += 1;
-                row(
-                    &mut defaults,
-                    &[
-                        file.display().to_string(),
-                        format!("{:08X}", entry.name_hash),
-                        name_of(&names, entry.name_hash),
-                        entry.element_count.to_string(),
-                        entry.blob_offset.to_string(),
-                    ],
-                )?;
+            if files % 2000 == 0 {
+                eprintln!("{files} files read, {seen} material(s) so far");
+                let _ = materials.flush();
+                let _ = variables.flush();
+                let _ = defaults.flush();
             }
-        }
-
-        row(
-            &mut materials,
-            &[
-                file.display().to_string(),
-                format!("{:08X}", stats.version),
-                stats.shader_size.to_string(),
-                stats.contexts.to_string(),
-                stats.conditions_offset.to_string(),
-                stats.dependency_offset.to_string(),
-                stats.dependency_count.to_string(),
-                stats.group_size.to_string(),
-                stats.device_size.to_string(),
-                stats.default_offset.to_string(),
-                stats.programs.to_string(),
-                stats.vertex.to_string(),
-                stats.pixel.to_string(),
-                stats.tables.to_string(),
-                variable_rows.to_string(),
-                default_rows.to_string(),
-            ],
-        )?;
+        });
     }
 
     materials.flush()?;
@@ -469,9 +434,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     defaults.flush()?;
 
     println!(
-        "wrote the dump of {seen} material(s) to {}",
+        "wrote the dump of {seen} material(s) from {files} file(s) to {}",
         out_dir.display()
     );
 
     Ok(())
+}
+
+/// Writes the three CSV rows of one material data file. Returns whether the
+/// file was a material with a shader section.
+fn process(
+    file: &Path,
+    materials: &mut impl Write,
+    variables: &mut impl Write,
+    defaults: &mut impl Write,
+    names: &HashMap<u32, String>,
+) -> std::io::Result<bool> {
+    let Some(data) = fs::read(file).ok() else {
+        return Ok(false);
+    };
+    let Some(shader) = shader_section(&data) else {
+        return Ok(false);
+    };
+    let stats = inspect(shader, u32_at(&data, 0));
+
+    let group = {
+        let offset = u32_at(shader, 32) as usize;
+        let size = u32_at(shader, 36) as usize;
+        shader.get(offset..offset + size)
+    };
+
+    let mut variable_rows = 0usize;
+    if let Some(group) = group {
+        for (index, table) in variable_tables(group).iter().enumerate() {
+            for variable in &table.variables {
+                variable_rows += 1;
+                row(
+                    variables,
+                    &[
+                        file.display().to_string(),
+                        index.to_string(),
+                        variable.kind.to_string(),
+                        variable.flags.to_string(),
+                        format!("{:08X}", variable.name_hash),
+                        name_of(names, variable.name_hash),
+                        variable.offset.to_string(),
+                        variable.size.to_string(),
+                    ],
+                )?;
+            }
+        }
+    }
+
+    let mut default_rows = 0usize;
+    if let Some(block) = {
+        let offset = u32_at(shader, 20) as usize;
+        shader.get(offset..)
+    } && let Some((entries, _blob)) = default_data(block)
+    {
+        for entry in &entries {
+            default_rows += 1;
+            row(
+                defaults,
+                &[
+                    file.display().to_string(),
+                    format!("{:08X}", entry.name_hash),
+                    name_of(names, entry.name_hash),
+                    entry.element_count.to_string(),
+                    entry.blob_offset.to_string(),
+                ],
+            )?;
+        }
+    }
+
+    row(
+        materials,
+        &[
+            file.display().to_string(),
+            format!("{:08X}", stats.version),
+            stats.shader_size.to_string(),
+            stats.contexts.to_string(),
+            stats.conditions_offset.to_string(),
+            stats.dependency_offset.to_string(),
+            stats.dependency_count.to_string(),
+            stats.group_size.to_string(),
+            stats.device_size.to_string(),
+            stats.default_offset.to_string(),
+            stats.programs.to_string(),
+            stats.vertex.to_string(),
+            stats.pixel.to_string(),
+            stats.tables.to_string(),
+            variable_rows.to_string(),
+            default_rows.to_string(),
+        ],
+    )?;
+
+    Ok(true)
 }
