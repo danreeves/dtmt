@@ -111,6 +111,92 @@ impl Program {
     }
 }
 
+/// One constant buffer of a program's metadata tail. The entry is 24 bytes;
+/// within it the name hash sits at `+0` and the size in bytes at `+8`, the
+/// other four words are not decoded and are kept as they were read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TailCbuffer {
+    pub words: [u32; 6],
+}
+
+impl TailCbuffer {
+    /// Murmur32 of the constant buffer's name in the engine's shader sources.
+    pub fn name_hash(&self) -> u32 {
+        self.words[0]
+    }
+
+    /// Size of the constant buffer in bytes.
+    pub fn size(&self) -> u32 {
+        self.words[2]
+    }
+}
+
+/// A program's metadata tail: the counted constant buffer list followed by the
+/// engine's resource lists and the shared block. The lists after the constant
+/// buffers are not decoded yet, so they are kept verbatim; parsing and writing
+/// a tail round-trips its bytes exactly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tail {
+    /// The constant buffered described by the tail, in register order.
+    pub cbuffers: Vec<TailCbuffer>,
+    /// The tail bytes after the constant buffer list.
+    pub rest: Vec<u8>,
+}
+
+impl Tail {
+    /// Reads the constant buffer list that opens a program's metadata tail.
+    /// Returns `None` if the bytes do not look like one.
+    pub fn parse(bytes: &[u8]) -> Option<Tail> {
+        if bytes.len() < 4 {
+            return None;
+        }
+        let count = u32_at(bytes, 0) as usize;
+        if count > 64 {
+            return None;
+        }
+        let list_end = 4 + count * 24;
+        if list_end > bytes.len() {
+            return None;
+        }
+
+        let mut cbuffers = Vec::with_capacity(count);
+        for i in 0..count {
+            let at = 4 + i * 24;
+            let mut words = [0u32; 6];
+            for (word, slot) in words.iter_mut().enumerate() {
+                *slot = u32_at(bytes, at + word * 4);
+            }
+            let entry = TailCbuffer { words };
+            if entry.name_hash() == 0
+                || entry.size() == 0
+                || entry.size() >= 8192
+                || entry.size() % 16 != 0
+            {
+                return None;
+            }
+            cbuffers.push(entry);
+        }
+
+        Some(Tail {
+            cbuffers,
+            rest: bytes[list_end..].to_vec(),
+        })
+    }
+
+    /// Writes the tail back out: the constant buffer list, then the rest.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + self.cbuffers.len() * 24 + self.rest.len());
+        out.extend_from_slice(&(self.cbuffers.len() as u32).to_le_bytes());
+        for entry in &self.cbuffers {
+            for word in entry.words {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&self.rest);
+        out
+    }
+}
+
 /// Finds a named chunk in a DXBC container.
 fn find_chunk<'a>(container: &'a [u8], name: &[u8; 4]) -> Option<&'a [u8]> {
     if container.len() < 32 || &container[0..4] != b"DXBC" {
@@ -472,5 +558,40 @@ mod tests {
         assert_eq!(Stage::from_psv_kind(0), Stage::Pixel);
         assert_eq!(Stage::from_psv_kind(1), Stage::Vertex);
         assert_eq!(Stage::from_psv_kind(9), Stage::Other);
+    }
+
+    #[test]
+    fn tail_round_trips() {
+        // A tail shaped like the shipped ones: one constant buffer (c_per_object
+        // hashed by hand, 240 bytes) then resource list words and a block.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        for word in [0xB5639618u32, 0, 240, 0, 1, 0] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        bytes.extend_from_slice(&[0u8; 32]);
+
+        let tail = Tail::parse(&bytes).expect("a well formed tail");
+        assert_eq!(tail.cbuffers.len(), 1);
+        assert_eq!(tail.cbuffers[0].name_hash(), 0xB5639618);
+        assert_eq!(tail.cbuffers[0].size(), 240);
+        assert_eq!(tail.bytes(), bytes);
+    }
+
+    #[test]
+    fn tail_rejects_garbage() {
+        // A size that is not a multiple of 16, and a count that runs past the
+        // end of the tail, must both fail to parse.
+        let mut bad_size = Vec::new();
+        bad_size.extend_from_slice(&1u32.to_le_bytes());
+        for word in [1u32, 0, 33, 0, 0, 0] {
+            bad_size.extend_from_slice(&word.to_le_bytes());
+        }
+        assert!(Tail::parse(&bad_size).is_none());
+
+        let mut short = Vec::new();
+        short.extend_from_slice(&4u32.to_le_bytes());
+        short.extend_from_slice(&[0u8; 24]);
+        assert!(Tail::parse(&short).is_none());
     }
 }

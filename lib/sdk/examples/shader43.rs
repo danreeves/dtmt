@@ -300,6 +300,24 @@ fn tails(
         .ok_or("device data is out of range")?;
 
     let programs = shader::parse_programs(device)?;
+
+    if let Some(first) = programs.first() {
+        let preamble = device.get(..first.pos).unwrap_or_default();
+        println!("=== preamble, {} bytes ===", preamble.len());
+        for (row, chunk) in preamble.chunks(16).enumerate() {
+            let mut line = format!("+{:04}:", row * 16);
+            for word in chunk.chunks_exact(4) {
+                let value = u32::from_le_bytes(word.try_into().unwrap());
+                let name = names
+                    .and_then(|names| names.get(&value))
+                    .map(|name| format!(" {name}"))
+                    .unwrap_or_default();
+                line.push_str(&format!(" {value:>10}{name}"));
+            }
+            println!("{line}");
+        }
+    }
+
     for (index, program) in programs.iter().enumerate() {
         let next_pos = programs
             .get(index + 1)
@@ -315,6 +333,28 @@ fn tails(
             program.stage,
             tail.len()
         );
+        match shader::Tail::parse(tail) {
+            Some(parsed) => {
+                let round_trip = parsed.bytes() == tail;
+                let cbuffers = parsed
+                    .cbuffers
+                    .iter()
+                    .map(|entry| {
+                        let name = names
+                            .and_then(|names| names.get(&entry.name_hash()))
+                            .map(String::as_str)
+                            .unwrap_or("?");
+                        format!("{name}:{}", entry.size())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!(
+                    "  cbuffers [{cbuffers}] roundtrip={}",
+                    if round_trip { "ok" } else { "FAILED" }
+                );
+            }
+            None => println!("  cbuffers unparsed"),
+        }
         for (row, chunk) in tail.chunks(16).enumerate() {
             let mut line = format!("+{:04}:", row * 16);
             for word in chunk.chunks_exact(4) {
