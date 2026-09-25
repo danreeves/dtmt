@@ -310,7 +310,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    8 are empty in every family. One family's list 7 carries four records, so the
    7-word record shape is not universal - the record size may depend on the
    resource kind. Which lists exist by index and the pixel tail's trailing
-   `{DA560F03, 0, 0}` run are still open.
+   `{DA560F03, 0, 0}` run are still open. The trailing run is **family-independent**
+   (identical in the UI base and the 4-program family), and the 4-program
+   family's pixel tail confirms the run shapes: `{SV_POSITION, 0, 0}` then four
+   `{CUSTOM, i, i}` records, the counted `{DA560F03, 0, 0}` run and a final `2`.
+   The tail's block placement varies per family: the UI base's pixel tail embeds
+   `preamble[12..]` (549 bytes) at +252, while the 4-program family's block is 840
+   bytes and mostly matches the preamble's first 840 bytes (116 differing bytes),
+   so the tail's block is not always a straight preamble copy.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
