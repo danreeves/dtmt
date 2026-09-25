@@ -178,15 +178,20 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   clone boots but the title texture stays black: the cloned channel does not
   bind, so the group data records (not the block record) are what the engine
   resolves when a material names a channel.
-- The block's **config portion** (the 561-byte preamble minus the record stream;
-  the whole preamble is embedded verbatim at the end of every pixel tail, after
-  the cbuffer and resource/signature lists - the 112-byte vertex tails do not
-  carry it) is 120 bytes of header (group count 36, table counts/sizes) then
-  **29 byte-packed 13-byte records** `{u32 index, u8 0, u32 value, u32 0}` and
-  the stream count. The record indices (16..26, 94..101, 12..14, 30, 38, 46, 54)
-  and values (1/8/255/15/4/6/2/0/7) are still to interpret; the 16..26 run lines
-  up exactly with `global_viewport`'s frame globals (`time` ..
-  `upscaling_enabled`), so the table looks like per-variable binding data.
+- The block's **config portion** (the preamble minus the record stream; the whole
+  preamble is embedded verbatim at the end of every pixel tail, after the cbuffer
+  and resource/signature lists - the 112-byte vertex tails do not carry it) is
+  120 bytes of header (group count, table counts/sizes) then byte-packed 13-byte
+  records `{u32 index, u8 0, u32 value, u32 0}` and the stream count. The same
+  records appear across families: a **22-record common prefix** (`12:1 16:1 15:8
+  19:8 10:FF 14:1 18:1 1A:1 11:FF 13:1 17:1 5E:F 5F:F 60:F 61:F 62:F 63:F 64:F
+  65:F 0C:1 0E:4 0D:1`) then family-specific records, so the index space is the
+  engine's global variable order (16..26 is `time` .. `upscaling_enabled` in the
+  UI base) and the values are small per-family masks/counts (1, 8, `0xF`,
+  `0xFF`, `0x60`, `0x78`). Families with fewer programs have *more* block
+  records (a 4-program family: 40-58 vs the 96-program UI base's 29), so the
+  table is sized by the variable set, not the program count. What the values
+  count is still open.
 - The group data holds a channel in **two framings**, 3 records each per group
   unit (108 + 108 = 216 for the UI base's `texture_map`; `shader43 --channel
   <name>` dumps them). **Canonical** 20-byte records
@@ -242,7 +247,12 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    variables: `texture_map` x3 plus `view_proj`, `world_view_proj`, `world` and
    `dev_wireframe_color`. The packed 28-byte copies are keyed by `c_per_object`.
    The group descriptors are `global_viewport` (kind 1 cbuffer), an unnamed
-   texture (kind 3) and an unnamed UAV (kind 5).
+   texture (kind 3) and an unnamed UAV (kind 5). Families differ in how they
+   organize the tables: the UI base has two runs (the `c_per_object` variables
+   and the `global_viewport` variables), while a 4-program environment family
+   (`38ECBAD13742E4E1`) has a single merged run with engine and material
+   variables interleaved by offset (`camera_unprojection` 0, `camera_pos` 16,
+   `texture_map_1453a433` 24, `camera_view` 32, `world_view_proj` 48, ...).
 2. **Program tails from DXBC**: the tail is the per-program binding map and it
    is load-bearing - zeroing everything but the cbuffer entries crashes the game
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
