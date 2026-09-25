@@ -44,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
     let mut records_mode = false;
+    let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
@@ -79,6 +80,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 variables_dict = Some(PathBuf::from(
                     args.get(i).expect("--variables needs a dictionary"),
+                ));
+            }
+            "--registry" => {
+                i += 1;
+                registry_mode = true;
+                variables_dict = Some(PathBuf::from(
+                    args.get(i).expect("--registry needs a dictionary"),
                 ));
             }
             "--slots" => {
@@ -210,6 +218,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Some(load_dictionary(path)?),
         None => None,
     };
+
+    if registry_mode {
+        let names = variable_names.ok_or("--registry needs a dictionary")?;
+        for path in &files {
+            if let Err(err) = registry(path, &names) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
 
     if records_mode {
         for path in &files {
@@ -550,6 +568,122 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
         println!("  {name:<32} type={ty} offset={offset} size={size}");
     }
 
+    Ok(())
+}
+
+/// Pairs the block's binding records with the group's variable tables. A block
+/// record's index is the engine's global variable order, and a family's table
+/// lists the variables it uses in that order, so every run position that also
+/// appears in the block's index set names that index. This is the table a
+/// generated family needs for the engine variables it touches.
+fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let first = programs.first().map(|program| program.pos).unwrap_or(0);
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+
+    let count = u32_at(preamble, 12).saturating_sub(8) as usize;
+    let mut indices = BTreeMap::new();
+    for i in 0..count {
+        let at = 0x78 + i * 13;
+        if at + 13 > preamble.len() {
+            break;
+        }
+        indices.insert(u32_at(preamble, at), u32_at(preamble, at + 5));
+    }
+
+    let group_offset = u32_at(shader, 32) as usize;
+    let group_size = u32_at(shader, 36) as usize;
+    let group = shader
+        .get(group_offset..group_offset + group_size)
+        .ok_or("group data is out of range")?;
+
+    let record = |at: usize| -> Option<u32> {
+        if at + 20 > group.len() {
+            return None;
+        }
+        let ty = u32_at(group, at);
+        let flags = u32_at(group, at + 4);
+        let hash = u32_at(group, at + 8);
+        let offset = u32_at(group, at + 12);
+        let size = u32_at(group, at + 16);
+        let expected = match ty {
+            0 => 4,
+            1 => 8,
+            2 => 12,
+            3 => 16,
+            4 => 64,
+            _ => 0,
+        };
+        if ty > 12 || flags > 3 || offset > 4096 || (expected != 0 && size != expected) {
+            return None;
+        }
+        Some(hash)
+    };
+
+    // Collect the runs once, then report the positions the block also names.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut at = 0usize;
+    while at + 20 <= group.len() {
+        if record(at).is_some() {
+            let mut start = at;
+            while start >= 20 && record(start - 20).is_some() {
+                start -= 20;
+            }
+            let mut end = at + 20;
+            while record(end).is_some() {
+                end += 20;
+            }
+            let run = (start, (end - start) / 20);
+            if !runs.contains(&run) {
+                runs.push(run);
+            }
+            at = end;
+        } else {
+            at += 4;
+        }
+    }
+
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} block record(s), {} variable run(s)",
+        indices.len(),
+        runs.len()
+    );
+    let mut named = 0;
+    for (start, len) in &runs {
+        for i in 0..*len {
+            let Some(hash) = record(start + i * 20) else {
+                continue;
+            };
+            let Some(&value) = indices.get(&(i as u32)) else {
+                continue;
+            };
+            let index = i as u32;
+            let name = names.get(&hash).map(String::as_str).unwrap_or("?");
+            named += 1;
+            println!("  run+{start:#06x}[{i:>3}] = index {index:<3} value {value:<10} {name}");
+        }
+    }
+    println!("  {named} of the block's indices named by the tables");
+    let missing: Vec<String> = indices
+        .keys()
+        .copied()
+        .filter(|index| {
+            !runs.iter().any(|(start, len)| {
+                (0..*len).any(|i| record(start + i * 20).is_some() && *index == i as u32)
+            })
+        })
+        .map(|index| format!("{index}"))
+        .collect();
+    println!("  unnamed block indices: {}", missing.join(" "));
     Ok(())
 }
 
