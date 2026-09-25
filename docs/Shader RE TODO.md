@@ -293,7 +293,13 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    (`POSITION`@0, `COLOR`@1, `TEXCOORD`@2), the pixel tail's count-free run is
    its interpolated inputs (`CUSTOM`0@1, `CUSTOM`1@2, `CUSTOM`2@3). The vertex
    tail is just the cbuffer entry, empty lists and one counted run of three
-   `{hash, 0, index}` records. Which lists exist and their order is still open.
+   `{hash, 0, index}` records. The list sequence is fixed per stage: the UI
+   base's pixel tails all show **eight counted resource lists** with counts
+   `0,0,0,1,0,1,1,0` (lists 4, 6 and 7 carry the texture, the UAV and a
+   vertex-data-like record), then the count-free input run and a counted run;
+   the vertex tails have seven empty lists then their counted output run. Which
+   lists exist by index and the pixel tail's trailing `{DA560F03, 0, 0}` run are
+   still open.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
