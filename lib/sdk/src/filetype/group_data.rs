@@ -491,19 +491,24 @@ fn rewrite_table(data: &mut [u8], at: usize, old: &[Record], variables: &[Variab
     }
     let mut bytes = Vec::with_capacity(new);
     for (index, variable) in variables.iter().enumerate() {
-        // The kind and the flags are the engine's, not the declaration's: a slot
-        // keeps what the template gave it and only takes the new name and offset,
-        // so renaming a variable is otherwise byte for byte what it was. A slot
-        // with no template behind it takes the declaration's type.
-        let (kind, flags) = old
+        // The kind, the flags and the size are the engine's, not the
+        // declaration's: a slot keeps what the template gave it and takes only
+        // the new name and offset, so renaming a variable is otherwise byte for
+        // byte what it was. A kind above 4 is one of the engine's own - a texture
+        // binding is kind 5 and four bytes wide - and its size is nothing the
+        // declaration's type can say, so a slot that already exists must not have
+        // its size recomputed.
+        let (kind, flags, size) = old
             .get(index)
-            .map_or((variable.kind, 0), |record| (record.kind, record.flags));
+            .map_or((variable.kind, 0, variable.size()), |record| {
+                (record.kind, record.flags, record.size)
+            });
         Record {
             kind,
             flags,
             hash: variable.hash(),
             offset: variable.offset,
-            size: variable.size(),
+            size,
         }
         .write(&mut bytes);
     }
@@ -797,6 +802,42 @@ mod tests {
             .rebuild_packed(&template_variables())
             .expect_err("no packed run");
         assert!(err.to_string().contains("was not found"), "{err}");
+    }
+
+    #[test]
+    fn a_slot_keeps_the_size_the_engine_gave_it() {
+        // A kind above 4 is the engine's own: a texture binding is kind 5 and
+        // four bytes wide, and nothing in the declaration's type can say so. A
+        // rewrite that recomputed the size would write a zero and the engine
+        // would read a different slot.
+        let mut data = template().into_bytes();
+        let (at, table) = GroupData::new(data.clone())
+            .object_table()
+            .expect("the table");
+        let kinds = [5u32, 5, 3];
+        // Rebuild the table with kinds the size table has never heard of.
+        let mut records = table.clone();
+        for (record, kind) in records.iter_mut().zip(kinds) {
+            record.kind = kind;
+        }
+        for (index, record) in records.iter().enumerate() {
+            let at = at + index * RECORD_LEN;
+            data[at..at + 4].copy_from_slice(&record.kind.to_le_bytes());
+        }
+        let data = GroupData::new(data);
+        let variables: Vec<Variable> = data
+            .object_table()
+            .expect("the table")
+            .1
+            .iter()
+            .map(|record| Variable::from_hash(record.hash, record.offset, record.kind))
+            .collect();
+        let rebuilt = data.rebuild(&variables).expect("rebuild");
+        assert_eq!(
+            rebuilt,
+            data.bytes(),
+            "a slot keeps the size the template gave it, kind 5 or not"
+        );
     }
 
     #[test]
