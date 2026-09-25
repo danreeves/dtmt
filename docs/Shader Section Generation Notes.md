@@ -383,9 +383,10 @@ header is at `start + 20 x len`, its count at `+ 8`, and its records at `+ 12`. 
 whose records are the nineteen channels. `GroupData::channel_table` reads it and
 `GroupData::channels` groups the records into channels.
 
-A **channel is three records, not one**: a type 5 texture binding followed by two
-type 1 parameters - the UV scale and offset the sampler takes. So the record count
-is not the channel count, and the channels of the six families are:
+A channel is a **texture** channel of three records - a type 5 binding followed by
+two type 1 parameters, the UV scale and offset the sampler takes - and a *scalar*
+channel of one. So the record count is not the channel count, and the channels of
+the six families are:
 
 | family | groups | records | channels |
 | --- | --- | --- | --- |
@@ -616,6 +617,33 @@ shape as the ones earlier in the session: the tool skipped three families silent
 because an early return in one branch ran past the next test. Three families
 looked like failures and were a missing brace in a reporting path. A substitution
 test that only runs when a dictionary happens to be complete is not a test.
+
+## The channel table is the one table a from-scratch group data writes
+
+The other two tables in a group are engine-side - `global_viewport` and the packed
+run - so they are carried. The **channel table is the declaration's own**, so it
+has to be writable rather than copied, and it is the last gap on the path to a
+group data built without a template. `GroupData::rebuild_channels` closes it, and
+rewriting the table with the channels it was read as comes back byte for byte on
+five of the six families - the sixth being `38ECBAD1`, which has no channel table
+at all, the single-group exception already noted twice.
+
+A channel keeps the records the template gave it and takes only the new name and
+offset, exactly as the variable table does, because a type 5 binding's width is
+the engine's and not something a declaration's type can say. A rename moves the
+name hash in **each** of a channel's records - twelve bytes for a texture channel,
+four for a scalar one - and nothing else. More channels than the table has room
+for is refused rather than guessed at: a new channel needs a new cbuffer offset,
+and where that comes from is the compiled program's reflection.
+
+That is the seam the from-scratch path needs, and it is the same shape as the
+section's: a caller with the program's reflection supplies the offsets, and
+everything else about the record is the engine's.
+
+A correction to the note above, which came out of writing the writer: the first
+version of `rebuild_channels` assumed three records per channel and refused every
+family, because the truth is that a channel is *however many* records it is. The
+assumption had come from the texture channels being the ones visible in a dump.
 
 
 

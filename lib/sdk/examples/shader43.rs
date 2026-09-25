@@ -1035,6 +1035,22 @@ fn channels(
             records.join(" ")
         );
     }
+
+    // The channel table is the one a from-scratch group data has to write, so
+    // rewriting it with the channels it was read as must change nothing.
+    let rebuilt = group_data.rebuild_channels(&channels);
+    match rebuilt {
+        Ok(rebuilt) if rebuilt == group_data.bytes() => {
+            println!("  channel round trip: identical");
+        }
+        Ok(rebuilt) => {
+            let at = diffs(group_data.bytes(), &rebuilt)
+                .first()
+                .map_or(usize::MAX, |(at, _)| *at);
+            println!("  channel round trip: differs at +{at}");
+        }
+        Err(err) => println!("  channel round trip: {err}"),
+    }
     Ok(())
 }
 

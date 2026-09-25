@@ -137,6 +137,19 @@ impl Record {
             out.extend_from_slice(&word.to_le_bytes());
         }
     }
+
+    /// The record's bytes, over four words of `data` at an offset.
+    fn write_at(&self, data: &mut [u8], at: usize) {
+        if at + RECORD_LEN > data.len() {
+            return;
+        }
+        for (index, word) in [self.kind, self.flags, self.hash, self.offset, self.size]
+            .into_iter()
+            .enumerate()
+        {
+            data[at + index * 4..at + index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+    }
 }
 
 /// The tag word that opens every dependencies entry, on every shipped family.
@@ -494,10 +507,11 @@ impl GroupData {
     /// records at `+ 12`. On `427B5E6E` that is `1528 + 20 x 58 = 2688`, whose
     /// header is `{400, 0, 19}` and whose records are the nineteen channels.
     ///
-    /// A channel is three records, not one: a type 5 texture binding followed by
-    /// two type 1 parameters - the UV scale and offset the sampler takes. So the
-    /// record count is not the channel count, and [`GroupData::channels`] is what
-    /// to read for that.
+    /// A channel is however many records it is: a *texture* channel is three - a
+    /// type 5 binding followed by two type 1 parameters, the UV scale and offset
+    /// the sampler takes - and a scalar channel is one. So the record count is
+    /// not the channel count, and [`GroupData::channels`] is what to read for
+    /// that. `427B5E6E` is 19 records for 15 channels, which is the mix.
     pub fn channel_table(&self) -> Option<(usize, Vec<Record>)> {
         let (at, table) = self.object_table()?;
         let header = at + table.len() * RECORD_LEN;
@@ -511,6 +525,69 @@ impl GroupData {
             records.push(Record::read(&self.data, start + index * RECORD_LEN)?);
         }
         Some((start, records))
+    }
+
+    /// Rewrites the channel table from a list of channels.
+    ///
+    /// This is the one table a from-scratch group data has to *write* rather than
+    /// copy: the channels are what the declaration declares, where the engine's
+    /// `global_viewport` table and the material's own variables are carried. A
+    /// channel keeps the records the template gave it and takes only the new name
+    /// and offset, for the same reason the variable table does - a type 5 binding
+    /// and its two type 1 parameters are engine-side widths, not something a
+    /// declaration's type can say.
+    ///
+    /// So a table read from a section and rewritten with the channels it was read
+    /// as comes back byte for byte, which is what the tests pin. Writing a channel
+    /// the template has no slot for is refused rather than guessed at: a new
+    /// channel needs a new cbuffer offset, and where that comes from is the
+    /// compiled program's reflection, which is [`GroupData::rebuild`]'s input and
+    /// not this one's.
+    pub fn rebuild_channels(&self, channels: &[Channel]) -> Result<Vec<u8>> {
+        let (at, old) = self
+            .channel_table()
+            .ok_or_else(|| eyre::eyre!("the material's own channel table was not found"))?;
+        // A channel is however many records it is, not a fixed three: a *texture*
+        // channel is three - the type 5 binding and its two type 1 parameters -
+        // and a scalar channel is one. So the records go down by a running cursor
+        // over the channels in table order, which is the order
+        // `GroupData::channels` hands them back in, and the only check needed is
+        // that the whole set fits.
+        let wanted: usize = channels.iter().map(|channel| channel.records.len()).sum();
+        if wanted > old.len() {
+            bail!(
+                "the template has room for {} channel records and {wanted} were asked for",
+                old.len()
+            );
+        }
+        let mut data = self.data.clone();
+        let mut slot = 0;
+        for channel in channels {
+            for record in &channel.records {
+                let Some(template) = old.get(slot) else {
+                    break;
+                };
+                let kind = if record.kind != 0 {
+                    record.kind
+                } else {
+                    template.kind
+                };
+                let size = TYPE_SIZES
+                    .iter()
+                    .find(|(code, ..)| *code == kind)
+                    .map_or(template.size, |(_, size)| *size);
+                Record {
+                    kind,
+                    flags: template.flags,
+                    hash: channel.hash,
+                    offset: record.offset,
+                    size,
+                }
+                .write_at(&mut data, at + slot * RECORD_LEN);
+                slot += 1;
+            }
+        }
+        Ok(data)
     }
 
     /// The channels a group's channel table declares, one per texture binding.
@@ -1077,6 +1154,62 @@ mod tests {
         assert_eq!(channels.len(), 1, "three records, one channel");
         assert_eq!(channels[0].records.len(), 3);
         assert_eq!(channels[0].offset(), 0);
+    }
+
+    #[test]
+    fn a_channel_table_rewrites_from_the_channels_it_was_read_as() {
+        // The channel table is the one a from-scratch group data has to write, so
+        // rewriting it with the channels it was read as must change nothing.
+        let group_data = with_channels();
+        let channels = group_data.channels();
+        assert_eq!(channels.len(), 1);
+        let rebuilt = group_data.rebuild_channels(&channels).expect("rewrite");
+        assert_eq!(
+            rebuilt,
+            group_data.bytes(),
+            "a channel table round trips through its own channels"
+        );
+
+        // A rename reaches every record of the channel - a texture channel's
+        // binding and both of its parameters carry the name - and nothing else.
+        let mut renamed = channels.clone();
+        renamed[0].hash = var("bca", 0, 5).hash();
+        let rebuilt = group_data.rebuild_channels(&renamed).expect("rewrite");
+        let changed = group_data
+            .bytes()
+            .iter()
+            .zip(&rebuilt)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(
+            changed,
+            3 * 4,
+            "a renamed channel moves its name hash in each of its three records"
+        );
+    }
+
+    #[test]
+    fn a_channel_table_that_does_not_fit_is_refused() {
+        // A channel the template has no slot for needs a cbuffer offset from the
+        // compiled program's reflection, so asking for more than fits is an error
+        // rather than a guess at where the next one goes.
+        let group_data = with_channels();
+        let extra = Channel {
+            hash: var("noise_texture", 0, 5).hash(),
+            records: vec![Record {
+                kind: 5,
+                flags: 0,
+                hash: 0,
+                offset: 32,
+                size: 4,
+            }],
+        };
+        assert!(
+            group_data
+                .rebuild_channels(&[extra.clone(), extra.clone(), extra.clone(), extra])
+                .is_err(),
+            "more channels than the table has room for is refused"
+        );
     }
 
     #[test]
