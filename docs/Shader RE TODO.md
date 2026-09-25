@@ -87,6 +87,23 @@ families. Supporting decodes, as the experiment needs them: descriptor `Y`
 semantics, the packed copies' generation grammar, and the tail resource-list
 kinds.
 
+Block notes from a byte-precise dump of the chain base (863 byte preamble):
+
+- The channel records are **byte packed**, not word aligned: the `bca` record
+  starts at `+0x283` (`{u32 3, u32 bca_hash, u32 5, u32 1, ...}`) and its hash
+  sits at `+0x287`. Record strides differ with content (`bca` -> `orm` is 74
+  bytes, `orm` -> `nm` is 73), so records are variable length with the format
+  flags from `texture_format_spec.config` in their tails.
+- `orm` and `nm` are preceded by a different word than `bca` (`c5 0a 8d bd`
+  before the `orm` hash), so the word before the hash is not a stable "kind".
+- Channel records appear in the preamble *and* after every pixel program (the
+  same block), so a channel rename has to patch every copy. The group data
+  carries the same names in its canonical records and in the cbuffer-keyed
+  packed form, so a rename must patch all three places. A preset line that
+  replaces the 4 byte name hash everywhere (group data, preamble, every tail)
+  is the mechanical equivalent of the `variable` rewrite for channels; not
+  implemented yet.
+
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
    (24 bytes per constant buffer, 8 bytes per other resource) - decoded and
