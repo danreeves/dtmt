@@ -6,14 +6,36 @@ Working notes and next steps for the `shader43` reverse engineering. See
 
 ## Priority order
 
-1. **Group data channel records** (current): parse the canonical and packed
-   framings precisely so a cloned channel can be inserted with correct counts -
-   the last piece before a family can add its own texture channel.
-2. **New-family path proper**: generate a whole family (block config, packed
-   copies, tail resource lists, conditions), not just patch a shipped one.
-3. **Unit workstream**: streamed meshes first, then skins/animations.
+Items 1 and 2 are done and verified; item 3 turned out to be done already. What is
+left is particles, and the end-to-end test that no round trip can replace.
+
+1. ~~**Group data channel records**~~ **done.** Both framings read: the canonical
+   20-byte records and the packed 28-byte copies, with the packed ones found on
+   every shipped family rather than the one a bad predicate found. The channel
+   table is the one table a from-scratch group data *writes*, and it round trips
+   byte for byte.
+2. ~~**New-family path proper**~~ **done, and the whole section round trips.**
+   Contexts, conditions, dependencies, group data, channels, block and programs
+   are read and written, and **all six shipped sections come back byte for byte**.
+   Every region is either laid out by a formula or carried whole, and the carried
+   list is nine items. A substitution test covers the half a round trip cannot: a
+   renamed context is 4 bytes at +48, a renamed variable 4 bytes inside the group
+   data, and a length-changing edit moves every later offset by the formula with
+   the group data untouched. See `Shader Section Generation Notes.md`.
+3. ~~**Unit workstream**~~ **was already done.** `filetype::unit` has compiled
+   *and* decompiled the version `0x73` payload for some time, with 16 passing
+   tests including four round trips - mesh geometry, the scene graph, mesh objects
+   and a full decompile. Verified rather than assumed; the roadmap was stale.
 4. **Particles**: a new file type (compile/decompile) so particle-based mods
-   like RainbowFlame can be replicated.
+   like RainbowFlame can be replicated. `File-Type-Status.md` still has this as
+   `None`, and it is the last format on the list.
+5. **From-scratch end to end**, in game. Every seam is in place - declaration to
+   channels and contexts, HLSL through DXC to programs and cbuffer offsets, the
+   group data and section writers - but a generated family cannot be *verified*
+   here, because a declaration and a section cannot be paired: the shipped
+   sections and the Stingray-library declarations share no channel name. The only
+   oracle left is whether the game loads it, so this needs an in-game run.
+
 
 ## Goal
 
