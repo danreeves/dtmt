@@ -105,6 +105,47 @@ recomputable (that is how the splice flow already relocates them).
   from resources the engine owns (textures/samplers through the bindless
   arrays).
 
+## Declarative target format (from the Stingray renderer mod)
+
+`C:\dev\vmb\mods\Badgers\core\stingray_renderer` implements the Stingray renderer
+and shows the shape a from-scratch declaration has to take. A `.shader_node`
+declares a whole family:
+
+- `inputs` - the material interface: `name`, `type` (`scalar`, `vector3`, ...),
+  `domain` (`vertex`/`pixel`) and the **permutation flag that enables the input**
+  (`type = { vector3: ["HAS_BASE_COLOR"] }`). These are the `c_per_object`
+  variables and, through the flags, the condition set.
+- `channels` - the vertex -> pixel interpolants with `type`, `semantic` and
+  `domain` (`vertex_position`, `vertex_normal : NORMAL`). These are the group's
+  channel records and the tail's signature runs.
+- `permutation_sets` - named sets of choices, each
+  `{ if: <expression>, define: { macros, stages }, permute_with: <nested set> }`.
+  The recursion enumerates the permutation space; the `if` expressions are over
+  material properties (`is_any_material_variable_set(...)`,
+  `lightmap_format() == ...`, `num_skin_weights() == 4`, `defined(TRANSPARENT)`).
+- `shader_contexts` - per context: `compile_with` (the permutation set to
+  enumerate) and `passes` (`code_block`, `defines`, `render_state`).
+- `code_blocks` - the HLSL per pass, with `include`, `samplers`,
+  `stage_conditions`.
+- `render_state` / `sampler_state` - the fixed-function state.
+
+Mapping to the `shader43` section:
+
+| Declaration | Section |
+| --- | --- |
+| `shader_contexts` names | contexts |
+| the `if` expressions of the permutation sets | the conditions decision tree - the condition hashes resolve to material properties (`gui`, `red`, `green`, `blue`, `alpha`), so the tree is derivable instead of copied |
+| one permutation | one group (group count = permutations) + one program pair |
+| `inputs` | the `c_per_object` variable table (name hash, type, domain) |
+| `channels` | the channel/resource table, the block's channel records, the tail's signature runs |
+| `code_blocks.code.hlsl` + defines | the programs |
+
+So the conditions tree - the largest engine-side carry today - is *derivable* from
+a declaration. What stays engine-side: the query mechanism (how the engine asks
+about a material property), the bindless array/space conventions, the engine's
+variable registry (name -> block index and cbuffer offset), the per-permutation
+group headers, and the block header blob.
+
 ## Open items blocking a from-scratch shader
 
 1. Program tails: the parts after the cbuffer/signature lists, and what the

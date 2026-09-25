@@ -363,7 +363,16 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    conditions at all: the minimal two program material ships an empty conditions
    section and a single `default` context pair `{query_id, 0xFFFFFFFF}`, with
    the group header carrying that same query id. So this only has to be decoded
-   to support several groups/permutations in one material.
+   to support several groups/permutations in one material. Measured on the UI
+   base: 35 records of `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes +
+   a payload, sizes 24/30/36/42/48/54/60 bytes for counts 2/3/4/4/5/6/7 (so the
+   payload length is not a function of the count alone - it is bit-packed and
+   depends on the condition kinds). The payload is a sequence of u16
+   `flag << 8 | operand` pairs with flags `0x10/0x20/0x50/0x70/0x90` seen and
+   small operands; the condition hashes are **material properties** (`gui`,
+   `red`, `green`, `blue`, `alpha` resolve), so the tree is derivable from a
+   declaration that names them (see the Stingray format in
+   `Shader Section Generation Notes.md`).
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry). Lead: the
    preamble's first words track the material's contexts - `{1, query_count, 2, …}`
