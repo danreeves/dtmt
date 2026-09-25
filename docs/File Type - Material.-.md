@@ -269,14 +269,15 @@ interface when a section is generated:
   record in the device preamble, and the record stream's count word (right
   before the first record) is bumped. Block channel records have a fixed length
   per kind (kind 4 -> 60 bytes, kind 5 -> 73), which is what lets the exact
-  record bytes be found without parsing the rest of the block. The template
-  stays intact. The per-pixel tail blocks and the group data are not cloned: an
-  earlier revision cloned the template's group data variable record too and the
-  game failed with an out-of-memory fatal error at boot, while the block-only
-  form boots. **Verified in game**: with the block-only form the title screen's
-  texture is black - the cloned channel does not bind, so the group data records
-  are what the engine resolves. The tail blocks carry kind 2 records whose
-  length is still unknown.
+  record bytes be found without parsing the rest of the block. The group data
+  describes the channel in two framings - the canonical 20-byte variable records
+  and the cbuffer-keyed packed 28-byte copies - and both are cloned with their
+  run counts. The template stays intact. **Verified in game**: with the full
+  clone and the material naming the new channel, the title screen renders the
+  mod texture with the cycling tint (the block-only clone left the title black,
+  and the group data records are what the engine resolves). The per-pixel tail
+  blocks carry kind 2 records whose length is still unknown, so they are not
+  cloned; the UI base binds from the preamble's stream without it.
 
 These lines are applied in `Preset::generate_with_report`, before the section is
 assembled. The variable lines (`variable`, `clone`) grow the constant buffer in

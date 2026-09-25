@@ -115,9 +115,10 @@ bytes, 5 -> 73 bytes), the engine prologue (`linear_depth`, `global_diffuse_map`
 `sun_shadow_map`, `fog_volume`) is at fixed offsets and the stream ends exactly
 at the preamble's end. `shader43 --records` parses it end to end on three shipped
 families, and a `clone_channel` preset line clones a record into the preamble,
-every tail's block and the group data's variable records (unit-tested). Whether
-the engine binds a material texture under the new name is the pending in-game
-question.
+every tail's block and the group data's variable records (unit-tested). In game
+the cloned name **binds**: with the clone and a material naming it, the title
+screen renders the mod texture with the cycling tint (a block-only clone left
+the title black).
 
 Block notes from a byte-precise dump of the chain base (863 byte preamble):
 
@@ -186,20 +187,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   `{name_hash, a, b, c, d, B5639618, 0}` (the `c_per_object` hash near the end),
   e.g. `{hash, 0, 0, 4, 1, B5639618, 0}`. A channel clone therefore needs 3
   canonical + 3 packed insertions per group unit (216 total for the UI base)
-  with the run counts bumped; the generic run heuristic inserted 108 at false
-  positives (it corrupted `camera_world` into `world`) and OOM'd, so the precise
-  per-framing parser is what is needed. First attempt (`clone_channel_group_data`)
-  clones both framings and bumps the counts, but on the real group data its
-  canonical scan finds only 36 of the 108 records: the rest are canonical-shaped
-  yet fail `read_variable`'s field checks, so the scan has to be layout-aware
-  rather than reusing the generic variable reader. The missed records are stored
-  at a **2-byte-shifted alignment with a different field order** (their bytes run
-  `00 05 00 00 00 00 00 00 | hash | ...` instead of `05 00 00 00 | 00 ... |
-  hash`), so the layout-aware reader has to handle both alignments: the missed
-  records are the **same 20-byte records at a 2-byte-aligned offset** (the first
-  unit has them at `+0x736`, `+0x74A` and `+0x75E`), which a 4-byte-stepping
-  scan skips. The clone is unit-tested and
-  undeployed until then. The flag words are byte-packed, and a record's tail carries the
+  with the run counts bumped. The records are byte-packed (any alignment): the
+  UI base's canonical records sit at 4-, 2- and 1-byte-aligned offsets, so the
+  scan probes every byte offset and the run/count check rejects the shifted
+  views. `clone_channel_group_data` inserts all 216 records on the UI base
+  (108 canonical + 108 packed, unit-tested) and is **verified in game**: with
+  the block record, the group data clone and the material naming the new
+  channel, the title screen renders the mod texture with the cycling tint,
+  where the block-only clone stayed black. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same

@@ -136,7 +136,9 @@ fn clone_channel_group_data(data: &mut Vec<u8>, template: u32, name: u32) -> usi
 
     let mut inserts: Vec<Insert> = Vec::new();
 
-    // Canonical runs of aligned 20 byte records, each preceded by its count.
+    // Canonical runs of 20 byte records, each preceded by its count. The
+    // records are not reliably aligned, so every byte offset is probed; the
+    // run/count check rejects the shifted views that pass over other data.
     let mut at = 0;
     while at + 20 <= data.len() {
         if read_variable(data, at).map(|record| record.2) == Some(template) {
@@ -159,7 +161,7 @@ fn clone_channel_group_data(data: &mut Vec<u8>, template: u32, name: u32) -> usi
                 });
             }
         }
-        at += 2;
+        at += 1;
     }
 
     // Packed runs of 28 byte records, the count once before the run.
@@ -909,12 +911,14 @@ impl Preset {
             }
         }
 
-        // Channel record clones add a record to the preamble's record stream and
-        // to every program tail's block, right where the template record sits.
-        // The record's length follows its kind, so the exact template bytes can
-        // be searched for without parsing the surrounding block. The group data
-        // describes the channel as a variable record (its type and slot), so
-        // that record is cloned too, with the template's offset and size.
+        // Channel record clones add a record to the preamble's record stream,
+        // right where the template record sits: the engine resolves a material's
+        // channel name against this stream, while the group data below supplies
+        // the variable interface. The record's length follows its kind, so the
+        // exact template bytes can be searched for without parsing the
+        // surrounding block. The per-program tail blocks are left as shipped;
+        // cloning the preamble and the group data is what made the channel bind
+        // in game.
         for clone in &self.channel_clones {
             let template = hash_token(&clone.template);
             let name = hash_token(&clone.name);
