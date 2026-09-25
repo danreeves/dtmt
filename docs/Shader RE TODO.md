@@ -277,7 +277,17 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    modelling it needs the packed record stream, not u32 lists. Next step: model
    the resource/signature lists (their counts, kinds and how many words each
    kind uses) and the block, so a tail can be generated from the compiled
-   container's reflection instead of the preset's bytes.
+   container's reflection instead of the preset's bytes. Concrete shapes seen in
+   the UI base's pixel tail: after the cbuffer entries, counted lists of 7-word
+   resource records (empty list = one `0` word) - a texture `{3AFC636C, 2, 0,
+   FFFFFFFF, 2, FFFFFFFF, 0}`, a UAV `{41B1CFF8, 3, 0, FFFFFFFF, 1F, FFFFFFFF,
+   0}` and a third `{4B42C5E6, 0, 1, 1F, 4, DC0548BC, 0}` whose differing shape
+   is the open part - then signature runs of 3-word `{hash, index, ordinal}`
+   records (`{96B9600E, 0, 1} {96B9600E, 1, 2} {96B9600E, 2, 3}` with no count
+   of their own, matching the container's ISG1) and a counted run
+   `{DA560F03, 0, 0}`. The vertex tail is just the cbuffer entry, empty lists
+   and one counted run of three `{hash, 0, index}` records. Which lists exist and
+   their order is still open.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
