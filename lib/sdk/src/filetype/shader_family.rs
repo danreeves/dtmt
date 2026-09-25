@@ -155,6 +155,184 @@ pub struct ProgramDef {
     pub stage: String,
 }
 
+/// The macros a choice or a pass defines, in the three forms the declarations
+/// write them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Define {
+    /// `["SKINNED_4WEIGHTS"]`
+    Macros(Vec<String>),
+    /// `"SKINNED_4WEIGHTS"`, a list of one.
+    Macro(String),
+    /// `{ "macros": [...], stages: [...] }`
+    Table(DefineTable),
+}
+
+impl Define {
+    /// The macros defined.
+    pub fn macros(&self) -> &[String] {
+        match self {
+            Self::Macros(macros) => macros,
+            Self::Macro(macro_name) => std::slice::from_ref(macro_name),
+            Self::Table(table) => &table.macros,
+        }
+    }
+
+    /// The stages the macros apply to. Empty means every stage.
+    pub fn stages(&self) -> &[String] {
+        match self {
+            Self::Macros(_) | Self::Macro(_) => &[],
+            Self::Table(table) => &table.stages,
+        }
+    }
+}
+
+impl Default for Define {
+    fn default() -> Self {
+        Self::Macros(Vec::new())
+    }
+}
+
+/// The table form of a [`Define`].
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct DefineTable {
+    /// The macros to define.
+    #[serde(default, alias = "macro")]
+    pub macros: Vec<String>,
+    /// The stages the macros apply to. Empty means every stage.
+    #[serde(default, alias = "stage")]
+    pub stages: Vec<String>,
+}
+
+/// A shader context: one named set of passes the family compiles and draws. Named
+/// for the section's contexts, and not for anything to do with errors.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ShaderContext {
+    /// The context's name, which is what the engine asks for.
+    pub name: String,
+    /// How the passes are sorted: `immediate` or `deferred`.
+    pub sort_mode: Option<String>,
+    /// When the context compiles, and over which permutation sets.
+    pub compile_with: Vec<CompileWith>,
+    /// The passes, in declaration order, chosen by condition.
+    pub passes: Vec<PassEntry>,
+}
+
+/// One `compile_with` entry: when the context compiles, and over which
+/// permutation sets. An empty `permute_with` means every set.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CompileWith {
+    /// The condition, if the entry has one.
+    pub condition: Option<String>,
+    /// The names of the permutation sets to permute over.
+    pub permute_with: Vec<String>,
+}
+
+impl CompileWith {
+    /// Whether the context compiles under `defines`, or `None` when the
+    /// condition reaches a fact only the engine can answer.
+    pub fn holds(&self, defines: &Defines) -> Result<Option<bool>> {
+        let Some(text) = &self.condition else {
+            return Ok(Some(true));
+        };
+        let condition = Condition::parse(text)
+            .wrap_err_with(|| format!("an unparsable compile_with condition {text:?}"))?;
+        Ok(condition.holds(defines))
+    }
+}
+
+/// An entry of a context's `passes`: a pass, or a branch that chooses between
+/// two lists of them.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PassEntry {
+    /// One pass, drawn as it is.
+    Pass(Pass),
+    /// `if <condition> then [...] else [...]`, with the branches themselves
+    /// pass entries.
+    Branch {
+        /// The condition, as it is written.
+        condition: String,
+        /// The entries to use when the condition holds.
+        then: Vec<PassEntry>,
+        /// The entries to use when it does not.
+        otherwise: Vec<PassEntry>,
+    },
+}
+
+impl PassEntry {
+    /// Collects the passes that may apply under `defines`.
+    ///
+    /// A branch whose condition the defines cannot answer contributes *both* of
+    /// its sides, because the engine decides it per material at runtime: a pass
+    /// drawn when it should not be is wasted, a pass missing when it was needed
+    /// is a hole.
+    pub fn select<'a>(&'a self, defines: &Defines, out: &mut Vec<&'a Pass>) -> Result<()> {
+        match self {
+            Self::Pass(pass) => out.push(pass),
+            Self::Branch {
+                condition,
+                then,
+                otherwise,
+            } => {
+                let condition = Condition::parse(condition)
+                    .wrap_err_with(|| format!("an unparsable pass condition {condition:?}"))?;
+                let selected = match condition.holds(defines) {
+                    Some(true) => then,
+                    Some(false) => otherwise,
+                    None => {
+                        collect_passes(then, defines, out)?;
+                        otherwise
+                    }
+                };
+                collect_passes(selected, defines, out)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Collects the passes of a list of entries.
+fn collect_passes<'a>(
+    entries: &'a [PassEntry],
+    defines: &Defines,
+    out: &mut Vec<&'a Pass>,
+) -> Result<()> {
+    for entry in entries {
+        entry.select(defines, out)?;
+    }
+    Ok(())
+}
+
+/// One pass: a draw of a code block, with the macros it adds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pass {
+    /// The layer it is drawn on, when it names one.
+    pub layer: Option<String>,
+    /// The code block the pass compiles - the HLSL entry point pair.
+    pub code_block: String,
+    /// The macros the pass defines.
+    pub defines: Define,
+    /// The render state the pass draws with.
+    pub render_state: Option<String>,
+    /// The key the engine sorts variants by, when the pass names one.
+    pub branch_key: Option<String>,
+}
+
+impl Pass {
+    /// The macros the pass defines.
+    pub fn macros(&self) -> &[String] {
+        self.defines.macros()
+    }
+}
+
+impl ShaderContext {
+    /// The passes that may apply under `defines`.
+    pub fn passes_of(&self, defines: &Defines) -> Result<Vec<&Pass>> {
+        let mut passes = Vec::new();
+        collect_passes(&self.passes, defines, &mut passes)?;
+        Ok(passes)
+    }
+}
+
 /// A set of mutually exclusive compile choices, from a `permutation_sets` entry
 /// of a `.shader_node` file. Each choice is taken when its `if` expression holds
 /// - or always, for the `default` choice.
@@ -193,6 +371,87 @@ pub struct Family {
     pub variables: BTreeMap<String, VariableDef>,
     /// The compile-time permutation sets, in name order.
     pub permutation_sets: Vec<PermutationSet>,
+    /// The shader contexts, in name order: what the family compiles and draws.
+    pub contexts: Vec<ShaderContext>,
+}
+
+impl Family {
+    /// The context of that name, which is what the engine asks for.
+    pub fn context(&self, name: &str) -> Option<&ShaderContext> {
+        self.contexts.iter().find(|context| context.name == name)
+    }
+
+    /// The compile permutations of one context: the product of the choices of
+    /// the sets its `compile_with` names, or of every set when it names none.
+    ///
+    /// A context that names a set permutes over that one alone, which is how a
+    /// shadow pass compiles its own permutation without multiplying the family's
+    /// groups. Whether a context that names none really permutes over all of them
+    /// is not settled: the toolchain also drops the sets a context's code does
+    /// not use, and that is a dependency of the compiled code rather than of the
+    /// declaration. So the count this returns is an upper bound.
+    pub fn permutations_for(&self, context: &ShaderContext) -> Vec<Permutation> {
+        let names: Vec<&String> = context
+            .compile_with
+            .iter()
+            .filter_map(|entry| entry.permute_with.first())
+            .collect();
+        let sets: Vec<&PermutationSet> = if names.is_empty() {
+            self.permutation_sets.iter().collect()
+        } else {
+            let named: Vec<&PermutationSet> = names
+                .iter()
+                .filter_map(|name| {
+                    self.permutation_sets
+                        .iter()
+                        .find(|set| set.name == name.as_str())
+                })
+                .collect();
+            // A name that matches no set is a declaration this reader does not
+            // understand; falling back to every set keeps the count honest rather
+            // than dropping permutations.
+            if named.len() == names.len() {
+                named
+            } else {
+                self.permutation_sets.iter().collect()
+            }
+        };
+        let mut permutations = vec![Permutation {
+            choices: Vec::new(),
+            macros: Vec::new(),
+        }];
+        for set in sets {
+            let mut next = Vec::with_capacity(permutations.len() * set.choices.len());
+            for permutation in permutations {
+                for (index, choice) in set.choices.iter().enumerate() {
+                    let mut permutation = permutation.clone();
+                    permutation.choices.push((set.name.clone(), index));
+                    permutation.macros.extend(choice.macros.iter().cloned());
+                    next.push(permutation);
+                }
+            }
+            permutations = next;
+        }
+        permutations
+    }
+
+    /// The number of groups a context compiles: how many permutations of it there
+    /// are. The section's groups are the sum over its contexts.
+    pub fn group_count_of(&self, context: &ShaderContext) -> usize {
+        self.permutations_for(context).len()
+    }
+
+    /// The number of groups the family compiles: the sum over its contexts. With
+    /// no contexts, the one permutation of the family itself.
+    pub fn context_group_count(&self) -> usize {
+        if self.contexts.is_empty() {
+            return self.group_count();
+        }
+        self.contexts
+            .iter()
+            .map(|context| self.group_count_of(context))
+            .sum()
+    }
 }
 
 impl Family {

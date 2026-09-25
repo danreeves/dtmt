@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sdk::filetype::condition::Defines;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
 use sdk::filetype::shader_family::{self, BlockTemplate, ChannelDef};
@@ -794,6 +795,42 @@ fn build_block(
         interface.flags.join(" "),
         interface.variables.join(" "),
         interface.channels.join(" "),
+    );
+
+    // The contexts: what each one compiles, and the passes it draws. The
+    // interface's flags stand in for the defines, since a pass condition reads
+    // the same input flags.
+    for context in &family.contexts {
+        let defines = Defines::new(interface.flags.iter().cloned());
+        let passes = context.passes_of(&defines)?;
+        println!(
+            "  context {}: sort {} permutes {} sets, {} passes",
+            context.name,
+            context.sort_mode.clone().unwrap_or_default(),
+            family.permutations_for(context).len(),
+            passes.len(),
+        );
+        for entry in &context.compile_with {
+            println!(
+                "    compiles if [{}] over [{}]",
+                entry.condition.clone().unwrap_or_default(),
+                entry.permute_with.join(" ")
+            );
+        }
+        for pass in passes {
+            println!(
+                "    pass layer [{}] block {} macros [{}] state [{}]",
+                pass.layer.clone().unwrap_or_default(),
+                pass.code_block,
+                pass.macros().join(" "),
+                pass.render_state.clone().unwrap_or_default(),
+            );
+        }
+    }
+    println!(
+        "  groups: {} over the family's sets, {} over its contexts",
+        family.group_count(),
+        family.context_group_count(),
     );
 
     let channels: Vec<(String, ChannelDef)> = family
