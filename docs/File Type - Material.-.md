@@ -273,9 +273,10 @@ interface when a section is generated:
   stays intact. The per-pixel tail blocks and the group data are not cloned: an
   earlier revision cloned the template's group data variable record too and the
   game failed with an out-of-memory fatal error at boot, while the block-only
-  form boots; the tail blocks carry kind 2 records whose length is still
-  unknown. Whether the engine binds a material texture under the new name with
-  the block record alone is not verified in game yet.
+  form boots. **Verified in game**: with the block-only form the title screen's
+  texture is black - the cloned channel does not bind, so the group data records
+  are what the engine resolves. The tail blocks carry kind 2 records whose
+  length is still unknown.
 
 These lines are applied in `Preset::generate_with_report`, before the section is
 assembled. The variable lines (`variable`, `clone`) grow the constant buffer in

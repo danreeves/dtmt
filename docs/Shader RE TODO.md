@@ -159,7 +159,13 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   count, no group data, no tails) boots normally. The group data clone is
   therefore wrong and was dropped. The per-pixel blocks repeat the stream with
   kind 2 records mixed in, whose length is still unknown, so tail blocks are not
-  cloned yet. The flag words are byte-packed, and a record's tail carries the
+  cloned yet. Inspecting the failing group data shows an unrelated record
+  changed (`camera_world` became `world`), i.e. the generic run heuristic
+  inserted clones at false-positive record occurrences; cloning a channel's
+  group data needs a precise per-table parser instead. In game, the block-only
+  clone boots but the title texture stays black: the cloned channel does not
+  bind, so the group data records (not the block record) are what the engine
+  resolves when a material names a channel. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same
