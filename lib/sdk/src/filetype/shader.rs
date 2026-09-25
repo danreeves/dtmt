@@ -39,9 +39,10 @@
 //! of the public RainbowFlame reverse engineering write-up by Vansinnet
 //! (findings only; no code from that project is used here).
 
-use color_eyre::eyre::{Context, Result, bail};
+use color_eyre::eyre::{Context as _, Result, bail, eyre};
 use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe};
 
+use crate::filetype::group_data::{DEPENDENCY_LEN, Dependency};
 use crate::murmur;
 
 /// Shader section version used by Darktide.
@@ -623,9 +624,354 @@ impl NodePool {
     }
 }
 
+/// One record of the contexts table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContextRecord {
+    /// murmur32 of the context's name: `default`, `shadow_caster`, and the
+    /// unnamed ones.
+    pub name: u32,
+    /// [`LINK_FLAG`] for a context whose conditions are shared, 0 for one written
+    /// out inline.
+    pub flags: u32,
+    /// The group index this context selects.
+    pub group: u32,
+    /// The group data's own header hash - the check that identifies the record,
+    /// since the `default` context of every shipped family carries it.
+    pub group_hash: u32,
+    /// The record's fifth word, carried because nothing here sets it.
+    pub tail: u32,
+}
+
+/// The `flags` word of a context that is a link rather than an inline context.
+pub const LINK_FLAG: u32 = 0xFFFF_FFFF;
+
+/// The record length of a contexts record.
+pub const CONTEXT_LEN: usize = 20;
+
+/// One record of the link table, eight bytes: a hash and a word carried verbatim.
+///
+/// The second word is `0x1C` - the node length - on every link but the last, and
+/// `0xFFFFFFFF` on the last, on all three shipped families that have links. Which
+/// of the two readings is right changes what a writer may put there, so it is
+/// carried rather than derived.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Link {
+    /// The link's key. The two families that share a node carry the same value.
+    pub hash: u32,
+    /// Carried verbatim; see the type's own note.
+    pub second: u32,
+}
+
+/// The record length of a link record.
+pub const LINK_LEN: usize = 8;
+
+/// A whole shader section, read by the layout formula and laid out again by it.
+///
+/// The regions are not independent offsets: `conditions_offset` is
+/// `48 + 20 x contexts + 8 x links`, and the link count and the node count are the
+/// same count. So a section is read by walking that formula and written by
+/// recomputing it, and a section that is read and written with what it was read
+/// comes back byte for byte - which is the oracle the whole write path is checked
+/// against.
+///
+/// The words this does not own are carried: the header's version, opaque and
+/// default-data words, each context's `tail`, and each link's second word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Section {
+    version: u32,
+    opaque: u32,
+    default_data: u32,
+    contexts: Vec<ContextRecord>,
+    links: Vec<Link>,
+    pool: NodePool,
+    dependencies: Vec<Dependency>,
+    group_data: Vec<u8>,
+    /// The bytes between the group data and the programs.
+    ///
+    /// The header's group data *size* is 1, 1, 3, 2, 3 and 1 bytes short of the
+    /// distance to the device data on the six shipped families, and the shortfall
+    /// is not constant, so it is neither alignment nor a fixed header. It is
+    /// carried, like the link's second word: this does not know what it is, and
+    /// guessing would be the one change in the section that cannot be checked.
+    trailing: Vec<u8>,
+    device_data: Vec<u8>,
+    /// Everything after the programs, carried verbatim.
+    ///
+    /// The header's sixth word - `default_data_offset` - points into this region,
+    /// and it is the last thing in the section. On the six shipped families it
+    /// lands at the end of the device data on three of them and two to three
+    /// bytes into it on the others, so it is carried with the rest rather than
+    /// laid out: what a default-data block holds is not established, and the
+    /// section round trips byte for byte with the bytes kept whole.
+    tail: Vec<u8>,
+}
+
+impl Section {
+    /// The length of the 12-word header.
+    pub const HEADER_LEN: usize = 48;
+
+    /// Reads a section. The bytes are the section itself, without the 20-byte
+    /// prefix a content file wraps it in.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let word = |i: usize| u32_at(bytes, i * 4);
+        let (version, opaque) = (word(0), word(1));
+        if version != VERSION {
+            bail!("the section is version {version}, not {VERSION}");
+        }
+        let (contexts_at, contexts_n) = (word(2) as usize, word(3) as usize);
+        let conditions_at = word(4) as usize;
+        let default_data = word(5);
+        let (dependencies_at, dependencies_n) = (word(6) as usize, word(7) as usize);
+        let (group_at, group_len) = (word(8) as usize, word(9) as usize);
+        let (device_at, device_len) = (word(10) as usize, word(11) as usize);
+
+        // The formula, read off the contexts table and the conditions offset.
+        let links_at = contexts_at + contexts_n * CONTEXT_LEN;
+        if conditions_at < links_at || (conditions_at - links_at) % LINK_LEN != 0 {
+            bail!("the conditions offset does not leave a whole number of links");
+        }
+        let links_n = (conditions_at - links_at) / LINK_LEN;
+        // Checked, because a header whose offsets run backwards is a header to
+        // refuse rather than an offset to subtract.
+        let Some(blob) = dependencies_at.checked_sub(conditions_at) else {
+            bail!("the dependencies table starts before the conditions blob");
+        };
+        if blob % NODE_LEN != 0 {
+            bail!("the conditions blob is not a whole number of nodes");
+        }
+        let nodes = blob / NODE_LEN;
+        if nodes != links_n {
+            bail!("{links_n} links but {nodes} nodes: the pool is one node per link");
+        }
+
+        let slice = |at: usize, len: usize| -> Result<Vec<u8>> {
+            bytes
+                .get(at..at + len)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| eyre!("the region at {at} x {len} is out of range"))
+        };
+
+        let mut contexts = Vec::with_capacity(contexts_n);
+        for index in 0..contexts_n {
+            let at = contexts_at + index * CONTEXT_LEN;
+            contexts.push(ContextRecord {
+                name: u32_at(bytes, at),
+                flags: u32_at(bytes, at + 4),
+                group: u32_at(bytes, at + 8),
+                group_hash: u32_at(bytes, at + 12),
+                tail: u32_at(bytes, at + 16),
+            });
+        }
+        let mut links = Vec::with_capacity(links_n);
+        for index in 0..links_n {
+            let at = links_at + index * LINK_LEN;
+            links.push(Link {
+                hash: u32_at(bytes, at),
+                second: u32_at(bytes, at + 4),
+            });
+        }
+
+        Ok(Self {
+            version,
+            opaque,
+            default_data,
+            contexts,
+            links,
+            pool: NodePool::read(bytes, conditions_at, dependencies_at),
+            dependencies: Dependency::read(bytes, dependencies_at, dependencies_n),
+            group_data: slice(group_at, group_len)?,
+            trailing: slice(
+                group_at + group_len,
+                device_at.saturating_sub(group_at + group_len),
+            )?,
+            device_data: slice(device_at, device_len)?,
+            tail: bytes
+                .get(device_at + device_len..)
+                .unwrap_or_default()
+                .to_vec(),
+        })
+    }
+
+    /// The contexts, in table order.
+    pub fn contexts(&self) -> &[ContextRecord] {
+        &self.contexts
+    }
+
+    /// The link table.
+    pub fn links(&self) -> &[Link] {
+        &self.links
+    }
+
+    /// The conditions node pool.
+    pub fn pool(&self) -> &NodePool {
+        &self.pool
+    }
+
+    /// The dependencies table.
+    pub fn dependencies(&self) -> &[Dependency] {
+        &self.dependencies
+    }
+
+    /// The group data's bytes.
+    pub fn group_data(&self) -> &[u8] {
+        &self.group_data
+    }
+
+    /// The device data: the programs, carried verbatim.
+    pub fn device_data(&self) -> &[u8] {
+        &self.device_data
+    }
+
+    /// Lays the section out again, recomputing every offset from the formula.
+    pub fn into_bytes(self) -> Vec<u8> {
+        let contexts_len = self.contexts.len() * CONTEXT_LEN;
+        let links_len = self.links.len() * LINK_LEN;
+        let dependencies_len = self.dependencies.len() * DEPENDENCY_LEN;
+        let contexts_at = Self::HEADER_LEN;
+        let links_at = contexts_at + contexts_len;
+        let conditions_at = links_at + links_len;
+        let dependencies_at = conditions_at + self.pool.bytes().len();
+        let group_at = dependencies_at + dependencies_len;
+        let device_at = group_at + self.group_data.len() + self.trailing.len();
+
+        let mut out = Vec::with_capacity(device_at + self.device_data.len());
+        for word in [
+            self.version,
+            self.opaque,
+            contexts_at as u32,
+            self.contexts.len() as u32,
+            conditions_at as u32,
+            self.default_data,
+            dependencies_at as u32,
+            self.dependencies.len() as u32,
+            group_at as u32,
+            self.group_data.len() as u32,
+            device_at as u32,
+            self.device_data.len() as u32,
+        ] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        for context in &self.contexts {
+            for word in [
+                context.name,
+                context.flags,
+                context.group,
+                context.group_hash,
+                context.tail,
+            ] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        for link in &self.links {
+            for word in [link.hash, link.second] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(self.pool.bytes());
+        for dependency in &self.dependencies {
+            out.extend_from_slice(&dependency.write());
+        }
+        out.extend_from_slice(&self.group_data);
+        out.extend_from_slice(&self.trailing);
+        out.extend_from_slice(&self.device_data);
+        out.extend_from_slice(&self.tail);
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A section with the shipped shape: two contexts, one of them a link, one
+    /// dependency, and both regions of engine data.
+    fn section() -> Section {
+        Section {
+            version: VERSION,
+            opaque: 0x1234_5678,
+            default_data: 0,
+            contexts: vec![
+                ContextRecord {
+                    name: 0xF276_0503,
+                    flags: 0,
+                    group: 2,
+                    group_hash: 0x8BE2_82AA,
+                    tail: 0,
+                },
+                ContextRecord {
+                    name: 0x99C0_9062,
+                    flags: LINK_FLAG,
+                    group: 0x5852_A5B1,
+                    group_hash: 0,
+                    tail: 1,
+                },
+            ],
+            links: vec![Link {
+                hash: 0xC580_0413,
+                second: 0xFFFF_FFFF,
+            }],
+            pool: NodePool::of(1),
+            dependencies: vec![Dependency::of()],
+            group_data: vec![0x11; 96],
+            trailing: vec![0x00, 0x00, 0x00],
+            device_data: vec![0x22; 40],
+            tail: vec![0x33; 16],
+        }
+    }
+
+    #[test]
+    fn a_section_laid_out_by_the_formula_comes_back_byte_for_byte() {
+        // The oracle the whole write path is checked against: read a section,
+        // write it with what was read, and nothing may move.
+        let bytes = section().into_bytes();
+        let read = Section::parse(&bytes).expect("the section reads");
+        assert_eq!(read.contexts().len(), 2);
+        assert_eq!(read.links().len(), 1);
+        assert_eq!(read.pool().len(), 1);
+        assert!(read.pool().is_known());
+        assert_eq!(read.dependencies().len(), 1);
+        assert_eq!(read.group_data().len(), 96);
+        assert_eq!(read.device_data().len(), 40);
+        assert_eq!(read.into_bytes(), bytes, "a section round trips");
+    }
+
+    #[test]
+    fn the_layout_is_a_formula_and_not_a_set_of_offsets() {
+        // 48 + 20 x 2 contexts + 8 x 1 link is where the conditions blob starts,
+        // and the header says so rather than the writer having copied it.
+        let bytes = section().into_bytes();
+        assert_eq!(u32_at(&bytes, 16), 48 + 20 * 2 + 8 * 1);
+        assert_eq!(u32_at(&bytes, 8), 48, "contexts start after the header");
+        assert_eq!(
+            u32_at(&bytes, 24),
+            u32_at(&bytes, 16) + 28,
+            "dependencies follow the pool"
+        );
+        assert_eq!(
+            u32_at(&bytes, 32),
+            u32_at(&bytes, 24) + 8,
+            "the group data follows the eight byte entry"
+        );
+
+        // And a link count that disagrees with the node count is caught rather
+        // than laid out wrong.
+        let mut wrong = bytes.clone();
+        wrong[24..28].copy_from_slice(&0u32.to_le_bytes()); // dependencies at 0
+        assert!(
+            Section::parse(&wrong).is_err(),
+            "a node count that is not the link count is refused"
+        );
+    }
+
+    #[test]
+    fn a_section_version_is_checked() {
+        let mut bytes = section().into_bytes();
+        bytes[0..4].copy_from_slice(&44u32.to_le_bytes());
+        assert!(
+            Section::parse(&bytes).is_err(),
+            "a version is not 43 is refused"
+        );
+    }
 
     #[test]
     fn a_node_pool_is_a_run_of_one_known_node() {

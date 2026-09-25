@@ -48,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut preamble_mode = false;
     let mut dependencies_mode = false;
     let mut channels_mode = false;
+    let mut layout_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
@@ -115,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--preamble" => preamble_mode = true,
             "--dependencies" => dependencies_mode = true,
             "--channels" => channels_mode = true,
+            "--layout" => layout_mode = true,
             "--build-block" => {
                 i += 1;
                 block_family = Some(PathBuf::from(
@@ -217,6 +219,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if layout_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = layout(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -760,6 +775,74 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
 
 /// Reads a section's group data: the descriptors, the tables it can find, and
 /// whether rebuilding it from the table it already carries is a no-op.
+fn layout(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+    let section = Section::parse(bytes)?;
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} contexts, {} links, {} nodes, {} dependencies, {} bytes of group data, {} of programs",
+        section.contexts().len(),
+        section.links().len(),
+        section.pool().len(),
+        section.dependencies().len(),
+        section.group_data().len(),
+        section.device_data().len()
+    );
+    for (index, context) in section.contexts().iter().enumerate() {
+        println!(
+            "    context {index}: {:08X} {}  {}  group {}  hash {:08X}  tail {:08X}",
+            context.name,
+            named(context.name),
+            if context.flags == sdk::filetype::shader::LINK_FLAG {
+                "link"
+            } else {
+                "    "
+            },
+            context.group,
+            context.group_hash,
+            context.tail
+        );
+    }
+    for (index, link) in section.links().iter().enumerate() {
+        println!(
+            "    link {index}: {:08X} {}  second {:08X}",
+            link.hash,
+            named(link.hash),
+            link.second
+        );
+    }
+    println!(
+        "    the node pool is {} known",
+        if section.pool().is_known() {
+            "all"
+        } else {
+            "not all"
+        }
+    );
+    match section.into_bytes() {
+        rebuilt if rebuilt == bytes => println!("  section round trip: identical"),
+        rebuilt => {
+            let at = rebuilt
+                .iter()
+                .zip(bytes)
+                .position(|(a, b)| a != b)
+                .unwrap_or(rebuilt.len().min(bytes.len()));
+            println!("  section round trip: differs at byte {at}");
+        }
+    }
+    Ok(())
+}
+
 fn channels(
     path: &Path,
     names: Option<&HashMap<u32, String>>,
@@ -839,17 +922,8 @@ fn dependencies(
     for (index, entry) in entries.iter().enumerate() {
         let name = named(entry.name);
         println!(
-            "    {index}: tag {:08X}  {:08X} {}  groups {}  hash {:08X}{}",
-            entry.tag,
-            entry.name,
-            name,
-            entry.groups,
-            entry.hash,
-            if entry.agrees_with(&group_data) {
-                "  agrees"
-            } else {
-                "  DOES NOT AGREE"
-            }
+            "    {index}: tag {:08X}  {:08X} {}",
+            entry.tag, entry.name, name
         );
     }
     Ok(())

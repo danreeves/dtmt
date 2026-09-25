@@ -518,10 +518,11 @@ there the section's layout is fully determined:
 | `conditions_offset` | 28 x links | the node pool |
 | `dependency_offset` | 16 x dependencies | the dependencies table |
 | `group_data_offset` | `group_data_size` | the group data |
+| `group_data_offset + size` | 1-3 bytes | slack, carried |
 | `device_data_offset` | `device_data_size` | the programs |
+| after the programs | to the end | the default-data region, carried |
 
-So `conditions_offset = 48 + 20 x contexts + 8 x links`, and **the link count and
-the node count are the same count** - which is what the pool measurement already
+so a writer lays the region out rather than copying offsets, and the link count and the node count are the same count - which is what the pool measurement already
 showed, now confirmed from the other side. On the three families that have them:
 
 | family | contexts | links | `conditions_offset` | check |
@@ -548,6 +549,39 @@ A link is also visible from the contexts side: a context record whose `flags`
 word is `0xFFFFFFFF` is a link, and its `group` word is `0x5852A5B1` or
 `0x31305A92` - the same values in the two families that share them, which is what
 "shared" means here.
+
+## The whole section round trips, and a correction to the dependencies entry
+
+`Section::parse` walks the formula above and `Section::into_bytes` recomputes it,
+and **all six shipped sections come back byte for byte**. That is the oracle the
+write path needed, and finding it turned up a mistake worth recording.
+
+**The dependencies entry is 8 bytes, not 16.** The earlier note gave it the group
+count and the group hash as well, on the strength of those two words matching the
+group data's header. They do match - and that is exactly why the reading was
+wrong. `group_data_offset - dependency_offset` is **8** on all six families, so
+the two words past the entry *are* the group data's first two, read through a
+window twice as wide as the entry. The entry is `{tag, name}` and nothing more:
+the renderer library, twice. The count and the hash are the group data's own, read
+from the group data, which is the only place they live.
+
+The diff said so before the arithmetic did. The first whole-section round trip
+differed at byte 32 - `group_data_offset` - on every family, and fixing the entry
+to 8 bytes moved the diff to byte 40, then to the very end, then to nothing.
+
+Two regions are carried rather than derived, and both are named as such:
+
+- **The slack** between the group data and the programs. The header's group data
+  *size* is 1, 1, 3, 2, 3 and 1 bytes short of the distance to the device data.
+  Not constant, so neither alignment nor a fixed header.
+- **The default-data region** after the programs, which the header's sixth word
+  points into. It lands exactly at the end of the device data on three families
+  and two to three bytes before it on the others.
+
+Both are kept whole rather than laid out, for the same reason the link's second
+word is: they are the fields this does not know the meaning of, and a change there
+is the one change in the section that could not be checked.
+
 
 
 ### What the section now is
