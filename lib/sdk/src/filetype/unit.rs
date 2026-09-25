@@ -10,7 +10,7 @@
 //! packed vertex streams, a scene graph, mesh objects, LOD objects and a
 //! material list. This module turns the authoring pair into that payload.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use color_eyre::eyre::{self, Context as _, Result, bail};
@@ -121,6 +121,18 @@ struct UnitDef {
     editor_metadata: Option<EditorMetadata>,
     #[serde(default)]
     lights: BTreeMap<String, Light>,
+    /// Opaque payload sections a decompiled unit carries verbatim (hex, no
+    /// `#`). Mod authored units omit them and get the compiler's defaults.
+    #[serde(default)]
+    dynamic_data: Option<String>,
+    #[serde(default)]
+    flow: Option<String>,
+    #[serde(default)]
+    flow_dynamic: Option<String>,
+    #[serde(default)]
+    physics: Option<String>,
+    #[serde(default)]
+    trailer: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -668,6 +680,35 @@ fn unify_geometry(geometry: &BsiGeometry) -> Result<(Vec<UnifiedStream>, Vec<u32
         }
     }
 
+    // One shared index list means the streams are already gathered: every index
+    // picks one vertex per stream. Pass them through so a decompiled payload
+    // keeps its vertex order (and any unreferenced vertices), and validate the
+    // indices as the gathered path would.
+    if geometry.indices.streams.len() == 1 {
+        let list = &geometry.indices.streams[0];
+        for source in &sources {
+            for &vertex in list {
+                if vertex as usize >= source.size {
+                    bail!(
+                        "Index {} is out of range for channel '{}' ({} vertices)",
+                        vertex,
+                        source.name,
+                        source.size
+                    );
+                }
+            }
+        }
+        let gathered = sources
+            .iter()
+            .map(|source| UnifiedStream {
+                name: source.name.clone(),
+                components: source.components,
+                data: source.data.to_vec(),
+            })
+            .collect();
+        return Ok((gathered, list.clone()));
+    }
+
     let mut gathered: Vec<UnifiedStream> = sources
         .iter()
         .map(|source| UnifiedStream {
@@ -929,6 +970,12 @@ impl<'a> Reader<'a> {
             .ok_or_else(|| eyre::eyre!("payload ends inside a byte array at {}", self.at))?;
         self.at += length;
         Ok(bytes.to_vec())
+    }
+
+    /// Everything from the current position to the end, for opaque trailers a
+    /// decompiled payload carries verbatim.
+    fn rest(&self) -> &[u8] {
+        &self.data[self.at..]
     }
 
     fn u32_array(&mut self) -> Result<Vec<u32>> {
@@ -1290,9 +1337,25 @@ fn write_decoded_lods(w: &mut Writer, lods: &[DecodedLod]) {
     }
 }
 
+/// Opaque payload sections a decompiled unit carries verbatim. Mod authored
+/// units leave them empty, and the compiler writes its defaults.
+#[derive(Default)]
+struct UnitBlobs {
+    dynamic_data: Option<String>,
+    flow: Option<String>,
+    flow_dynamic: Option<String>,
+    physics: Option<String>,
+    trailer: Option<String>,
+}
+
 /// Emits the `.unit` SJSON for a decoded payload. Names that only survive as
 /// hashes are written as `#HEX` tokens, which the compiler takes as hashes.
-fn unit_sjson(slots: &[(u32, u64)], meshes: &[u32], lods: &[DecodedLod]) -> String {
+fn unit_sjson(
+    slots: &[(u32, u64)],
+    meshes: &[u32],
+    lods: &[DecodedLod],
+    blobs: &UnitBlobs,
+) -> String {
     let mut text = String::from("materials = {\n");
     for (slot, resource) in slots {
         text.push_str(&format!("\t\"#{slot:08X}\" = \"#{resource:016X}\"\n"));
@@ -1330,6 +1393,21 @@ fn unit_sjson(slots: &[(u32, u64)], meshes: &[u32], lods: &[DecodedLod]) -> Stri
         ));
     }
     text.push_str("}\n");
+    if let Some(data) = &blobs.dynamic_data {
+        text.push_str(&format!("dynamic_data = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.flow {
+        text.push_str(&format!("flow = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.flow_dynamic {
+        text.push_str(&format!("flow_dynamic = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.physics {
+        text.push_str(&format!("physics = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.trailer {
+        text.push_str(&format!("trailer = \"{data}\"\n"));
+    }
     text
 }
 
@@ -1356,10 +1434,16 @@ fn channel_type(kind: u32) -> Result<&'static str> {
     })
 }
 
-/// Emits the `.bsi` SJSON for decoded geometries and mesh objects. Each
-/// geometry is named after the mesh object that uses it; the names double as
-/// the `.unit` renderable and node names.
-fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<String> {
+/// Emits the `.bsi` SJSON for decoded geometries, scene graph nodes and mesh
+/// objects. Each geometry is named after the mesh object that uses it; the
+/// names double as the `.unit` renderable names. Scene graph nodes keep the
+/// names, hierarchy and local transforms read from the payload, so a
+/// decompiled unit preserves its parent chain.
+fn bsi_sjson(
+    geometries: &[DecodedGeometry],
+    meshes: &[DecodedMesh],
+    graph: &DecodedSceneGraph,
+) -> Result<String> {
     let mut names: Vec<Option<u32>> = vec![None; geometries.len()];
     for mesh in meshes {
         if mesh.geometry_index == 0 {
@@ -1433,16 +1517,112 @@ fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<S
     }
     text.push_str("}\n");
 
+    // Scene graph nodes, nested under their parents. Geometry lists are keyed
+    // off the mesh objects, so a node that hosts a renderable gets its name.
+    let mut node_geometries: Vec<Vec<u32>> = vec![Vec::new(); graph.nodes.len()];
+    for mesh in meshes {
+        let index = mesh.node_index as usize;
+        if index >= graph.nodes.len() {
+            bail!(
+                "Mesh object #{:08X} references scene graph node {} of {}",
+                mesh.name,
+                mesh.node_index,
+                graph.nodes.len()
+            );
+        }
+        node_geometries[index].push(mesh.name);
+    }
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); graph.nodes.len()];
+    let mut roots = Vec::new();
+    for (index, node) in graph.nodes.iter().enumerate() {
+        if node.parent_type == 0 {
+            roots.push(index);
+            continue;
+        }
+        let parent = node.parent_index as usize;
+        if parent >= graph.nodes.len() || parent == index {
+            bail!(
+                "Scene graph node {index} has an invalid parent {}",
+                node.parent_index
+            );
+        }
+        children[parent].push(index);
+    }
+    let mut seen = BTreeSet::new();
+    for node in &graph.nodes {
+        if !seen.insert(node.name) {
+            bail!("Scene graph node #{:08X} appears twice", node.name);
+        }
+    }
+    // Emit siblings sorted by node name: the compiler stores children in a
+    // BTreeMap, so a recompiled payload comes back in the same order.
+    roots.sort_by_key(|index| graph.nodes[*index].name);
+    for list in &mut children {
+        list.sort_by_key(|index| graph.nodes[*index].name);
+    }
+
     text.push_str("nodes = {\n");
-    for (index, geometry) in geometries.iter().enumerate() {
-        let _ = geometry;
-        let name = names[index].unwrap();
-        text.push_str(&format!(
-            "\t\"#{name:08X}\" = {{ geometries = [ \"#{name:08X}\" ] local = [ 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 ] }}\n"
-        ));
+    for index in roots {
+        write_bsi_node(&mut text, graph, &children, &node_geometries, index, 1);
     }
     text.push_str("}\n");
     Ok(text)
+}
+
+/// Writes one scene graph node and its children into the `.bsi` text. The
+/// payload stores a TRS triple, so scale is folded back into the basis rows;
+/// the compiler normalizes the rows again, which recovers both the original
+/// rotation and the original world transform.
+fn write_bsi_node(
+    text: &mut String,
+    graph: &DecodedSceneGraph,
+    children: &[Vec<usize>],
+    node_geometries: &[Vec<u32>],
+    index: usize,
+    depth: usize,
+) {
+    let node = &graph.nodes[index];
+    let indent = "\t".repeat(depth);
+    let geometries = node_geometries[index]
+        .iter()
+        .map(|name| format!("\"#{name:08X}\""))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let local = [
+        node.rotation[0] * node.scale[0],
+        node.rotation[1] * node.scale[0],
+        node.rotation[2] * node.scale[0],
+        0.0,
+        node.rotation[3] * node.scale[1],
+        node.rotation[4] * node.scale[1],
+        node.rotation[5] * node.scale[1],
+        0.0,
+        node.rotation[6] * node.scale[2],
+        node.rotation[7] * node.scale[2],
+        node.rotation[8] * node.scale[2],
+        0.0,
+        node.position[0],
+        node.position[1],
+        node.position[2],
+        1.0,
+    ];
+    text.push_str(&format!(
+        "{indent}\"#{:08X}\" = {{\n{indent}\tgeometries = [ {geometries} ]\n{indent}\tlocal = [ {} ]\n",
+        node.name,
+        local
+            .iter()
+            .map(|value| format!("{value}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ));
+    if !children[index].is_empty() {
+        text.push_str(&format!("{indent}\tchildren = {{\n"));
+        for child in &children[index] {
+            write_bsi_node(text, graph, children, node_geometries, *child, depth + 1);
+        }
+        text.push_str(&format!("{indent}\t}}\n"));
+    }
+    text.push_str(&format!("{indent}}}\n"));
 }
 
 /// Decompiles a static unit payload into its `.unit` and `.bsi` SJSON texts.
@@ -1468,7 +1648,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     if reader.u32()? != 0 {
         bail!("animation groups are not supported yet");
     }
-    let _scene_graph = parse_scene_graph(&mut reader)?;
+    let scene_graph = parse_scene_graph(&mut reader)?;
     let meshes = parse_mesh_objects(&mut reader)?;
     if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32_array()?.len() != 0 {
         bail!("actors are not supported yet");
@@ -1491,24 +1671,61 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     }
     let _animation_bones = reader.bool()?;
     let _animation_state_machine = reader.byte_array()?;
-    let _dynamic_data = reader.byte_array()?;
+    let dynamic_data = reader.byte_array()?;
     if reader.u32()? != 0 {
         bail!("visibility groups are not supported yet");
     }
-    let _flow = reader.byte_array()?;
-    let _flow_dynamic = reader.byte_array()?;
+    let flow = reader.byte_array()?;
+    let flow_dynamic = reader.byte_array()?;
     let _triangle_finder = reader.byte_array()?;
-    let _physics = reader.byte_array()?;
+    let physics = reader.byte_array()?;
     let _default_material = reader.u64()?;
     let mut slots = Vec::new();
     for _ in 0..reader.u32()? {
         slots.push((reader.u32()?, reader.u64()?));
     }
+    // The standard trailer fields and anything a shipped payload appends after
+    // them, kept as one opaque blob.
+    let trailer = reader.rest().to_vec();
+
+    // Streamed geometries keep their vertex data outside the payload: the
+    // streams declare vertices and a stride but carry no bytes. They cannot be
+    // recompiled from the payload alone.
+    for geometry in &geometries {
+        if geometry
+            .streams
+            .iter()
+            .any(|stream| stream.data.is_empty() && stream.vertices > 0)
+        {
+            bail!("streamed geometry is not supported yet (a vertex stream has no data)");
+        }
+    }
+
+    // The sentinel and the zero trailer are the compiler's defaults; only carry
+    // sections a shipped payload actually fills in.
+    let sentinel = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
+    let default_trailer = {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // empty byte array length
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes
+    };
+    let blobs = UnitBlobs {
+        dynamic_data: (dynamic_data != sentinel).then(|| hex_encode(&dynamic_data)),
+        flow: (!flow.is_empty()).then(|| hex_encode(&flow)),
+        flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
+        physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
+        trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
+    };
 
     let mesh_names: Vec<u32> = meshes.iter().map(|mesh| mesh.name).collect();
     Ok((
-        unit_sjson(&slots, &mesh_names, &lods),
-        bsi_sjson(&geometries, &meshes)?,
+        unit_sjson(&slots, &mesh_names, &lods, &blobs),
+        bsi_sjson(&geometries, &meshes, &scene_graph)?,
     ))
 }
 
@@ -1554,6 +1771,34 @@ fn hash32_token(token: &str) -> u32 {
         u32::from_str_radix(trimmed, 16).unwrap_or(0)
     } else {
         u32::from(Murmur32::hash(token))
+    }
+}
+
+/// Hex helpers for the opaque payload sections in a `.unit` (no `#` prefix;
+/// these are byte blobs, not hashes).
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
+}
+
+fn hex_decode(text: &str) -> Result<Vec<u8>> {
+    let trimmed = text.strip_prefix('#').unwrap_or(text);
+    if trimmed.len() % 2 != 0 {
+        bail!("Hex blob has an odd length");
+    }
+    (0..trimmed.len())
+        .step_by(2)
+        .map(|at| {
+            u8::from_str_radix(&trimmed[at..at + 2], 16)
+                .wrap_err_with(|| format!("Invalid hex blob byte '{}'", &trimmed[at..at + 2]))
+        })
+        .collect()
+}
+
+/// Decodes an optional hex blob from a `.unit`, or falls back to `default`.
+fn decode_blob(text: &Option<String>, default: &[u8]) -> Result<Vec<u8>> {
+    match text {
+        Some(hex) => hex_decode(hex),
+        None => Ok(default.to_vec()),
     }
 }
 
@@ -1782,18 +2027,22 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.u32(0);
     w.u32(0);
     // Animation bones flag, animation state machine, dynamic data. The
-    // `ffffffff 00000000` sentinel matches shipped inline units.
+    // `ffffffff 00000000` sentinel matches shipped inline units; decompiled
+    // units write their own blob instead.
     w.bool(false);
     w.byte_array(&[]);
-    w.byte_array(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]);
+    w.byte_array(&decode_blob(
+        &def.dynamic_data,
+        &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
+    )?);
     // Visibility groups.
     w.u32(0);
     // Flow and flow dynamic data.
-    w.byte_array(&[]);
-    w.byte_array(&[]);
+    w.byte_array(&decode_blob(&def.flow, &[])?);
+    w.byte_array(&decode_blob(&def.flow_dynamic, &[])?);
     // Mesh geometry triangle finder and physics scene data.
     w.byte_array(&[0u8; 4]);
-    w.byte_array(&[]);
+    w.byte_array(&decode_blob(&def.physics, &[])?);
     // Default material and the material list.
     w.u64(0);
     w.u32(slots.len() as u32);
@@ -1801,13 +2050,20 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(*slot);
         w.u64(u64::from(resource.to_murmur64()));
     }
-    // Unknown lists, skeleton name and the trailing unknown list.
-    w.u32(0);
-    w.u32(0);
-    w.byte_array(&[]);
-    w.u32(0);
-    w.u64(0);
-    w.u32(0);
+    match &def.trailer {
+        // A decompiled payload writes the exact bytes it carried, which may
+        // include fields the compiler does not model yet.
+        Some(hex) => w.bytes(&hex_decode(hex)?),
+        None => {
+            // Unknown lists, skeleton name and the trailing unknown list.
+            w.u32(0);
+            w.u32(0);
+            w.byte_array(&[]);
+            w.u32(0);
+            w.u64(0);
+            w.u32(0);
+        }
+    }
 
     Ok(w.buf)
 }
@@ -2120,7 +2376,12 @@ renderables = {
 
     #[test]
     fn unit_sjson_uses_hash_names() {
-        let text = unit_sjson(&[(0x44F4_A503, 0x1122_3344_5566_7788)], &[0x553C_252C], &[]);
+        let text = unit_sjson(
+            &[(0x44F4_A503, 0x1122_3344_5566_7788)],
+            &[0x553C_252C],
+            &[],
+            &UnitBlobs::default(),
+        );
         assert!(
             text.contains("\"#44F4A503\" = \"#1122334455667788\""),
             "{text}"
@@ -2138,10 +2399,10 @@ renderables = {
         assert_eq!(reader.u32().unwrap(), 0, "skins");
         assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
         assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
-        let _graph = parse_scene_graph(&mut reader).unwrap();
+        let graph = parse_scene_graph(&mut reader).unwrap();
         let meshes = parse_mesh_objects(&mut reader).unwrap();
 
-        let text = bsi_sjson(&[geometry], &meshes).unwrap();
+        let text = bsi_sjson(&[geometry], &meshes, &graph).unwrap();
         assert!(text.contains("\"#553C252C\" = {"), "{text}");
         assert!(text.contains("size = 3"), "indices: {text}");
         assert!(
@@ -2190,6 +2451,97 @@ renderables = {
         assert_eq!(left.index_count, right.index_count);
         assert_eq!(left.batches, right.batches);
         assert_eq!(left.materials, right.materials);
+    }
+
+    /// A two-geometry BSI whose second node hangs off the first.
+    fn hierarchy_bsi() -> String {
+        let geometry = |name: &str| {
+            format!(
+                r#"
+    {name} = {{
+        indices = {{ size = 3 streams = [ [ 0 1 2 ] ] type = "TRIANGLE_LIST" }}
+        materials = [ {{ name = "m_cube" primitives = [ 0 ] }} ]
+        streams = [
+            {{ channels = [ {{ index = 0 name = "POSITION" type = "CT_FLOAT3" }} ] data = [ 0 0 0 1 0 0 0 1 0 ] size = 3 stride = 12 }}
+            {{ channels = [ {{ index = 0 name = "NORMAL" type = "CT_FLOAT3" }} ] data = [ 0 0 1 0 0 1 0 0 1 ] size = 3 stride = 12 }}
+            {{ channels = [ {{ index = 0 name = "TEXCOORD" type = "CT_FLOAT2" }} ] data = [ 0 0 1 0 0 1 ] size = 3 stride = 8 }}
+        ]
+    }}
+"#
+            )
+        };
+        format!(
+            "geometries = {{{}{}\n}}\nnodes = {{\n    root_node = {{\n        geometries = [ \"g_root\" ]\n        local = [ 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 ]\n        children = {{\n            child_node = {{\n                geometries = [ \"g_child\" ]\n                local = [ 1 0 0 0 0 1 0 0 0 0 1 0 1 2 3 1 ]\n            }}\n        }}\n    }}\n}}\n",
+            geometry("g_root"),
+            geometry("g_child")
+        )
+    }
+
+    fn hierarchy_unit() -> &'static str {
+        r##"
+materials = { m_cube = "#1122334455667788" }
+renderables = {
+    g_root = { culling = "bounding_volume" shadow_caster = true viewport_visible = true }
+    g_child = { culling = "bounding_volume" shadow_caster = true viewport_visible = true }
+}
+"##
+    }
+
+    /// Reads the scene graph out of a compiled payload.
+    fn payload_scene_graph(payload: &[u8]) -> DecodedSceneGraph {
+        let count = u32_at(payload, 4);
+        let mut reader = Reader::new(&payload[8..]);
+        for _ in 0..count {
+            parse_mesh_geometry(&mut reader).unwrap();
+        }
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        parse_scene_graph(&mut reader).unwrap()
+    }
+
+    #[test]
+    fn decompile_preserves_the_scene_graph_hierarchy() {
+        let name = resource_name("units/mods/test/hierarchy");
+        let file = compile(name.clone(), hierarchy_unit(), hierarchy_bsi().as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+        let before = payload_scene_graph(payload);
+        assert_eq!(before.nodes.len(), 2);
+
+        let (unit_text, bsi_text) = decompile(payload).unwrap();
+        assert!(bsi_text.contains("children = {"), "{bsi_text}");
+
+        // The emitted pair compiles back to the same hierarchy, transforms and
+        // parent links.
+        let again = compile(name, &unit_text, bsi_text.as_bytes()).unwrap();
+        let after = payload_scene_graph(again.variants()[0].data());
+        let parents = |graph: &DecodedSceneGraph| -> BTreeMap<u32, Option<u32>> {
+            graph
+                .nodes
+                .iter()
+                .map(|node| {
+                    let parent = (node.parent_type != 0)
+                        .then(|| graph.nodes[node.parent_index as usize].name);
+                    (node.name, parent)
+                })
+                .collect()
+        };
+        assert_eq!(parents(&before), parents(&after));
+        for node in &before.nodes {
+            let other = after
+                .nodes
+                .iter()
+                .find(|other| other.name == node.name)
+                .unwrap_or_else(|| panic!("node #{:08X} is missing", node.name));
+            assert_eq!(node.rotation, other.rotation);
+            assert_eq!(node.position, other.position);
+            assert_eq!(node.world, other.world);
+        }
+        let child = u32::from(Murmur32::hash("child_node"));
+        assert_eq!(
+            parents(&after).get(&child),
+            Some(&Some(u32::from(Murmur32::hash("root_node"))))
+        );
     }
 
     #[test]
@@ -2323,5 +2675,32 @@ renderables = {
         assert_eq!(parsed.a, vec![1, 2, 3]);
         assert_eq!(parsed.b["c"], 4);
         assert_eq!(parsed.b["d"], 5);
+    }
+
+    #[test]
+    fn opaque_payload_sections_round_trip() {
+        let unit = format!(
+            "{UNIT}\ndynamic_data = \"0102030405060708\"\nflow = \"AABB\"\n\
+             flow_dynamic = \"CCDD\"\nphysics = \"EEFF\"\ntrailer = \"0A0B0C\"\n"
+        );
+        let name = resource_name("units/mods/test/opaque");
+        let file = compile(name.clone(), &unit, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+        assert!(contains_u32(payload, 0x05040302), "dynamic data");
+
+        let (unit_text, bsi_text) = decompile(payload).unwrap();
+        assert!(
+            unit_text.contains("dynamic_data = \"0102030405060708\""),
+            "{unit_text}"
+        );
+        assert!(unit_text.contains("flow = \"AABB\""), "{unit_text}");
+        assert!(unit_text.contains("flow_dynamic = \"CCDD\""), "{unit_text}");
+        assert!(unit_text.contains("physics = \"EEFF\""), "{unit_text}");
+        assert!(unit_text.contains("trailer = \"0A0B0C\""), "{unit_text}");
+
+        // The decompiled pair recompiles with the opaque sections intact.
+        let again = compile(name, &unit_text, bsi_text.as_bytes()).unwrap();
+        let payload_again = again.variants()[0].data();
+        assert_eq!(payload, payload_again, "opaque sections round trip");
     }
 }

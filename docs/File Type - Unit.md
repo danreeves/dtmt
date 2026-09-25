@@ -2,8 +2,10 @@
 
 Status: **Partial.** DTMT compiles a `.unit` (SJSON) plus a `.bsi` (SJSON
 geometry) into the runtime unit payload, and a static single-mesh unit compiles,
-deploys and spawns in game (`World.spawn_unit_ex`). Skins, animations, LOD
-objects and decompilation are not implemented yet.
+deploys and spawns in game (`World.spawn_unit_ex`). Static units also decompile
+back into a `.unit`/`.bsi` pair that recompiles to the same payload (four
+shipped payloads round-trip at identical size). Skins, animations, streamed
+meshes and actor/camera/light units are rejected with clear errors.
 
 References used: the Bitsquid/Stingray `unit` structures as parsed by the
 Bitsquid Blender Tools (`stingray/unit/dt.py` and friends), the VT2 SDK example
@@ -18,6 +20,11 @@ A unit is authored as two SJSON files with the same base name:
 - `<name>.unit`: `materials` (slot name -> material path), `renderables`
   (name -> flags) and optionally `lod` (steps of `renderables` with a
   `visible_height_range`). `editor_metadata` and `lights` are ignored by DTMT.
+  A decompiled unit also carries the opaque payload sections it read back as hex
+  strings - `dynamic_data`, `flow`, `flow_dynamic`, `physics` and `trailer` -
+  which the compiler writes back verbatim; mod-authored units omit them and get
+  the compiler's defaults (the `ffffffff 00000000` dynamic sentinel and empty
+  sections).
 - `<name>.bsi`: `geometries` (each with `indices`, `streams`, `materials`),
   `nodes` (a hierarchy with `local` 4x4 matrices and `geometries` lists) and
   optionally `animations`. A `.bsi` may be wrapped in the `bsiz` container
@@ -41,11 +48,13 @@ declaration has no such component and shipped units do not carry them either.
 
 The BSI indexes each attribute independently - `indices.streams[i]` indexes
 `streams[i]`'s own vertex array - while the compiled geometry uses one vertex per
-unique attribute tuple and a single index list. The compiler therefore gathers
-the streams: it walks the corner lists together, emits a vertex for every
-distinct tuple of per-stream indices and writes the resulting unified index
-list. A BSI with a single index list (the common case for hand-written sources)
-uses that list for every stream. The VT2 SDK example
+unique attribute tuple and a single index list. When a BSI has several index
+lists the compiler gathers the streams: it walks the corner lists together,
+emits a vertex for every distinct tuple of per-stream indices and writes the
+resulting unified index list. A BSI with a single index list (the common case
+for hand-written sources, and what the decompiler emits) already has one vertex
+per index, so the streams pass through unchanged: a decompiled geometry keeps
+its vertex order and any unreferenced vertices. The VT2 SDK example
 `endurance_badges/units/props/endurance_badges/prop_endurance_badge_01`
 (five independently indexed streams, `bsiz`-wrapped, with `editor_metadata`,
 `lights` and `animations`) compiles through this path; the tool
@@ -88,11 +97,12 @@ Payload layout (little-endian, version word `0x73` first):
    unknown word.
 5. Empty sections for actors, cameras, lights, terrains, joints and movers.
 6. `animation_state_machine`, `dynamic_data` (inline units use the sentinel
-   `ffffffff 00000000`), visibility groups, flow data, the 4-byte triangle
-   finder (`00000000`), physics data.
+   `ffffffff 00000000`; a decompiled unit writes its own blob), visibility
+   groups, flow data, the 4-byte triangle finder (`00000000`), physics data.
 7. `default_material_resource` and the `materials` list of
    `{murmur32(slot), murmur64(material path)}` pairs.
-8. Empty trailing sections and the skeleton name.
+8. Trailing sections and the skeleton name: the standard zero words, or the
+   exact bytes a decompiled payload carried (`trailer`).
 
 The working inline prop (`chain_8m_01`) has **no LOD objects**: its single mesh
 is attached to the scene graph directly. LOD objects are only needed for real
@@ -115,6 +125,12 @@ list and in the unit's `materials` map.
   gathering of independently indexed streams.
 - `lib/sdk/examples/compile_unit.rs`: compile one `.unit`/`.bsi` pair into a
   payload file, for testing the compiler outside a mod build.
+- `lib/sdk/examples/decompile_unit.rs`: decompile a compiled payload into a
+  `.unit`/`.bsi` pair (static units only; unsupported payloads fail with a
+  reason).
+- `lib/sdk/examples/unit_roundtrip.rs`: decompile a payload, compile the pair
+  back and decompile again; the corpus sweep reports 4 static payloads round
+  tripping at identical size and 99 unsupported ones skipped with a reason.
 - `crates/dtmt/src/cmd/build.rs`: package entries of type `unit` are compiled
   from the `.unit` file and the sibling `.bsi`.
 - The snoopymod (`units/mods/snoopymod/cube.unit|bsi`) is the test case; in game
@@ -125,29 +141,19 @@ list and in the unit's `materials` map.
 - Mesh flag words (`0x000C2001, 3, 1` on shipped static props) and the four
   bounding-volume extras are copied, not derived; their exact meaning is
   unknown.
-- Skin/animations, streamed meshes (external `.stream` data) and decompilation
-  (payload -> `.unit`/`.bsi`) are not implemented. Two decompilation slices are
-  in place though: `f32_from_f16`, `oct_decode` and `decode_stream` unpack a
-  compiled vertex stream back into source floats (round-trip tested for
-  positions, octahedral normals and texcoords), and the mesh geometry structure
-  now parses and rewrites byte-exactly (`Reader`, `parse_mesh_geometry`,
-  `write_decoded_geometry`, round-trip tested on a compiled payload). What
-  remains is the rest of the payload (scene graph, meshes, materials, LOD
-  objects) and the `.unit`/`.bsi` SJSON emitter.
-- Emitter port plan: the decode slices (`parse_mesh_geometry`,
-  `parse_scene_graph`, `parse_mesh_objects`, `parse_lod_objects`) already
-  produce every structure the emitter needs, and `decode_stream` unpacks the
-  vertex data back to source floats. Names that survive only as hashes (slots,
-  renderables, nodes, LODs) are written as `#HEX` tokens, which the compiler now
-  accepts; material resources keep their exact 64 bit hash the same way. The
-  emitted `.bsi` should use one index list shared by every stream (the unified
-  form) and one node per mesh object with an identity local transform, which is
-  exactly what the validated Python prototype emitted.
+- Skin/animations, streamed meshes and actor/camera/light units are not
+  implemented: a payload that uses them is rejected with a clear error (skins,
+  simple animations, animation groups, actors, cameras, lights, visibility
+  groups, a non-empty device blob, and vertex streams that declare vertices but
+  carry no bytes - streamed geometry).
+- The decompiler preserves the payload's scene-graph parent chain; sibling order
+  is normalized to the compiler's sorted order (BTreeMaps), and the four shipped
+  static payloads round-trip at identical size. Round-tripped normals are
+  re-encoded (octahedral half2 is lossy), so the `.bsi` text can differ in
+  `NORMAL` stream data only.
 - Decompiling a shipped static prop (`chain_8m_01`, 26033 bytes) and recompiling
-  the emitted pair gives 25901 bytes with the same geometry: 4 streams, 972
-  indices, one batch, and the same material slot (`945378ED`) and resource
-  (`2EDC32093F2CB485`). The 132 byte difference is the scene graph: the emitter
-  writes one node per mesh, while the shipped unit has a parent chain.
+  the emitted pair gives 26033 bytes with the same geometry (4 streams, 972
+  indices, one batch) and the same parent chain, scale and material slot.
 - The decompilation path was validated end to end with a Python prototype: a
   compiled cube payload was parsed, its streams unpacked and a `.unit`/`.bsi`
   pair emitted, which `compile_unit` recompiled back into a 1277 byte payload
