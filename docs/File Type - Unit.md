@@ -126,7 +126,11 @@ list and in the unit's `materials` map.
   bounding-volume extras are copied, not derived; their exact meaning is
   unknown.
 - Skin/animations, streamed meshes (external `.stream` data) and decompilation
-  (payload -> `.unit`/`.bsi`) are not implemented.
+  (payload -> `.unit`/`.bsi`) are not implemented. The first decompilation slice
+  is in place though: `f32_from_f16`, `oct_decode` and `decode_stream` unpack a
+  compiled vertex stream back into source floats (round-trip tested for
+  positions, octahedral normals and texcoords). What remains is parsing the
+  payload's structures and emitting the `.unit`/`.bsi` SJSON pair.
 - LOD objects compile from the unit SJSON's `lod` entries (validated: names,
   step ranges and step meshes). The `bounding_volume` and `orientation` names are
   parsed but unused, and a step's `stream_offset` stays 0 because the compiler

@@ -751,6 +751,73 @@ fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32])
     Ok(())
 }
 
+/// Convert an IEEE 754 half back to `f32` (the inverse of `f16`).
+fn f32_from_f16(bits: u16) -> f32 {
+    let sign = ((bits >> 15) & 1) as u32;
+    let exponent = ((bits >> 10) & 0x1f) as u32;
+    let mantissa = (bits & 0x3ff) as u32;
+    let value = if exponent == 0 {
+        (mantissa as f32) * 2.0f32.powi(-24)
+    } else if exponent == 0x1f {
+        if mantissa == 0 { f32::INFINITY } else { f32::NAN }
+    } else {
+        (mantissa as f32 / 1024.0 + 1.0) * 2.0f32.powi(exponent as i32 - 15)
+    };
+    if sign == 1 { -value } else { value }
+}
+
+/// Decode an octahedral half2 back to a unit direction (the inverse of
+/// `oct_encode`).
+fn oct_decode(u: f32, v: f32) -> [f32; 3] {
+    let mut x = u * 2.0 - 1.0;
+    let mut y = v * 2.0 - 1.0;
+    let z = 1.0 - (x.abs() + y.abs());
+    if z < 0.0 {
+        let nx = (1.0 - y.abs()) * if x >= 0.0 { 1.0 } else { -1.0 };
+        let ny = (1.0 - x.abs()) * if y >= 0.0 { 1.0 } else { -1.0 };
+        x = nx;
+        y = ny;
+    }
+    let length = (x * x + y * y + z * z).sqrt().max(1e-8);
+    [x / length, y / length, z / length]
+}
+
+/// Unpack one compiled vertex stream back into source floats: the inverse of
+/// `compile_stream`, keyed by the channel component and the compiled type.
+/// The first slice of unit decompilation.
+fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
+    fn halves(data: &[u8]) -> Vec<f32> {
+        data.chunks_exact(2)
+            .map(|chunk| f32_from_f16(u16::from_le_bytes([chunk[0], chunk[1]])))
+            .collect()
+    }
+    match (component, kind) {
+        // POSITION: half4, drop w.
+        (0, 17) => {
+            let mut out = Vec::with_capacity(data.len() / 8 * 3);
+            for vertex in halves(data).chunks_exact(4) {
+                out.extend_from_slice(&vertex[..3]);
+            }
+            Ok(out)
+        }
+        // NORMAL: octahedral half2.
+        (1, 15) => {
+            let values = halves(data);
+            let mut out = Vec::with_capacity(values.len() / 2 * 3);
+            for pair in values.chunks_exact(2) {
+                out.extend_from_slice(&oct_decode(pair[0], pair[1]));
+            }
+            Ok(out)
+        }
+        // TEXCOORD, COLOR and BLENDWEIGHTS: half values as they are.
+        (5, 15) | (4, 17) | (8, 17) => Ok(halves(data)),
+        // COLOR and BLENDINDICES: bytes.
+        (4, 19) => Ok(data.iter().map(|byte| *byte as f32 / 255.0).collect()),
+        (7, 19) => Ok(data.iter().map(|byte| *byte as f32).collect()),
+        (component, kind) => bail!("Cannot decode channel component {component} type {kind}"),
+    }
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1141,6 +1208,34 @@ renderables = {
         // Sixteen vertices' worth of half4 positions would be wrong here: the
         // payload is small (three vertices).
         assert!(payload.len() < 1024, "payload {} bytes", payload.len());
+    }
+
+    #[test]
+    fn streams_round_trip_through_decode() {
+        // POSITION: half4, xyz plus a discarded w.
+        let positions = [0.5f32, -1.0, 2.0, 0.25, 0.0, 1.0];
+        let format = compile_stream("POSITION", &positions, 2, 3).unwrap().unwrap();
+        assert_eq!(format.kind, 17);
+        let decoded = decode_stream(0, format.kind, &format.data).unwrap();
+        assert_eq!(decoded.len(), 6);
+        for (before, after) in positions.iter().zip(&decoded) {
+            assert!((before - after).abs() < 1e-3, "{before} vs {after}");
+        }
+
+        // NORMAL: octahedral half2.
+        let normals = [0.0f32, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, -1.0, 0.0];
+        let format = compile_stream("NORMAL", &normals, 3, 3).unwrap().unwrap();
+        assert_eq!(format.kind, 15);
+        let decoded = decode_stream(1, format.kind, &format.data).unwrap();
+        for (before, after) in normals.iter().zip(&decoded) {
+            assert!((before - after).abs() < 1e-2, "{before} vs {after}");
+        }
+
+        // TEXCOORD: half2.
+        let uvs = [0.0f32, 1.0, 0.5, 0.25];
+        let format = compile_stream("TEXCOORD", &uvs, 2, 2).unwrap().unwrap();
+        let decoded = decode_stream(5, format.kind, &format.data).unwrap();
+        assert_eq!(decoded, uvs);
     }
 
     #[test]
