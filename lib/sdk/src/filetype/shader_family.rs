@@ -1,76 +1,32 @@
-//! Declarative shader-family definitions: the mod-side input to a generated
-//! `shader43` section.
+//! The intermediate representation of a shader family: what the emitters need to
+//! write a `shader43` section, and nothing else.
 //!
-//! A [`Family`] is what a mod writes instead of a shipped shader blob: the
-//! programs (by source file), the channels the family exchanges between its
-//! stages, and the material variables it accepts. [`Family::permutations`]
-//! enumerates the runtime permutations - one per combination of the declared
-//! optional variables - and each becomes a group in the section, compiled with
-//! the flags its variables enable.
+//! This module is deliberately *not* a mod-facing file format. A mod describes a
+//! family the way the Stingray toolchain does, in a `.shader_node` file; the
+//! reader in [`super::shader_node`] turns that into the [`Family`] here, and the
+//! emitters turn a [`Family`] into bytes. Anything the mod writes that does not
+//! reach the emitters does not belong in these types.
 //!
-//! The format is SJSON, the dialect the material and shader node files use, with
-//! the names as map keys so they can be hashed straight to murmur32:
+//! Two enumerations live here, and they answer different questions:
 //!
-//! ```sjson
-//! // snoopy_ui.shader_family
-//! channels = {
-//!     vertex_position = {
-//!         type = "float4"
-//!         domain = "vertex"
-//!         required = true
-//!     }
-//!     texture_map = {
-//!         type = "texture2d"
-//!         domain = "pixel"
-//!         required = true
-//!     }
-//! }
-//!
-//! variables = {
-//!     base_color = {
-//!         type = "vector3"
-//!         domain = "pixel"
-//!         flag = "HAS_BASE_COLOR"
-//!         default = [ 1, 1, 1 ]
-//!     }
-//!     opacity = {
-//!         type = "scalar"
-//!         domain = "pixel"
-//!         flag = "HAS_OPACITY"
-//!     }
-//!     mod_tint = {
-//!         type = "vector4"
-//!         domain = "pixel"
-//!     }
-//! }
-//!
-//! programs = {
-//!     vs_main = {
-//!         source = "snoopymod/ui.vs.hlsl"
-//!         stage = "vertex"
-//!     }
-//!     ps_main = {
-//!         source = "snoopymod/ui.ps.hlsl"
-//!         stage = "pixel"
-//!     }
-//! }
-//! ```
+//! - [`Family::interfaces`] enumerates the *runtime* interfaces: one per
+//!   combination of the family's optional variables, each with the flags it
+//!   defines and the variables and channels it exposes. This is what the
+//!   conditions tree indexes on when it picks a group's interface.
+//! - [`Family::permutations`] enumerates the *compile* permutations: one per
+//!   combination of a choice from each [`PermutationSet`], with the macros the
+//!   programs are compiled with. The family's group count is this product.
 //!
 //! Everything the section still needs from the engine - the block header blob,
-//! the engine's variable registry, the bindless conventions - is deliberately
-//! not part of this file; it is carried by the toolchain instead.
+//! the engine's variable registry, the bindless conventions - is not part of a
+//! family; it is carried by the toolchain as a [`BlockTemplate`].
 
 use std::collections::BTreeMap;
-
-use color_eyre::eyre;
-use color_eyre::eyre::{Context, Result, bail};
-use serde::{Deserialize, Serialize};
 
 /// The stage a channel or variable belongs to. A `vertex` channel is written by
 /// the vertex program and interpolated into the pixel program; a `pixel` one is
 /// a pixel-program-only value.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Domain {
     /// Written by the vertex stage and read by the pixel stage.
     Vertex,
@@ -80,25 +36,19 @@ pub enum Domain {
 }
 
 /// The type of a channel or variable. The sizes match the group data's record
-/// sizes: 4, 8, 12 and 16 bytes, and 64 for a 4x4 matrix. The material's own
-/// spelling (`scalar`, `vector2`, ...) is accepted as an alias.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+/// sizes: 4, 8, 12 and 16 bytes, and 64 for a 4x4 matrix.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ValueType {
     /// A scalar (4 bytes).
-    #[serde(alias = "scalar")]
+    #[default]
     Float,
     /// A two-component vector (8 bytes).
-    #[serde(alias = "vector2")]
     Float2,
     /// A three-component vector (12 bytes).
-    #[serde(alias = "vector3")]
     Float3,
     /// A four-component vector (16 bytes).
-    #[serde(alias = "vector4")]
     Float4,
     /// A 4x4 matrix (64 bytes).
-    #[serde(alias = "matrix", alias = "float3x3")]
     Float4x4,
     /// A 2D texture channel.
     Texture2D,
@@ -118,57 +68,82 @@ impl ValueType {
     }
 }
 
+/// The type spellings a `.shader_node` uses, in either of the two dialects the
+/// toolchain files mix: HLSL (`float3`) and the material vocabulary
+/// (`vector3`).
+impl ValueType {
+    /// Parses a declared type name, or `None` when the name is not one the
+    /// group data can size.
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "float" | "scalar" => Self::Float,
+            "float2" | "vector2" => Self::Float2,
+            "float3" | "vector3" => Self::Float3,
+            "float4" | "vector4" => Self::Float4,
+            "float4x4" | "matrix" | "float3x3" => Self::Float4x4,
+            "texture2d" | "texture" => Self::Texture2D,
+            _ => return None,
+        })
+    }
+}
+
 /// A channel: a named value the vertex program hands to the pixel program, or a
 /// texture the material binds.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ChannelDef {
+    /// The channel's name, which is what the group data hashes.
+    pub name: String,
     /// The channel's type.
-    #[serde(rename = "type")]
     pub kind: ValueType,
     /// Which stage produces it.
-    #[serde(default)]
     pub domain: Domain,
     /// Whether the material must provide it. A required channel is in every
-    /// interface; an optional one joins only the permutations that define its
-    /// variable's flag.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// interface; an optional one joins only the interfaces whose mask defines
+    /// its gating variable's flag.
     pub required: bool,
-    /// The variable whose flag gates this channel, when it is not the channel's
-    /// own name (a `normal_map` texture can follow `normal_strength`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variable: Option<String>,
-    /// The DXBC semantic to bind the channel to, if not the default for its
-    /// type.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The DXBC semantic to bind the channel to, if the declaration names one.
     pub semantic: Option<String>,
+    /// The variable whose flag gates this channel, when it is not the channel's
+    /// own name.
+    pub variable: Option<String>,
+    /// The conditions over permutation macros that have to hold for the channel
+    /// to exist, as the keys of the declaration's `channels` table it sits under.
+    /// Empty means the channel is unconditional.
+    pub conditions: Vec<String>,
+}
+
+impl Default for ChannelDef {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            kind: ValueType::Float4,
+            domain: Domain::Pixel,
+            required: true,
+            semantic: None,
+            variable: None,
+            conditions: Vec::new(),
+        }
+    }
 }
 
 /// A material variable: a value the material may set by name, like
-/// `dev_wireframe_color` in the shipped families. A variable with a `flag` is
-/// optional - it belongs to the interface only in the permutations that define
-/// that flag.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// `dev_wireframe_color` in the shipped families. A variable with a flag is
+/// optional - it belongs to the interface only where that flag is defined.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct VariableDef {
     /// The variable's type.
-    #[serde(rename = "type")]
     pub kind: ValueType,
     /// Which stage reads it.
-    #[serde(default)]
     pub domain: Domain,
     /// The permutation flag that makes the variable part of the interface. A
     /// variable without a flag is always present.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flag: Option<String>,
     /// The default value written into the section's default data.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub default: Vec<f32>,
 }
 
-/// One program of a stage, given by the source file `dtmt build` compiles.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// One program of a stage, given by the source the toolchain compiles.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProgramDef {
     /// The HLSL source, relative to the mod root.
     pub source: String,
@@ -176,35 +151,53 @@ pub struct ProgramDef {
     pub stage: String,
 }
 
-/// A whole family declaration: the programs to compile, the channels the family
-/// exchanges and the material variables it accepts, keyed by name.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+/// A set of mutually exclusive compile choices, from a `permutation_sets` entry
+/// of a `.shader_node` file. Each choice is taken when its `if` expression holds
+/// - or always, for the `default` choice.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PermutationSet {
+    /// The set's name, as the declaration spells it.
+    pub name: String,
+    /// The set's choices, in declaration order.
+    pub choices: Vec<Choice>,
+}
+
+/// One choice of a [`PermutationSet`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    /// The `if` expression that selects the choice, if it has one.
+    pub condition: Option<String>,
+    /// The macros the choice defines.
+    pub macros: Vec<String>,
+    /// The stages those macros apply to. Empty means every stage.
+    pub stages: Vec<String>,
+    /// Whether this is the set's `default` choice, taken when no `if` holds.
+    pub is_default: bool,
+}
+
+/// A whole family: what the emitters need, gathered from a `.shader_node` file
+/// and its companion.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Family {
     /// The programs to compile, keyed by entry point name.
-    #[serde(default)]
     pub programs: BTreeMap<String, ProgramDef>,
-    /// The channels the family exchanges.
-    #[serde(default)]
-    pub channels: BTreeMap<String, ChannelDef>,
-    /// The material variables the family accepts.
-    #[serde(default)]
+    /// The channels the family exchanges, in the order the declaration lists
+    /// them: the order of the conditions table decides the conditions section.
+    pub channels: Vec<ChannelDef>,
+    /// The material variables the family accepts, keyed by name. A declaration's
+    /// own inputs are keyed by uuid, so this is in name order instead.
     pub variables: BTreeMap<String, VariableDef>,
+    /// The compile-time permutation sets, in name order.
+    pub permutation_sets: Vec<PermutationSet>,
 }
 
 impl Family {
-    /// Parses a declaration from SJSON.
-    pub fn from_sjson(sjson: &str) -> Result<Self> {
-        serde_sjson::from_str(sjson)
-            .map_err(|err| eyre::eyre!("failed to parse the shader family: {err}"))
+    /// The channel of that name, when the family declares it.
+    pub fn channel(&self, name: &str) -> Option<&ChannelDef> {
+        self.channels.iter().find(|channel| channel.name == name)
     }
 
-    /// Serialises the declaration back to SJSON.
-    pub fn to_sjson(&self) -> Result<String> {
-        serde_sjson::to_string(self).wrap_err("failed to write the shader family")
-    }
-
-    /// The flags the declaration can define, in name order.
+    /// The flags the family's variables can gate on, in name order.
     pub fn flags(&self) -> Vec<&str> {
         let mut flags: Vec<&str> = Vec::new();
         for variable in self.variables.values() {
@@ -217,16 +210,15 @@ impl Family {
         flags
     }
 
-    /// Enumerates the runtime permutations: one per combination of the declared
-    /// optional variables, in the order the flags are named (bit 0 first). Each
-    /// becomes one group in the section and one program pair compiled with the
-    /// flags its variables enable; the variables and channels that ride along
-    /// are that group's interface.
-    pub fn permutations(&self) -> Vec<Permutation> {
+    /// Enumerates the runtime interfaces: one per combination of the optional
+    /// variables, in the order the flags are named (bit 0 first). Each carries
+    /// the flags it defines, the variables and channels it exposes, and the mask
+    /// the conditions tree keys on.
+    pub fn interfaces(&self) -> Vec<Interface> {
         let flags = self.flags();
         let count = 1u32 << flags.len();
         (0..count)
-            .map(|mask| Permutation {
+            .map(|mask| Interface {
                 mask,
                 flags: flags
                     .iter()
@@ -246,21 +238,52 @@ impl Family {
                 channels: self
                     .channels
                     .iter()
-                    .filter(|(name, channel)| {
+                    .filter(|channel| {
                         channel.required
                             || self
-                                .gating_variable(name, channel)
+                                .gating_variable(&channel.name, channel)
                                 .and_then(|variable| variable.flag.as_ref())
                                 .is_some_and(|flag| self.enabled(flag, mask, &flags))
                     })
-                    .map(|(name, _)| name.clone())
+                    .map(|channel| channel.name.clone())
                     .collect(),
             })
             .collect()
     }
 
-    /// The number of groups the declaration generates.
+    /// Enumerates the compile permutations: one per combination of a choice from
+    /// each permutation set, the first set varying slowest. Each carries the
+    /// choices that make it up and the macros the programs compile with. A
+    /// family with no sets has the one empty permutation.
+    pub fn permutations(&self) -> Vec<Permutation> {
+        let mut permutations = vec![Permutation {
+            choices: Vec::new(),
+            macros: Vec::new(),
+        }];
+        for set in &self.permutation_sets {
+            let mut next = Vec::with_capacity(permutations.len() * set.choices.len());
+            for permutation in permutations {
+                for (index, choice) in set.choices.iter().enumerate() {
+                    let mut permutation = permutation.clone();
+                    permutation.choices.push((set.name.clone(), index));
+                    permutation.macros.extend(choice.macros.iter().cloned());
+                    next.push(permutation);
+                }
+            }
+            permutations = next;
+        }
+        permutations
+    }
+
+    /// The number of groups the family generates: the product of the sets'
+    /// choice counts, or one when the family declares no sets.
     pub fn group_count(&self) -> usize {
+        self.permutations().len()
+    }
+
+    /// The number of runtime interfaces: one per combination of the optional
+    /// variables.
+    pub fn interface_count(&self) -> usize {
         1usize << self.flags().len()
     }
 
@@ -284,14 +307,14 @@ impl Family {
     }
 }
 
-/// One enumerated permutation: the flags it defines and the interface it
-/// exposes. `mask` is the bit set over [`Family::flags`] and is what the
-/// conditions tree indexes on.
+/// One runtime interface: the flags a material's inputs enable and the variables
+/// and channels they expose. `mask` is the bit set over [`Family::flags`] and is
+/// what the conditions tree indexes on.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Permutation {
+pub struct Interface {
     /// The bit set over [`Family::flags`].
     pub mask: u32,
-    /// The permutation flags, in declaration order.
+    /// The permutation flags, in name order.
     pub flags: Vec<String>,
     /// The variable names in the interface.
     pub variables: Vec<String>,
@@ -299,15 +322,28 @@ pub struct Permutation {
     pub channels: Vec<String>,
 }
 
-impl Permutation {
-    /// Whether the permutation defines `flag`.
+impl Interface {
+    /// Whether the interface defines `flag`.
     pub fn defines(&self, flag: &str) -> bool {
         self.flags.iter().any(|f| f == flag)
     }
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
+/// One compile permutation: the choice it takes from each permutation set and
+/// the macros those choices define.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Permutation {
+    /// The choice taken from each set, as `(set name, choice index)`.
+    pub choices: Vec<(String, usize)>,
+    /// The macros the permutation defines.
+    pub macros: Vec<String>,
+}
+
+impl Permutation {
+    /// Whether the permutation defines `macro`.
+    pub fn defines(&self, macro_name: &str) -> bool {
+        self.macros.iter().any(|m| m == macro_name)
+    }
 }
 
 /// The record length the engine uses for a channel record, by its kind.
@@ -335,7 +371,8 @@ impl BlockTemplate {
     /// Reads a shipped preamble, checking the header/table/stream framing: a
     /// 120-byte header, `count - 8` byte-packed 13-byte records, the stream's
     /// count word, then the records themselves.
-    pub fn from_preamble(preamble: &[u8]) -> Result<Self> {
+    pub fn from_preamble(preamble: &[u8]) -> Result<Self, color_eyre::Report> {
+        use color_eyre::eyre::bail;
         if preamble.len() < 0x78 {
             bail!("the block template is too small ({} bytes)", preamble.len());
         }
@@ -359,9 +396,8 @@ impl BlockTemplate {
             records_data.push((u32_at(preamble, at), u32_at(preamble, at + 5)));
             at += 13;
         }
-        let mut stream = preamble[table_end..].to_vec();
-        // Trim the stream to its records: walk the count and the per-kind
-        // lengths so a template with a trailing pad still parses.
+        // Trim the stream to its records: walk the count and the per-kind lengths
+        // so a template with a trailing pad still parses.
         let mut kept = 4;
         at = table_end + 4;
         for _ in 0..stream_count {
@@ -379,6 +415,7 @@ impl BlockTemplate {
                 preamble.len()
             );
         }
+        let mut stream = preamble[table_end..].to_vec();
         stream.truncate(kept);
         Ok(Self {
             preamble: preamble.to_vec(),
@@ -445,7 +482,8 @@ pub fn build_block(
     channels: &[(String, ChannelDef)],
     groups: u32,
     cbuffers: u32,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, color_eyre::Report> {
+    use color_eyre::eyre::bail;
     let mut block = Vec::new();
     // The header: the template's bytes with the three varying words rewritten.
     block.extend_from_slice(&template.preamble[..0x78]);
@@ -476,8 +514,8 @@ pub fn build_block(
             continue;
         }
         // A new channel: clone the template's record of the same kind. Only the
-        // two texture kinds have a decoded record length, and the texture
-        // record is the shape the verified channel clone used.
+        // two texture kinds have a decoded record length, and the texture record
+        // is the shape the verified channel clone used.
         if channel.kind != ValueType::Texture2D {
             bail!(
                 "channel {name} is a {:?} and no block record of that kind is known",
@@ -513,148 +551,168 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = r#"
-        // The family a mod would ship.
-        channels = {
-            vertex_position = {
-                type = "float4"
-                domain = "vertex"
-                required = true
-            }
-            texture_map = {
-                type = "texture2d"
-                domain = "pixel"
-                required = true
-            }
+    /// A family as the `.shader_node` reader hands it over: two required
+    /// channels and one gated by an optional variable.
+    fn sample() -> Family {
+        let mut family = Family::default();
+        for name in ["texture_map", "vertex_position"] {
+            family.channels.push(ChannelDef {
+                name: name.to_string(),
+                kind: ValueType::Texture2D,
+                required: true,
+                ..ChannelDef::default()
+            });
         }
-
-        variables = {
-            base_color = {
-                type = "vector3"
-                domain = "pixel"
-                flag = "HAS_BASE_COLOR"
-                default = [ 1, 1, 1 ]
-            }
-            opacity = {
-                type = "scalar"
-                domain = "pixel"
-                flag = "HAS_OPACITY"
-            }
-            mod_tint = {
-                type = "vector4"
-                domain = "pixel"
-            }
+        family.channels.push(ChannelDef {
+            name: "normal_map".to_string(),
+            kind: ValueType::Texture2D,
+            required: false,
+            variable: Some("normal_strength".to_string()),
+            ..ChannelDef::default()
+        });
+        for (name, flag) in [
+            ("base_color", Some("HAS_BASE_COLOR")),
+            ("opacity", Some("HAS_OPACITY")),
+        ] {
+            family.variables.insert(
+                name.to_string(),
+                VariableDef {
+                    kind: ValueType::Float3,
+                    flag: flag.map(String::from),
+                    default: vec![1.0, 1.0, 1.0],
+                    ..VariableDef::default()
+                },
+            );
         }
+        family.variables.insert(
+            "normal_strength".to_string(),
+            VariableDef {
+                kind: ValueType::Float,
+                flag: Some("HAS_NORMAL_MAP".to_string()),
+                ..VariableDef::default()
+            },
+        );
+        family.variables.insert(
+            "mod_tint".to_string(),
+            VariableDef {
+                kind: ValueType::Float4,
+                ..VariableDef::default()
+            },
+        );
+        family
+    }
 
-        programs = {
-            vs_main = {
-                source = "snoopymod/ui.vs.hlsl"
-                stage = "vertex"
-            }
-            ps_main = {
-                source = "snoopymod/ui.ps.hlsl"
-                stage = "pixel"
-            }
+    /// The texture channel of the sample family.
+    fn texture_channel() -> ChannelDef {
+        ChannelDef {
+            name: "texture_map".to_string(),
+            kind: ValueType::Texture2D,
+            required: true,
+            ..ChannelDef::default()
         }
-    "#;
-
-    #[test]
-    fn parses_a_declaration() {
-        let family = Family::from_sjson(SAMPLE).expect("parse");
-        assert_eq!(family.programs.len(), 2);
-        assert_eq!(family.programs["vs_main"].stage, "vertex");
-        assert_eq!(family.channels.len(), 2);
-        assert_eq!(family.channels["texture_map"].kind, ValueType::Texture2D);
-        assert_eq!(family.channels["vertex_position"].domain, Domain::Vertex);
-        assert!(family.channels["texture_map"].required);
-        assert_eq!(family.variables.len(), 3);
-        assert_eq!(family.variables["base_color"].default, vec![1.0, 1.0, 1.0]);
-        // The types agree with the group data's record sizes.
-        assert_eq!(family.channels["vertex_position"].kind.size(), 16);
-        assert_eq!(family.variables["mod_tint"].kind.size(), 16);
     }
 
     #[test]
-    fn enumerates_one_group_per_optional_variable_subset() {
-        let family = Family::from_sjson(SAMPLE).expect("parse");
-        assert_eq!(family.flags(), vec!["HAS_BASE_COLOR", "HAS_OPACITY"]);
-        // Two optional variables: four interfaces, so four groups.
-        assert_eq!(family.group_count(), 4);
+    fn parses_either_type_spelling() {
+        assert_eq!(ValueType::parse("vector3"), Some(ValueType::Float3));
+        assert_eq!(ValueType::parse("float3"), Some(ValueType::Float3));
+        assert_eq!(ValueType::parse("scalar"), Some(ValueType::Float));
+        assert_eq!(ValueType::parse("texture2d"), Some(ValueType::Texture2D));
+        assert_eq!(ValueType::parse("texture_cube"), None);
+    }
 
-        let permutations = family.permutations();
-        assert!(permutations[0].flags.is_empty());
-        // Without the optional variables only the always-present one is left.
-        assert_eq!(permutations[0].variables, vec!["mod_tint"]);
-        // The required channels ride along in every permutation.
+    #[test]
+    fn one_interface_per_optional_variable_subset() {
+        let family = sample();
         assert_eq!(
-            permutations[0].channels,
+            family.flags(),
+            vec!["HAS_BASE_COLOR", "HAS_NORMAL_MAP", "HAS_OPACITY"]
+        );
+        // Three optional variables: eight interfaces, bit 0 first.
+        assert_eq!(family.interface_count(), 8);
+
+        let interfaces = family.interfaces();
+        assert!(interfaces[0].flags.is_empty());
+        // Without the optional variables only the always-present one is left.
+        assert_eq!(interfaces[0].variables, vec!["mod_tint"]);
+        // The required channels ride along in every interface.
+        assert_eq!(
+            interfaces[0].channels,
             vec!["texture_map", "vertex_position"]
         );
+        // A gated channel joins when its gating variable's flag is set:
+        // HAS_NORMAL_MAP is bit 1, so interfaces 2 and 3 have it and 1 does not.
+        assert!(!interfaces[1].channels.contains(&"normal_map".to_string()));
+        assert_eq!(interfaces[1].channels.len(), 2);
+        assert!(interfaces[2].channels.contains(&"normal_map".to_string()));
+        assert!(interfaces[3].channels.contains(&"normal_map".to_string()));
 
-        assert!(permutations[1].defines("HAS_BASE_COLOR"));
-        assert!(!permutations[1].defines("HAS_OPACITY"));
-        assert_eq!(permutations[1].variables, vec!["base_color", "mod_tint"]);
-
-        assert!(permutations[2].defines("HAS_OPACITY"));
-        assert!(!permutations[2].defines("HAS_BASE_COLOR"));
-
-        assert!(permutations[3].defines("HAS_BASE_COLOR"));
-        assert!(permutations[3].defines("HAS_OPACITY"));
-        assert_eq!(
-            permutations[3].variables,
-            vec!["base_color", "mod_tint", "opacity"]
-        );
+        assert!(interfaces[1].defines("HAS_BASE_COLOR"));
+        assert!(!interfaces[1].defines("HAS_OPACITY"));
+        assert_eq!(interfaces[1].variables, vec!["base_color", "mod_tint"]);
+        assert_eq!(interfaces[7].variables.len(), 4);
         // The masks are distinct, so the conditions tree can key on them.
-        let masks: Vec<u32> = permutations.iter().map(|p| p.mask).collect();
-        assert_eq!(masks, vec![0, 1, 2, 3]);
+        let masks: Vec<u32> = interfaces.iter().map(|i| i.mask).collect();
+        assert_eq!(masks, (0..8).collect::<Vec<u32>>());
     }
 
     #[test]
-    fn an_optional_channel_follows_its_variable() {
-        let text = r#"
-            channels = {
-                texture_map = {
-                    type = "texture2d"
-                    required = true
-                }
-                normal_map = {
-                    type = "texture2d"
-                    variable = "normal_strength"
-                }
-            }
-            variables = {
-                normal_strength = {
-                    type = "scalar"
-                    flag = "HAS_NORMAL_MAP"
-                }
-            }
-        "#;
-        let family = Family::from_sjson(text).expect("parse");
-        let permutations = family.permutations();
-        assert_eq!(permutations.len(), 2);
-        assert_eq!(permutations[0].channels, vec!["texture_map"]);
-        assert_eq!(permutations[1].channels, vec!["normal_map", "texture_map"]);
-    }
-
-    #[test]
-    fn round_trips_through_sjson() {
-        let family = Family::from_sjson(SAMPLE).expect("parse");
-        let text = family.to_sjson().expect("write");
-        let again = Family::from_sjson(&text).expect("re-parse");
-        assert_eq!(family, again);
-    }
-
-    #[test]
-    fn an_empty_declaration_makes_one_group() {
-        let family = Family::from_sjson("channels = {}").expect("parse");
+    fn one_permutation_per_choice_combination() {
+        let mut family = sample();
         assert_eq!(family.group_count(), 1);
-        assert_eq!(family.permutations()[0].mask, 0);
-    }
-
-    #[test]
-    fn rejects_an_unknown_key() {
-        let err = Family::from_sjson("programz = {}").expect_err("must fail");
-        assert!(err.to_string().contains("programz"), "{err}");
+        family.permutation_sets = vec![
+            PermutationSet {
+                name: "vertex_modifiers".to_string(),
+                choices: vec![
+                    Choice {
+                        condition: Some("num_skin_weights() == 4".to_string()),
+                        macros: vec!["SKINNED_4WEIGHTS".to_string()],
+                        stages: vec!["vertex".to_string()],
+                        is_default: false,
+                    },
+                    Choice {
+                        condition: None,
+                        macros: vec![],
+                        stages: vec![],
+                        is_default: true,
+                    },
+                ],
+            },
+            PermutationSet {
+                name: "instanced_modifiers".to_string(),
+                choices: vec![
+                    Choice {
+                        condition: Some("instanced()".to_string()),
+                        macros: vec!["INSTANCED".to_string()],
+                        stages: vec![],
+                        is_default: false,
+                    },
+                    Choice {
+                        condition: None,
+                        macros: vec![],
+                        stages: vec![],
+                        is_default: true,
+                    },
+                ],
+            },
+        ];
+        // Two sets of two choices: four permutations, the first set slowest.
+        assert_eq!(family.group_count(), 4);
+        let permutations = family.permutations();
+        assert_eq!(
+            permutations[0].choices,
+            vec![
+                ("vertex_modifiers".to_string(), 0),
+                ("instanced_modifiers".to_string(), 0)
+            ]
+        );
+        assert!(permutations[0].defines("SKINNED_4WEIGHTS"));
+        assert!(permutations[0].defines("INSTANCED"));
+        // The first set varies slowest, so taking the second choice of the
+        // second set leaves the first set's macros alone.
+        assert_eq!(permutations[1].macros, vec!["SKINNED_4WEIGHTS".to_string()]);
+        assert_eq!(permutations[2].macros, vec!["INSTANCED".to_string()]);
+        assert!(permutations[3].macros.is_empty());
     }
 
     /// The murmur32 the engine hashes channel names with, pinned against a name
@@ -686,16 +744,6 @@ mod tests {
         record[12..16].copy_from_slice(&0x1234u32.to_le_bytes());
         block.extend_from_slice(&record);
         block
-    }
-
-    fn texture_channel() -> ChannelDef {
-        ChannelDef {
-            kind: ValueType::Texture2D,
-            domain: Domain::Pixel,
-            required: true,
-            variable: None,
-            semantic: None,
-        }
     }
 
     #[test]

@@ -24,6 +24,8 @@ use std::process::Command;
 
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
+use sdk::filetype::shader_family::{self, BlockTemplate, ChannelDef};
+use sdk::filetype::shader_node::ShaderNode;
 use sdk::filetype::shader_preset::channel_record_len;
 use sdk::murmur;
 use sdk::murmur::Dictionary;
@@ -46,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
+    let mut block_family: Option<PathBuf> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -106,6 +109,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 section = Some(args.get(i).expect("--section needs a name").clone());
             }
             "--preamble" => preamble_mode = true,
+            "--build-block" => {
+                i += 1;
+                block_family = Some(PathBuf::from(
+                    args.get(i).expect("--build-block needs a shader family"),
+                ));
+            }
             "--records" => records_mode = true,
             "--channel" => {
                 i += 1;
@@ -198,6 +207,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(family) = &block_family {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = build_block(path, family, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -684,6 +706,165 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
         .map(|index| format!("{index}"))
         .collect();
     println!("  unnamed block indices: {}", missing.join(" "));
+    Ok(())
+}
+
+/// Builds a block for a family declaration, using the section's own preamble as
+/// the engine template, and reports the round trip: a declaration naming exactly
+/// the template's channels must rebuild the template byte for byte.
+fn build_block(
+    path: &Path,
+    family_path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let first = programs.first().ok_or("no programs")?.pos;
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+    let template = BlockTemplate::from_preamble(preamble)?;
+
+    let node = ShaderNode::from_sjson(&fs::read_to_string(family_path)?)?;
+    let family = node.family()?;
+
+    println!("=== {} ===", path.display());
+    println!(
+        "template: {} groups, {} cbuffers, {} engine records, {} bytes",
+        template.groups(),
+        template.cbuffers(),
+        template.records().len(),
+        preamble.len()
+    );
+    for (index, value) in template.records() {
+        println!("  record {index} = {value}");
+    }
+    for hash in template.channel_names() {
+        match names.and_then(|names| names.get(&hash)) {
+            Some(name) => println!("  channel {hash:08X} {name}"),
+            None => println!("  channel {hash:08X}"),
+        }
+    }
+
+    println!(
+        "declaration: {} groups from {} permutation sets, {} interfaces from {} \
+         flags, {} channels, {} variables",
+        family.group_count(),
+        family.permutation_sets.len(),
+        family.interface_count(),
+        family.flags().len(),
+        family.channels.len(),
+        family.variables.len()
+    );
+    for set in &family.permutation_sets {
+        println!("  set {}: {} choices", set.name, set.choices.len());
+        for (index, choice) in set.choices.iter().enumerate() {
+            println!(
+                "    {index}: if [{}] macros [{}] stages [{}] default {}",
+                choice.condition.clone().unwrap_or_default(),
+                choice.macros.join(" "),
+                choice.stages.join(" "),
+                choice.is_default,
+            );
+        }
+    }
+    for (index, permutation) in family.permutations().iter().enumerate() {
+        println!(
+            "  group {index:02}: macros [{}] from {:?}",
+            permutation.macros.join(" "),
+            permutation.choices,
+        );
+    }
+    for interface in family.interfaces() {
+        println!(
+            "  interface {:02}: flags [{}] channels [{}] variables [{}]",
+            interface.mask,
+            interface.flags.join(" "),
+            interface.channels.join(" "),
+            interface.variables.join(" "),
+        );
+    }
+
+    let channels: Vec<(String, ChannelDef)> = family
+        .channels
+        .iter()
+        .map(|channel| (channel.name.clone(), channel.clone()))
+        .collect();
+    let cbuffers = family.programs.len() as u32;
+    let block = shader_family::build_block(
+        &template,
+        &channels,
+        family.group_count() as u32,
+        cbuffers.max(1),
+    )?;
+    println!(
+        "built: {} bytes, {} channels, header says {} groups / {} cbuffers / {} records",
+        block.len(),
+        channels.len(),
+        u32_at(&block, 4),
+        u32_at(&block, 8),
+        u32_at(&block, 12),
+    );
+
+    // The round trip. The channel stream is keyed by name, so the declaration
+    // is emitted in the template's own channel order to make the comparison
+    // exact; a name the template lacks goes last and shows up as a difference.
+    let declared: Vec<(u32, String, ChannelDef)> = channels
+        .iter()
+        .map(|(name, def)| (hash_name(name), name.clone(), def.clone()))
+        .collect();
+    let template_channels = template.channel_names();
+    let mut ordered: Vec<(String, ChannelDef)> = Vec::new();
+    for hash in &template_channels {
+        if let Some((_, name, def)) = declared.iter().find(|(h, _, _)| h == hash) {
+            ordered.push((name.clone(), def.clone()));
+        }
+    }
+    for (hash, name, def) in &declared {
+        if !template_channels.contains(hash) {
+            ordered.push((name.clone(), def.clone()));
+        }
+    }
+    let missing: Vec<String> = template_channels
+        .iter()
+        .filter(|hash| !declared.iter().any(|(h, _, _)| h == *hash))
+        .map(|hash| match names.and_then(|names| names.get(hash)) {
+            Some(name) => format!("{name} ({hash:08X})"),
+            None => format!("{hash:08X}"),
+        })
+        .collect();
+    println!(
+        "declaration covers {}/{} of the template's channels; not declared: {}",
+        template_channels.len() - missing.len(),
+        template_channels.len(),
+        if missing.is_empty() {
+            "none".to_string()
+        } else {
+            missing.join(", ")
+        }
+    );
+
+    let rebuilt =
+        shader_family::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
+    match rebuilt == preamble {
+        true => println!("round trip: identical to the template preamble"),
+        false => {
+            let at = rebuilt
+                .iter()
+                .zip(preamble)
+                .position(|(a, b)| a != b)
+                .unwrap_or(rebuilt.len().min(preamble.len()));
+            println!(
+                "round trip: differs at byte {at} ({} vs {} bytes)",
+                rebuilt.len(),
+                preamble.len()
+            );
+        }
+    }
     Ok(())
 }
 
