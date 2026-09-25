@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sdk::filetype::condition::Defines;
+use sdk::filetype::group_data::GroupData;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
 use sdk::filetype::shader_family::{self, BlockTemplate, ChannelDef};
@@ -49,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dependencies_mode = false;
     let mut channels_mode = false;
     let mut layout_mode = false;
+    let mut plan_declaration: Option<PathBuf> = None;
     let mut substitute_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
@@ -118,6 +120,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--dependencies" => dependencies_mode = true,
             "--channels" => channels_mode = true,
             "--layout" => layout_mode = true,
+            "--plan" => {
+                i += 1;
+                plan_declaration = Some(PathBuf::from(
+                    args.get(i).expect("--plan needs a declaration").clone(),
+                ));
+            }
             "--substitute" => substitute_mode = true,
             "--build-block" => {
                 i += 1;
@@ -234,6 +242,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         for path in &files {
             if let Err(err) = substitute(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(declaration) = &plan_declaration {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = plan(declaration, path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -922,6 +943,89 @@ fn substitute(
             "OUTSIDE THE GROUP DATA"
         }
     );
+    Ok(())
+}
+
+/// A dry run: what a generated section *would* contain, and whether it holds
+/// together. Reads only - it writes nothing, and touches no game install.
+///
+/// This is the check that makes a deploy safe. A generated family cannot be
+/// verified against a shipped one, because a declaration and a section cannot be
+/// paired, so the invariants are all there is. `Section::build` enforces the ones
+/// that can fail silently - a context pointing at a group or a hash the group data
+/// does not have - and refusing here means the same refusal happens before
+/// anything is deployed.
+fn plan(
+    declaration: &Path,
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let text = fs::read_to_string(declaration)?;
+    let family = sdk::filetype::shader_node::ShaderNode::from_sjson(&text)?.family()?;
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let template = Section::parse(bytes)?;
+    let group_data = GroupData::new(template.group_data().to_vec());
+    let groups = group_data.group_count();
+    let hash = group_data.hash();
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+
+    println!("=== {} + {} ===", declaration.display(), path.display());
+    println!(
+        "  declared: {} inputs, {} channels, {} permutation sets, {} contexts",
+        family.variables.len(),
+        family.channels.len(),
+        family.permutation_sets.len(),
+        family.contexts.len()
+    );
+    let channels = match family.contexts.first() {
+        None => Err(color_eyre::eyre::eyre!("the declaration has no contexts")),
+        Some(context) => match family.permutations_for(context).first() {
+            None => Err(color_eyre::eyre::eyre!("the context permutes over nothing")),
+            Some(permutation) => family.channels_of(permutation),
+        },
+    };
+    let channels = match channels {
+        Ok(channels) => channels
+            .iter()
+            .map(|channel| channel.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Err(err) => format!("unresolved: {err}"),
+    };
+    println!("  the first group's channels: {channels}");
+
+    let records = family.context_records(groups, hash);
+    let carried = sdk::filetype::shader::Carried::of(&template);
+    match Section::build(&records, template.group_data().to_vec(), &carried) {
+        Err(err) => println!("  refused: {err}"),
+        Ok(section) => {
+            let bytes = section.into_bytes();
+            let back = Section::parse(&bytes).expect("a built section reads back");
+            println!(
+                "  built: {} contexts, {} bytes (the template is {}), {} of programs carried",
+                back.contexts().len(),
+                bytes.len(),
+                template.into_bytes().len(),
+                back.device_data().len()
+            );
+            for context in back.contexts() {
+                println!(
+                    "    context {:08X} {}  group {}  hash {:08X}",
+                    context.name,
+                    named(context.name),
+                    context.group,
+                    context.group_hash
+                );
+            }
+            println!("  the invariants hold; nothing was written");
+        }
+    }
     Ok(())
 }
 
