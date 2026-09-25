@@ -65,17 +65,16 @@ as the decode allows.
    kind uses) and the block, so a tail can be generated from the compiled
    container's reflection instead of the preset's bytes.
 
-   Current understanding (all verified in game unless noted): the **upload
-   layout is the canonical variable tables** - a fresh base material with a new
-   variable name (`mod_probe`) at a new offset (240) was uploaded and driven from
-   Lua; the **packed copies** are a library-side serialization that must parse
-   but whose variable records are not what uploads (the probe kept the shipped
-   records and still uploaded the new name from the canonical table); the
-   **block** is the shader library's compiled interface - replacing it with a
-   generated minimal one, or zeroing it, fails shader load (`dispatch_loadtime`,
-   `shader #ID[...]`), and keeping only 64 bytes loads then OOMs at draw. The
-   tails are load-bearing as well (cbuffer list is ours, the resource lists are
-   the library's).
+   Current understanding (all verified in game): the **upload layout is the
+   engine's own** - the names and offsets its compilation of the shipped shader
+   produced. A control run with the shipped name at its shipped offset has the
+   tint cycling, while every attempt to introduce a new name (`mod_probe` at
+   offset 240, in the canonical tables, the packed copies, the material
+   declaration and the tails, with the shader reading it) stays at zero. Moving
+   a shipped name to a new offset behaves the same. So a material can set the
+   *values* of the shipped variable set, but not extend or move the layout; the
+   block, the packed copies and the tails are validated but not the source of the
+   layout either.
 2b. **Generator plan** - what a generated section is made of:
 
 | Piece | Source |
@@ -97,15 +96,13 @@ as the decode allows.
    write. New *channel names* still require the library's block to already list
    them, since the block is the library's own record set.
 
-2c. **Recipe for mod-defined parameters (works today)** - a mod can re-purpose
-   any shipped variable slot: rewrite the record's `name_hash`, `offset` and
-   `size` in the canonical table, give the cbuffer a size that covers the new
-   offset in the HLSL (the tail's size field does not matter, a 256 byte shader
-   cbuffer with 240 byte tails renders), and drive the value from Lua under the
-   new name. The probe did exactly this: `dev_wireframe_color`'s slot became
-   `mod_probe` at offset 240 and the value arrived. What does not work: adding a
-   record (the count is fixed and shifting the tables is untested), or moving a
-   *shipped* name to a new offset (the engine pins the names it knows).
+2c. **Mod-defined parameters: what actually works** - only the shipped variable
+   names at the shipped offsets take values (set from Lua or the material SJSON).
+   The layout itself is part of the engine-compiled interface: a new name or a
+   moved offset stays at zero no matter which copies are patched. So a mod can
+   drive the shipped parameters (and pack several values into one shipped
+   `float4` slot), but it cannot add or move variables. (An earlier run seemed to
+   show a new name uploading; the control run above shows that was wrong.)
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
