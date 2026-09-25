@@ -549,9 +549,122 @@ pub fn rebuild(data: &[u8], replace: impl Fn(&Program) -> Option<Vec<u8>>) -> Re
     Ok(new_data)
 }
 
+/// The record length of one conditions node.
+pub const NODE_LEN: usize = 28;
+
+/// The one conditions node every shipped family carries.
+///
+/// This is measured, and it is the reason the node's grammar does not have to be
+/// decoded. A section's conditions blob is a pool of 28-byte nodes, one per
+/// *link* record in its contexts table, and **every node on every shipped family
+/// is these same 28 bytes**: five nodes across `004F18EA`, `2A04418E` and
+/// `3F08AC44`, and the three families with no links have an empty blob. A node
+/// does not vary with the family, the group count, the context or the interface,
+/// so it is engine-side constant data of the same kind as the `global_viewport`
+/// table and the dependency's path - carried, not derived.
+///
+/// So a generated section writes `count` copies of [`CONDITIONS_NODE`], and the
+/// only per-family part of the region is *how many* links the contexts table has.
+/// [`NodePool::is_known`] is the check for a template whose nodes are something
+/// else, which would mean the constant is not constant after all.
+pub const CONDITIONS_NODE: [u8; NODE_LEN] = [
+    0x01, 0x00, 0x08, 0x00, 0x0C, 0x00, 0x01, 0x00, 0xFD, 0x89, 0x9E, 0x7F, 0x01, 0x30, 0x07, 0x70,
+    0x00, 0x20, 0x00, 0x10, 0x04, 0x30, 0x05, 0x50, 0x07, 0x50, 0x00, 0x90,
+];
+
+/// A section's conditions blob: a pool of [`CONDITIONS_NODE`] copies, one per
+/// link in the contexts table.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NodePool {
+    nodes: Vec<u8>,
+}
+
+impl NodePool {
+    /// Reads the pool at an offset, up to the offset the dependencies table
+    /// starts at.
+    pub fn read(data: &[u8], at: usize, end: usize) -> Self {
+        let end = end.min(data.len());
+        let start = at.min(end);
+        Self {
+            nodes: data[start..end].to_vec(),
+        }
+    }
+
+    /// How many nodes the pool carries.
+    pub fn len(&self) -> usize {
+        self.nodes.len() / NODE_LEN
+    }
+
+    /// Whether the pool is empty.
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// The bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.nodes
+    }
+
+    /// Whether every node is the known constant.
+    pub fn is_known(&self) -> bool {
+        self.nodes
+            .chunks(NODE_LEN)
+            .all(|node| node == CONDITIONS_NODE)
+    }
+
+    /// A pool of `count` copies of [`CONDITIONS_NODE`], which is what a generated
+    /// section writes: one per link record in its contexts table.
+    pub fn of(count: usize) -> Self {
+        let mut nodes = Vec::with_capacity(count * NODE_LEN);
+        for _ in 0..count {
+            nodes.extend_from_slice(&CONDITIONS_NODE);
+        }
+        Self { nodes }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_node_pool_is_a_run_of_one_known_node() {
+        // Every node on every shipped family is these 28 bytes, so the pool is
+        // `count` copies of a constant and the grammar is never decoded.
+        let pool = NodePool::of(2);
+        assert_eq!(pool.len(), 2);
+        assert!(pool.is_known());
+        assert_eq!(pool.bytes().len(), 2 * NODE_LEN);
+
+        // And it survives a trip through the bytes.
+        let read = NodePool::read(pool.bytes(), 0, pool.bytes().len());
+        assert_eq!(read, pool);
+        assert!(read.is_known());
+
+        // A pool with a node that is not the constant is caught, rather than
+        // assumed to be a sharing failure.
+        let mut other = pool.bytes().to_vec();
+        other[0] ^= 0xFF;
+        assert!(
+            !NodePool::read(&other, 0, other.len()).is_known(),
+            "a node that is not the constant is not known"
+        );
+    }
+
+    #[test]
+    fn the_node_is_twenty_eight_bytes_and_seven_words() {
+        // Pinned so a miscount of the record is a failing test rather than a pool
+        // of records that reads one word short.
+        assert_eq!(NODE_LEN, 28);
+        assert_eq!(CONDITIONS_NODE.len(), NODE_LEN);
+        let words: Vec<u32> = CONDITIONS_NODE
+            .chunks(4)
+            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+            .collect();
+        assert_eq!(words.len(), 7);
+        assert_eq!(words[0], 0x0008_0001);
+        assert_eq!(words[6], 0x9000_5007);
+    }
 
     #[test]
     fn stage_from_psv_kind() {

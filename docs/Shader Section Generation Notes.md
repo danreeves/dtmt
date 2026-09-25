@@ -475,19 +475,53 @@ it sits between the contexts and the dependencies:
 
 `2A04418E`'s two nodes are **byte-identical**, which is the point of sharing them
 and also the reason the link's key is not a node index - two different keys, the
-same node. The node is seven words, which read as fourteen `u16`s:
+same node.
 
-```text
-00080001 0001000C 7F9E89FD 70073001 10002000 50053004 90005007
- 0001 0008  0001 000C  7F9E 89FD  0001 0007  0003 0010  0000 0010  0004 0005  0007 0005
-```
+## The conditions node is a constant, and that closes the section
 
-The shape of it is suggestive - a leading `1` before an index, `16` and `5` each
-appearing twice, a pair of them large enough to be hashes - and that is exactly
-as far as it goes. **The grammar is not decoded**: nothing here has been checked
-against a declaration's conditions, and there is no pairing oracle to check it
-against, so a reading of these `u16`s would be a guess. The `u16 flag<<8|operand`
-idea is worth testing when a pairing exists; it is not evidence yet.
+The node is seven words, and the next measurement is the one that matters:
+
+> **Every node on every shipped family is these same 28 bytes.**
+
+Five nodes across the three families that have any - `004F18EA` one, `2A04418E`
+two, `3F08AC44` two - and all five are
+`00080001 0001000C 7F9E89FD 70073001 10002000 50053004 90005007`. The other three
+have an empty blob because they have no links.
+
+So a node does not vary with the family, the group count, the context or the
+interface. **The grammar never has to be decoded**, because a generated section
+writes `count` copies of the constant - `NodePool::of(count)` - and the only
+per-family part of the region is *how many* links the contexts table has, which is
+a count rather than a grammar. `NodePool::is_known` is the check for a template
+whose nodes are something else, which would mean the constant is not constant.
+
+This is the same category as the `global_viewport` table and the dependency's
+path: engine-side constant data, carried. It is also the answer to the question
+the previous section left open, and it is a better one than "undecoded" - the
+earlier note that the payload was the last real gap was measuring the wrong thing,
+because the payload was never per-family to begin with.
+
+A test pins the constant's length, its word count and both end words, and it
+earned its place immediately: the constant was first written with each word
+byte-reversed, and the end-word assertion is what caught it.
+
+### What the section now is
+
+| region | status |
+| --- | --- |
+| contexts table | **measured and writable** - 20-byte records, the group hash read off the group data |
+| conditions pool | **measured, a constant** - `count` copies of 28 bytes, one per link |
+| dependencies entry | **measured and writable** - count and hash read off the group data |
+| group data | **measured and writable** - byte-identical round trip on all six |
+| channels | **measured** - three records each, read by count |
+| packed run | **measured and readable** - per-slot bindings, not a projection |
+| block | **measured and writable** - 863/863 bytes |
+| programs | engine-side, Oodle-framed DXBC, rebuilt not constructed |
+
+The carried list is now: the group count, the group hash, the 28-byte node, the
+dependency path, and the engine's `global_viewport` table. Everything else is
+derived from the declaration or read off the group data being built.
+
 
 
 ## The compiler is DXC, reached through its DLL
