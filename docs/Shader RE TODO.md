@@ -285,9 +285,15 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    is the open part - then signature runs of 3-word `{hash, index, ordinal}`
    records (`{96B9600E, 0, 1} {96B9600E, 1, 2} {96B9600E, 2, 3}` with no count
    of their own, matching the container's ISG1) and a counted run
-   `{DA560F03, 0, 0}`. The vertex tail is just the cbuffer entry, empty lists
-   and one counted run of three `{hash, 0, index}` records. Which lists exist and
-   their order is still open.
+   `{DA560F03, 0, 0}`. **The signature hashes are murmur32 of the semantic
+   name** - `POSITION` = `3FFEABD6`, `COLOR` = `FCDCBA12`, `TEXCOORD` =
+   `B77A0F36`, `CUSTOM` = `96B9600E`, `SV_POSITION` = `DC0548BC` (verified with
+   the `hash` example) - so the runs can be emitted from the DXBC `ISG1`/`OSG1`
+   chunks: the vertex tail's counted run is its output signature
+   (`POSITION`@0, `COLOR`@1, `TEXCOORD`@2), the pixel tail's count-free run is
+   its interpolated inputs (`CUSTOM`0@1, `CUSTOM`1@2, `CUSTOM`2@3). The vertex
+   tail is just the cbuffer entry, empty lists and one counted run of three
+   `{hash, 0, index}` records. Which lists exist and their order is still open.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
