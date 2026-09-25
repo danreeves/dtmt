@@ -159,7 +159,7 @@ fn clone_channel_group_data(data: &mut Vec<u8>, template: u32, name: u32) -> usi
                 });
             }
         }
-        at += 4;
+        at += 2;
     }
 
     // Packed runs of 28 byte records, the count once before the run.

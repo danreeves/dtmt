@@ -195,7 +195,10 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   rather than reusing the generic variable reader. The missed records are stored
   at a **2-byte-shifted alignment with a different field order** (their bytes run
   `00 05 00 00 00 00 00 00 | hash | ...` instead of `05 00 00 00 | 00 ... |
-  hash`), so the layout-aware reader has to handle both alignments. The clone is unit-tested and
+  hash`), so the layout-aware reader has to handle both alignments: the missed
+  records are the **same 20-byte records at a 2-byte-aligned offset** (the first
+  unit has them at `+0x736`, `+0x74A` and `+0x75E`), which a 4-byte-stepping
+  scan skips. The clone is unit-tested and
   undeployed until then. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
