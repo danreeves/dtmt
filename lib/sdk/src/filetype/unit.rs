@@ -1279,6 +1279,115 @@ fn unit_sjson(slots: &[(u32, u64)], meshes: &[u32], lods: &[DecodedLod]) -> Stri
     text
 }
 
+/// Component and channel-type names for the emitted `.bsi`, matching the
+/// compiler's reader.
+fn channel_name(component: u32) -> Result<&'static str> {
+    Ok(match component {
+        0 => "POSITION",
+        1 => "NORMAL",
+        4 => "COLOR",
+        5 => "TEXCOORD",
+        7 => "BLENDINDICES",
+        8 => "BLENDWEIGHTS",
+        other => bail!("Cannot emit channel component {other}"),
+    })
+}
+
+fn channel_type(kind: u32) -> Result<&'static str> {
+    Ok(match kind {
+        17 => "CT_HALF4",
+        15 => "CT_HALF2",
+        19 => "CT_UBYTE4",
+        other => bail!("Cannot emit channel type {other}"),
+    })
+}
+
+/// Emits the `.bsi` SJSON for decoded geometries and mesh objects. Each
+/// geometry is named after the mesh object that uses it; the names double as
+/// the `.unit` renderable and node names.
+fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<String> {
+    let mut names: Vec<Option<u32>> = vec![None; geometries.len()];
+    for mesh in meshes {
+        if mesh.geometry_index == 0 {
+            continue;
+        }
+        if let Some(slot) = names.get_mut(mesh.geometry_index as usize - 1)
+            && slot.is_none()
+        {
+            *slot = Some(mesh.name);
+        }
+    }
+
+    let mut text = String::from("geometries = {\n");
+    for (index, geometry) in geometries.iter().enumerate() {
+        let name = names
+            .get(index)
+            .and_then(|name| *name)
+            .ok_or_else(|| eyre::eyre!("geometry {index} has no mesh object"))?;
+
+        let indices: Vec<u32> = if geometry.index_format == 0 {
+            geometry
+                .index_data
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]) as u32)
+                .collect()
+        } else {
+            geometry
+                .index_data
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+                .collect()
+        };
+
+        text.push_str(&format!(
+            "\t\"#{name:08X}\" = {{\n\t\tindices = {{\n\t\t\tsize = {}\n\t\t\tstreams = [ [ {} ] ]\n\t\t\ttype = \"TRIANGLE_LIST\"\n\t\t}}\n",
+            indices.len(),
+            indices.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" ")
+        ));
+        text.push_str("\t\tmaterials = [\n");
+        for batch in &geometry.batches {
+            let slot = geometry.materials.get(batch[0] as usize).copied().unwrap_or(0);
+            let primitives: Vec<String> = (batch[1]..batch[1] + batch[2])
+                .map(|triangle| triangle.to_string())
+                .collect();
+            text.push_str(&format!(
+                "\t\t\t{{ name = \"#{slot:08X}\" primitives = [ {} ] }}\n",
+                primitives.join(" ")
+            ));
+        }
+        text.push_str("\t\t]\n\t\tstreams = [\n");
+        for (stream_index, stream) in geometry.streams.iter().enumerate() {
+            let channel = geometry
+                .channels
+                .get(stream_index)
+                .ok_or_else(|| eyre::eyre!("geometry {index} stream {stream_index} has no channel"))?;
+            let data = decode_stream(channel.component, channel.kind, &stream.data)?;
+            let components = data.len() / stream.vertices.max(1) as usize;
+            text.push_str(&format!(
+                "\t\t\t{{ channels = [ {{ index = 0 name = \"{}\" type = \"{}\" }} ] data = [ {} ] size = {} stride = {} }}\n",
+                channel_name(channel.component)?,
+                channel_type(channel.kind)?,
+                data.iter().map(|value| format!("{value}")).collect::<Vec<_>>().join(" "),
+                stream.vertices,
+                components * 4
+            ));
+        }
+        text.push_str("\t\t]\n\t}\n");
+    }
+    text.push_str("}\n");
+
+    text.push_str("nodes = {\n");
+    for (index, geometry) in geometries.iter().enumerate() {
+        let _ = geometry;
+        let name = names[index].unwrap();
+        text.push_str(&format!(
+            "\t\"#{name:08X}\" = {{ geometries = [ \"#{name:08X}\" ] local = [ 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 ] }}\n"
+        ));
+    }
+    text.push_str("}\n");
+    Ok(text)
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1882,6 +1991,29 @@ renderables = {
         let text = unit_sjson(&[(0x44F4_A503, 0x1122_3344_5566_7788)], &[0x553C_252C], &[]);
         assert!(text.contains("\"#44F4A503\" = \"#1122334455667788\""), "{text}");
         assert!(text.contains("\"#553C252C\" = {"), "{text}");
+    }
+
+    #[test]
+    fn bsi_sjson_describes_the_geometry() {
+        let name = resource_name("units/mods/test/bsi");
+        let file = compile(name, UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+        let mut reader = Reader::new(&payload[8..]);
+        let geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        let _graph = parse_scene_graph(&mut reader).unwrap();
+        let meshes = parse_mesh_objects(&mut reader).unwrap();
+
+        let text = bsi_sjson(&[geometry], &meshes).unwrap();
+        assert!(text.contains("\"#553C252C\" = {"), "{text}");
+        assert!(text.contains("size = 3"), "indices: {text}");
+        assert!(text.contains("name = \"POSITION\" type = \"CT_HALF4\""), "{text}");
+        assert!(text.contains("name = \"NORMAL\" type = \"CT_HALF2\""), "{text}");
+        assert!(text.contains("name = \"TEXCOORD\" type = \"CT_HALF2\""), "{text}");
+        assert!(text.contains("name = \"#44F4A503\""), "material slot: {text}");
+        assert!(text.contains("primitives = [ 0 ]"), "{text}");
     }
 
     #[test]
