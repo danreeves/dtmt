@@ -665,6 +665,44 @@ pub struct Link {
 /// The record length of a link record.
 pub const LINK_LEN: usize = 8;
 
+/// The engine-side bytes a generated section has to be given, because nothing in a
+/// declaration and nothing in a compiled program produces them.
+///
+/// This is the carried list, in one place: the header words the engine sets, the
+/// link records, the bytes between the group data and the programs, the programs
+/// themselves, and whatever follows them. A [`Section::build`] takes these and
+/// the declaration's own parts, and writes the rest.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Carried {
+    /// The header's second word, which no declaration sets.
+    pub opaque: u32,
+    /// The header's sixth word, which points into the tail.
+    pub default_data: u32,
+    /// The link table, one record per link the contexts declare.
+    pub links: Vec<Link>,
+    /// The bytes between the group data and the programs.
+    pub trailing: Vec<u8>,
+    /// The programs, Oodle-framed DXBC.
+    pub device_data: Vec<u8>,
+    /// Everything after the programs.
+    pub tail: Vec<u8>,
+}
+
+impl Carried {
+    /// The carried bytes of a template section, so a generated one can be built
+    /// against the same engine data rather than against nothing.
+    pub fn of(template: &Section) -> Self {
+        Self {
+            opaque: template.opaque,
+            default_data: template.default_data,
+            links: template.links.clone(),
+            trailing: template.trailing.clone(),
+            device_data: template.device_data.clone(),
+            tail: template.tail.clone(),
+        }
+    }
+}
+
 /// A whole shader section, read by the layout formula and laid out again by it.
 ///
 /// The regions are not independent offsets: `conditions_offset` is
@@ -844,6 +882,74 @@ impl Section {
         &self.device_data
     }
 
+    /// Builds a section from the declaration's own parts and the engine's.
+    ///
+    /// This is the "no shipped blob" path. [`Section::parse`] is the only other
+    /// way to make a [`Section`], so without this a section could only ever be a
+    /// template with things changed in it - and the whole carried list exists
+    /// because a declaration cannot produce these bytes. What a declaration *can*
+    /// produce is the contexts, and what the compiler produces is the group data,
+    /// and everything else arrives in `carried`.
+    ///
+    /// What it checks is the pair that cannot be allowed to disagree: the number
+    /// of contexts, and the group count and hash the contexts point at. A context
+    /// whose `group_hash` is not the group data's own hash is refused here rather
+    /// than written, because it is the one mistake a generated section could make
+    /// that a round trip would never catch - there would be no template to catch
+    /// it against.
+    pub fn build(
+        contexts: &[ContextRecord],
+        group_data: Vec<u8>,
+        carried: &Carried,
+    ) -> Result<Self> {
+        if group_data.len() < 8 {
+            bail!(
+                "the group data is {} bytes, too short for a header",
+                group_data.len()
+            );
+        }
+        let groups = u32::from_le_bytes(group_data[0..4].try_into().unwrap());
+        let hash = u32::from_le_bytes(group_data[4..8].try_into().unwrap());
+        if contexts.is_empty() {
+            bail!("a section needs at least the default context");
+        }
+        for (index, context) in contexts.iter().enumerate() {
+            if context.flags != LINK_FLAG && (context.group_hash != hash || context.group >= groups)
+            {
+                bail!(
+                    "context {index} selects group {} with hash {:08X}, and the group \
+                     data has {groups} groups and hash {hash:08X}",
+                    context.group,
+                    context.group_hash
+                );
+            }
+        }
+        let links = contexts
+            .iter()
+            .filter(|context| context.flags == LINK_FLAG)
+            .count();
+        if links != carried.links.len() {
+            bail!(
+                "{} contexts are links but {} link records were carried",
+                links,
+                carried.links.len()
+            );
+        }
+        Ok(Self {
+            version: VERSION,
+            opaque: carried.opaque,
+            default_data: carried.default_data,
+            contexts: contexts.to_vec(),
+            links: carried.links.clone(),
+            pool: NodePool::of(links),
+            dependencies: vec![Dependency::of()],
+            group_data,
+            trailing: carried.trailing.clone(),
+            device_data: carried.device_data.clone(),
+            tail: carried.tail.clone(),
+        })
+    }
+
     /// Lays the section out again, recomputing every offset from the formula.
     pub fn into_bytes(self) -> Vec<u8> {
         let contexts_len = self.contexts.len() * CONTEXT_LEN;
@@ -904,6 +1010,67 @@ impl Section {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_section_can_be_built_without_a_blob() {
+        // The "no shipped blob" path: the contexts and the group data come from
+        // the declaration and the compiler, and only the engine bytes are carried.
+        // It has to lay out and read back with nothing to compare against.
+        let mut group_data = vec![0u8; 8];
+        group_data[0..4].copy_from_slice(&1u32.to_le_bytes()); // one group
+        group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
+        group_data.extend_from_slice(&[0x11; 88]);
+        let carried = Carried {
+            opaque: 0x1234_5678,
+            default_data: 0,
+            links: vec![],
+            trailing: vec![0x00],
+            device_data: vec![0x22; 24],
+            tail: vec![0x33; 8],
+        };
+        let contexts = [ContextRecord {
+            name: 0xF276_0503,
+            flags: 0,
+            group: 0,
+            group_hash: 0x8BE2_82AA,
+            tail: 0xFFFF_FFFF,
+        }];
+        let built = Section::build(&contexts, group_data.clone(), &carried).expect("built");
+        let bytes = built.into_bytes();
+        let back = Section::parse(&bytes).expect("reads back");
+        assert_eq!(back.contexts().len(), 1);
+        assert_eq!(back.contexts()[0].group_hash, 0x8BE2_82AA);
+        assert_eq!(back.group_data(), group_data.as_slice());
+        assert_eq!(back.device_data(), carried.device_data.as_slice());
+        assert_eq!(back.pool().len(), 0, "no links, so no nodes");
+        assert_eq!(back.into_bytes(), bytes, "and it is stable");
+    }
+
+    #[test]
+    fn a_built_section_refuses_a_context_that_points_at_nothing() {
+        // The one mistake a generated section could make that a round trip could
+        // never catch, because there would be no template to catch it against.
+        let mut group_data = vec![0u8; 8];
+        group_data[0..4].copy_from_slice(&1u32.to_le_bytes());
+        group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
+        let carried = Carried::default();
+        let stale = ContextRecord {
+            name: 0xF276_0503,
+            flags: 0,
+            group: 0,
+            group_hash: 0xDEAD_BEEF,
+            tail: 0,
+        };
+        assert!(
+            Section::build(&[stale], group_data.clone(), &carried).is_err(),
+            "a context whose hash is not the group data's is refused"
+        );
+        let out_of_range = ContextRecord { group: 5, ..stale };
+        assert!(
+            Section::build(&[out_of_range], group_data, &carried).is_err(),
+            "a context past the last group is refused"
+        );
+    }
 
     /// A section with the shipped shape: two contexts, one of them a link, one
     /// dependency, and both regions of engine data.
