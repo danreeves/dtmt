@@ -562,7 +562,11 @@ fn is_packed(data: &[u8], at: usize) -> bool {
         return false;
     }
     let word = |i: usize| u32::from_le_bytes(data[at + i..at + i + 4].try_into().unwrap());
-    word(20) == PACKED_KEY && word(24) == 0 && word(0) != 0
+    // `{name hash, a, b, byte offset, kind, cbuffer hash, type}`: the fourth word
+    // is the variable's byte offset in the cbuffer the fifth names, the fifth is
+    // c_per_object's hash, and the seventh is 2. Checking for a zero in the
+    // seventh, as this did, found a run of one in data that holds dozens.
+    word(0) != 0 && word(16) == 1 && word(20) == PACKED_KEY && word(24) == 2
 }
 
 #[cfg(test)]
@@ -649,9 +653,10 @@ mod tests {
         // The packed run: three 28-byte copies of the same names.
         for name in ["texture_map", "world", "mod_tint"] {
             data.extend_from_slice(&var(name, 0, 3).hash().to_le_bytes());
-            data.extend_from_slice(&[0xCD; 16]); // the cbuffer binding
+            data.extend_from_slice(&[0xCD; 12]); // a, b and the byte offset
+            data.extend_from_slice(&1u32.to_le_bytes()); // the kind
             data.extend_from_slice(&PACKED_KEY.to_le_bytes());
-            data.extend_from_slice(&0u32.to_le_bytes());
+            data.extend_from_slice(&2u32.to_le_bytes()); // the type
         }
         GroupData::new(data)
     }
@@ -845,3 +850,4 @@ mod tests {
         assert_eq!(var("texture_map", 0, 3).hash(), 0xE503152C);
     }
 }
+
