@@ -1098,6 +1098,59 @@ fn write_decoded_scene_graph(w: &mut Writer, graph: &DecodedSceneGraph) {
     }
 }
 
+/// A mesh object: name, indices and render flags.
+struct DecodedMesh {
+    name: u32,
+    node_index: u32,
+    geometry_index: u32,
+    skin_index: u32,
+    unk4: u32,
+    unk5: u32,
+    unk6: u32,
+    bounds: [f32; 10],
+    unk7: u32,
+}
+
+fn parse_mesh_objects(reader: &mut Reader<'_>) -> Result<Vec<DecodedMesh>> {
+    let mut meshes = Vec::new();
+    for _ in 0..reader.u32()? {
+        let mut mesh = DecodedMesh {
+            name: reader.u32()?,
+            node_index: reader.u32()?,
+            geometry_index: reader.u32()?,
+            skin_index: reader.u32()?,
+            unk4: reader.u32()?,
+            unk5: reader.u32()?,
+            unk6: reader.u32()?,
+            bounds: [0.0f32; 10],
+            unk7: 0,
+        };
+        for value in &mut mesh.bounds {
+            *value = reader.f32()?;
+        }
+        mesh.unk7 = reader.u32()?;
+        meshes.push(mesh);
+    }
+    Ok(meshes)
+}
+
+fn write_decoded_mesh_objects(w: &mut Writer, meshes: &[DecodedMesh]) {
+    w.u32(meshes.len() as u32);
+    for mesh in meshes {
+        w.u32(mesh.name);
+        w.u32(mesh.node_index);
+        w.u32(mesh.geometry_index);
+        w.u32(mesh.skin_index);
+        w.u32(mesh.unk4);
+        w.u32(mesh.unk5);
+        w.u32(mesh.unk6);
+        for value in mesh.bounds {
+            w.f32(value);
+        }
+        w.u32(mesh.unk7);
+    }
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1549,6 +1602,33 @@ renderables = {
         writer.byte_array(&[]);
         writer.u32(0);
         write_decoded_scene_graph(&mut writer, &graph);
+        assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
+    }
+
+    #[test]
+    fn mesh_objects_round_trip() {
+        let name = resource_name("units/mods/test/meshes");
+        let file = compile(name, UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        let mut reader = Reader::new(&payload[8..]);
+        let geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        let graph = parse_scene_graph(&mut reader).unwrap();
+        let meshes = parse_mesh_objects(&mut reader).unwrap();
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(meshes[0].name, u32::from(Murmur32::hash("g_cube")));
+        assert_eq!(meshes[0].geometry_index, 1);
+
+        let mut writer = Writer::new();
+        write_decoded_geometry(&mut writer, &geometry);
+        writer.u32(0);
+        writer.byte_array(&[]);
+        writer.u32(0);
+        write_decoded_scene_graph(&mut writer, &graph);
+        write_decoded_mesh_objects(&mut writer, &meshes);
         assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
     }
 
