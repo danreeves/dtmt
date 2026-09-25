@@ -273,6 +273,37 @@ still missing is where one group's tables end and the next group's begin, and th
 header's second word. The per-group headers - the 74/57/29-byte structures noted
 earlier - are what would settle both.
 
+### The 12-byte table header, and what is still open in it
+
+The header is confirmed twice over on the same family, and the count is always
+its last word:
+
+```
++124   70 00 01 00   04 00 00 00   45 00 00 00    256,    4, count 69  → table at +136
++1516  F0 06 00 00   00 00 00 00   3A 00 00 00   1776,    0, count 58  → table at +1528
+```
+
+The first word is **not** the cbuffer size in both cases. `1776` is the size of
+`global_viewport` and the material table's offsets run to 1764 inside it, so
+there the first word is the cbuffer; but the engine table's first word is `256`
+and its own records run to 1764 as well. So the first word is something else that
+happens to be 1776 for the second table - the previous table's end, a group's
+slice of the cbuffer, or a count of something else. The second word is `4` and
+`0`, which look like flags but could as easily be a sub-count.
+
+Both of the material table's and the engine table's offsets land in the same
+cbuffer, which is worth stating plainly: **a group has one `global_viewport`
+cbuffer, and both tables describe slices of it.** That is why the engine table is
+the same in every group and the material's is not - the material's records are
+the group's own slice.
+
+The region between the descriptors (+56) and the first table's header (+124) is
+68 bytes of 16-byte entries whose hashes are the ones the tail's resource lists
+already name - `3AFC636C` (list 4, a family texture) and `41B1CFF8` (list 6, a
+UAV) among them - so the per-group header is a *resource* list, and the tables
+follow it. That is the structure to decode next: the entry shape, and therefore
+where a group's tables end and the next group's resources begin.
+
 ## The compiler is DXC, reached through its DLL
 
 `dtmt build` compiles a material's shader sources today, but by **spawning
