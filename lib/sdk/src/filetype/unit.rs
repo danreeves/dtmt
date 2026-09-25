@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 
-use color_eyre::eyre::{self, bail, Context as _, Result};
+use color_eyre::eyre::{self, Context as _, Result, bail};
 use serde::Deserialize;
 
 use crate::murmur::{IdString64, Murmur32, Murmur64};
@@ -459,7 +459,13 @@ fn compile_stream(
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 17,
+                stride: 8,
+                data: out,
+                vertices: size,
+            }))
         }
         // Normals are octahedral-encoded half2.
         "NORMAL" => {
@@ -469,7 +475,13 @@ fn compile_stream(
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 15,
+                stride: 4,
+                data: out,
+                vertices: size,
+            }))
         }
         // Texture coordinates are half2.
         "TEXCOORD" => {
@@ -479,7 +491,13 @@ fn compile_stream(
                     out.extend_from_slice(&f16(*value).to_le_bytes());
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 15,
+                stride: 4,
+                data: out,
+                vertices: size,
+            }))
         }
         // Colors become half4.
         "COLOR" => {
@@ -495,7 +513,13 @@ fn compile_stream(
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 17,
+                stride: 8,
+                data: out,
+                vertices: size,
+            }))
         }
         "BLENDINDICES" => {
             let mut out = Vec::with_capacity(size as usize * 4);
@@ -504,7 +528,13 @@ fn compile_stream(
                     out.push(*value as u8);
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 19, stride: 4, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 19,
+                stride: 4,
+                data: out,
+                vertices: size,
+            }))
         }
         "BLENDWEIGHTS" => {
             let mut out = Vec::with_capacity(size as usize * 8);
@@ -513,7 +543,13 @@ fn compile_stream(
                     out.extend_from_slice(&f16(*value).to_le_bytes());
                 }
             }
-            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
+            Ok(Some(VertexFormat {
+                component,
+                kind: 17,
+                stride: 8,
+                data: out,
+                vertices: size,
+            }))
         }
         _ => unreachable!(),
     }
@@ -678,9 +714,12 @@ fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32])
     let (streams, indices) = unify_geometry(geometry)?;
     let mut formats = Vec::new();
     for stream in &streams {
-        if let Some(format) =
-            compile_stream(&stream.name, &stream.data, stream.vertices(), stream.components)?
-        {
+        if let Some(format) = compile_stream(
+            &stream.name,
+            &stream.data,
+            stream.vertices(),
+            stream.components,
+        )? {
             formats.push(format);
         }
     }
@@ -767,7 +806,11 @@ fn f32_from_f16(bits: u16) -> f32 {
     let value = if exponent == 0 {
         (mantissa as f32) * 2.0f32.powi(-24)
     } else if exponent == 0x1f {
-        if mantissa == 0 { f32::INFINITY } else { f32::NAN }
+        if mantissa == 0 {
+            f32::INFINITY
+        } else {
+            f32::NAN
+        }
     } else {
         (mantissa as f32 / 1024.0 + 1.0) * 2.0f32.powi(exponent as i32 - 15)
     };
@@ -1206,7 +1249,18 @@ fn parse_lod_objects(reader: &mut Reader<'_>) -> Result<Vec<DecodedLod>> {
         let order = reader.u32_array()?;
         let unk7 = reader.u32()?;
         let unk8 = reader.bool()?;
-        lods.push(DecodedLod { name, unk2, unk3, steps, bounds, unk4, unk5, order, unk7, unk8 });
+        lods.push(DecodedLod {
+            name,
+            unk2,
+            unk3,
+            steps,
+            bounds,
+            unk4,
+            unk5,
+            order,
+            unk7,
+            unk8,
+        });
     }
     Ok(lods)
 }
@@ -1346,7 +1400,11 @@ fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<S
         ));
         text.push_str("\t\tmaterials = [\n");
         for batch in &geometry.batches {
-            let slot = geometry.materials.get(batch[0] as usize).copied().unwrap_or(0);
+            let slot = geometry
+                .materials
+                .get(batch[0] as usize)
+                .copied()
+                .unwrap_or(0);
             let primitives: Vec<String> = (batch[1]..batch[1] + batch[2])
                 .map(|triangle| triangle.to_string())
                 .collect();
@@ -1357,10 +1415,9 @@ fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<S
         }
         text.push_str("\t\t]\n\t\tstreams = [\n");
         for (stream_index, stream) in geometry.streams.iter().enumerate() {
-            let channel = geometry
-                .channels
-                .get(stream_index)
-                .ok_or_else(|| eyre::eyre!("geometry {index} stream {stream_index} has no channel"))?;
+            let channel = geometry.channels.get(stream_index).ok_or_else(|| {
+                eyre::eyre!("geometry {index} stream {stream_index} has no channel")
+            })?;
             let data = decode_stream(channel.component, channel.kind, &stream.data)?;
             let components = data.len() / stream.vertices.max(1) as usize;
             text.push_str(&format!(
@@ -1424,7 +1481,12 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     }
     let lods = parse_lod_objects(&mut reader)?;
     // Terrains, unknowns, joints and movers.
-    if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 {
+    if reader.u32()? != 0
+        || reader.u32()? != 0
+        || reader.u32()? != 0
+        || reader.u32()? != 0
+        || reader.u32()? != 0
+    {
         bail!("terrains, joints or movers are not supported yet");
     }
     let _animation_bones = reader.bool()?;
@@ -1962,7 +2024,11 @@ renderables = {
         assert_eq!(reader.u32().unwrap(), 0, "unknown 15");
         // Animation state, visibility groups and flow data.
         assert!(!reader.bool().unwrap(), "animation bones flag");
-        assert_eq!(reader.byte_array().unwrap().len(), 0, "animation state machine");
+        assert_eq!(
+            reader.byte_array().unwrap().len(),
+            0,
+            "animation state machine"
+        );
         assert_eq!(
             reader.byte_array().unwrap(),
             vec![0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
@@ -1971,7 +2037,11 @@ renderables = {
         assert_eq!(reader.u32().unwrap(), 0, "visibility groups");
         assert_eq!(reader.byte_array().unwrap().len(), 0, "flow");
         assert_eq!(reader.byte_array().unwrap().len(), 0, "flow dynamic data");
-        assert_eq!(reader.byte_array().unwrap(), vec![0, 0, 0, 0], "triangle finder");
+        assert_eq!(
+            reader.byte_array().unwrap(),
+            vec![0, 0, 0, 0],
+            "triangle finder"
+        );
         assert_eq!(reader.byte_array().unwrap().len(), 0, "physics");
         // Default material and the material list.
         assert_eq!(reader.u64().unwrap(), 0, "default material");
@@ -2051,7 +2121,10 @@ renderables = {
     #[test]
     fn unit_sjson_uses_hash_names() {
         let text = unit_sjson(&[(0x44F4_A503, 0x1122_3344_5566_7788)], &[0x553C_252C], &[]);
-        assert!(text.contains("\"#44F4A503\" = \"#1122334455667788\""), "{text}");
+        assert!(
+            text.contains("\"#44F4A503\" = \"#1122334455667788\""),
+            "{text}"
+        );
         assert!(text.contains("\"#553C252C\" = {"), "{text}");
     }
 
@@ -2071,10 +2144,22 @@ renderables = {
         let text = bsi_sjson(&[geometry], &meshes).unwrap();
         assert!(text.contains("\"#553C252C\" = {"), "{text}");
         assert!(text.contains("size = 3"), "indices: {text}");
-        assert!(text.contains("name = \"POSITION\" type = \"CT_HALF4\""), "{text}");
-        assert!(text.contains("name = \"NORMAL\" type = \"CT_HALF2\""), "{text}");
-        assert!(text.contains("name = \"TEXCOORD\" type = \"CT_HALF2\""), "{text}");
-        assert!(text.contains("name = \"#44F4A503\""), "material slot: {text}");
+        assert!(
+            text.contains("name = \"POSITION\" type = \"CT_HALF4\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("name = \"NORMAL\" type = \"CT_HALF2\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("name = \"TEXCOORD\" type = \"CT_HALF2\""),
+            "{text}"
+        );
+        assert!(
+            text.contains("name = \"#44F4A503\""),
+            "material slot: {text}"
+        );
         assert!(text.contains("primitives = [ 0 ]"), "{text}");
     }
 
@@ -2086,7 +2171,10 @@ renderables = {
 
         let (unit_text, bsi_text) = decompile(payload).unwrap();
         assert!(bsi_text.contains("\"#553C252C\" = {"), "{bsi_text}");
-        assert!(unit_text.contains("\"#44F4A503\" = \"#1122334455667788\""), "{unit_text}");
+        assert!(
+            unit_text.contains("\"#44F4A503\" = \"#1122334455667788\""),
+            "{unit_text}"
+        );
 
         // Recompiling the emitted pair gives an equivalent payload. Normals are
         // octahedral-encoded, so their unpack/re-pack is not bit exact; compare
@@ -2108,7 +2196,9 @@ renderables = {
     fn streams_round_trip_through_decode() {
         // POSITION: half4, xyz plus a discarded w.
         let positions = [0.5f32, -1.0, 2.0, 0.25, 0.0, 1.0];
-        let format = compile_stream("POSITION", &positions, 2, 3).unwrap().unwrap();
+        let format = compile_stream("POSITION", &positions, 2, 3)
+            .unwrap()
+            .unwrap();
         assert_eq!(format.kind, 17);
         let decoded = decode_stream(0, format.kind, &format.data).unwrap();
         assert_eq!(decoded.len(), 6);
@@ -2145,18 +2235,13 @@ renderables = {
         let geometry = BsiGeometry {
             indices: BsiIndices {
                 size: 6,
-                streams: vec![
-                    vec![0, 1, 2, 0, 2, 3],
-                    vec![0, 0, 1, 0, 1, 1],
-                ],
+                streams: vec![vec![0, 1, 2, 0, 2, 3], vec![0, 0, 1, 0, 1, 1]],
                 kind: "TRIANGLE_LIST".to_string(),
             },
             streams: vec![
                 BsiStream {
                     channels: channel("POSITION"),
-                    data: vec![
-                        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0,
-                    ],
+                    data: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0],
                     size: 4,
                     stride: 12,
                 },
@@ -2219,11 +2304,15 @@ renderables = {
         let payload = file.variants()[0].data();
         assert!(contains_u32(payload, 0x553C_252C), "mesh/node name");
         assert!(contains_u32(payload, 0x44F4_A503), "material slot");
-        assert!(!contains_u32(payload, u32::from(Murmur32::hash("553C252C"))));
+        assert!(!contains_u32(
+            payload,
+            u32::from(Murmur32::hash("553C252C"))
+        ));
     }
 
     #[test]
-    fn normalizer_accepts_space_separated_values() {        #[derive(Deserialize)]
+    fn normalizer_accepts_space_separated_values() {
+        #[derive(Deserialize)]
         struct Test {
             a: Vec<u32>,
             b: BTreeMap<String, u32>,
@@ -2236,4 +2325,3 @@ renderables = {
         assert_eq!(parsed.b["d"], 5);
     }
 }
-

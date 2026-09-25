@@ -69,7 +69,13 @@ fn read_variable(data: &[u8], at: usize) -> Option<(u32, u32, u32, u32, u32)> {
 /// effect and the new slot is never written. Returns the number of records
 /// replaced and the slot's previous `(offset, size)`, which callers use to grow
 /// the constant buffer in the program tails.
-fn patch_variable(data: &mut [u8], slot: u32, name: u32, offset: u32, size: u32) -> (usize, Option<(u32, u32)>) {
+fn patch_variable(
+    data: &mut [u8],
+    slot: u32,
+    name: u32,
+    offset: u32,
+    size: u32,
+) -> (usize, Option<(u32, u32)>) {
     let Some(&(kind, ..)) = VARIABLE_SIZES.iter().find(|(.., bytes)| *bytes == size) else {
         return (0, None);
     };
@@ -458,12 +464,9 @@ impl Preset {
             // Variable slot re-purposes carry four fields.
             if let Some(rest) = line.strip_prefix("variable ") {
                 let mut fields = rest.split(' ');
-                let (Some(slot), Some(name), Some(offset), Some(size)) = (
-                    fields.next(),
-                    fields.next(),
-                    fields.next(),
-                    fields.next(),
-                ) else {
+                let (Some(slot), Some(name), Some(offset), Some(size)) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                else {
                     bail!("malformed variable line: {line}");
                 };
                 preset.variables.push(VariableRewrite {
@@ -478,12 +481,9 @@ impl Preset {
             // Variable slot additions carry four fields too.
             if let Some(rest) = line.strip_prefix("clone ") {
                 let mut fields = rest.split(' ');
-                let (Some(template), Some(name), Some(offset), Some(size)) = (
-                    fields.next(),
-                    fields.next(),
-                    fields.next(),
-                    fields.next(),
-                ) else {
+                let (Some(template), Some(name), Some(offset), Some(size)) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                else {
                     bail!("malformed clone line: {line}");
                 };
                 preset.clones.push(VariableClone {
@@ -907,13 +907,7 @@ mod tests {
         for word in [3u32, 0, slot, 224, 16] {
             data.extend_from_slice(&word.to_le_bytes());
         }
-        let (count, old) = clone_variable(
-            &mut data,
-            slot,
-            hash_token("mod_extra"),
-            240,
-            16,
-        );
+        let (count, old) = clone_variable(&mut data, slot, hash_token("mod_extra"), 240, 16);
         assert_eq!(count, 1);
         assert_eq!(old, Some((224, 16)));
         assert_eq!(u32_at(&data, 20 + 8), hash_token("mod_extra"));
