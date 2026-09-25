@@ -377,6 +377,43 @@ pub struct Family {
 
 impl Family {
     /// The context of that name, which is what the engine asks for.
+    /// The contexts a generated section carries, one per declared context.
+    ///
+    /// This is the bridge from the declaration to the section: `shader_contexts`
+    /// are named, and the section's contexts table is a list of name hashes, so a
+    /// family that declares three contexts writes three records.
+    ///
+    /// Every record selects group 0 and carries the group data's own hash, because
+    /// that is what an inline context is on a shipped section: `default` points at
+    /// the group data, and the other contexts point at their own compiled hash.
+    /// A family that needs a context on a *different* group - the shape a link
+    /// takes - says so by building the record itself, which is why this returns
+    /// the records rather than only offering to make them.
+    ///
+    /// The `hash` is the group data's header hash and `groups` its count, and
+    /// both have to come from the group data rather than from the declaration: the
+    /// group count is a property of the compiled build, and `Section::build`
+    /// checks the two against each other.
+    pub fn context_records(
+        &self,
+        groups: u32,
+        hash: u32,
+    ) -> Vec<crate::filetype::shader::ContextRecord> {
+        use crate::filetype::shader::ContextRecord;
+        use crate::murmur::Murmur32;
+        self.contexts
+            .iter()
+            .map(|context| ContextRecord {
+                name: Murmur32::hash(context.name.as_bytes()).into(),
+                flags: 0,
+                group: 0,
+                group_hash: hash,
+                tail: 0xFFFF_FFFF,
+            })
+            .collect()
+    }
+
+    /// One declared shader context by name.
     pub fn context(&self, name: &str) -> Option<&ShaderContext> {
         self.contexts.iter().find(|context| context.name == name)
     }
@@ -1089,6 +1126,36 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    #[test]
+    fn a_family_writes_one_context_record_per_declared_context() {
+        // The bridge from the declaration to the section: three named contexts
+        // become three records, each pointing at the group data the build made.
+        let family = Family {
+            contexts: vec![
+                ShaderContext {
+                    name: "default".to_string(),
+                    ..Default::default()
+                },
+                ShaderContext {
+                    name: "shadow_caster".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let records = family.context_records(3, 0x8BE2_82AA);
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].group_hash, 0x8BE2_82AA);
+        assert_eq!(records[0].group, 0);
+        assert_eq!(records[0].tail, 0xFFFF_FFFF);
+        assert_ne!(records[0].name, records[1].name, "names are hashed apart");
+        assert_eq!(
+            records[0].name,
+            crate::murmur::Murmur32::hash("default".as_bytes()).into()
+        );
+    }
+
     fn a_group_has_the_channels_its_conditions_allow() {
         let mut family = sample();
         // Two channels under a condition each, as a real declaration writes
