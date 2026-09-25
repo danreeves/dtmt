@@ -43,11 +43,84 @@ struct StepDef {
 struct RenderableDef {}
 
 #[derive(Debug, Deserialize)]
+struct CameraSettings {
+    #[serde(default)]
+    far_range: f32,
+    #[serde(default)]
+    interest_point_distance: f32,
+    #[serde(default)]
+    orthographic_plane: Vec<f32>,
+    #[serde(default)]
+    orthographic_zoom: f32,
+    #[serde(default)]
+    position: Vec<f32>,
+    #[serde(default)]
+    projection_type: String,
+    #[serde(default)]
+    rotation: Vec<f32>,
+    #[serde(default)]
+    rotation_speed: f32,
+    #[serde(default)]
+    translation_speed: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct FlowFraming {
+    #[serde(default)]
+    scale: f32,
+    #[serde(default)]
+    x: f32,
+    #[serde(default)]
+    y: f32,
+}
+
+/// Editor-only metadata. Declared so its float values parse with the typed
+/// reader: unknown values would be skipped generically, and the SJSON tokenizer
+/// cannot skip a float (it tokenizes `4.579212` as `4` plus leftovers).
+#[derive(Debug, Deserialize)]
+struct EditorMetadata {
+    #[serde(default)]
+    camera_settings: Option<CameraSettings>,
+    #[serde(default)]
+    flow_framing: Option<FlowFraming>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Light {
+    #[serde(default)]
+    box_max: Vec<f32>,
+    #[serde(default)]
+    box_min: Vec<f32>,
+    #[serde(default)]
+    cast_shadows: bool,
+    #[serde(default)]
+    color: Vec<f32>,
+    #[serde(default)]
+    falloff_end: f32,
+    #[serde(default)]
+    falloff_exponent: f32,
+    #[serde(default)]
+    falloff_start: f32,
+    #[serde(default)]
+    node: String,
+    #[serde(default)]
+    spot_angle_end: f32,
+    #[serde(default)]
+    spot_angle_start: f32,
+    #[serde(rename = "type", default)]
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct UnitDef {
     materials: BTreeMap<String, String>,
     #[serde(default)]
     lod: Vec<LodDef>,
     renderables: BTreeMap<String, RenderableDef>,
+    #[serde(default)]
+    editor_metadata: Option<EditorMetadata>,
+    #[serde(default)]
+    lights: BTreeMap<String, Light>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +128,11 @@ struct BsiDef {
     geometries: BTreeMap<String, BsiGeometry>,
     #[serde(default)]
     nodes: BTreeMap<String, BsiNode>,
+    /// Declared so animation float streams parse typed; they are not compiled.
+    #[serde(default)]
+    animations: Vec<BsiAnimation>,
+    #[serde(default)]
+    source_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,6 +166,40 @@ struct BsiChannel {
     name: String,
     #[serde(rename = "type")]
     kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BsiAnimationChannel {
+    #[serde(default)]
+    index: u32,
+    #[serde(default)]
+    name: String,
+    #[serde(rename = "type", default)]
+    kind: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BsiAnimationStream {
+    #[serde(default)]
+    channels: Vec<BsiAnimationChannel>,
+    #[serde(default)]
+    data: Vec<f32>,
+    #[serde(default)]
+    size: u32,
+    #[serde(default)]
+    stride: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct BsiAnimation {
+    #[serde(default)]
+    node: String,
+    #[serde(default)]
+    parameter: String,
+    #[serde(default)]
+    stream: Option<BsiAnimationStream>,
+    #[serde(default)]
+    times: Vec<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -304,7 +416,12 @@ struct VertexFormat {
     vertices: u32,
 }
 
-fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Result<VertexFormat> {
+fn compile_stream(
+    name: &str,
+    data: &[f32],
+    size: u32,
+    components: usize,
+) -> Result<Option<VertexFormat>> {
     if data.len() != size as usize * components {
         bail!(
             "Channel '{name}' has {} values, expected {} for {size} vertices",
@@ -319,6 +436,10 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
         "TEXCOORD" => 5,
         "BLENDINDICES" => 7,
         "BLENDWEIGHTS" => 8,
+        // The compiled Darktide vertex declaration has no tangent or binormal
+        // component, and shipped units do not carry them either, so streams
+        // that only VT2-style sources export are skipped.
+        "TANGENT" | "BINORMAL" => return Ok(None),
         other => bail!("Unsupported vertex channel '{other}'"),
     };
     match name {
@@ -330,7 +451,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
         }
         // Normals are octahedral-encoded half2.
         "NORMAL" => {
@@ -340,7 +461,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size }))
         }
         // Texture coordinates are half2.
         "TEXCOORD" => {
@@ -350,7 +471,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.extend_from_slice(&f16(*value).to_le_bytes());
                 }
             }
-            Ok(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 15, stride: 4, data: out, vertices: size }))
         }
         // Colors become half4.
         "COLOR" => {
@@ -366,7 +487,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.extend_from_slice(&f16(value).to_le_bytes());
                 }
             }
-            Ok(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
         }
         "BLENDINDICES" => {
             let mut out = Vec::with_capacity(size as usize * 4);
@@ -375,7 +496,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.push(*value as u8);
                 }
             }
-            Ok(VertexFormat { component, kind: 19, stride: 4, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 19, stride: 4, data: out, vertices: size }))
         }
         "BLENDWEIGHTS" => {
             let mut out = Vec::with_capacity(size as usize * 8);
@@ -384,7 +505,7 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
                     out.extend_from_slice(&f16(*value).to_le_bytes());
                 }
             }
-            Ok(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size })
+            Ok(Some(VertexFormat { component, kind: 17, stride: 8, data: out, vertices: size }))
         }
         _ => unreachable!(),
     }
@@ -423,16 +544,137 @@ fn write_bounding_volume(w: &mut Writer, min: [f32; 3], max: [f32; 3]) {
     }
 }
 
-fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32]) -> Result<()> {
-    w.u32(1); // mesh geometry version
-    let mut formats = Vec::new();
+/// One vertex attribute stream after gathering.
+struct UnifiedStream {
+    name: String,
+    components: usize,
+    data: Vec<f32>,
+}
+
+impl UnifiedStream {
+    fn vertices(&self) -> u32 {
+        (self.data.len() / self.components.max(1)) as u32
+    }
+}
+
+/// BSI attributes are indexed independently - the format stores one index list
+/// per vertex stream, each indexing its own vertex array. Darktide's compiled
+/// geometry instead uses one vertex per unique attribute tuple and a single
+/// index list, so gather the streams: walk the corner lists together and emit a
+/// vertex for every distinct tuple of per-stream indices.
+fn unify_geometry(geometry: &BsiGeometry) -> Result<(Vec<UnifiedStream>, Vec<u32>)> {
+    struct Source<'a> {
+        name: String,
+        components: usize,
+        data: &'a [f32],
+        size: usize,
+    }
+
+    let mut sources = Vec::new();
     for stream in &geometry.streams {
         let channel = stream
             .channels
             .first()
             .ok_or_else(|| eyre::eyre!("Geometry stream has no channels"))?;
         let components = (stream.stride / 4) as usize;
-        formats.push(compile_stream(&channel.name, &stream.data, stream.size, components)?);
+        if components == 0 {
+            bail!("Channel '{}' has a zero stride", channel.name);
+        }
+        if stream.data.len() != stream.size as usize * components {
+            bail!(
+                "Channel '{}' has {} values, expected {} for {} vertices",
+                channel.name,
+                stream.data.len(),
+                stream.size as usize * components,
+                stream.size
+            );
+        }
+        sources.push(Source {
+            name: channel.name.clone(),
+            components,
+            data: &stream.data,
+            size: stream.size as usize,
+        });
+    }
+
+    // One index list shared by every stream, or one per stream.
+    let lists: Vec<&Vec<u32>> = if geometry.indices.streams.len() == 1 {
+        sources
+            .iter()
+            .map(|_| &geometry.indices.streams[0])
+            .collect()
+    } else if geometry.indices.streams.len() == sources.len() {
+        geometry.indices.streams.iter().collect()
+    } else {
+        bail!(
+            "Geometry has {} index lists for {} vertex streams",
+            geometry.indices.streams.len(),
+            sources.len()
+        );
+    };
+    let corners = geometry.indices.size as usize;
+    for (index, list) in lists.iter().enumerate() {
+        if list.len() != corners {
+            bail!(
+                "Index list {} has {} values, expected {}",
+                index,
+                list.len(),
+                corners
+            );
+        }
+    }
+
+    let mut gathered: Vec<UnifiedStream> = sources
+        .iter()
+        .map(|source| UnifiedStream {
+            name: source.name.clone(),
+            components: source.components,
+            data: Vec::new(),
+        })
+        .collect();
+    let mut seen = std::collections::HashMap::new();
+    let mut indices = Vec::with_capacity(corners);
+    let mut vertex_count = 0u32;
+    for corner in 0..corners {
+        let key: Vec<u32> = lists.iter().map(|list| list[corner]).collect();
+        if let Some(&index) = seen.get(&key) {
+            indices.push(index);
+            continue;
+        }
+        for (stream_index, source) in sources.iter().enumerate() {
+            let vertex = key[stream_index] as usize;
+            if vertex >= source.size {
+                bail!(
+                    "Index {} is out of range for channel '{}' ({} vertices)",
+                    vertex,
+                    source.name,
+                    source.size
+                );
+            }
+            let at = vertex * source.components;
+            gathered[stream_index]
+                .data
+                .extend_from_slice(&source.data[at..at + source.components]);
+        }
+        let index = vertex_count;
+        seen.insert(key, index);
+        indices.push(index);
+        vertex_count += 1;
+    }
+
+    Ok((gathered, indices))
+}
+
+fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32]) -> Result<()> {
+    w.u32(1); // mesh geometry version
+    let (streams, indices) = unify_geometry(geometry)?;
+    let mut formats = Vec::new();
+    for stream in &streams {
+        if let Some(format) =
+            compile_stream(&stream.name, &stream.data, stream.vertices(), stream.components)?
+        {
+            formats.push(format);
+        }
     }
     w.u32(formats.len() as u32);
     for format in &formats {
@@ -453,14 +695,6 @@ fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32])
     }
 
     // Index stream: 16 bit when possible.
-    let indices: Vec<u32> = geometry.indices.streams.iter().flatten().copied().collect();
-    if indices.len() != geometry.indices.size as usize {
-        bail!(
-            "Geometry index stream has {} values, expected {}",
-            indices.len(),
-            geometry.indices.size
-        );
-    }
     let use32 = indices.iter().any(|i| *i > u16::MAX as u32);
     w.u32(0); // validity
     w.u32(0); // stream type
@@ -910,8 +1144,54 @@ renderables = {
     }
 
     #[test]
-    fn normalizer_accepts_space_separated_values() {
-        #[derive(Deserialize)]
+    fn unify_gathers_independently_indexed_streams() {
+        fn channel(name: &str) -> Vec<BsiChannel> {
+            vec![BsiChannel {
+                index: 0,
+                name: name.to_string(),
+                kind: "CT_FLOAT3".to_string(),
+            }]
+        }
+
+        let geometry = BsiGeometry {
+            indices: BsiIndices {
+                size: 6,
+                streams: vec![
+                    vec![0, 1, 2, 0, 2, 3],
+                    vec![0, 0, 1, 0, 1, 1],
+                ],
+                kind: "TRIANGLE_LIST".to_string(),
+            },
+            streams: vec![
+                BsiStream {
+                    channels: channel("POSITION"),
+                    data: vec![
+                        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0,
+                    ],
+                    size: 4,
+                    stride: 12,
+                },
+                BsiStream {
+                    channels: channel("NORMAL"),
+                    data: vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                    size: 2,
+                    stride: 12,
+                },
+            ],
+            materials: Vec::new(),
+        };
+
+        let (streams, indices) = unify_geometry(&geometry).unwrap();
+        // Four distinct (position, normal) tuples behind six corners.
+        assert_eq!(streams[0].vertices(), 4);
+        assert_eq!(streams[1].vertices(), 4);
+        assert_eq!(indices, vec![0, 1, 2, 0, 2, 3]);
+        // Vertex 2 uses position 2 and normal 1.
+        assert_eq!(&streams[1].data[6..9], &[0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn normalizer_accepts_space_separated_values() {        #[derive(Deserialize)]
         struct Test {
             a: Vec<u32>,
             b: BTreeMap<String, u32>,
@@ -924,3 +1204,4 @@ renderables = {
         assert_eq!(parsed.b["d"], 5);
     }
 }
+

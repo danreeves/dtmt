@@ -36,6 +36,30 @@ way Darktide stores them:
 | BLENDINDICES | ubyte4, stride 4 |
 | BLENDWEIGHTS | half4, stride 8 |
 
+`TANGENT`/`BINORMAL` streams are skipped: the compiled Darktide vertex
+declaration has no such component and shipped units do not carry them either.
+
+The BSI indexes each attribute independently - `indices.streams[i]` indexes
+`streams[i]`'s own vertex array - while the compiled geometry uses one vertex per
+unique attribute tuple and a single index list. The compiler therefore gathers
+the streams: it walks the corner lists together, emits a vertex for every
+distinct tuple of per-stream indices and writes the resulting unified index
+list. A BSI with a single index list (the common case for hand-written sources)
+uses that list for every stream. The VT2 SDK example
+`endurance_badges/units/props/endurance_badges/prop_endurance_badge_01`
+(five independently indexed streams, `bsiz`-wrapped, with `editor_metadata`,
+`lights` and `animations`) compiles through this path; the tool
+`examples/compile_unit.rs` turns a `.unit`/`.bsi` pair into a payload file
+directly.
+
+The SDK's metadata sections (`editor_metadata`, `lights`, `animations`,
+`source_path`) are declared in the compiler's schema even though they are not
+compiled. That is deliberate: fields the schema does not know are skipped
+generically, and the SJSON tokenizer cannot skip a float (it tokenizes
+`4.579212` as `4` plus leftovers and then fails), so any unknown section with
+float values would break the parse. New metadata fields therefore have to be
+declared to keep the reader working.
+
 Each compiled stream carries its channel as `{component, type, set, stream,
 is_instance}`; the channel type codes are the Darktide ones (2 = float3,
 15 = half2, 17 = half4, 19 = ubyte4).
@@ -86,7 +110,11 @@ list and in the unit's `materials` map.
 
 - `lib/sdk/src/filetype/unit.rs`: SJSON/BSI parsing (with a normalizer that
   accepts both the SDK's space-separated values and the parser's
-  comma/newline-separated form), packing and payload writing.
+  comma/newline-separated form), per-stream index unification, packing and
+  payload writing. Unit tests cover the cube case, the normalizer and the
+  gathering of independently indexed streams.
+- `lib/sdk/examples/compile_unit.rs`: compile one `.unit`/`.bsi` pair into a
+  payload file, for testing the compiler outside a mod build.
 - `crates/dtmt/src/cmd/build.rs`: package entries of type `unit` are compiled
   from the `.unit` file and the sibling `.bsi`.
 - The snoopymod (`units/mods/snoopymod/cube.unit|bsi`) is the test case; in game
