@@ -208,6 +208,24 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    reproducible. `flags` keeps the space in bits 16+ and a small kind in the low
    bits (0 material cbuffer, 1 engine cbuffer, 3 texture, 5 UAV). Still open:
    what `Y` measures - but its *shape* is now clear: it is a packed array of 16 two-bit fields (values 0..3). Vertex-data resources take exactly `1, 5, 21, 85, 341` = `sum(4^i)` (`bones`, `idata`, `hmap`), which is what "one count in each of 1, 2, 4, 5 slots" looks like, and the UI base's `41B1CFF8` reading 10 = `2 + 8` next to `global_texture2D`'s 5 = `1 + 4` is the same packing with the fields at 2. So a likely reading is "per program/pass, how many times the group binds this resource", saturating at 3 per field; the exact slot meaning is still to confirm. Also open: the compact copies' exact record order.
+
+   The group data's overall structure is mapped now (UI base, 62,884 bytes):
+   a 32-byte global header (`{u32 group_count = 36, u32 library_hash,
+   u32 0x130, u32 4, u32 c_per_object, 0, 0, 0}`), then **36 groups**, each
+   holding its descriptors (3 x 16 bytes, above), the channel table (`{u32 2,
+   u32 count = 7}` + 7 canonical 20-byte records), the variable table (`{u32 2,
+   u32 count = 69}` + 69 canonical records), the packed copies (`{u32, u32 0,
+   u32 count = 3}` + 3 packed 28-byte records) and a byte-packed group header
+   (74 bytes in groups 0-11, 57 in 12-34, 29 in the last; it carries the
+   permutation's hash, e.g. `9FCFE126` in 12 groups). The channel table, variable
+   table and packed run are **byte-identical across all 36 groups**; only the
+   descriptors' `Y` and the group header vary (`Y` = `{0, 5, 10}` in groups 0-11,
+   `{0, 1, 2}` from group 12 on - the per-permutation binding counts). The
+   "compact copies" are the same records re-emitted per group at whatever byte
+   alignment the group lands on (the group size, 1758/1741 bytes, is not
+   4-divisible), not a different encoding. Generation can therefore emit the
+   tables once and replicate them across the template's group count, keeping the
+   template's descriptors and headers.
 2. **Program tails from DXBC**: the tail is the per-program binding map and it
    is load-bearing - zeroing everything but the cbuffer entries crashes the game
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),

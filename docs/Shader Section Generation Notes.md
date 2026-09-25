@@ -78,7 +78,7 @@ recomputable (that is how the splice flow already relocates them).
 | Contexts | Copy from a template with the same shader family. The query ids and their condition-entry offsets are engine-side constants tied to the shader's permutation space; the layout is `{name_hash, u32, count, count × {query_id, conditions_offset}}` | Layout known, ids only copyable |
 | Conditions | Copy from the same template. Records are `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes + a packed payload; they form a decision tree whose leaves select a group | Layout known, payload decoding still open |
 | Dependencies | Copy from the same template (8 bytes = one u64 id on the UI base) | Copyable only |
-| Group data | Generate per group. Each group needs a header (`{u32, query_id_of_the_group, descriptor words, …}`), the variable tables for that group's cbuffers, and the compact copy of those tables that follows. The variable records are `{type, flags, name_hash, cbuffer_offset, size}` runs with a count word; copies must all be consistent | Partly known: how the compact copy and the descriptor words relate is still open |
+| Group data | Generate per group. Each group needs a header (`{u32, query_id_of_the_group, descriptor words, …}`), the variable tables for that group's cbuffers, and the compact copy of those tables that follows. The variable records are `{type, flags, name_hash, cbuffer_offset, size}` runs with a count word; copies must all be consistent | Structure mapped (see `Shader RE TODO.md`): a 32-byte global header then 36 groups; the channel table, variable table and packed run are byte-identical across all 36 groups, only the descriptors' `Y` and the byte-packed group header vary. So generation = emit the tables once, replicate them across the template's group count, keep the template's descriptors/headers |
 | Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the preset's preamble before the records | The preamble's field layout (it is a packed table with increasing indices and small values, plus variable name hashes in places); decoding it is required for families whose program set differs from the template's |
 | Program tails | Still partly open. Cbuffer entries are 24-byte records whose `{name_hash, size}` sit at `+4`/`+12`, in register order; signature elements are listed by name hash with index/ordinal. What the engine does with the rest of the tail is unknown | Open |
 | Default data | Generate: `{u32 zero}{u32 count}` then `count × {name_hash, element_count, blob_offset}` then the value blob, with `element_count` = 1/2/3/4 for scalar/vec2/vec3/vec4 and `blob_offset` = byte offset of the value in the blob | Known |
@@ -109,8 +109,11 @@ recomputable (that is how the splice flow already relocates them).
 
 1. Program tails: the parts after the cbuffer/signature lists, and what the
    engine derives from them (root signature, register/space pairs).
-2. Group data: the descriptor words after the group's query id, the compact copy
-   of the variable tables, and whether one group can replace a permutation set.
+2. Group data: the group header's own fields (the byte-packed words around the
+   permutation hash) are still not decoded. The tables are mapped and
+   byte-identical across the 36 groups, so generation can emit them once and keep
+   the template's descriptors and headers; whether one group can replace a
+   permutation set is then just a matter of the copied conditions agreeing.
 3. Conditions: the payload encoding and what a leaf selects.
 4. How a material chooses a context at runtime (which context query a material
    parameter answers), which decides whether a generated shader can ship a
