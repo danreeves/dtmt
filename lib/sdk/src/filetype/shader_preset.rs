@@ -800,6 +800,54 @@ mod tests {
         assert_eq!(u32_at(group, 72 + 8), hash_token("mod_extra"));
     }
     #[test]
+    fn grow_tails_expands_the_covering_entry() {
+        let tail = shader::Tail {
+            cbuffers: vec![shader::TailCbuffer {
+                words: [0xB5639618, 0, 240, 0, 0, 0],
+            }],
+            rest: Vec::new(),
+        }
+        .bytes();
+        let mut programs = vec![(Stage::Pixel, tail)];
+        grow_tails(&mut programs, 240, 256);
+        let parsed = shader::Tail::parse(&programs[0].1).unwrap();
+        assert_eq!(parsed.cbuffers[0].size(), 256);
+
+        // An entry that does not cover the old range stays untouched.
+        let tail = shader::Tail {
+            cbuffers: vec![shader::TailCbuffer {
+                words: [0x1, 0, 64, 0, 0, 0],
+            }],
+            rest: Vec::new(),
+        }
+        .bytes();
+        let mut programs = vec![(Stage::Pixel, tail)];
+        grow_tails(&mut programs, 240, 256);
+        let parsed = shader::Tail::parse(&programs[0].1).unwrap();
+        assert_eq!(parsed.cbuffers[0].size(), 64);
+    }
+
+    #[test]
+    fn clone_reports_the_template_range() {
+        let mut data = Vec::new();
+        let slot = hash_token("dev_wireframe_color");
+        for word in [3u32, 0, slot, 224, 16] {
+            data.extend_from_slice(&word.to_le_bytes());
+        }
+        let (count, old) = clone_variable(
+            &mut data,
+            slot,
+            hash_token("mod_extra"),
+            240,
+            16,
+        );
+        assert_eq!(count, 1);
+        assert_eq!(old, Some((224, 16)));
+        assert_eq!(u32_at(&data, 20 + 8), hash_token("mod_extra"));
+        assert_eq!(u32_at(&data, 20 + 12), 240);
+    }
+
+    #[test]
     fn tails_round_trip_through_dedup() {
         let mut preset = empty_preset();
         let tail_a = vec![1u8, 2, 3, 4];

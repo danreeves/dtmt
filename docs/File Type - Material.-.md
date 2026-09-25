@@ -242,6 +242,44 @@ To modify an existing shader instead of writing one from scratch, its compiled
 program can be translated back to editable HLSL; see
 [Shader Decompilation](Shader%20Decompilation.md).
 
+### Custom material parameters
+
+A base material's shader library decides which material variables exist and
+where they live in the material constant buffer. Two preset lines adapt that
+interface when a section is generated:
+
+- `variable <shipped> <name> <offset> <size>` re-purposes a shipped slot: the
+  shipped variable's 20 byte record is rewritten to the new name, offset and
+  size everywhere it occurs (canonical records and the verbatim copies the
+  packed serialization embeds), and the slot is no longer addressable under its
+  old name.
+- `clone <template> <name> <offset> <size>` adds a slot: a copy of the
+  template's record is appended to every run of records that contains it, with
+  the run's count word bumped. The template stays intact.
+
+Both are applied in `Preset::generate_with_report`, before the section is
+assembled, and both grow the constant buffer in the program tails when the new
+offset reaches past the shipped buffer end.
+
+Three declarations have to agree for a slot to be readable:
+
+1. the **shader** must declare the constant buffer large enough. On the UI base
+   the material buffer is `b1` and the decompiled HLSL declares
+   `float4 _25_m0[15]` (240 bytes); a slot at offset 240 needs
+   `float4 _25_m0[16]` (256 bytes). Members are read as `_25_m0[offset / 16]`.
+2. the **program tails** must mention the larger size. DTMT rewrites every tail
+   entry whose size covered the old range and is smaller than the new one
+   (`grow_tails`), so this is automatic.
+3. the **group data** records must place the new member inside that buffer (the
+   `variable`/`clone` lines do that).
+
+For the mod's title screen the shipped `dev_wireframe_color` lives at offset
+224 of the UI base's material buffer, so cloning it at offset 240 and reading
+`_25_m0[15]` gives the mod a slot of its own: the material SJSON declares
+`mod_extra = { type = "vector4" value = [1, 1, 1, 1] }` and Lua drives it
+through `material_values`. Verified offline (36 records added to 36 runs, tails
+grown to 256 in all 96 programs); in-game verification pending.
+
 ## Status and open questions
 
 ### Implemented
