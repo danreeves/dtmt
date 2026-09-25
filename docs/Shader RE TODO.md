@@ -192,7 +192,10 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   clones both framings and bumps the counts, but on the real group data its
   canonical scan finds only 36 of the 108 records: the rest are canonical-shaped
   yet fail `read_variable`'s field checks, so the scan has to be layout-aware
-  rather than reusing the generic variable reader. The clone is unit-tested and
+  rather than reusing the generic variable reader. The missed records are stored
+  at a **2-byte-shifted alignment with a different field order** (their bytes run
+  `00 05 00 00 00 00 00 00 | hash | ...` instead of `05 00 00 00 | 00 ... |
+  hash`), so the layout-aware reader has to handle both alignments. The clone is unit-tested and
   undeployed until then. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
