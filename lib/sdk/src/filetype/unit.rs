@@ -847,6 +847,15 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
     }
 
+    fn u16(&mut self) -> Result<u16> {
+        let bytes = self
+            .data
+            .get(self.at..self.at + 2)
+            .ok_or_else(|| eyre::eyre!("payload ends inside a u16 at {}", self.at))?;
+        self.at += 2;
+        Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
     fn bool(&mut self) -> Result<bool> {
         let byte = *self
             .data
@@ -995,6 +1004,98 @@ fn write_decoded_geometry(w: &mut Writer, geometry: &DecodedGeometry) {
     }
     w.u32_array(&geometry.materials);
     w.u32(geometry.unk2);
+}
+
+/// A scene graph node, kept in the order the payload stores its fields.
+struct DecodedNode {
+    rotation: [f32; 9],
+    position: [f32; 3],
+    scale: [f32; 3],
+    world: [f32; 16],
+    parent_type: u16,
+    parent_index: u16,
+    name: u32,
+}
+
+struct DecodedSceneGraph {
+    nodes: Vec<DecodedNode>,
+    unk6: Vec<(u32, u32)>,
+}
+
+fn parse_scene_graph(reader: &mut Reader<'_>) -> Result<DecodedSceneGraph> {
+    let mut nodes = Vec::new();
+    for _ in 0..reader.u32()? {
+        let mut rotation = [0.0f32; 9];
+        for value in &mut rotation {
+            *value = reader.f32()?;
+        }
+        let mut position = [0.0f32; 3];
+        for value in &mut position {
+            *value = reader.f32()?;
+        }
+        let mut scale = [0.0f32; 3];
+        for value in &mut scale {
+            *value = reader.f32()?;
+        }
+        nodes.push(DecodedNode {
+            rotation,
+            position,
+            scale,
+            world: [0.0f32; 16],
+            parent_type: 0,
+            parent_index: 0,
+            name: 0,
+        });
+    }
+    for node in &mut nodes {
+        for value in &mut node.world {
+            *value = reader.f32()?;
+        }
+    }
+    for node in &mut nodes {
+        node.parent_type = reader.u16()?;
+        node.parent_index = reader.u16()?;
+    }
+    for node in &mut nodes {
+        node.name = reader.u32()?;
+    }
+    let mut unk6 = Vec::new();
+    for _ in 0..reader.u32()? {
+        unk6.push((reader.u32()?, reader.u32()?));
+    }
+    Ok(DecodedSceneGraph { nodes, unk6 })
+}
+
+fn write_decoded_scene_graph(w: &mut Writer, graph: &DecodedSceneGraph) {
+    w.u32(graph.nodes.len() as u32);
+    for node in &graph.nodes {
+        for value in node.rotation {
+            w.f32(value);
+        }
+        for value in node.position {
+            w.f32(value);
+        }
+        for value in node.scale {
+            w.f32(value);
+        }
+    }
+    for node in &graph.nodes {
+        for value in node.world {
+            w.f32(value);
+        }
+    }
+    for node in &graph.nodes {
+        w.u16(node.parent_type);
+        w.u16(node.parent_index);
+    }
+    for node in &graph.nodes {
+        w.u32(node.name);
+    }
+    w.u32(graph.unk6.len() as u32);
+    for (a, b) in &graph.unk6 {
+        w.u32(*a);
+        w.u32(*b);
+    }
 }
 
 struct FlatNode<'a> {
@@ -1422,6 +1523,32 @@ renderables = {
 
         let mut writer = Writer::new();
         write_decoded_geometry(&mut writer, &geometry);
+        assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
+    }
+
+    #[test]
+    fn scene_graph_round_trips() {
+        let name = resource_name("units/mods/test/scene");
+        let file = compile(name, UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        // After the version word, the geometry count and the first geometry,
+        // then the (empty) skins and simple-animation sections.
+        let mut reader = Reader::new(&payload[8..]);
+        let geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        let graph = parse_scene_graph(&mut reader).unwrap();
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.nodes[0].name, u32::from(Murmur32::hash("g_cube")));
+
+        let mut writer = Writer::new();
+        write_decoded_geometry(&mut writer, &geometry);
+        writer.u32(0);
+        writer.byte_array(&[]);
+        writer.u32(0);
+        write_decoded_scene_graph(&mut writer, &graph);
         assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
     }
 
