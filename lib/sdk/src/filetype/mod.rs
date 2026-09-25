@@ -1,4 +1,5 @@
 pub mod condition;
+pub mod group_data;
 pub mod lua;
 pub mod material;
 pub mod package;

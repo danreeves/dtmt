@@ -50,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
     let mut block_family: Option<PathBuf> = None;
+    let mut group_data_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -115,6 +116,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 block_family = Some(PathBuf::from(
                     args.get(i).expect("--build-block needs a shader family"),
                 ));
+            }
+            "--group-data" => {
+                i += 1;
+                group_data_mode = true;
             }
             "--records" => records_mode = true,
             "--channel" => {
@@ -208,6 +213,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if group_data_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = group_data(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -707,6 +725,111 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
         .map(|index| format!("{index}"))
         .collect();
     println!("  unnamed block indices: {}", missing.join(" "));
+    Ok(())
+}
+
+/// Reads a section's group data: the descriptors, the tables it can find, and
+/// whether rebuilding it from the table it already carries is a no-op.
+fn group_data(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{GroupData, Variable};
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let bytes = shader
+        .get(offset..offset + size)
+        .ok_or("group data is out of range")?
+        .to_vec();
+    let group_data = GroupData::new(bytes);
+
+    println!("=== {} ===", path.display());
+    println!(
+        "group data: {size} bytes, {} groups",
+        group_data.group_count()
+    );
+    if let Some(descriptors) = group_data.descriptors() {
+        println!(
+            "  descriptors: engine {{{}, {}, {:08X}, {:X}}} object {{{}, {}, {:08X}, {:X}}} packed {{{}, {}, {:08X}, {:X}}}",
+            descriptors.engine.offset,
+            descriptors.engine.count,
+            descriptors.engine.cbuffer,
+            descriptors.engine.flags,
+            descriptors.object.offset,
+            descriptors.object.count,
+            descriptors.object.cbuffer,
+            descriptors.object.flags,
+            descriptors.packed.offset,
+            descriptors.packed.count,
+            descriptors.packed.cbuffer,
+            descriptors.packed.flags,
+        );
+    }
+
+    // Every run of canonical records, and the packed runs.
+    let runs = group_data.runs();
+    println!("  {} runs of variable records:", runs.len());
+    for (index, run) in runs.iter().enumerate() {
+        println!("    run {index}: {} records", run.len());
+        for record in run.iter().take(6) {
+            let name = names
+                .and_then(|names| names.get(&record.hash))
+                .cloned()
+                .unwrap_or_default();
+            println!(
+                "      type {} {:08X} offset {:5} size {:3} {}",
+                record.kind, record.hash, record.offset, record.size, name
+            );
+        }
+        if run.len() > 6 {
+            println!("      ... {} more", run.len() - 6);
+        }
+    }
+    for (key, hashes) in group_data.packed_runs() {
+        println!("  packed run {:08X}: {} copies", key, hashes.len());
+    }
+
+    // The material's own table, and the round trip: rebuilding from the table the
+    // section already carries must change nothing.
+    match group_data.object_table() {
+        None => println!("  no material variable table was found"),
+        Some((at, records)) => {
+            println!("  material table at +{at}: {} records", records.len());
+            let variables: Vec<Variable> = records
+                .iter()
+                .map(
+                    |record| match names.and_then(|names| names.get(&record.hash)) {
+                        // A name the dictionary knows: rebuild from the name.
+                        Some(name) => Variable::new(name.clone(), record.offset, record.kind),
+                        // Otherwise the hash is all there is, and a variable built
+                        // from it rewrites to the same bytes.
+                        None => Variable::from_hash(record.hash, record.offset, record.kind),
+                    },
+                )
+                .collect();
+            match group_data.rebuild(&variables) {
+                Ok(rebuilt) if rebuilt == group_data.bytes() => {
+                    println!("  round trip: identical");
+                }
+                Ok(rebuilt) => {
+                    let at = rebuilt
+                        .iter()
+                        .zip(group_data.bytes())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(rebuilt.len().min(group_data.bytes().len()));
+                    println!(
+                        "  round trip: differs at byte {at} ({} vs {} bytes)",
+                        rebuilt.len(),
+                        group_data.bytes().len()
+                    );
+                }
+                Err(err) => println!("  round trip failed: {err}"),
+            }
+        }
+    }
     Ok(())
 }
 
