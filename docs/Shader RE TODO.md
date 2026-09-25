@@ -150,7 +150,16 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   family has the same engine prologue - `linear_depth` (kind 4, `+0x20F`),
   `global_diffuse_map` (kind 4, `+0x24B`), `sun_shadow_map` (kind 5, `+0x287`)
   and `fog_volume` (kind 4, `+0x2D0`) - and family channels follow (the first at
-  `+0x30C`). The flag words are byte-packed, and a record's tail carries the
+  `+0x30C`). The stream is preceded by its **record count** in the word right
+  before the first record (1 for the UI base, 6 for staff-49), and a clone has
+  to bump it. In-game channel-clone tests: cloning the block record **and** the
+  group data variable record made the game fail with an out-of-memory fatal
+  error at boot (the same signature as a malformed device preamble), and fixing
+  the count word alone did not help; a **block-only** clone (preamble record +
+  count, no group data, no tails) boots normally. The group data clone is
+  therefore wrong and was dropped. The per-pixel blocks repeat the stream with
+  kind 2 records mixed in, whose length is still unknown, so tail blocks are not
+  cloned yet. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same

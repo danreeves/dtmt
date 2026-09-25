@@ -119,19 +119,6 @@ fn patch_variable(
     (patched, Some((slot_offset, slot_size)))
 }
 
-/// Reads the `(offset, size)` of a variable-like record by name hash, for the
-/// records [`clone_variable`] understands.
-fn variable_slot(data: &[u8], hash: u32) -> Option<(u32, u32)> {
-    for at in (0..data.len().saturating_sub(19)).step_by(4) {
-        if let Some((_, _, found, offset, size)) = read_variable(data, at)
-            && found == hash
-        {
-            return Some((offset, size));
-        }
-    }
-    None
-}
-
 /// Appends a copy of the `template` record to every run of consecutive records
 /// that contains it, renamed to `name` with the given `offset` and `size`. The
 /// run's count word is bumped when one can be found (the word just before the
@@ -266,6 +253,33 @@ fn find_channel_record(data: &[u8], hash: u32) -> Option<(usize, u32, usize)> {
             return Some((at, u32_at(data, at + 4), len));
         }
         at += 1;
+    }
+    None
+}
+
+/// Finds the channel record stream at the end of a preamble or program tail: the
+/// chain of records that consumes the buffer exactly, returning its start
+/// offset (the word before it is the record count) and its record count.
+fn find_channel_stream(data: &[u8]) -> Option<(usize, usize)> {
+    for start in 0..data.len() {
+        let mut at = start;
+        let mut count = 0;
+        while at < data.len() {
+            if at + 12 > data.len() || u32_at(data, at + 8) != 1 {
+                break;
+            }
+            let Some(len) = channel_record_len(u32_at(data, at + 4)) else {
+                break;
+            };
+            if at + len > data.len() {
+                break;
+            }
+            at += len;
+            count += 1;
+        }
+        if at == data.len() && count > 0 {
+            return Some((start, count));
+        }
     }
     None
 }
@@ -825,20 +839,26 @@ impl Preset {
             if template == name {
                 continue;
             }
-            if let Some((offset, size)) = variable_slot(&group_data, template) {
-                let (count, _) = clone_variable(&mut group_data, template, name, offset, size);
-                cloned += count;
-            }
+            // The stream's record count lives in the word right before it; it has
+            // to grow with the inserted record or the engine reads the stream
+            // wrong (an unbumped count made the game run out of memory).
+            let stream = find_channel_stream(&preamble);
             let Some((offset, _kind, len)) = find_channel_record(&preamble, template) else {
                 continue;
             };
             let record = preamble[offset..offset + len].to_vec();
             let mut replacement = record.clone();
             replacement[0..4].copy_from_slice(&name.to_le_bytes());
-            cloned += clone_record(&mut preamble, &record, &replacement);
-            for (_, tail) in &mut programs {
-                cloned += clone_record(tail, &record, &replacement);
+            let inserted = clone_record(&mut preamble, &record, &replacement);
+            if inserted > 0
+                && let Some((start, count)) = stream
+                && start >= 4
+            {
+                let at = start - 4;
+                let grown = (count + inserted) as u32;
+                preamble[at..at + 4].copy_from_slice(&grown.to_le_bytes());
             }
+            cloned += inserted;
         }
 
         let device = self.build_device_with(&preamble, &programs, containers)?;
@@ -1192,29 +1212,27 @@ mod tests {
     }
 
     #[test]
-    fn channel_clone_also_copies_the_group_data_record() {
+    fn channel_clone_bumps_the_stream_count() {
         let mut preset = empty_preset();
         let template = hash_token("texture_map");
         let name = hash_token("mod_map");
 
-        // A channel's variable record: {kind 5, flags 1, hash, offset 24, size 4}.
-        let mut group = Vec::new();
-        for word in [5u32, 1, template, 24, 4] {
-            group.extend_from_slice(&word.to_le_bytes());
-        }
-        preset.group_data = group;
+        // The record stream is preceded by its record count (the shipped
+        // families have it right before the first record).
+        let mut preamble = Vec::new();
+        preamble.extend_from_slice(&1u32.to_le_bytes());
+        preamble.extend_from_slice(&channel_record(template, 4));
+        preset.device_preamble = preamble;
         preset.channel_clones.push(ChannelClone {
             template: "texture_map".to_string(),
             name: "mod_map".to_string(),
         });
 
-        let (section, rewritten, cloned) = preset.generate_with_report(&HashMap::new()).unwrap();
-        assert_eq!((rewritten, cloned), (0, 1));
-        // The group data starts at 48; the clone sits after the template record
-        // and keeps its slot.
-        let group = &section[48..];
-        assert_eq!(u32_at(group, 28), name);
-        assert_eq!(u32_at(group, 32), 24);
-        assert_eq!(u32_at(group, 36), 4);
+        let (section, _, cloned) = preset.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!(cloned, 1);
+        let device = &section[48..];
+        assert_eq!(u32_at(device, 0), 2, "stream count grew by one");
+        assert_eq!(u32_at(device, 4), template);
+        assert_eq!(u32_at(device, 64), name);
     }
 }
