@@ -65,16 +65,17 @@ as the decode allows.
    kind uses) and the block, so a tail can be generated from the compiled
    container's reflection instead of the preset's bytes.
 
-   Current understanding (all verified in game): the **upload layout is the
-   engine's own** - the names and offsets its compilation of the shipped shader
-   produced. A control run with the shipped name at its shipped offset has the
-   tint cycling, while every attempt to introduce a new name (`mod_probe` at
-   offset 240, in the canonical tables, the packed copies, the material
-   declaration and the tails, with the shader reading it) stays at zero. Moving
-   a shipped name to a new offset behaves the same. So a material can set the
-   *values* of the shipped variable set, but not extend or move the layout; the
-   block, the packed copies and the tails are validated but not the source of the
-   layout either.
+   Current understanding, verified in game: **material variables are matched
+   positionally** to the shader library's own variable slots, using the library's
+   offsets. The name is only the key the material and Lua use; it does not place
+   the value. With the shipped group tables untouched, a material declaring a
+   brand-new name (`mod_probe`, vector4) and a shader reading the shipped slot
+   (offset 224) has the tint cycling, driven from Lua under the new name. So a
+   mod can rename and drive the library's parameter slots, but the number and
+   positions of those slots are the library's compiled interface: the UI base
+   exposes one vector4 slot plus its texture channels. Patching tables, packed
+   copies or the material's `offset` (which is an offset into the material's own
+   `variable_data`, not a cbuffer offset) never moves a value.
 2b. **Generator plan** - what a generated section is made of:
 
 | Piece | Source |
@@ -96,13 +97,13 @@ as the decode allows.
    write. New *channel names* still require the library's block to already list
    them, since the block is the library's own record set.
 
-2c. **Mod-defined parameters: what actually works** - only the shipped variable
-   names at the shipped offsets take values (set from Lua or the material SJSON).
-   The layout itself is part of the engine-compiled interface: a new name or a
-   moved offset stays at zero no matter which copies are patched. So a mod can
-   drive the shipped parameters (and pack several values into one shipped
-   `float4` slot), but it cannot add or move variables. (An earlier run seemed to
-   show a new name uploading; the control run above shows that was wrong.)
+2c. **Mod-defined parameters: what works** - a material can rename and drive the
+   library's parameter slots (they are matched positionally, so the material's
+   own names are the API it exposes to Lua and the material SJSON), but the
+   number and positions of the slots are the library's compiled interface. On the
+   UI base that is one vector4 slot plus the texture channels; extra values pack
+   into it four floats at a time. Adding or moving slots is not possible from
+   data.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions

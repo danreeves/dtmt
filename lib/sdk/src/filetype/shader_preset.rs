@@ -166,6 +166,8 @@ pub struct Preset {
     pub device_preamble: Vec<u8>,
     /// One entry per program of the template's device data, in order.
     pub programs: Vec<(Stage, Vec<u8>)>,
+    /// Distinct program tails in the order `program` lines reference them.
+    pub tails: Vec<Vec<u8>>,
     /// Variable slots to re-purpose when the section is generated.
     pub variables: Vec<VariableRewrite>,
 }
@@ -241,6 +243,7 @@ impl Preset {
             group_data,
             device_preamble,
             programs,
+            tails: Vec::new(),
             variables: Vec::new(),
         })
     }
@@ -258,6 +261,7 @@ impl Preset {
             group_data: Vec::new(),
             device_preamble: Vec::new(),
             programs: Vec::new(),
+            tails: Vec::new(),
             variables: Vec::new(),
         };
 
@@ -267,7 +271,8 @@ impl Preset {
                 continue;
             }
 
-            // Program lines carry two fields (stage plus tail hex).
+            // Program lines carry two fields (stage plus tail hex, or `#n` to
+            // refer to a deduplicated tail declared below).
             if let Some(rest) = line.strip_prefix("program ") {
                 let (stage, tail) = rest
                     .split_once(' ')
@@ -277,7 +282,28 @@ impl Preset {
                     "Pixel" => Stage::Pixel,
                     other => bail!("unsupported program stage '{other}'"),
                 };
-                preset.programs.push((stage, from_hex(tail)?));
+                let tail = match tail.strip_prefix('#') {
+                    Some(index) => preset
+                        .tails
+                        .get(index.parse::<usize>()?)
+                        .cloned()
+                        .ok_or_else(|| color_eyre::eyre::eyre!("unknown tail #{index}"))?,
+                    None => from_hex(tail)?,
+                };
+                preset.programs.push((stage, tail));
+                continue;
+            }
+
+            // Deduplicated tails, referenced by `program <stage> #n`.
+            if let Some(rest) = line.strip_prefix("tail ") {
+                let (index, hex) = rest
+                    .split_once(' ')
+                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed tail line"))?;
+                let index = index.parse::<usize>()?;
+                if preset.tails.len() <= index {
+                    preset.tails.resize(index + 1, Vec::new());
+                }
+                preset.tails[index] = from_hex(hex)?;
                 continue;
             }
 
@@ -335,8 +361,25 @@ impl Preset {
             to_hex(&self.device_preamble)
         ));
 
-        for (stage, tail) in &self.programs {
-            text.push_str(&format!("program {stage:?} {}\n", to_hex(tail)));
+        // Deduplicate the tails: programs that share one reference the same
+        // `tail` line, which shrinks family presets a lot (the UI family has 96
+        // programs but only about 20 distinct tails).
+        let mut distinct: Vec<&Vec<u8>> = Vec::new();
+        let mut indexes = Vec::with_capacity(self.programs.len());
+        for (_, tail) in &self.programs {
+            match distinct.iter().position(|other| **other == *tail) {
+                Some(index) => indexes.push(index),
+                None => {
+                    distinct.push(tail);
+                    indexes.push(distinct.len() - 1);
+                }
+            }
+        }
+        for (index, tail) in distinct.iter().enumerate() {
+            text.push_str(&format!("tail {index} {}\n", to_hex(tail)));
+        }
+        for ((stage, _), index) in self.programs.iter().zip(&indexes) {
+            text.push_str(&format!("program {stage:?} #{index}\n"));
         }
 
         for variable in &self.variables {
@@ -559,5 +602,29 @@ mod tests {
         let (section, rewritten) = preset.generate_with_report(&HashMap::new()).unwrap();
         assert_eq!(rewritten, 0);
         assert_eq!(&section[48..68], &preset.group_data[..]);
+    }
+    #[test]
+    fn tails_round_trip_through_dedup() {
+        let mut preset = empty_preset();
+        let tail_a = vec![1u8, 2, 3, 4];
+        let tail_b = vec![5u8, 6, 7, 8];
+        preset.programs = vec![
+            (Stage::Vertex, tail_a.clone()),
+            (Stage::Pixel, tail_b.clone()),
+            (Stage::Vertex, tail_a.clone()),
+        ];
+
+        let text = preset.to_text();
+        assert!(text.contains("tail 0 01020304"));
+        assert!(text.contains("tail 1 05060708"));
+        assert!(text.contains("program Vertex #0"));
+        assert!(text.contains("program Pixel #1"));
+        assert_eq!(text.matches("program Vertex #0").count(), 2);
+
+        let parsed = Preset::from_text(&text).unwrap();
+        assert_eq!(parsed.programs.len(), 3);
+        assert_eq!(parsed.programs[0].1, tail_a);
+        assert_eq!(parsed.programs[1].1, tail_b);
+        assert_eq!(parsed.programs[2].1, tail_a);
     }
 }
