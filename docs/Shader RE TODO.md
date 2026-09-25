@@ -369,10 +369,17 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    payload length is not a function of the count alone - it is bit-packed and
    depends on the condition kinds). The payload is a sequence of u16
    `flag << 8 | operand` pairs with flags `0x10/0x20/0x50/0x70/0x90` seen and
-   small operands; the condition hashes are **material properties** (`gui`,
-   `red`, `green`, `blue`, `alpha` resolve), so the tree is derivable from a
+   small operands; the condition hashes are material-side names (`gui`, `red`,
+   `green`, `blue`, `alpha` resolve), so the tree is derivable from a
    declaration that names them (see the Stingray format in
-   `Shader Section Generation Notes.md`).
+   `Shader Section Generation Notes.md`). The material side declares `channels`
+   (its texture channels), `textures`, `variables` and `material_contexts` (a
+   key = value map, e.g. `surface_material = "bone"`; the shipped base material
+   uses `"dirt"`), and the base material ships an empty conditions section, so
+   the tree is only needed for permuted families. The condition hashes are *not*
+   in the group's variable tables, so they are neither cbuffer variables nor the
+   family's channels - whether they name the material's context values or its
+   optional properties is still open.
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry). Lead: the
    preamble's first words track the material's contexts - `{1, query_count, 2, …}`
