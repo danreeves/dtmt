@@ -856,6 +856,15 @@ impl<'a> Reader<'a> {
         Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
     }
 
+    fn u64(&mut self) -> Result<u64> {
+        let bytes = self
+            .data
+            .get(self.at..self.at + 8)
+            .ok_or_else(|| eyre::eyre!("payload ends inside a u64 at {}", self.at))?;
+        self.at += 8;
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
     fn bool(&mut self) -> Result<bool> {
         let byte = *self
             .data
@@ -1630,6 +1639,63 @@ renderables = {
         write_decoded_scene_graph(&mut writer, &graph);
         write_decoded_mesh_objects(&mut writer, &meshes);
         assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
+    }
+
+    #[test]
+    fn trailer_sections_are_as_expected() {
+        let name = resource_name("units/mods/test/trailer");
+        let file = compile(name, UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        let mut reader = Reader::new(&payload[8..]);
+        let _geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        let _graph = parse_scene_graph(&mut reader).unwrap();
+        let meshes = parse_mesh_objects(&mut reader).unwrap();
+        assert_eq!(meshes.len(), 1);
+
+        // Actors, cameras and the unknown blob.
+        assert_eq!(reader.u32().unwrap(), 0, "actors");
+        assert_eq!(reader.u32().unwrap(), 0, "actors 2");
+        assert_eq!(reader.u32_array().unwrap().len(), 0, "unknown list");
+        assert_eq!(reader.u32().unwrap(), 0, "cameras");
+        assert_eq!(reader.u32().unwrap(), 0, "lights");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "unknown blob");
+        // LOD objects, terrains, unknowns, joints and movers.
+        assert_eq!(reader.u32().unwrap(), 0, "lod objects");
+        assert_eq!(reader.u32().unwrap(), 0, "terrains");
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 11");
+        assert_eq!(reader.u32().unwrap(), 0, "joints");
+        assert_eq!(reader.u32().unwrap(), 0, "movers");
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 15");
+        // Animation state, visibility groups and flow data.
+        assert!(!reader.bool().unwrap(), "animation bones flag");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "animation state machine");
+        assert_eq!(
+            reader.byte_array().unwrap(),
+            vec![0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
+            "dynamic data sentinel"
+        );
+        assert_eq!(reader.u32().unwrap(), 0, "visibility groups");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "flow");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "flow dynamic data");
+        assert_eq!(reader.byte_array().unwrap(), vec![0, 0, 0, 0], "triangle finder");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "physics");
+        // Default material and the material list.
+        assert_eq!(reader.u64().unwrap(), 0, "default material");
+        assert_eq!(reader.u32().unwrap(), 1, "materials");
+        assert_eq!(reader.u32().unwrap(), 0x44f4_a503, "material slot");
+        assert_eq!(reader.u64().unwrap(), 0x1122_3344_5566_7788, "material");
+        // Trailing unknowns and the skeleton name.
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 16");
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 17");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "unknown 18");
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 19");
+        assert_eq!(reader.u64().unwrap(), 0, "skeleton name");
+        assert_eq!(reader.u32().unwrap(), 0, "unknown 20");
+        assert_eq!(reader.at, payload.len() - 8, "payload consumed exactly");
     }
 
     #[test]
