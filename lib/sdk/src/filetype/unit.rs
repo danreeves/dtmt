@@ -695,9 +695,10 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(*node_index as u32);
         w.u32((geometry_index + 1) as u32);
         w.u32(0); // skin index
-        w.u32(0); // unknown
-        w.u32(0);
-        w.u32(0);
+        // Render flags as they appear on shipped static props.
+        w.u32(0x000c_2001);
+        w.u32(3);
+        w.u32(1);
         let (min, max) = geometry_bounds(geometry_at(*geometry_index)?);
         write_bounding_volume(&mut w, min, max);
         w.u32(0); // unknown
@@ -773,10 +774,11 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.u32(0);
     w.u32(0);
     w.u32(0);
-    // Animation bones flag, animation state machine, dynamic data.
+    // Animation bones flag, animation state machine, dynamic data. The
+    // `ffffffff 00000000` sentinel matches shipped inline units.
     w.bool(false);
     w.byte_array(&[]);
-    w.byte_array(&[0u8; 8]);
+    w.byte_array(&[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]);
     // Visibility groups.
     w.u32(0);
     // Flow and flow dynamic data.
