@@ -297,3 +297,17 @@ program can be translated back to editable HLSL; see
    uses the shipped `dev_wireframe_color`), and growing the per-object cbuffer
    for a genuinely new slot fails even with every encoded size patched, so the
    farmgate for that is the binding layout (item 3).
+
+   Follow-up (verified offline): the UI family's group data is a repeated unit
+   structure - 36 units of five tables each, stride 2142 bytes - and the
+   interface table (records of kinds 1/3/4/5 at byte offsets up to 304) holds
+   the channels *and* the variables. Channels (`texture_map`, `bca`, `nm`,
+   `orm`) also appear in the device block; scalar/vector variables
+   (`dev_wireframe_color`, `outline_color`, `view_proj`) appear **only** in the
+   group data, so the group data is the name-to-slot map. The preset rewrite
+   (`variable <slot> <new-name> <offset> <size>`, implemented as
+   `patch_variable`: it replaces the exact 20 byte record wherever it occurs)
+   was exercised in game as a title-screen test: the shipped
+   `dev_wireframe_color` record was renamed to `mod_tint` in all 36 copies while
+   keeping offset 224/size 16, the instance material declared `mod_tint`, and
+   Lua drove it. Result pending.
