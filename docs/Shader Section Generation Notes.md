@@ -226,6 +226,53 @@ purpose, because the costs differ:
 - a **pass** whose branch is unknown contributes *both* sides - a pass drawn when
   it should not be is wasted, a pass missing when it was needed is a hole.
 
+## The group data, measured (this is what the emitter walks)
+
+The group data is `8 + 48` bytes of header followed by the tables, and **every
+table is preceded by a 12-byte header whose third word is that table's record
+count**. That is the run length the descriptor does not carry, and it is what
+makes a deterministic walk possible instead of pattern-matching.
+
+Measured on `427B5E6E72E72FD7` (3 groups), all offsets relative to the group data:
+
+| offset | bytes | meaning |
+| --- | --- | --- |
+| +0 | `03 00 00 00 0D E8 35 2B` | group count, then a hash |
+| +8 | 3 x 16 bytes | descriptors, `{offset, count, cbuffer hash, flags}` |
+| +124 | `70 00 01 00 04 00 00 00 45 00 00 00` | the first table's header, ending in the count **69** |
+| +136 | 69 x 20 bytes | the engine's `global_viewport` table |
+| +1516 | `F0 06 00 00 00 00 00 00 3A 00 00 00` | header: size **1776**, 0, count **58** |
+| +1528 | 58 x 20 bytes | the material's own variables |
+| +2688 | `90 01 00 00 00 00 00 00 13 00 00 00` | header: size 400, 0, count **19** |
+| +2700 | 19 x 20 bytes | the channels |
+| +3080 | `C0 01 00 00 80 00 00 00 13 00 00 00` | header: size 448, `0x80`, count **19** |
+
+`0x6F0` = 1776 is the size of the `global_viewport` cbuffer, which the
+`global_viewport` variable table independently says, so the first word of the
+header is the size of the cbuffer the table's offsets refer to. The second word
+is a flag or a stride, and is not settled.
+
+Two things follow, and both correct earlier assumptions:
+
+- **The tables come one after another, each with its own header**, in the order
+  engine, material, channels. The material's table is therefore the one whose
+  header count is the second largest in a group, and its *length differs per
+  group* (58 / 17 / 15 across these three), which is the per-group interface
+  showing through the data.
+- **Runs must start on a word boundary.** Scanning at every byte offset finds
+  false runs - a table at 1528 also "reads" as 8 records from 1527, and the
+  28-byte packed records read as 20-byte records one at a time, every 28 bytes.
+  A rewrite that trusts such a run clobbers the bytes after it, which is why the
+  round trip fails on four of the six families while the two whose tables are
+  found cleanly come back byte for byte.
+
+So the emitter's open problem is not the byte layout - it is the walk. Given a
+table header, the next table's header is 12 + 20 x count bytes away, and the
+group's tables are the ones between the descriptors and the next group's. What is
+still missing is where one group's tables end and the next group's begin, and the
+header's second word. The per-group headers - the 74/57/29-byte structures noted
+earlier - are what would settle both.
+
 ## The compiler is DXC, reached through its DLL
 
 `dtmt build` compiles a material's shader sources today, but by **spawning
@@ -242,12 +289,10 @@ directly is the better shape, and the SDK has everything it needs:
 
 Two things to get right, both from how the `oodle` crate links `oo2core`:
 
-- The DLL is **not** on `PATH` and not shipped with the game, so a plain import
-  link would stop `dtmt.exe` from starting at all. It has to be delay-loaded, and
-  `LoadLibraryW`'d from the SDK's `bin` directory (found the same way `find_dxc`
-  finds the exe) before the first `DxcCreateInstance`. Once loaded by absolute
-  path, the delay-load import resolves against the already-loaded module, so a
-  mod that compiles no shaders never touches the DLL.
+- The DLL is not on `PATH` and not shipped with the game, so like `oo2core` a
+  developer copies it over: link the import library and ship `dxcompiler.dll`
+  beside the tool, the same arrangement the Oodle binding already needs. No
+  delay-loading and no runtime path hunting - one DLL to copy, like Oodle.
 - The interfaces are ABI-stable, so a hand-written `extern "system"` vtable for
   the handful of types needed (`IDxcBlob`, `IDxcBlobEncoding`, `IDxcUtils`,
   `IDxcCompiler3`, `DxcBuffer`) is enough. `dxcapi.h` is large and drags in the
@@ -292,3 +337,4 @@ the group count cannot be settled by pairing. Two things can settle it instead:
 
 Treat any number computed from a Stingray declaration as a hypothesis about
 Darktide, never as a measurement of it.
+
