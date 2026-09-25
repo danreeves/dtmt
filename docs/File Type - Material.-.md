@@ -264,10 +264,19 @@ interface when a section is generated:
   material declares the texture under the new name and the shader keeps sampling
   the same register. Verified against the UI base: `channel texture_map mod_map`
   replaced all 264 occurrences (216 in the group data, 48 in the device data).
+- `clone_channel <template> <new-name>` adds a channel: the template's block
+  record is copied with its name hash replaced and inserted right after every
+  occurrence of the template record - in the device preamble and in every
+  program tail's block. Block channel records have a fixed length per kind
+  (kind 4 -> 60 bytes, kind 5 -> 73), which is what lets the exact record bytes
+  be found without parsing the rest of the block. The template stays intact. The
+  group data descriptor for the new channel is not generated yet, so a material
+  cannot bind a texture to it until that half exists.
 
-Both are applied in `Preset::generate_with_report`, before the section is
-assembled, and both grow the constant buffer in the program tails when the new
-offset reaches past the shipped buffer end.
+These lines are applied in `Preset::generate_with_report`, before the section is
+assembled. The variable lines (`variable`, `clone`) grow the constant buffer in
+the program tails when the new offset reaches past the shipped buffer end; the
+channel lines only change the interface's names.
 
 Three declarations have to agree for a slot to be readable:
 

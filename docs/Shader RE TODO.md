@@ -100,9 +100,12 @@ kinds.
 Update: variables and cbuffers turned out not to be in the block (see the block
 notes below), so the block's remaining authority is resources/channels - and its
 record stream is now framed: record lengths follow the record's `kind` (4 -> 60
-bytes, 5 -> 73 bytes), the engine prologue is at fixed offsets and the stream
-ends exactly at the preamble's end. The next experiment is cloning a channel
-record with a new name hash (the same shape as `clone_variable`).
+bytes, 5 -> 73 bytes), the engine prologue (`linear_depth`, `global_diffuse_map`,
+`sun_shadow_map`, `fog_volume`) is at fixed offsets and the stream ends exactly
+at the preamble's end. `shader43 --records` parses it end to end on three shipped
+families, and a `clone_channel` preset line clones a record into the preamble and
+every tail's block (unit-tested). What still has to be generated for a new
+channel to actually bind is the group data descriptor, which is the next piece.
 
 Block notes from a byte-precise dump of the chain base (863 byte preamble):
 
@@ -139,10 +142,11 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   preamble and parses cleanly. A record is `{u32 name_hash, u32 kind,
   u32 count = 1, ...}` and its length is fixed by `kind`: **kind 4 -> 60 bytes,
   kind 5 -> 73 bytes** (kind 2 is `global_texture2D`, which appears in the
-  per-pixel blocks only). The stream ends exactly at the preamble's end
-  (staff-49: 5 records ending at `+0x391`; the enemy warpfire material
-  `bb79ba7a5b92d132`: 6 records ending at `+0x3E7`; the UI base: 1 record ending
-  at `+0x231`). Every family has the same engine prologue at the same offsets -
+  per-pixel blocks only). The stream parses end to end with `shader43
+  --records`, exactly reaching the preamble's end (staff-49: 6 records from
+  `+0x20F` to `+0x391`; the enemy warpfire material `bb79ba7a5b92d132`: 7
+  records from `+0x20F` to `+0x3E7`; the UI base: 1 record at `+0x1F5`). Every
+  family has the same engine prologue - `linear_depth` (kind 4, `+0x20F`),
   `global_diffuse_map` (kind 4, `+0x24B`), `sun_shadow_map` (kind 5, `+0x287`)
   and `fog_volume` (kind 4, `+0x2D0`) - and family channels follow (the first at
   `+0x30C`). The flag words are byte-packed, and a record's tail carries the

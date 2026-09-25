@@ -24,6 +24,7 @@ use std::process::Command;
 
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
+use sdk::filetype::shader_preset::channel_record_len;
 use sdk::murmur;
 use sdk::murmur::Dictionary;
 
@@ -42,6 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tails_mode = false;
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
+    let mut records_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -95,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 section = Some(args.get(i).expect("--section needs a name").clone());
             }
             "--preamble" => preamble_mode = true,
+            "--records" => records_mode = true,
             "--decompile" => {
                 i += 1;
                 decompile_dir = Some(PathBuf::from(
@@ -202,6 +205,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Some(load_dictionary(path)?),
         None => None,
     };
+
+    if records_mode {
+        for path in &files {
+            if let Err(err) = records(path, variable_names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
 
     let dxil_spirv = dxil_spirv.unwrap_or_else(|| {
         PathBuf::from(std::env::var("DXIL_SPIRV").unwrap_or_else(|_| "dxil-spirv".to_string()))
@@ -528,6 +540,77 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
 
 /// Dumps the packed table the device data starts with, before the first program
 /// record: its size, the program positions, and the raw bytes.
+/// Dumps the channel records of the device preamble: the chain of fixed-length
+/// records at the end of the preamble, with their names resolved through the
+/// dictionary when one is given.
+fn records(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+
+    let programs = shader::parse_programs(device)?;
+    let first = programs.first().ok_or("no programs")?.pos;
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+
+    println!(
+        "=== {} preamble {} bytes ===",
+        path.display(),
+        preamble.len()
+    );
+
+    // Find the chain of records that consumes the preamble exactly.
+    let mut found = None;
+    for start in 0..preamble.len() {
+        let mut at = start;
+        let mut records = Vec::new();
+        while at < preamble.len() {
+            if at + 12 > preamble.len() {
+                break;
+            }
+            let hash = u32_at(preamble, at);
+            let kind = u32_at(preamble, at + 4);
+            let count = u32_at(preamble, at + 8);
+            if count != 1 {
+                break;
+            }
+            let Some(len) = channel_record_len(kind) else {
+                break;
+            };
+            if at + len > preamble.len() {
+                break;
+            }
+            records.push((at, hash, kind, len));
+            at += len;
+        }
+        if at == preamble.len() && !records.is_empty() {
+            found = Some(records);
+            break;
+        }
+    }
+
+    let Some(records) = found else {
+        println!("  no record stream found");
+        return Ok(());
+    };
+    println!("  {} records", records.len());
+    for (at, hash, kind, len) in records {
+        let name = names
+            .and_then(|names| names.get(&hash))
+            .cloned()
+            .unwrap_or_else(|| format!("#{hash:08X}"));
+        println!("  +{at:#06x}  kind {kind}  {len:>2} bytes  {name}");
+    }
+    Ok(())
+}
+
 fn dump_preamble(path: &Path, dump_dir: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(path)?;
     let shader = shader_section(&data)?;

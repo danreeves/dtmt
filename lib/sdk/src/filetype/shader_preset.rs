@@ -228,6 +228,56 @@ fn replace_hash(data: &mut [u8], old: u32, new: u32) -> usize {
     replaced
 }
 
+/// The length of a block channel record, by its `kind`: texture channels are
+/// 60 bytes (kind 4) or 73 bytes (kind 5). Other kinds are only known to exist
+/// (kind 2 is `global_texture2D`), not how long they are.
+pub fn channel_record_len(kind: u32) -> Option<usize> {
+    match kind {
+        4 => Some(60),
+        5 => Some(73),
+        _ => None,
+    }
+}
+
+/// Finds a block channel record by name hash, returning its `(offset, kind,
+/// len)`. A record starts with the name hash and carries a `count` of one.
+fn find_channel_record(data: &[u8], hash: u32) -> Option<(usize, u32, usize)> {
+    let needle = hash.to_le_bytes();
+    let mut at = 0;
+    while at + 12 <= data.len() {
+        if data[at..at + 4] == needle
+            && let Some(len) = channel_record_len(u32_at(data, at + 4))
+            && u32_at(data, at + 8) == 1
+            && at + len <= data.len()
+        {
+            return Some((at, u32_at(data, at + 4), len));
+        }
+        at += 1;
+    }
+    None
+}
+
+/// Inserts `replacement` directly after every occurrence of `template` in
+/// `data`, returning how many copies were inserted. Used to add a channel
+/// record to the preamble and to each program tail's block.
+fn clone_record(data: &mut Vec<u8>, template: &[u8], replacement: &[u8]) -> usize {
+    let mut cloned = 0;
+    let mut at = 0;
+    while at + template.len() <= data.len() {
+        if data[at..at + template.len()] == *template {
+            data.splice(
+                at + template.len()..at + template.len(),
+                replacement.iter().copied(),
+            );
+            cloned += 1;
+            at += template.len() + replacement.len();
+        } else {
+            at += 1;
+        }
+    }
+    cloned
+}
+
 fn from_hex(text: &str) -> Result<Vec<u8>> {
     if text.len() % 2 != 0 {
         bail!("hex string has an odd length");
@@ -298,6 +348,24 @@ pub struct ChannelRename {
     pub name: String,
 }
 
+/// A new channel (texture) record: a copy of a shipped channel's block record
+/// with a new name hash. The block's channel records are fixed-length per kind
+/// (a record is `{name_hash, kind, count}` plus byte-packed flags; kind 4
+/// records are 60 bytes, kind 5 are 73), so a copy is inserted directly after
+/// every occurrence of the template record in the preamble and in each program
+/// tail's block. Unlike [`ChannelRename`] this leaves the shipped channel alone
+/// and adds one; the group data descriptor for the new channel is not generated
+/// yet.
+#[derive(Clone, Debug)]
+pub struct ChannelClone {
+    /// The shipped channel whose record is copied: a name or an 8 digit
+    /// murmur32 hash.
+    pub template: String,
+    /// The new channel name (or its 8 digit hash), as the material and its
+    /// textures block will address it.
+    pub name: String,
+}
+
 /// The wrapper of one shader family.
 pub struct Preset {
     pub version: u32,
@@ -320,6 +388,8 @@ pub struct Preset {
     pub clones: Vec<VariableClone>,
     /// Channel names to rename when the section is generated.
     pub channels: Vec<ChannelRename>,
+    /// Channel records to add when the section is generated.
+    pub channel_clones: Vec<ChannelClone>,
 }
 
 impl Preset {
@@ -397,6 +467,7 @@ impl Preset {
             variables: Vec::new(),
             clones: Vec::new(),
             channels: Vec::new(),
+            channel_clones: Vec::new(),
         })
     }
 
@@ -417,6 +488,7 @@ impl Preset {
             variables: Vec::new(),
             clones: Vec::new(),
             channels: Vec::new(),
+            channel_clones: Vec::new(),
         };
 
         for line in text.lines() {
@@ -508,6 +580,19 @@ impl Preset {
                 continue;
             }
 
+            // Channel record clones carry two fields too.
+            if let Some(rest) = line.strip_prefix("clone_channel ") {
+                let mut fields = rest.split(' ');
+                let (Some(template), Some(name)) = (fields.next(), fields.next()) else {
+                    bail!("malformed clone_channel line: {line}");
+                };
+                preset.channel_clones.push(ChannelClone {
+                    template: template.to_string(),
+                    name: name.to_string(),
+                });
+                continue;
+            }
+
             let (key, value) = line.split_once(' ').unwrap_or((line, ""));
             match key {
                 "version" => preset.version = value.parse()?,
@@ -579,6 +664,13 @@ impl Preset {
 
         for channel in &self.channels {
             text.push_str(&format!("channel {} {}\n", channel.slot, channel.name));
+        }
+
+        for clone in &self.channel_clones {
+            text.push_str(&format!(
+                "clone_channel {} {}\n",
+                clone.template, clone.name
+            ));
         }
 
         text
@@ -708,6 +800,28 @@ impl Preset {
             }
         }
 
+        // Channel record clones add a record to the preamble's record stream and
+        // to every program tail's block, right where the template record sits.
+        // The record's length follows its kind, so the exact template bytes can
+        // be searched for without parsing the surrounding block.
+        for clone in &self.channel_clones {
+            let template = hash_token(&clone.template);
+            let name = hash_token(&clone.name);
+            if template == name {
+                continue;
+            }
+            let Some((offset, _kind, len)) = find_channel_record(&preamble, template) else {
+                continue;
+            };
+            let record = preamble[offset..offset + len].to_vec();
+            let mut replacement = record.clone();
+            replacement[0..4].copy_from_slice(&name.to_le_bytes());
+            cloned += clone_record(&mut preamble, &record, &replacement);
+            for (_, tail) in &mut programs {
+                cloned += clone_record(tail, &record, &replacement);
+            }
+        }
+
         let device = self.build_device_with(&preamble, &programs, containers)?;
 
         let contexts_offset = 48usize;
@@ -776,6 +890,7 @@ mod tests {
             variables: Vec::new(),
             clones: Vec::new(),
             channels: Vec::new(),
+            channel_clones: Vec::new(),
         }
     }
 
@@ -974,5 +1089,86 @@ mod tests {
         assert_eq!(parsed.programs[0].1, tail_a);
         assert_eq!(parsed.programs[1].1, tail_b);
         assert_eq!(parsed.programs[2].1, tail_a);
+    }
+
+    /// Builds a minimal block channel record: `{hash, kind, count = 1}` plus
+    /// filler bytes of the kind's length.
+    fn channel_record(hash: u32, kind: u32) -> Vec<u8> {
+        let len = channel_record_len(kind).unwrap();
+        let mut record = vec![0u8; len];
+        record[0..4].copy_from_slice(&hash.to_le_bytes());
+        record[4..8].copy_from_slice(&kind.to_le_bytes());
+        record[8..12].copy_from_slice(&1u32.to_le_bytes());
+        record
+    }
+
+    #[test]
+    fn channel_records_are_found_by_kind_length() {
+        let engine = hash_token("fog_volume");
+        let mut preamble = vec![0u8; 32];
+        preamble.extend_from_slice(&channel_record(engine, 4));
+        preamble.extend_from_slice(&channel_record(0x1111_1111, 5));
+        preamble.extend_from_slice(&channel_record(0x2222_2222, 4));
+
+        assert_eq!(find_channel_record(&preamble, engine), Some((32, 4, 60)));
+        assert_eq!(
+            find_channel_record(&preamble, 0x1111_1111),
+            Some((92, 5, 73))
+        );
+        assert_eq!(
+            find_channel_record(&preamble, 0x2222_2222),
+            Some((165, 4, 60))
+        );
+        assert_eq!(find_channel_record(&preamble, 0xDEAD_BEEF), None);
+    }
+
+    #[test]
+    fn channel_clone_inserts_a_record() {
+        let template = hash_token("texture_map");
+        let name = hash_token("mod_map");
+        let record = channel_record(template, 4);
+        let mut replacement = record.clone();
+        replacement[0..4].copy_from_slice(&name.to_le_bytes());
+
+        let mut preamble = vec![0u8; 24];
+        preamble.extend_from_slice(&record);
+        preamble.extend_from_slice(&channel_record(0x3333_3333, 5));
+        assert_eq!(clone_record(&mut preamble, &record, &replacement), 1);
+        assert_eq!(u32_at(&preamble, 24), template);
+        assert_eq!(u32_at(&preamble, 84), name);
+        assert_eq!(u32_at(&preamble, 88), 4);
+        assert_eq!(u32_at(&preamble, 60 + 84 + 4), 5, "record intact");
+
+        // A tail whose block repeats the record is patched the same way.
+        let mut tail = record.clone();
+        tail.extend_from_slice(&channel_record(0x4444_4444, 4));
+        assert_eq!(clone_record(&mut tail, &record, &replacement), 1);
+        assert_eq!(u32_at(&tail, 60), name);
+    }
+
+    #[test]
+    fn channel_clone_line_round_trips_and_generates() {
+        let mut preset = empty_preset();
+        let template = hash_token("texture_map");
+        let mut preamble = vec![0u8; 16];
+        preamble.extend_from_slice(&channel_record(template, 4));
+        preset.device_preamble = preamble;
+        preset.channel_clones.push(ChannelClone {
+            template: "texture_map".to_string(),
+            name: "mod_map".to_string(),
+        });
+
+        let text = preset.to_text();
+        assert!(text.contains("clone_channel texture_map mod_map"), "{text}");
+        let parsed = Preset::from_text(&text).unwrap();
+        assert_eq!(parsed.channel_clones.len(), 1);
+
+        let (section, rewritten, cloned) = parsed.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!((rewritten, cloned), (0, 1));
+        // The device starts at 48 with the other sections empty.
+        let device = &section[48..];
+        assert_eq!(u32_at(device, 16), template);
+        assert_eq!(u32_at(device, 16 + 60), hash_token("mod_map"));
+        assert_eq!(u32_at(device, 16 + 60 + 4), 4);
     }
 }
