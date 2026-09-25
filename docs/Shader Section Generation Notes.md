@@ -582,6 +582,42 @@ Both are kept whole rather than laid out, for the same reason the link's second
 word is: they are the fields this does not know the meaning of, and a change there
 is the one change in the section that could not be checked.
 
+## The substitution test, which is the one the round trip cannot cover
+
+A round trip proves nothing moves when nothing is meant to change. It says nothing
+about what happens when something *is* meant to, which is the only case that
+matters for a writer. So three substitutions, run against all six families:
+
+**A renamed context: 4 bytes, at +48, and only those.** The name word, nothing
+else. A rename is length-preserving, so it *should* leave every offset alone, and
+it does.
+
+**A renamed material variable: 4 bytes, one run, entirely inside the group data.**
+The name hash of one record, reached through `GroupData::rebuild` rather than
+through the section, so this also says the group data's own rebuild does not drag
+the section's offsets with it. Three of the six skip it - their material tables
+hold only records the dictionary has no name for, which is a gap in the dictionary
+and not a failure, and the tool says which it skipped and why.
+
+**A context added: the offsets followed the formula.** This is the half the round
+trip cannot reach, because it is the one that *alters a length* and so has to move
+everything after the contexts table. On all six the rebuilt section reads back,
+the conditions offset lands where `48 + 20 x contexts + 8 x links` says, and the
+group data comes back byte for byte - which is the claim that matters, since the
+group data is the one region whose contents come from somewhere else entirely.
+
+That last one covers the families with links as well as without, which is where a
+copy-the-offsets writer would have failed: `004F18EA` gains a context and lands at
+116, `2A04418E` and `3F08AC44` at 144 with two links, and the node pool and the
+dependency entry move with them.
+
+A bug in the first run of this is worth recording too, because it is the same
+shape as the ones earlier in the session: the tool skipped three families silently
+because an early return in one branch ran past the next test. Three families
+looked like failures and were a missing brace in a reporting path. A substitution
+test that only runs when a dictionary happens to be complete is not a test.
+
+
 
 
 ### What the section now is

@@ -797,6 +797,28 @@ impl Section {
         &self.contexts
     }
 
+    /// The contexts, for a section that is changing one - adding or dropping a
+    /// context is what moves every offset after it.
+    pub fn contexts_mut(&mut self) -> &mut Vec<ContextRecord> {
+        &mut self.contexts
+    }
+
+    /// The links, for a section that is changing one.
+    pub fn links_mut(&mut self) -> &mut [Link] {
+        &mut self.links
+    }
+
+    /// Replaces the group data, for a section whose group data has been rebuilt.
+    ///
+    /// This is the seam the write path uses: the group data is rebuilt by
+    /// [`crate::filetype::group_data::GroupData::rebuild`] from the declaration's
+    /// own variables, and handed back here. The group's count and hash in the new
+    /// bytes are what the section reports, so a change to one cannot leave the
+    /// other stale.
+    pub fn set_group_data(&mut self, bytes: Vec<u8>) {
+        self.group_data = bytes;
+    }
+
     /// The link table.
     pub fn links(&self) -> &[Link] {
         &self.links

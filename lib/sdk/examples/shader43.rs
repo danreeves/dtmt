@@ -49,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dependencies_mode = false;
     let mut channels_mode = false;
     let mut layout_mode = false;
+    let mut substitute_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
@@ -117,6 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--dependencies" => dependencies_mode = true,
             "--channels" => channels_mode = true,
             "--layout" => layout_mode = true,
+            "--substitute" => substitute_mode = true,
             "--build-block" => {
                 i += 1;
                 block_family = Some(PathBuf::from(
@@ -219,6 +221,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if substitute_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = substitute(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -775,6 +790,141 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
 
 /// Reads a section's group data: the descriptors, the tables it can find, and
 /// whether rebuilding it from the table it already carries is a no-op.
+/// The byte ranges at which two versions of a section differ, as runs.
+fn diffs(old: &[u8], new: &[u8]) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let end = old.len().min(new.len());
+    let mut at = 0;
+    while at < end {
+        if old[at] == new[at] {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < end && old[at] != new[at] {
+            at += 1;
+        }
+        runs.push((start, at - start));
+    }
+    runs
+}
+
+fn substitute(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{GroupData, Variable};
+    use sdk::filetype::shader::Section;
+    use sdk::murmur::Murmur32;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+    println!("=== {} ===", path.display());
+    let original = Section::parse(bytes)?;
+
+    // One: rename a context. Nothing but that context's name word may move.
+    let probe: u32 = Murmur32::hash("probe_context").into();
+    let mut section = original.clone();
+    let before = section.contexts()[0].name;
+    section.contexts_mut()[0].name = probe;
+    let runs = diffs(bytes, &section.into_bytes());
+    let at = 48;
+    println!(
+        "  a renamed context: {:08X} {} -> {:08X}: {}",
+        before,
+        named(before),
+        probe,
+        if runs == [(at, 4)] {
+            "4 bytes at +48, and only those"
+        } else {
+            println!("    {runs:?}");
+            "MOVED MORE"
+        }
+    );
+
+    // Two: add a context, which alters a length and so has to move every offset
+    // after the contexts table. A rename never does this, so it is the half of
+    // the test the round trip cannot cover. Checked by reading the rebuilt
+    // section back rather than against a known answer.
+    let group = original.group_data().to_vec();
+    let mut wider = original.clone();
+    wider.contexts_mut().push(original.contexts()[0]);
+    let rebuilt = wider.into_bytes();
+    match Section::parse(&rebuilt) {
+        Err(err) => println!("  a context added: the rebuilt section did not read: {err}"),
+        Ok(back) => {
+            let conditions = u32::from_le_bytes(rebuilt[16..20].try_into().unwrap()) as usize;
+            let expect = 48 + 20 * back.contexts().len() + 8 * back.links().len();
+            println!(
+                "  a context added: {} contexts, {} links, conditions at {conditions} (the formula says {expect}): {}",
+                back.contexts().len(),
+                back.links().len(),
+                if conditions == expect
+                    && back.group_data() == group.as_slice()
+                    && back.contexts().len() == original.contexts().len() + 1
+                {
+                    "the offsets followed the formula, the group data is untouched"
+                } else {
+                    "THE FORMULA DID NOT HOLD"
+                }
+            );
+        }
+    }
+
+    // Three: rename one material variable, through the group data's own rebuild.
+    // Nothing outside the group data may move, and inside it only the one name.
+    let group_data = GroupData::new(group.clone());
+    let table = group_data.object_table().map(|(_, table)| table);
+    // The first record the dictionary can name, so the rename has a real name to
+    // go to and a real old name to replace.
+    let named_index = table.as_ref().and_then(|table| {
+        table
+            .iter()
+            .position(|record| names.is_some_and(|names| names.contains_key(&record.hash)))
+    });
+    let (Some(table), Some(index)) = (table, named_index) else {
+        println!("  a renamed variable: skipped, no named variable in the table");
+        return Ok(());
+    };
+    let mut variables: Vec<Variable> = table
+        .iter()
+        .map(
+            |record| match names.and_then(|names| names.get(&record.hash)) {
+                Some(name) => Variable::new(name.clone(), record.offset, record.kind),
+                None => Variable::from_hash(record.hash, record.offset, record.kind),
+            },
+        )
+        .collect();
+    let old_name = variables[index].name.clone();
+    variables[index].name = "probe_variable".to_string();
+    let rebuilt_group = group_data.rebuild(&variables)?;
+    let mut section = original;
+    section.set_group_data(rebuilt_group);
+    let section_bytes = section.into_bytes();
+    let runs = diffs(bytes, &section_bytes);
+    let group_at = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
+    let device_at = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
+    let inside = runs
+        .iter()
+        .all(|(at, _)| *at >= group_at && *at < device_at);
+    let total: usize = runs.iter().map(|(_, len)| len).sum();
+    println!(
+        "  a renamed variable: {old_name} -> probe_variable: {total} bytes in {} run(s): {}",
+        runs.len(),
+        if inside {
+            "all inside the group data"
+        } else {
+            println!("    {runs:?}");
+            "OUTSIDE THE GROUP DATA"
+        }
+    );
+    Ok(())
+}
+
 fn layout(
     path: &Path,
     names: Option<&HashMap<u32, String>>,
