@@ -178,6 +178,15 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   clone boots but the title texture stays black: the cloned channel does not
   bind, so the group data records (not the block record) are what the engine
   resolves when a material names a channel.
+- The block's **config portion** (the 561-byte preamble minus the record stream;
+  the whole preamble is embedded verbatim at the end of every pixel tail, after
+  the cbuffer and resource/signature lists - the 112-byte vertex tails do not
+  carry it) is 120 bytes of header (group count 36, table counts/sizes) then
+  **29 byte-packed 13-byte records** `{u32 index, u8 0, u32 value, u32 0}` and
+  the stream count. The record indices (16..26, 94..101, 12..14, 30, 38, 46, 54)
+  and values (1/8/255/15/4/6/2/0/7) are still to interpret; the 16..26 run lines
+  up exactly with `global_viewport`'s frame globals (`time` ..
+  `upscaling_enabled`), so the table looks like per-variable binding data.
 - The group data holds a channel in **two framings**, 3 records each per group
   unit (108 + 108 = 216 for the UI base's `texture_map`; `shader43 --channel
   <name>` dumps them). **Canonical** 20-byte records
@@ -225,7 +234,15 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    alignment the group lands on (the group size, 1758/1741 bytes, is not
    4-divisible), not a different encoding. Generation can therefore emit the
    tables once and replicate them across the template's group count, keeping the
-   template's descriptors and headers.
+   template's descriptors and headers. The tables' contents are identified: the
+   69-record table is the **`global_viewport` engine cbuffer** (hash 516D5CCD,
+   1776 bytes) - `camera_*`, `time`, `delta_time`, `frame_number`,
+   `taa_enabled`, `gamma`, `viewport` and 40+ unnamed engine internals (28 named
+   by the dictionary) - and the 7-record table is the group's **`c_per_object`**
+   variables: `texture_map` x3 plus `view_proj`, `world_view_proj`, `world` and
+   `dev_wireframe_color`. The packed 28-byte copies are keyed by `c_per_object`.
+   The group descriptors are `global_viewport` (kind 1 cbuffer), an unnamed
+   texture (kind 3) and an unnamed UAV (kind 5).
 2. **Program tails from DXBC**: the tail is the per-program binding map and it
    is load-bearing - zeroing everything but the cbuffer entries crashes the game
    at shader load (`dispatch_loadtime`, `shader #ID[<the group's query id>]`),
