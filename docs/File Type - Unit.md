@@ -134,6 +134,15 @@ list and in the unit's `materials` map.
   `write_decoded_geometry`, round-trip tested on a compiled payload). What
   remains is the rest of the payload (scene graph, meshes, materials, LOD
   objects) and the `.unit`/`.bsi` SJSON emitter.
+- Emitter port plan: the decode slices (`parse_mesh_geometry`,
+  `parse_scene_graph`, `parse_mesh_objects`, `parse_lod_objects`) already
+  produce every structure the emitter needs, and `decode_stream` unpacks the
+  vertex data back to source floats. Names that survive only as hashes (slots,
+  renderables, nodes, LODs) are written as `#HEX` tokens, which the compiler now
+  accepts; material resources keep their exact 64 bit hash the same way. The
+  emitted `.bsi` should use one index list shared by every stream (the unified
+  form) and one node per mesh object with an identity local transform, which is
+  exactly what the validated Python prototype emitted.
 - The decompilation path was validated end to end with a Python prototype: a
   compiled cube payload was parsed, its streams unpacked and a `.unit`/`.bsi`
   pair emitted, which `compile_unit` recompiled back into a 1277 byte payload
