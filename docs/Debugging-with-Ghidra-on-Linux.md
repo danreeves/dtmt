@@ -14,10 +14,10 @@
 ```bash
 STEAM_COMPAT_CLIENT_INSTALL_PATH=/usr/bin/steam
 # `1361210` is the Steam AppID for Darktide. It's in the same library as the game, so through "Browse files" in the UI works as starting point
-STEAM_COMPAT_DATA_PATH=/path/to/SteamLibrary/steamapps/compatdata/1361210
+STEAM_COMPAT_DATA_PATH=/path/to/steamapps/compatdata/1361210
 # Any Proton version could be used, if it works with the game.
-# And it's fine if this is installed in a different `SteamLibrary` than the game
-/path/to/SteamLibrary/steamapps/common/Proton\ 8.0/proton run <cmd>
+# And it's fine if this is installed in a different library folder than the game
+/path/to/steamapps/common/Proton\ 8.0/proton run <cmd>
 ```
 
 3. Add `PROTON_DUMP_DEBUG_COMMANDS=1`, then look in `/tmp/proton_$(whoami)`
