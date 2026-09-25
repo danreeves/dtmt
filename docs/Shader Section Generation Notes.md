@@ -432,6 +432,63 @@ entry carries it, the group data header carries it, and `Dependency::of` keeps t
 two in step; a from-scratch build would have to take the count and the hash from a
 template, which is the same bargain the group data emitter already makes.
 
+## The contexts table, and the conditions node pool
+
+The header's third and fourth words are the contexts table's offset and count.
+The records are **20 bytes**:
+
+```text
+u32 name       // murmur32 of the context's name: F2760503 = default,
+               // 3100C3D2 = shadow_caster, 5852A5B1 unnamed
+u32 flags      // 0 for an inline context, FFFFFFFF for a link
+u32 group      // the group index the context selects
+u32 group_hash // the group data's own hash
+u32 tail       // FFFFFFFF on an inline record
+```
+
+The fourth word is the check that identifies it: on every family the `default`
+context's `group_hash` is **the group data's own header hash** - `8BE282AA`,
+`DC9EF937`, `C071FCF2`, `BC448AB8`, `F301AD0B`, `2B35E80D`, one for one. So a
+context is a *pointer at a group*, and the contexts table is writable from the
+group data the same way the dependency entry is.
+
+Read as 20-byte records, the families that disagree are not disagreements but the
+two forms a context takes:
+
+| family | contexts | shape |
+| --- | --- | --- |
+| `17A3DC01`, `427B5E6E`, `38ECBAD1` | 3, 3, 1 | all inline, `flags` 0, `tail` `FFFFFFFF` |
+| `004F18EA` | 2 | one inline, one **link** (`flags` `FFFFFFFF`) |
+| `2A04418E`, `3F08AC44` | 3 | one inline, two **links** |
+
+A **link** is a context whose conditions are shared rather than written out, and
+its second word is the node's key. That is what the header's fifth word is for -
+the conditions blob is a **node pool of 28-byte nodes, one per link record**, and
+it sits between the contexts and the dependencies:
+
+| family | links | blob |
+| --- | --- | --- |
+| `004F18EA` | 1 | 28 bytes = 1 node |
+| `2A04418E` | 2 | 56 bytes = 2 nodes |
+| `3F08AC44` | 2 | 56 bytes = 2 nodes |
+| `17A3DC01`, `427B5E6E`, `38ECBAD1` | 0 | empty |
+
+`2A04418E`'s two nodes are **byte-identical**, which is the point of sharing them
+and also the reason the link's key is not a node index - two different keys, the
+same node. The node is seven words, which read as fourteen `u16`s:
+
+```text
+00080001 0001000C 7F9E89FD 70073001 10002000 50053004 90005007
+ 0001 0008  0001 000C  7F9E 89FD  0001 0007  0003 0010  0000 0010  0004 0005  0007 0005
+```
+
+The shape of it is suggestive - a leading `1` before an index, `16` and `5` each
+appearing twice, a pair of them large enough to be hashes - and that is exactly
+as far as it goes. **The grammar is not decoded**: nothing here has been checked
+against a declaration's conditions, and there is no pairing oracle to check it
+against, so a reading of these `u16`s would be a guess. The `u16 flag<<8|operand`
+idea is worth testing when a pairing exists; it is not evidence yet.
+
 
 ## The compiler is DXC, reached through its DLL
 
