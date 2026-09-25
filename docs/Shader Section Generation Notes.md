@@ -369,6 +369,70 @@ The group counts are worth having on their own: `3, 3, 5, 1, 5, 3` against the
 sets per context. `permutations_for` is still an upper bound, but it now has a
 number to be measured against rather than a guess.
 
+## The channel table, and the stride that reaches it
+
+A group's third table is its **channels**, and the stride to it is measured rather
+than fitted:
+
+- a table's **record count is the word four bytes before its first record**;
+- the **next table's 12-byte header begins where this table's records end**.
+
+So for a material table of `len` records starting at `start`, the channel table's
+header is at `start + 20 x len`, its count at `+ 8`, and its records at `+ 12`. On
+`427B5E6E` that is `1528 + 20 x 58 = 2688`, whose header is `{400, 0, 19}` and
+whose records are the nineteen channels. `GroupData::channel_table` reads it and
+`GroupData::channels` groups the records into channels.
+
+A **channel is three records, not one**: a type 5 texture binding followed by two
+type 1 parameters - the UV scale and offset the sampler takes. So the record count
+is not the channel count, and the channels of the six families are:
+
+| family | groups | records | channels |
+| --- | --- | --- | --- |
+| `004F18EA` | 3 | - | 11 |
+| `17A3DC01` | 3 | - | 18 |
+| `2A04418E` | 5 | - | 17 |
+| `38ECBAD1` | 1 | - | **0** |
+| `3F08AC44` | 5 | - | 10 |
+| `427B5E6E` | 3 | 19 | 15 |
+
+`38ECBAD1` reads zero channels, and that is the **second** place the single-group
+family breaks a rule the other five obey - the first was its table header reading
+differently. It is a one-group family, so it is worth reading on its own before
+trusting either rule further; the canonical variable round trip is byte-identical
+on it regardless, because the rewrite never needed its channel table.
+
+One trap, in the fixture as much as the data: the channel header's second word is
+`0`, and `{400, 0, 19}` has bytes inside it that read as a record, so a *scan* for
+the run merges the material table with the channel table across the header. The
+count-bounded read does not care, which is the argument for reading by count
+rather than by run.
+
+## No pairing oracle, now measured rather than assumed
+
+The group's channel names resolve out of the game dictionary, and they are real
+material channels: `noise_texture`, `bca`, `orm`, `detail_nm`, `view_proj`,
+`world_view_proj`, `world`, `last_world`, `color`, `wind_speed`, `noise_color`,
+`world_noise_size`, `wind_power`, `detail_scale`, `dirt_amount`, `noise_edge_fade`,
+`noise_width`, `noise_scale`, `noise_str`, `sharpness`, `orm2`, `bc2`,
+`roughness`, `bc_blend`.
+
+None of the distinctive ones appear in any of the fifteen `.shader_node`
+declarations. `world_noise_size`, `wind_power`, `dirt_amount`, `noise_edge_fade`,
+`sharpness`, `detail_scale`, `bc_blend`, `noise_str` and `orm2` are each in **zero**
+declarations, while `billboard` - the one name that is in the library - is in seven.
+
+So the pairing oracle does not exist, and this is now a measurement rather than an
+assumption: the Badgers declarations are the Stingray *library's* output nodes and
+the shipped sections are game materials, and the two do not share a channel name.
+That settles the question `permutations_for` was waiting on - not in its favour,
+but it means the upper bound is **unfalsifiable with what is on disk**, and the
+honest position is that the group count is *carried*, not derived. The dependency
+entry carries it, the group data header carries it, and `Dependency::of` keeps the
+two in step; a from-scratch build would have to take the count and the hash from a
+template, which is the same bargain the group data emitter already makes.
+
+
 ## The compiler is DXC, reached through its DLL
 
 `dtmt build` compiles a material's shader sources today, but by **spawning

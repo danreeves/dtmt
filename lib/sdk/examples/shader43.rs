@@ -47,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
     let mut dependencies_mode = false;
+    let mut channels_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
@@ -113,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--preamble" => preamble_mode = true,
             "--dependencies" => dependencies_mode = true,
+            "--channels" => channels_mode = true,
             "--build-block" => {
                 i += 1;
                 block_family = Some(PathBuf::from(
@@ -215,6 +217,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if channels_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = channels(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -745,6 +760,51 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
 
 /// Reads a section's group data: the descriptors, the tables it can find, and
 /// whether rebuilding it from the table it already carries is a no-op.
+fn channels(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let group_data = GroupData::new(
+        shader
+            .get(offset..offset + size)
+            .ok_or("group data is out of range")?
+            .to_vec(),
+    );
+
+    let channels = group_data.channels();
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} groups, {} channels",
+        group_data.group_count(),
+        channels.len()
+    );
+    for channel in &channels {
+        let name = names
+            .and_then(|names| names.get(&channel.hash))
+            .cloned()
+            .unwrap_or_default();
+        let records: Vec<String> = channel
+            .records
+            .iter()
+            .map(|record| format!("{}@{}", record.kind, record.offset))
+            .collect();
+        println!(
+            "    {:08X} offset {:4}  {:<28} {}",
+            channel.hash,
+            channel.offset(),
+            name,
+            records.join(" ")
+        );
+    }
+    Ok(())
+}
+
 fn dependencies(
     path: &Path,
     names: Option<&HashMap<u32, String>>,

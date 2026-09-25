@@ -241,6 +241,24 @@ impl Dependency {
     }
 }
 
+/// One channel a group's channel table declares: a texture binding and the
+/// parameters bound to it, all sharing one name hash.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Channel {
+    /// murmur32 of the channel's name, the key the records group by.
+    pub hash: u32,
+    /// The records, in the order the table lists them: the type 5 binding first,
+    /// then its parameters.
+    pub records: Vec<Record>,
+}
+
+impl Channel {
+    /// The byte offset the texture binds at, which is the first record's.
+    pub fn offset(&self) -> u32 {
+        self.records.first().map_or(0, |record| record.offset)
+    }
+}
+
 /// One variable a generated group data declares: its name, and where the
 /// compiled program put it.
 #[derive(Clone, Debug, PartialEq)]
@@ -492,6 +510,61 @@ impl GroupData {
         }
         None
     }
+    /// The channels table: the third table of a group, the one after the
+    /// material's own variables.
+    ///
+    /// The stride is measured, not fitted. A table's record count is the word
+    /// four bytes *before* its first record, and the next table's 12-byte header
+    /// begins where this table's records end - so the header after a table of
+    /// `len` records starts at `start + 20 x len`, its count is at `+ 8`, and its
+    /// records at `+ 12`. On `427B5E6E` that is `1528 + 20 x 58 = 2688`, whose
+    /// header is `{400, 0, 19}` and whose records are the nineteen channels.
+    ///
+    /// A channel is three records, not one: a type 5 texture binding followed by
+    /// two type 1 parameters - the UV scale and offset the sampler takes. So the
+    /// record count is not the channel count, and [`GroupData::channels`] is what
+    /// to read for that.
+    pub fn channel_table(&self) -> Option<(usize, Vec<Record>)> {
+        let (at, table) = self.object_table()?;
+        let header = at + table.len() * RECORD_LEN;
+        let count = self.word(header + 8)? as usize;
+        let start = header + 12;
+        if count == 0 {
+            return None;
+        }
+        let mut records = Vec::with_capacity(count);
+        for index in 0..count {
+            records.push(Record::read(&self.data, start + index * RECORD_LEN)?);
+        }
+        Some((start, records))
+    }
+
+    /// The channels a group's channel table declares, one per texture binding.
+    ///
+    /// A channel is a run of records that share a name hash - the type 5 binding
+    /// and the parameters bound to it - so the channels are the distinct names in
+    /// the table, in the order the table lists them. That order is the order the
+    /// engine reads, and it is what a generated channel table has to keep.
+    pub fn channels(&self) -> Vec<Channel> {
+        let Some((_, records)) = self.channel_table() else {
+            return Vec::new();
+        };
+        let mut channels: Vec<Channel> = Vec::new();
+        for record in records {
+            match channels
+                .iter_mut()
+                .find(|channel| channel.hash == record.hash)
+            {
+                Some(channel) => channel.records.push(record),
+                None => channels.push(Channel {
+                    hash: record.hash,
+                    records: vec![record],
+                }),
+            }
+        }
+        channels
+    }
+
     /// The engine's `global_viewport` records: the run that is the same in every
     /// group, because the engine fills it whatever the material declares.
     ///
@@ -954,6 +1027,82 @@ mod tests {
             data.bytes(),
             "a slot keeps the size the template gave it, kind 5 or not"
         );
+    }
+
+    /// A group data with a material table and the channel table that follows it,
+    /// which is the pair the stride rule is about.
+    fn with_channels() -> GroupData {
+        // The 8-byte global header and the three descriptors, which a run inside
+        // is not a table - the tables start after them, as they do in a section.
+        let mut data = vec![0u8; 56];
+        data[0..4].copy_from_slice(&1u32.to_le_bytes()); // one group
+        data[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        // The engine's table, then the material's: two records each, with a gap
+        // between them so the two are separate runs as they are in a section.
+        for name in ["camera_pos", "time"] {
+            Record {
+                kind: 3,
+                flags: 0,
+                hash: var(name, 0, 3).hash(),
+                offset: 0,
+                size: 16,
+            }
+            .write(&mut data);
+        }
+        data.extend_from_slice(&[0u8; 24]);
+        for name in ["texture_map", "world"] {
+            Record {
+                kind: 3,
+                flags: 0,
+                hash: var(name, 0, 3).hash(),
+                offset: 0,
+                size: 16,
+            }
+            .write(&mut data);
+        }
+        // The channel table's 12-byte header, at the end of the material's
+        // records, then its records: one channel of three - the type 5 binding
+        // and two parameters.
+        let header = data.len();
+        data.resize(header + 12, 0);
+        for (index, word) in [0x190u32, 0xFFFF_FFFF, 3].into_iter().enumerate() {
+            let at = header + index * 4;
+            data[at..at + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        for (kind, offset) in [(5u32, 0u32), (1, 4), (1, 16)] {
+            Record {
+                kind,
+                flags: 0,
+                hash: var("orm", offset, kind).hash(),
+                offset,
+                size: size_of_kind(kind),
+            }
+            .write(&mut data);
+        }
+        GroupData::new(data)
+    }
+
+    #[test]
+    fn the_channel_table_is_the_one_after_the_material_variables() {
+        // The stride is measured: a table's count is the word four bytes before
+        // its first record, and the next table's header starts where this table's
+        // records end.
+        let group_data = with_channels();
+        let (material_at, material) = group_data.object_table().expect("the material table");
+        assert_eq!(material.len(), 2);
+        let (at, records) = group_data.channel_table().expect("the channel table");
+        assert_eq!(at, material_at + 2 * RECORD_LEN + 12);
+        assert_eq!(records.len(), 3);
+        assert_eq!(
+            records[0].kind, 5,
+            "a channel leads with its texture binding"
+        );
+
+        // And a channel is the records sharing a name, not one record.
+        let channels = group_data.channels();
+        assert_eq!(channels.len(), 1, "three records, one channel");
+        assert_eq!(channels[0].records.len(), 3);
+        assert_eq!(channels[0].offset(), 0);
     }
 
     #[test]
