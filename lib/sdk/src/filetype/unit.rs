@@ -1029,6 +1029,19 @@ fn mul4(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
     out
 }
 
+/// Resolves a name token to a 32 bit hash: an eight digit hex string (with or
+/// without a leading `#`) is taken as the hash itself, anything else is hashed
+/// like the engine hashes names. This lets a decompiled unit keep the exact
+/// hashes it read from a compiled payload.
+fn hash32_token(token: &str) -> u32 {
+    let trimmed = token.strip_prefix('#').unwrap_or(token);
+    if trimmed.len() == 8 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        u32::from_str_radix(trimmed, 16).unwrap_or(0)
+    } else {
+        u32::from(Murmur32::hash(token))
+    }
+}
+
 /// Compile a `.unit`/`.bsi` pair into a bundle file.
 pub fn compile(name: IdString64, unit_sjson: &str, bsi: &[u8]) -> Result<BundleFile> {
     let unit_text = normalize_sjson(unit_sjson);
@@ -1058,7 +1071,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         } else {
             IdString64::from(Murmur64::hash(material))
         };
-        slots.push((u32::from(Murmur32::hash(slot)), resource));
+        slots.push((u32::from(hash32_token(slot)), resource));
     }
 
     // Scene graph nodes in depth-first order.
@@ -1115,7 +1128,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         let slot_ids: Vec<u32> = geometry
             .materials
             .iter()
-            .map(|material| u32::from(Murmur32::hash(&material.name)))
+            .map(|material| u32::from(hash32_token(&material.name)))
             .collect();
         write_mesh_geometry(&mut w, geometry, &slot_ids)?;
     }
@@ -1163,14 +1176,14 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         }
     }
     for node in &flat {
-        w.u32(u32::from(Murmur32::hash(node.name)));
+        w.u32(u32::from(hash32_token(node.name)));
     }
     w.u32(0); // unknown list
 
     // Mesh objects.
     w.u32(meshes.len() as u32);
     for (renderable, geometry_index, node_index) in &meshes {
-        w.u32(u32::from(Murmur32::hash(renderable)));
+        w.u32(u32::from(hash32_token(renderable)));
         w.u32(*node_index as u32);
         w.u32((geometry_index + 1) as u32);
         w.u32(0); // skin index
@@ -1196,7 +1209,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     // LOD objects.
     w.u32(def.lod.len() as u32);
     for lod in &def.lod {
-        w.u32(u32::from(Murmur32::hash(&lod.name)));
+        w.u32(u32::from(hash32_token(&lod.name)));
         w.u64(0); // unknown hash
         w.u32(0); // unknown
         w.u32(lod.steps.len() as u32);
@@ -1513,6 +1526,21 @@ renderables = {
         // One LOD object named "lod" with the two authored steps.
         assert!(contains_u32(payload, u32::from(Murmur32::hash("lod"))));
         assert_eq!(u32_at(payload, 4), 1, "one mesh geometry");
+    }
+
+    #[test]
+    fn hex_names_are_taken_as_hashes() {
+        // A decompiled unit names its slots and renderables by hash; the
+        // compiler must not re-hash those strings.
+        let bsi = BSI.replace("g_cube", "553C252C");
+        let unit = UNIT
+            .replace("g_cube", "553C252C")
+            .replace("m_cube", "44F4A503");
+        let file = compile(resource_name("units/mods/test/hex"), &unit, bsi.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+        assert!(contains_u32(payload, 0x553C_252C), "mesh/node name");
+        assert!(contains_u32(payload, 0x44F4_A503), "material slot");
+        assert!(!contains_u32(payload, u32::from(Murmur32::hash("553C252C"))));
     }
 
     #[test]
