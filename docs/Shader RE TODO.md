@@ -177,17 +177,16 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   clone boots but the title texture stays black: the cloned channel does not
   bind, so the group data records (not the block record) are what the engine
   resolves when a material names a channel.
-- The group data holds a channel in **two framings** (the UI base's `texture_map`
-  has 216 occurrences, 108 of each). **Canonical** 20-byte records
-  `{type, flags, name_hash, cbuffer_offset, size}` sit in runs, e.g. for one
-  channel `{type 5, offset 0, size 4}`, `{type 1, offset 4, size 8}` and
-  `{type 1, offset 16, size 8}`. **Packed** copies repeat the same fields in a
-  cbuffer-keyed order, e.g. `{name_hash, 0, 0, 4, 1, B5639618, 0}` - the
-  `c_per_object` hash followed by a zero, with the channel's hash, offset and
-  size before it. Cloning a channel therefore needs one copy in every framing
-  per group unit (and the run counts bumped); the generic run heuristic matched
-  only the canonical shape and inserted at false positives, which is what
-  corrupted the group data and OOM'd. The flag words are byte-packed, and a record's tail carries the
+- The group data holds a channel in **two framings**: for the UI base's
+  `texture_map`, 144 **canonical** 20-byte records
+  `{type, flags, name_hash, cbuffer_offset, size}` - 4 per group unit (type 5
+  x36, type 1 x72, type 0 x36) - and 72 **packed** copies keyed by the
+  `c_per_object` hash `B5639618` (2 per unit), whose fields are reordered. A
+  channel clone therefore needs **6 insertions per group unit** (216 total for
+  the UI base) with the run counts bumped. The generic run heuristic matched
+  only some canonical shapes, inserted 108 records at false positives (it
+  corrupted `camera_world` into `world`) and OOM'd; the precise per-framing
+  parser is what is needed. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same
