@@ -4,6 +4,17 @@ Working notes and next steps for the `shader43` reverse engineering. See
 `File Type - Material.-.md` (field-level findings) and
 `Shader Section Generation Notes.md` (the target and what each section needs).
 
+## Priority order
+
+1. **Group data channel records** (current): parse the canonical and packed
+   framings precisely so a cloned channel can be inserted with correct counts -
+   the last piece before a family can add its own texture channel.
+2. **New-family path proper**: generate a whole family (block config, packed
+   copies, tail resource lists, conditions), not just patch a shipped one.
+3. **Unit workstream**: streamed meshes first, then skins/animations.
+4. **Particles**: a new file type (compile/decompile) so particle-based mods
+   like RainbowFlame can be replicated.
+
 ## Goal
 
 Everything a shader needs is defined in the mod (`<material>.hlsl` sources plus a
@@ -165,7 +176,18 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   group data needs a precise per-table parser instead. In game, the block-only
   clone boots but the title texture stays black: the cloned channel does not
   bind, so the group data records (not the block record) are what the engine
-  resolves when a material names a channel. The flag words are byte-packed, and a record's tail carries the
+  resolves when a material names a channel.
+- The group data holds a channel in **two framings** (the UI base's `texture_map`
+  has 216 occurrences, 108 of each). **Canonical** 20-byte records
+  `{type, flags, name_hash, cbuffer_offset, size}` sit in runs, e.g. for one
+  channel `{type 5, offset 0, size 4}`, `{type 1, offset 4, size 8}` and
+  `{type 1, offset 16, size 8}`. **Packed** copies repeat the same fields in a
+  cbuffer-keyed order, e.g. `{name_hash, 0, 0, 4, 1, B5639618, 0}` - the
+  `c_per_object` hash followed by a zero, with the channel's hash, offset and
+  size before it. Cloning a channel therefore needs one copy in every framing
+  per group unit (and the run counts bumped); the generic run heuristic matched
+  only the canonical shape and inserted at false positives, which is what
+  corrupted the group data and OOM'd. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same
