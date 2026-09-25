@@ -141,6 +141,17 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   carry more records than the preamble. Still missing to write records: the
   field meaning of the flag words and the count/owner word that delimits the
   record list (the bytes before the first hash differ per family).
+- Two families later (staff-49 and the enemy warpfire material `bb79ba7a5b92d132`)
+  pin the layout down further: the engine records `global_diffuse_map` (at
+  `+0x24B`) and `fog_volume` (at `+0x2D0`) sit at the **same offsets in both**,
+  so the block prologue is fixed; the family's first texture channel record
+  starts at `+0x30C` in both, but its length varies with its content (60 bytes
+  for staff, 146 bytes for the enemy material) and the next channel follows
+  immediately after (`+0x348` vs `+0x39E`). The record tail contains the same
+  packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` = 21 =
+  1+4+16, `0x55` = 85 = 1+4+16+64), so the channel records and the descriptors
+  share that grammar. A record starts `{name_hash, kind, count}` - kind 4/5 for
+  texture channels, 2 for `global_texture2D` - followed by byte-packed fields.
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
