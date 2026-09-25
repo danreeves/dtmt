@@ -24,7 +24,7 @@ _NOTE: This includes installations managed manually or with Vortex._
 If you've run into issues or received an error message during installation or game deployment, check the sections below.
 If those didn't help, you'll always find helpful people in the [Modders Discord](https://discord.gg/GFyCGNpJb8).
 
-When reporting issues, please attach a screenshot of the error message and DTMM's log file. You can find the log by entering `%APPDATA%\dtmm` into the File Explorer's address bar.
+When reporting issues, please attach a screenshot of the error message and DTMM's log file. You can find the log in the DTMM configuration folder (the `dtmm` folder under your roaming application data).
 
 ## "Found dtkit-patch-based mod installation"
 
@@ -32,7 +32,7 @@ Follow the migration steps above.
 
 ## "Failed to open game bundle directory"
 
-DTMM needs to know where to find the game files. Double-check the "Game Directory" value in the "Settings" tab, and make sure it points to the game's installation directory, e.g. `E:\SteamLibrary\steamapps\common\Warhammer 40000 Darktide`.
+DTMM needs to know where to find the game files. Double-check the "Game Directory" value in the "Settings" tab, and make sure it points to the game's installation directory, e.g. `<steam library>\steamapps\common\Warhammer 40000 Darktide`.
 
 ## "Failed to import mod"
 

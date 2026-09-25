@@ -27,7 +27,12 @@ async fn main() -> color_eyre::Result<()> {
         for line in sjson.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("shader_data") {
-                break;
+                println!("  shader_data = <{} hex chars omitted>", trimmed.len());
+                continue;
+            }
+            if trimmed.len() > 200 {
+                println!("  <{} char line omitted>", trimmed.len());
+                continue;
             }
             if trimmed.starts_with("channels = [") {
                 in_channels = true;

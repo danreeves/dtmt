@@ -8,7 +8,7 @@ To compile for Windows (native or cross), a `oo2core_win64.lib` file is needed. 
 
 ## Generating a `.lib` file
 
-A `.lib` file can be generated from a `.dll` file. The MSVC command line tools (from the Visual Studio installer) are required. Their tools can usually be found at `C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\<some_version>\bin`.
+A `.lib` file can be generated from a `.dll` file. The MSVC command line tools (from the Visual Studio installer) are required. Their tools are usually found under Visual Studio's install directory, in `VC\Tools\MSVC\<version>\bin`.
 
 1. `dumpbin /EXPORTS oo2core_9_win64.dll > oo2core_win64.def`
 2. Add a line `EXPORTS` at the top of the `.def` file

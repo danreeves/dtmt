@@ -12,10 +12,10 @@ Migration requires two steps:
 For most projects, the built-in migration command should be enough to convert a mod to the DTMT project structure:
 
 1. Determine a directory to migrate the mod to. The migration will create a new folder named after the mod here. In-place migrations are not supported.
-   E.g.: `C:\projects`
+   E.g.: `<projects folder>`
 2. Locate the `<mod_id>.mod` file for your mod.
-3. In a Command Prompt (or similar terminal application, e.g. [Windows Terminal](https://learn.microsoft.com/en-us/windows/terminal/install)), execute `dtmt migrate C:\path\to\my_mod.id C:\projects`
-4. Navigate to `C:\projects\<mod_id>` and execute `dtmt build` and `dtmt package`
+3. In a Command Prompt (or similar terminal application, e.g. [Windows Terminal](https://learn.microsoft.com/en-us/windows/terminal/install)), execute `dtmt migrate <path to my_mod.id> <projects folder>`
+4. Navigate to `<projects folder>\<mod_id>` and execute `dtmt build` and `dtmt package`
 
 ### Manually
 

@@ -45,7 +45,7 @@ With the file edited, you now need to turn your mod into something that DTMM can
 
 After you've verified that your new mod has been loaded in the game, you will want to start the actual implementation of your mod. Since it would be rather tedious to  create a new zip file, import that in DTMM and deploy it for every change, there is one more command to learn: `dtmt watch --deploy <path/to/Warhammer 40k Darktide>`.
 
-This will make DTMT continuously watch for changes in your mod's files, re-build the mod bundles and immediately deploy them to the given game directory. The path given should be the directory _above_ `bundle/`, e.g. `C:\Program Files\Steam\steamapps\common\Warhammer 40k Darktide`.
+This will make DTMT continuously watch for changes in your mod's files, re-build the mod bundles and immediately deploy them to the given game directory. The path given should be the directory _above_ `bundle/`, e.g. `<steam library>\steamapps\common\Warhammer 40k Darktide`.
 
 But there are two limitations, since DTMT cannot do a full deployment like DTMM:
 
