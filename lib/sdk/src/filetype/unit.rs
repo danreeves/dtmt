@@ -1236,6 +1236,49 @@ fn write_decoded_lods(w: &mut Writer, lods: &[DecodedLod]) {
     }
 }
 
+/// Emits the `.unit` SJSON for a decoded payload. Names that only survive as
+/// hashes are written as `#HEX` tokens, which the compiler takes as hashes.
+fn unit_sjson(slots: &[(u32, u64)], meshes: &[u32], lods: &[DecodedLod]) -> String {
+    let mut text = String::from("materials = {\n");
+    for (slot, resource) in slots {
+        text.push_str(&format!("\t\"#{slot:08X}\" = \"#{resource:016X}\"\n"));
+    }
+    text.push_str("}\n");
+    if !lods.is_empty() {
+        text.push_str("lod = [\n");
+        for lod in lods {
+            text.push_str(&format!(
+                "\t{{\n\t\tname = \"#{:08X}\"\n\t\tsteps = [\n",
+                lod.name
+            ));
+            for step in &lod.steps {
+                let names: Vec<String> = step
+                    .meshes
+                    .iter()
+                    .filter_map(|mesh| meshes.get(*mesh as usize))
+                    .map(|mesh| format!("\"#{mesh:08X}\""))
+                    .collect();
+                text.push_str(&format!(
+                    "\t\t\t{{ renderables = [ {} ] visible_height_range = [ {} {} ] }}\n",
+                    names.join(" "),
+                    step.range[0],
+                    step.range[1]
+                ));
+            }
+            text.push_str("\t\t]\n\t}\n");
+        }
+        text.push_str("]\n");
+    }
+    text.push_str("renderables = {\n");
+    for mesh in meshes {
+        text.push_str(&format!(
+            "\t\"#{mesh:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true }}\n"
+        ));
+    }
+    text.push_str("}\n");
+    text
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1832,6 +1875,13 @@ renderables = {
         writer.byte_array(&[]);
         write_decoded_lods(&mut writer, &lods);
         assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
+    }
+
+    #[test]
+    fn unit_sjson_uses_hash_names() {
+        let text = unit_sjson(&[(0x44F4_A503, 0x1122_3344_5566_7788)], &[0x553C_252C], &[]);
+        assert!(text.contains("\"#44F4A503\" = \"#1122334455667788\""), "{text}");
+        assert!(text.contains("\"#553C252C\" = {"), "{text}");
     }
 
     #[test]
