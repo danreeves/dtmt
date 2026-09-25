@@ -12,6 +12,28 @@ shader declaration); `dtmt build` compiles the sources and **generates the whole
 only game-derived data allowed is genuinely engine-side constants, kept as small
 as the decode allows.
 
+## Status
+
+**Custom shaders work as long as they are based on an existing shader
+interface.** Verified in game, a mod can:
+
+- ship its own programs (HLSL compiled with `dxc`, spliced into a generated
+  section);
+- bind its own textures through the library's channels;
+- drive values for every variable the library knows, from the material SJSON or
+  from Lua - variables bind **by name**, and a name the library does not know
+  stays out of the layout (up to four floats per known vector4 slot).
+
+What does not work yet:
+
+- renaming or adding material variables, or adding channels - the name set,
+  offsets and channel list are the library's compiled interface;
+- a **custom interface** (our own cbuffers, resources and slots). The interface
+  is carried by data we can only copy today: the device **block** (the preamble
+  tail, repeated after each pixel program), the packed group-data copies, the
+  group descriptors' `Y` field and the program tails' resource lists. They are
+  understood well enough to patch consistently, not yet enough to write.
+
 ## Done
 
 - `shader43` section codec: parse/rebuild, Oodle frames, stage from `PSV0`,
@@ -37,6 +59,21 @@ as the decode allows.
   textures/UAVs/samplers with space fields and a bindless sentinel).
 
 ## Next steps
+
+**Next action (decides whether custom interfaces are a compiler problem or a
+dead end): decode the block's record grammar.** The block is the one structure
+whose authority is still unproven, and the name-to-slot map lives in it or
+beside it. Method: dump the device preamble of families with known, different
+variable sets (the miner's CSVs give the sets and hashes), diff them and locate
+the record for a known variable (e.g. `dev_wireframe_color` = `795CF4A7` on the
+UI base family). Then clone that record with a new name hash and offset, patch
+it consistently (block, canonical records, packed copies, descriptors, tails)
+and test in game whether a material declaring the new name binds. If the block
+can be grown, generation is a matter of modelling its record stream; if not, the
+interface is engine-compiled and custom base materials stay bound to shipped
+families. Supporting decodes, as the experiment needs them: descriptor `Y`
+semantics, the packed copies' generation grammar, and the tail resource-list
+kinds.
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
