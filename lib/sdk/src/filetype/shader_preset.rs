@@ -119,6 +119,88 @@ fn patch_variable(
     (patched, Some((slot_offset, slot_size)))
 }
 
+/// Clones a channel's group data records: the canonical 20 byte variable
+/// records and the packed 28 byte copies, bumping each run's count. Returns how
+/// many records were inserted.
+fn clone_channel_group_data(data: &mut Vec<u8>, template: u32, name: u32) -> usize {
+    struct Insert {
+        at: usize,
+        bytes: Vec<u8>,
+        count_at: usize,
+    }
+
+    /// A packed record carries the cbuffer hash and a zero at +20/+24.
+    fn packed(data: &[u8], at: usize) -> bool {
+        at + 28 <= data.len() && u32_at(data, at + 20) > 0xFFFF && u32_at(data, at + 24) == 0
+    }
+
+    let mut inserts: Vec<Insert> = Vec::new();
+
+    // Canonical runs of aligned 20 byte records, each preceded by its count.
+    let mut at = 0;
+    while at + 20 <= data.len() {
+        if read_variable(data, at).map(|record| record.2) == Some(template) {
+            let mut start = at;
+            while start >= 20 && read_variable(data, start - 20).is_some() {
+                start -= 20;
+            }
+            let mut end = at + 20;
+            while read_variable(data, end).is_some() {
+                end += 20;
+            }
+            let records = (end - start) / 20;
+            if start >= 4 && u32_at(data, start - 4) as usize == records {
+                let mut clone = data[at..at + 20].to_vec();
+                clone[8..12].copy_from_slice(&name.to_le_bytes());
+                inserts.push(Insert {
+                    at: at + 20,
+                    bytes: clone,
+                    count_at: start - 4,
+                });
+            }
+        }
+        at += 4;
+    }
+
+    // Packed runs of 28 byte records, the count once before the run.
+    let mut at = 0;
+    while at + 28 <= data.len() {
+        if u32_at(data, at) == template && packed(data, at) {
+            let mut start = at;
+            while start >= 28 && packed(data, start - 28) {
+                start -= 28;
+            }
+            let mut end = at + 28;
+            while packed(data, end) {
+                end += 28;
+            }
+            let records = (end - start) / 28;
+            if start >= 4 && u32_at(data, start - 4) as usize == records {
+                let mut clone = data[at..at + 28].to_vec();
+                clone[0..4].copy_from_slice(&name.to_le_bytes());
+                inserts.push(Insert {
+                    at: at + 28,
+                    bytes: clone,
+                    count_at: start - 4,
+                });
+            }
+        }
+        at += 1;
+    }
+
+    // Apply back to front so earlier offsets stay valid; every insertion bumps
+    // its run's count.
+    inserts.sort_by_key(|insert| insert.at);
+    let mut cloned = 0;
+    for insert in inserts.into_iter().rev() {
+        data.splice(insert.at..insert.at, insert.bytes);
+        let count = u32_at(data, insert.count_at) + 1;
+        data[insert.count_at..insert.count_at + 4].copy_from_slice(&count.to_le_bytes());
+        cloned += 1;
+    }
+    cloned
+}
+
 /// Appends a copy of the `template` record to every run of consecutive records
 /// that contains it, renamed to `name` with the given `offset` and `size`. The
 /// run's count word is bumped when one can be found (the word just before the
@@ -839,6 +921,9 @@ impl Preset {
             if template == name {
                 continue;
             }
+            // The group data describes the channel in canonical and packed
+            // framings; both are cloned with their run counts.
+            cloned += clone_channel_group_data(&mut group_data, template, name);
             // The stream's record count lives in the word right before it; it has
             // to grow with the inserted record or the engine reads the stream
             // wrong (an unbumped count made the game run out of memory).
@@ -1234,5 +1319,49 @@ mod tests {
         assert_eq!(u32_at(device, 0), 2, "stream count grew by one");
         assert_eq!(u32_at(device, 4), template);
         assert_eq!(u32_at(device, 64), name);
+    }
+
+    #[test]
+    fn channel_clone_copies_both_group_data_framings() {
+        let mut preset = empty_preset();
+        let template = hash_token("texture_map");
+        let name = hash_token("mod_map");
+        let cbuffer = 0xB5639618;
+
+        // A canonical run of two records with its count, then a packed run of
+        // two records (cbuffer hash and zero at +20/+24) with its count.
+        let mut group = Vec::new();
+        group.extend_from_slice(&2u32.to_le_bytes());
+        for (kind, offset, size) in [(5u32, 0u32, 4u32), (1, 4, 8)] {
+            for word in [kind, 0, template, offset, size] {
+                group.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        group.extend_from_slice(&2u32.to_le_bytes());
+        for a in [0u32, 8] {
+            for word in [template, a, 0, 4, 1, cbuffer, 0] {
+                group.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        preset.group_data = group;
+        preset.channel_clones.push(ChannelClone {
+            template: "texture_map".to_string(),
+            name: "mod_map".to_string(),
+        });
+
+        let (section, _, cloned) = preset.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!(cloned, 4, "two canonical and two packed records");
+        let group = &section[48..];
+        // Canonical run: count 2 -> 4, one clone after each record.
+        assert_eq!(u32_at(group, 0), 4, "canonical count");
+        assert_eq!(u32_at(group, 32), name, "first canonical clone");
+        // The packed run follows the grown canonical run: 4 + 4 * 20.
+        assert_eq!(u32_at(group, 84), 4, "packed count");
+        assert_eq!(u32_at(group, 116), name, "first packed clone");
+        assert_eq!(
+            u32_at(group, 136),
+            cbuffer,
+            "packed clone keeps the cbuffer"
+        );
     }
 }
