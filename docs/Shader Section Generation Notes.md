@@ -159,3 +159,103 @@ group headers, and the block header blob.
 4. How a material chooses a context at runtime (which context query a material
    parameter answers), which decides whether a generated shader can ship a
    single context.
+
+## The declaration front end (what the reader now covers)
+
+`filetype::shader_node` reads a `.shader_node` into the `Family` the emitters
+consume. It takes `inputs`, `channels`, `permutation_sets` and `shader_contexts`,
+and ignores the rest, so a declaration out ahead of the reader still parses. All
+fifteen real declarations in the Badgers mod read, and every condition in them
+parses.
+
+Three things the first reading got wrong, each found by running it against those
+files:
+
+- an input writes its type as a **flag table** (`type = { vector3: ["HAS_X"] }`)
+  or as a **bare name** (`type = "vector3"`), depending on whether it has flags;
+- the `channels` table **nests**: a condition gates a *set* of channels, and a
+  set can hold further conditions, so a channel carries the whole path of
+  conditions it sits under;
+- `defines` comes in three spellings - a list, a bare name, or a table with
+  `stages` - in both a permutation choice and a pass.
+
+The toolchain's dialect is not SJSON, so `serde_sjson` is vendored
+(`lib/serde_sjson`, a submodule of the fork) with four relaxations: `key: value`
+separates as well as `key = value`, entries need not be on their own lines, a
+key may be a quoted string, and a quoted string may run over several lines. The
+third was a genuine upstream bug - `deserialize_identifier` took bare words only,
+so any derived struct rejected `"macros":`. Every change only accepts more than
+before, so the strict material files parse as they did.
+
+### Groups are per context, not per family
+
+`compile_with` names the permutation sets a context permutes over, and that is
+what the group count is: `standard_base`'s two contexts permute two sets each,
+four groups, where the product over every set of the family is sixteen. A
+`permute_with` may nest - a list of entries that each name a set again, so the
+block can be commented - and the names are flattened out of whatever nesting is
+used.
+
+Whether a context that names no set permutes over *all* of them is not settled.
+The toolchain also drops the sets whose macros a context's compiled HLSL never
+mentions, and that is a property of the code rather than of the declaration, so
+`Family::permutations_for` is an upper bound until a declaration can be paired
+with its own section and the real count measured.
+
+### An interface is a query, not an enumeration
+
+The first cut enumerated one interface per subset of the optional variables,
+which looks right until a real family does it: `standard_base` has 22 gated
+variables, so 4194304 interfaces, against the 16 groups a section ships. A
+material's inputs pick an interface; the conditions tree is what maps one onto a
+group. So `Family::interface(&names)` and `Family::interface_of(mask)` answer one
+query and nothing enumerates.
+
+### Conditions are three-valued
+
+`filetype::condition` parses the `if` grammar the declarations use - `defined`,
+`!`, `&&`, `||`, brackets, calls with or without arguments, comparisons - and
+evaluates it against a permutation's defines. A macro test is answered; a *call*
+is an engine query (`num_skin_weights()`, `on_platform(GL)`) that a generated
+family cannot answer, so it evaluates to `None` rather than a guess, and the
+combinators fold that through Kleene logic. The two consumers then differ on
+purpose, because the costs differ:
+
+- a **channel** whose condition is unknown is left out of the group - a value the
+  group cannot supply is a hole;
+- a **pass** whose branch is unknown contributes *both* sides - a pass drawn when
+  it should not be is wasted, a pass missing when it was needed is a hole.
+
+## The compiler is `dxc`, and the pipeline is already whole
+
+There is no need for a new compile step. `dtmt build` finds `dxc.exe` (the
+`dxc` config option, then `DTMT_DXC`, then the newest Windows SDK), compiles
+`vs_main`/`ps_main` from `<name>.hlsl` or `<name>.vs.hlsl`/`<name>.ps.hlsl` next
+to a material, and splices the container into every program of that stage
+(`crates/dtmt/src/cmd/build.rs`). The section's programs are therefore mod-owned
+today; what is still copied from a template is everything *around* them. The
+group data's `cbuffer_offset` values are the one input that needs a source, and
+the compiled container already carries them: the SDK's DXBC reflection gives the
+slot of every variable, which is what `shader43 --slots` prints.
+
+## Pairing a declaration with its own section
+
+To settle the group count, a declaration has to be read next to the section it
+was compiled into. The pieces are all present:
+
+- `C:\dev\core_diff\shader_nodes` holds 146 of the **game's own** declarations.
+- The compiled sections live in `bundle\data\XX\<hash>` in the install. The
+  files come in two shapes; the unextensioned ones are a material whose payload
+  *is* the section, and the layout is regular: the section size is a `u32` at
+  offset `0x14`, and the section is `data[len - 4 - size .. len - 4]`. Verified
+  against `bundle\data\00\0028686adad0c743`, a 35732-byte file whose 35408-byte
+  section starts at 320.
+- `db-list.txt` (in the notes directory) is the bundle database: a stream hash
+  per line, then the file hashes it holds. A file's hash is the murmur64 of its
+  **file name** alone - `bundle::get_name_from_path` hashes `path.file_name()`
+  and looks it up in a filename dictionary - so a candidate material's stream is
+  a lookup away.
+- The extracted section is checked against the declaration by its channel names:
+  each block channel record's murmur32 must be a channel the declaration
+  declares. That is a strong enough pairing signal not to need the material's own
+  name.
