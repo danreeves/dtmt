@@ -97,6 +97,13 @@ families. Supporting decodes, as the experiment needs them: descriptor `Y`
 semantics, the packed copies' generation grammar, and the tail resource-list
 kinds.
 
+Update: variables and cbuffers turned out not to be in the block (see the block
+notes below), so the block's remaining authority is resources/channels - and its
+record stream is now framed: record lengths follow the record's `kind` (4 -> 60
+bytes, 5 -> 73 bytes), the engine prologue is at fixed offsets and the stream
+ends exactly at the preamble's end. The next experiment is cloning a channel
+record with a new name hash (the same shape as `clone_variable`).
+
 Block notes from a byte-precise dump of the chain base (863 byte preamble):
 
 - The channel records are **byte packed**, not word aligned: the `bca` record
@@ -128,30 +135,23 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   rendered black, so something else about that patch was wrong - most likely the
   base material's variable list, which RainbowFlame patches in its materials as
   well.)
-- Channel records in the block: scanning a family's preamble for known channel
-  names shows byte-packed variable-length records that start with the name hash.
-  The `texture_map` record of the shipped UI base family (preamble and the copy
-  after every pixel program are byte-identical) is 60 bytes:
-  `{hash, kind = 4, count = 1, flags...}` followed by repeated small flag words
-  packed at three-byte strides; a `global_texture2D` record (kind 2) has
-  `FFFFFFFF` bindless markers inline and an embedded hash at +24. Staff-49's
-  preamble has four records (`global_diffuse_map`, `fog_volume`,
-  `texture_map_e5246d8c`, `texture_map_fc5c271f`) spaced 60 bytes apart, while
-  the UI base's preamble holds exactly one (`texture_map`); the per-pixel blocks
-  carry more records than the preamble. Still missing to write records: the
-  field meaning of the flag words and the count/owner word that delimits the
-  record list (the bytes before the first hash differ per family).
-- Two families later (staff-49 and the enemy warpfire material `bb79ba7a5b92d132`)
-  pin the layout down further: the engine records `global_diffuse_map` (at
-  `+0x24B`) and `fog_volume` (at `+0x2D0`) sit at the **same offsets in both**,
-  so the block prologue is fixed; the family's first texture channel record
-  starts at `+0x30C` in both, but its length varies with its content (60 bytes
-  for staff, 146 bytes for the enemy material) and the next channel follows
-  immediately after (`+0x348` vs `+0x39E`). The record tail contains the same
-  packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` = 21 =
-  1+4+16, `0x55` = 85 = 1+4+16+64), so the channel records and the descriptors
-  share that grammar. A record starts `{name_hash, kind, count}` - kind 4/5 for
-  texture channels, 2 for `global_texture2D` - followed by byte-packed fields.
+- Channel records in the block: the record stream sits at the end of the
+  preamble and parses cleanly. A record is `{u32 name_hash, u32 kind,
+  u32 count = 1, ...}` and its length is fixed by `kind`: **kind 4 -> 60 bytes,
+  kind 5 -> 73 bytes** (kind 2 is `global_texture2D`, which appears in the
+  per-pixel blocks only). The stream ends exactly at the preamble's end
+  (staff-49: 5 records ending at `+0x391`; the enemy warpfire material
+  `bb79ba7a5b92d132`: 6 records ending at `+0x3E7`; the UI base: 1 record ending
+  at `+0x231`). Every family has the same engine prologue at the same offsets -
+  `global_diffuse_map` (kind 4, `+0x24B`), `sun_shadow_map` (kind 5, `+0x287`)
+  and `fog_volume` (kind 4, `+0x2D0`) - and family channels follow (the first at
+  `+0x30C`). The flag words are byte-packed, and a record's tail carries the
+  same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
+  21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
+  cloning a record of the same kind and substituting the name hash, the same
+  mechanism as `clone_variable`, now with a known record length. The miner's
+  dictionary CSV carries the murmur32 hash in its third column, which is how
+  `sun_shadow_map` was resolved.
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
