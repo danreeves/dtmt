@@ -44,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
     let mut records_mode = false;
+    let mut channel_filter: Option<String> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -98,6 +99,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--preamble" => preamble_mode = true,
             "--records" => records_mode = true,
+            "--channel" => {
+                i += 1;
+                channel_filter = Some(args.get(i).expect("--channel needs a name").clone());
+            }
             "--decompile" => {
                 i += 1;
                 decompile_dir = Some(PathBuf::from(
@@ -209,6 +214,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if records_mode {
         for path in &files {
             if let Err(err) = records(path, variable_names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(channel) = &channel_filter {
+        let hash = hash_name(channel);
+        for path in &files {
+            if let Err(err) = channel_records(path, hash) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -607,6 +622,72 @@ fn records(
             .cloned()
             .unwrap_or_else(|| format!("#{hash:08X}"));
         println!("  +{at:#06x}  kind {kind}  {len:>2} bytes  {name}");
+    }
+    Ok(())
+}
+
+/// Resolves a name or 8 digit hex hash to a 32 bit hash.
+fn hash_name(token: &str) -> u32 {
+    let trimmed = token.strip_prefix('#').unwrap_or(token);
+    if trimmed.len() == 8 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        u32::from_str_radix(trimmed, 16).unwrap_or(0)
+    } else {
+        u32::from(murmur::Murmur32::hash(token))
+    }
+}
+
+/// Dumps the group data records of a channel, classified by framing: canonical
+/// 20-byte records (a small type word before the hash) and packed copies (a
+/// cbuffer hash before the hash).
+fn channel_records(path: &Path, hash: u32) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let group_offset = u32_at(shader, 32) as usize;
+    let group_size = u32_at(shader, 36) as usize;
+    let group = shader
+        .get(group_offset..group_offset + group_size)
+        .ok_or("group data is out of range")?;
+
+    let needle = hash.to_le_bytes();
+    let mut canonical = Vec::new();
+    let mut packed = Vec::new();
+    for at in 8..group.len().saturating_sub(4) {
+        if group[at..at + 4] != needle {
+            continue;
+        }
+        let before = u32_at(group, at - 8);
+        if before <= 12 {
+            canonical.push((
+                at,
+                before,
+                u32_at(group, at - 4),
+                u32_at(group, at + 4),
+                u32_at(group, at + 8),
+            ));
+        } else {
+            packed.push((
+                at,
+                before,
+                u32_at(group, at - 4),
+                u32_at(group, at + 4),
+                u32_at(group, at + 8),
+                u32_at(group, at + 12),
+            ));
+        }
+    }
+
+    println!(
+        "=== {} group data {} bytes, #{hash:08X} ===",
+        path.display(),
+        group.len()
+    );
+    println!("  canonical {} records", canonical.len());
+    for (at, kind, flags, offset, size) in &canonical {
+        println!("    +{at:#06x}  type {kind}  flags {flags}  offset {offset}  size {size}");
+    }
+    println!("  packed {} records", packed.len());
+    for (at, cbuffer, zero, a, b, c) in &packed {
+        println!("    +{at:#06x}  cbuffer #{cbuffer:08X}  {zero} {a} {b} {c}");
     }
     Ok(())
 }
