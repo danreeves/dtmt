@@ -117,8 +117,15 @@ fn patch_variable(data: &mut [u8], slot: u32, name: u32, offset: u32, size: u32)
 /// that contains it, renamed to `name` with the given `offset` and `size`. The
 /// run's count word is bumped when one can be found (the word just before the
 /// run or, in copies that use a `{kind, count}` header, the word before that).
-/// Returns the number of records added.
-fn clone_variable(data: &mut Vec<u8>, template: u32, name: u32, offset: u32, size: u32) -> usize {
+/// Returns the number of records added and the template's `(offset, size)`,
+/// which callers use to grow the constant buffer in the program tails.
+fn clone_variable(
+    data: &mut Vec<u8>,
+    template: u32,
+    name: u32,
+    offset: u32,
+    size: u32,
+) -> (usize, Option<(u32, u32)>) {
     // Canonical occurrences of the template record (aligned or not).
     let mut occurrences = Vec::new();
     let mut at = 0;
@@ -130,6 +137,10 @@ fn clone_variable(data: &mut Vec<u8>, template: u32, name: u32, offset: u32, siz
             at += 1;
         }
     }
+    let old = occurrences
+        .first()
+        .and_then(|at| read_variable(data, *at))
+        .map(|(_, _, _, offset, size)| (offset, size));
 
     let mut cloned = 0;
     // Work backwards so insertions do not move the occurrences still to come.
@@ -168,7 +179,27 @@ fn clone_variable(data: &mut Vec<u8>, template: u32, name: u32, offset: u32, siz
         }
         cloned += 1;
     }
-    cloned
+    (cloned, old)
+}
+
+/// Grows the constant buffer in every program tail that covered `old_end` before
+/// the change so it reaches `needed`.
+fn grow_tails(programs: &mut [(Stage, Vec<u8>)], old_end: u32, needed: u32) {
+    for (_, tail) in programs {
+        let Some(mut parsed) = shader::Tail::parse(tail) else {
+            continue;
+        };
+        let mut changed = false;
+        for entry in &mut parsed.cbuffers {
+            if entry.size() >= old_end && entry.size() < needed {
+                entry.words[2] = needed;
+                changed = true;
+            }
+        }
+        if changed {
+            *tail = parsed.bytes();
+        }
+    }
 }
 
 fn from_hex(text: &str) -> Result<Vec<u8>> {
@@ -569,25 +600,12 @@ impl Preset {
             // Grow the constant buffer that covered the slot so the shader can
             // actually read the new space: find the tail entry whose size covers
             // the old range and is smaller than the new one.
-            let Some((old_offset, old_size)) = old else {
-                continue;
-            };
-            let needed = variable.offset + variable.size;
-            let old_end = old_offset + old_size;
-            for (_, tail) in &mut programs {
-                let Some(mut parsed) = shader::Tail::parse(tail) else {
-                    continue;
-                };
-                let mut changed = false;
-                for entry in &mut parsed.cbuffers {
-                    if entry.size() >= old_end && entry.size() < needed {
-                        entry.words[2] = needed;
-                        changed = true;
-                    }
-                }
-                if changed {
-                    *tail = parsed.bytes();
-                }
+            if let Some((old_offset, old_size)) = old {
+                grow_tails(
+                    &mut programs,
+                    old_offset + old_size,
+                    variable.offset + variable.size,
+                );
             }
         }
 
@@ -599,13 +617,23 @@ impl Preset {
                     clone.size
                 );
             }
-            cloned += clone_variable(
+            let (count, old) = clone_variable(
                 &mut group_data,
                 hash_token(&clone.template),
                 hash_token(&clone.name),
                 clone.offset,
                 clone.size,
             );
+            cloned += count;
+
+            // A cloned slot needs the same cbuffer growth as a rewritten one.
+            if let Some((old_offset, old_size)) = old {
+                grow_tails(
+                    &mut programs,
+                    old_offset + old_size,
+                    clone.offset + clone.size,
+                );
+            }
         }
 
         let device = self.build_device_with(&programs, containers)?;
