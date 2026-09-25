@@ -128,6 +128,19 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   rendered black, so something else about that patch was wrong - most likely the
   base material's variable list, which RainbowFlame patches in its materials as
   well.)
+- Channel records in the block: scanning a family's preamble for known channel
+  names shows byte-packed variable-length records that start with the name hash.
+  The `texture_map` record of the shipped UI base family (preamble and the copy
+  after every pixel program are byte-identical) is 60 bytes:
+  `{hash, kind = 4, count = 1, flags...}` followed by repeated small flag words
+  packed at three-byte strides; a `global_texture2D` record (kind 2) has
+  `FFFFFFFF` bindless markers inline and an embedded hash at +24. Staff-49's
+  preamble has four records (`global_diffuse_map`, `fog_volume`,
+  `texture_map_e5246d8c`, `texture_map_fc5c271f`) spaced 60 bytes apart, while
+  the UI base's preamble holds exactly one (`texture_map`); the per-pixel blocks
+  carry more records than the preamble. Still missing to write records: the
+  field meaning of the flag words and the count/owner word that delimits the
+  record list (the bytes before the first hash differ per family).
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
