@@ -188,7 +188,12 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   canonical + 3 packed insertions per group unit (216 total for the UI base)
   with the run counts bumped; the generic run heuristic inserted 108 at false
   positives (it corrupted `camera_world` into `world`) and OOM'd, so the precise
-  per-framing parser is what is needed. The flag words are byte-packed, and a record's tail carries the
+  per-framing parser is what is needed. First attempt (`clone_channel_group_data`)
+  clones both framings and bumps the counts, but on the real group data its
+  canonical scan finds only 36 of the 108 records: the rest are canonical-shaped
+  yet fail `read_variable`'s field checks, so the scan has to be layout-aware
+  rather than reusing the generic variable reader. The clone is unit-tested and
+  undeployed until then. The flag words are byte-packed, and a record's tail carries the
   same packed 2-bit-per-slot usage counts as the descriptor `Y` field (`0x15` =
   21 = 1+4+16, `0x55` = 85 = 1+4+16+64). A channel can therefore be added by
   cloning a record of the same kind and substituting the name hash, the same
