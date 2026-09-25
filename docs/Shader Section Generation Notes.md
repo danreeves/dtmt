@@ -226,36 +226,69 @@ purpose, because the costs differ:
 - a **pass** whose branch is unknown contributes *both* sides - a pass drawn when
   it should not be is wasted, a pass missing when it was needed is a hole.
 
-## The compiler is `dxc`, and the pipeline is already whole
+## The compiler is DXC, reached through its DLL
 
-There is no need for a new compile step. `dtmt build` finds `dxc.exe` (the
-`dxc` config option, then `DTMT_DXC`, then the newest Windows SDK), compiles
-`vs_main`/`ps_main` from `<name>.hlsl` or `<name>.vs.hlsl`/`<name>.ps.hlsl` next
-to a material, and splices the container into every program of that stage
-(`crates/dtmt/src/cmd/build.rs`). The section's programs are therefore mod-owned
-today; what is still copied from a template is everything *around* them. The
-group data's `cbuffer_offset` values are the one input that needs a source, and
-the compiled container already carries them: the SDK's DXBC reflection gives the
-slot of every variable, which is what `shader43 --slots` prints.
+`dtmt build` compiles a material's shader sources today, but by **spawning
+`dxc.exe`** - found through the `dxc` config option, then `DTMT_DXC`, then the
+newest `Windows Kits\10\bin\*\x64\dxc.exe`. `dxc.exe` is a thin command-line
+wrapper: the compiler is `dxcompiler.dll`, reached through the COM interface in
+`dxcapi.h` (`DxcCreateInstance` -> `IDxcUtils` / `IDxcCompiler3`). Binding that
+directly is the better shape, and the SDK has everything it needs:
 
-## Pairing a declaration with its own section
+- `Windows Kits\10\Lib\*\um\x64\dxcompiler.lib` - the import library, in every
+  installed SDK (17763, 19041, 22621).
+- `Windows Kits\10\bin\*\x64\dxcompiler.dll` and `dxil.dll` next to `dxc.exe`.
+- `Windows Kits\10\Include\*\um\dxcapi.h` for the interface declarations.
 
-To settle the group count, a declaration has to be read next to the section it
-was compiled into. The pieces are all present:
+Two things to get right, both from how the `oodle` crate links `oo2core`:
 
-- `C:\dev\core_diff\shader_nodes` holds 146 of the **game's own** declarations.
-- The compiled sections live in `bundle\data\XX\<hash>` in the install. The
-  files come in two shapes; the unextensioned ones are a material whose payload
-  *is* the section, and the layout is regular: the section size is a `u32` at
-  offset `0x14`, and the section is `data[len - 4 - size .. len - 4]`. Verified
-  against `bundle\data\00\0028686adad0c743`, a 35732-byte file whose 35408-byte
-  section starts at 320.
-- `db-list.txt` (in the notes directory) is the bundle database: a stream hash
-  per line, then the file hashes it holds. A file's hash is the murmur64 of its
-  **file name** alone - `bundle::get_name_from_path` hashes `path.file_name()`
-  and looks it up in a filename dictionary - so a candidate material's stream is
-  a lookup away.
-- The extracted section is checked against the declaration by its channel names:
-  each block channel record's murmur32 must be a channel the declaration
-  declares. That is a strong enough pairing signal not to need the material's own
-  name.
+- The DLL is **not** on `PATH` and not shipped with the game, so a plain import
+  link would stop `dtmt.exe` from starting at all. It has to be delay-loaded, and
+  `LoadLibraryW`'d from the SDK's `bin` directory (found the same way `find_dxc`
+  finds the exe) before the first `DxcCreateInstance`. Once loaded by absolute
+  path, the delay-load import resolves against the already-loaded module, so a
+  mod that compiles no shaders never touches the DLL.
+- The interfaces are ABI-stable, so a hand-written `extern "system"` vtable for
+  the handful of types needed (`IDxcBlob`, `IDxcBlobEncoding`, `IDxcUtils`,
+  `IDxcCompiler3`, `DxcBuffer`) is enough. `dxcapi.h` is large and drags in the
+  Windows headers, so bindgen over it would make the build depend on an SDK
+  *include* tree where the import library alone would do.
+
+This matters for the from-scratch path because the group data's `cbuffer_offset`
+values come from the compiled container: the SDK's DXBC reflection already reports
+the slot of every variable (`shader43 --slots`), and Darktide needs DXBC, so the
+`dxc -T vs_5_0`-style profile the current shell-out already passes is what the
+DLL call has to reproduce exactly.
+
+## No ground truth to pair against
+
+This is the thing to know before planning any measurement: **the game ships no
+shader declarations at all.** A search of the whole install for `*.shader_node`,
+`*.shader_import` and `*.hlsl` returns nothing. What it ships is compiled
+sections only, inside the `bundle\data\XX\<hash>` files, which are bundle
+containers whose frames are Oodle-compressed - the SDK's `bundle` module plus the
+`oodle` crate are what read them, and nothing hand-rolled will.
+
+The declarations available on this machine are therefore *not* Darktide's:
+
+- `C:\dev\core_diff\shader_nodes` is a **Stingray library source drop** (it is a
+  git checkout, and its files are the classic Stingray node library - `group =
+  "Math"`, `type = "auto"`). It is the right *dialect* and the wrong families.
+- `C:\dev\vmb\...\stingray_renderer\output_nodes` is a mod's own
+  Stingray-renderer declarations. Also the right dialect, also not Darktide's
+  families.
+
+Darktide is built on Stingray, so its declarations are Stingray-shaped and the
+dialect work transfers. But there is no declaration whose section we also have, so
+the group count cannot be settled by pairing. Two things can settle it instead:
+
+1. **Round-trip.** Read a shipped section into the emitters and write it back
+   byte-identically. This is what the block emitter does now (863/863 bytes on
+   `427B5E6E72E72FD7`) and it is the only offline oracle available.
+2. **The binary.** The `dependencies` and `conditions` sections record what the
+   toolchain decided, so decoding them answers the group count directly - which
+   is why those two sections are the remaining decode work rather than the
+   emitters.
+
+Treat any number computed from a Stingray declaration as a hypothesis about
+Darktide, never as a measurement of it.
