@@ -267,11 +267,12 @@ interface when a section is generated:
 - `clone_channel <template> <new-name>` adds a channel: the template's block
   record is copied with its name hash replaced and inserted right after every
   occurrence of the template record - in the device preamble and in every
-  program tail's block. Block channel records have a fixed length per kind
-  (kind 4 -> 60 bytes, kind 5 -> 73), which is what lets the exact record bytes
-  be found without parsing the rest of the block. The template stays intact. The
-  group data descriptor for the new channel is not generated yet, so a material
-  cannot bind a texture to it until that half exists.
+  program tail's block - and the template's group data variable record (the
+  channel's type and slot) is cloned too, keeping the template's offset and
+  size. Block channel records have a fixed length per kind (kind 4 -> 60 bytes,
+  kind 5 -> 73), which is what lets the exact record bytes be found without
+  parsing the rest of the block. The template stays intact. Whether the engine
+  binds a material texture under the new name is not verified in game yet.
 
 These lines are applied in `Preset::generate_with_report`, before the section is
 assembled. The variable lines (`variable`, `clone`) grow the constant buffer in

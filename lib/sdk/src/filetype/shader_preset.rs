@@ -119,6 +119,19 @@ fn patch_variable(
     (patched, Some((slot_offset, slot_size)))
 }
 
+/// Reads the `(offset, size)` of a variable-like record by name hash, for the
+/// records [`clone_variable`] understands.
+fn variable_slot(data: &[u8], hash: u32) -> Option<(u32, u32)> {
+    for at in (0..data.len().saturating_sub(19)).step_by(4) {
+        if let Some((_, _, found, offset, size)) = read_variable(data, at)
+            && found == hash
+        {
+            return Some((offset, size));
+        }
+    }
+    None
+}
+
 /// Appends a copy of the `template` record to every run of consecutive records
 /// that contains it, renamed to `name` with the given `offset` and `size`. The
 /// run's count word is bumped when one can be found (the word just before the
@@ -803,12 +816,18 @@ impl Preset {
         // Channel record clones add a record to the preamble's record stream and
         // to every program tail's block, right where the template record sits.
         // The record's length follows its kind, so the exact template bytes can
-        // be searched for without parsing the surrounding block.
+        // be searched for without parsing the surrounding block. The group data
+        // describes the channel as a variable record (its type and slot), so
+        // that record is cloned too, with the template's offset and size.
         for clone in &self.channel_clones {
             let template = hash_token(&clone.template);
             let name = hash_token(&clone.name);
             if template == name {
                 continue;
+            }
+            if let Some((offset, size)) = variable_slot(&group_data, template) {
+                let (count, _) = clone_variable(&mut group_data, template, name, offset, size);
+                cloned += count;
             }
             let Some((offset, _kind, len)) = find_channel_record(&preamble, template) else {
                 continue;
@@ -1170,5 +1189,32 @@ mod tests {
         assert_eq!(u32_at(device, 16), template);
         assert_eq!(u32_at(device, 16 + 60), hash_token("mod_map"));
         assert_eq!(u32_at(device, 16 + 60 + 4), 4);
+    }
+
+    #[test]
+    fn channel_clone_also_copies_the_group_data_record() {
+        let mut preset = empty_preset();
+        let template = hash_token("texture_map");
+        let name = hash_token("mod_map");
+
+        // A channel's variable record: {kind 5, flags 1, hash, offset 24, size 4}.
+        let mut group = Vec::new();
+        for word in [5u32, 1, template, 24, 4] {
+            group.extend_from_slice(&word.to_le_bytes());
+        }
+        preset.group_data = group;
+        preset.channel_clones.push(ChannelClone {
+            template: "texture_map".to_string(),
+            name: "mod_map".to_string(),
+        });
+
+        let (section, rewritten, cloned) = preset.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!((rewritten, cloned), (0, 1));
+        // The group data starts at 48; the clone sits after the template record
+        // and keeps its slot.
+        let group = &section[48..];
+        assert_eq!(u32_at(group, 28), name);
+        assert_eq!(u32_at(group, 32), 24);
+        assert_eq!(u32_at(group, 36), 4);
     }
 }

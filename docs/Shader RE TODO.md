@@ -103,9 +103,10 @@ record stream is now framed: record lengths follow the record's `kind` (4 -> 60
 bytes, 5 -> 73 bytes), the engine prologue (`linear_depth`, `global_diffuse_map`,
 `sun_shadow_map`, `fog_volume`) is at fixed offsets and the stream ends exactly
 at the preamble's end. `shader43 --records` parses it end to end on three shipped
-families, and a `clone_channel` preset line clones a record into the preamble and
-every tail's block (unit-tested). What still has to be generated for a new
-channel to actually bind is the group data descriptor, which is the next piece.
+families, and a `clone_channel` preset line clones a record into the preamble,
+every tail's block and the group data's variable records (unit-tested). Whether
+the engine binds a material texture under the new name is the pending in-game
+question.
 
 Block notes from a byte-precise dump of the chain base (863 byte preamble):
 
