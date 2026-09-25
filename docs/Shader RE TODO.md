@@ -99,10 +99,11 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
 - Channel records appear in the preamble *and* after every pixel program (the
   same block), so a channel rename has to patch every copy. The group data
   carries the same names in its canonical records and in the cbuffer-keyed
-  packed form, so a rename must patch all three places. A preset line that
-  replaces the 4 byte name hash everywhere (group data, preamble, every tail)
-  is the mechanical equivalent of the `variable` rewrite for channels; not
-  implemented yet.
+  packed form, so a rename must patch all three places. This is implemented as
+  the `channel <shipped> <new>` preset line (`replace_hash`): it replaces the
+  4 byte name hash in the group data, the preamble and every tail. Verified
+  offline against the UI base (264 occurrences: 216 group, 48 device). In-game
+  verification of a renamed channel is still pending.
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order

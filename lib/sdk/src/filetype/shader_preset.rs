@@ -202,6 +202,26 @@ fn grow_tails(programs: &mut [(Stage, Vec<u8>)], old_end: u32, needed: u32) {
     }
 }
 
+/// Replaces every occurrence of a 32 bit name hash with another, returning how
+/// many were replaced. Used for channel renames, whose names are not part of a
+/// fixed record shape.
+fn replace_hash(data: &mut [u8], old: u32, new: u32) -> usize {
+    let old = old.to_le_bytes();
+    let new = new.to_le_bytes();
+    let mut replaced = 0;
+    let mut at = 0;
+    while at + 4 <= data.len() {
+        if data[at..at + 4] == old {
+            data[at..at + 4].copy_from_slice(&new);
+            replaced += 1;
+            at += 4;
+        } else {
+            at += 1;
+        }
+    }
+    replaced
+}
+
 fn from_hex(text: &str) -> Result<Vec<u8>> {
     if text.len() % 2 != 0 {
         bail!("hex string has an odd length");
@@ -257,6 +277,21 @@ pub struct VariableClone {
     pub size: u32,
 }
 
+/// A channel (texture) rename: the shipped channel's name hash is replaced by a
+/// new one everywhere it occurs - the group data records (canonical and packed),
+/// the device preamble and every program tail's block - so a material can bind
+/// its own texture under a new channel name. Offsets, sizes and registers stay
+/// as they are; only the name changes.
+#[derive(Clone, Debug)]
+pub struct ChannelRename {
+    /// The shipped channel whose name is taken over: a name or an 8 digit
+    /// murmur32 hash.
+    pub slot: String,
+    /// The new channel name (or its 8 digit hash), as the material and its
+    /// textures block will address it.
+    pub name: String,
+}
+
 /// The wrapper of one shader family.
 pub struct Preset {
     pub version: u32,
@@ -277,6 +312,8 @@ pub struct Preset {
     pub variables: Vec<VariableRewrite>,
     /// Variable slots to add when the section is generated.
     pub clones: Vec<VariableClone>,
+    /// Channel names to rename when the section is generated.
+    pub channels: Vec<ChannelRename>,
 }
 
 impl Preset {
@@ -353,6 +390,7 @@ impl Preset {
             tails: Vec::new(),
             variables: Vec::new(),
             clones: Vec::new(),
+            channels: Vec::new(),
         })
     }
 
@@ -372,6 +410,7 @@ impl Preset {
             tails: Vec::new(),
             variables: Vec::new(),
             clones: Vec::new(),
+            channels: Vec::new(),
         };
 
         for line in text.lines() {
@@ -456,6 +495,19 @@ impl Preset {
                 continue;
             }
 
+            // Channel renames carry two fields.
+            if let Some(rest) = line.strip_prefix("channel ") {
+                let mut fields = rest.split(' ');
+                let (Some(slot), Some(name)) = (fields.next(), fields.next()) else {
+                    bail!("malformed channel line: {line}");
+                };
+                preset.channels.push(ChannelRename {
+                    slot: slot.to_string(),
+                    name: name.to_string(),
+                });
+                continue;
+            }
+
             let (key, value) = line.split_once(' ').unwrap_or((line, ""));
             match key {
                 "version" => preset.version = value.parse()?,
@@ -525,6 +577,10 @@ impl Preset {
             ));
         }
 
+        for channel in &self.channels {
+            text.push_str(&format!("channel {} {}\n", channel.slot, channel.name));
+        }
+
         text
     }
 
@@ -532,17 +588,18 @@ impl Preset {
     /// record per preset program, using `containers[stage]` and that program's
     /// tail.
     pub fn build_device(&self, containers: &HashMap<Stage, Vec<u8>>) -> Result<Vec<u8>> {
-        self.build_device_with(&self.programs, containers)
+        self.build_device_with(&self.device_preamble, &self.programs, containers)
     }
 
-    /// Like [`Preset::build_device`], but with the program tails to use (the
-    /// generator may have rewritten them).
+    /// Like [`Preset::build_device`], but with the preamble and program tails to
+    /// use (the generator may have patched them).
     fn build_device_with(
         &self,
+        preamble: &[u8],
         programs: &[(Stage, Vec<u8>)],
         containers: &HashMap<Stage, Vec<u8>>,
     ) -> Result<Vec<u8>> {
-        let mut device = self.device_preamble.clone();
+        let mut device = preamble.to_vec();
 
         for (index, (stage, tail)) in programs.iter().enumerate() {
             let container = containers.get(stage).ok_or_else(|| {
@@ -577,6 +634,7 @@ impl Preset {
         containers: &HashMap<Stage, Vec<u8>>,
     ) -> Result<(Vec<u8>, usize, usize)> {
         let mut group_data = self.group_data.clone();
+        let mut preamble = self.device_preamble.clone();
         let mut programs = self.programs.clone();
         let mut rewritten = 0usize;
         let mut cloned = 0usize;
@@ -636,7 +694,21 @@ impl Preset {
             }
         }
 
-        let device = self.build_device_with(&programs, containers)?;
+        // Channel renames change only names: the hash is replaced in the group
+        // data (canonical and packed copies), in the preamble and in every
+        // program tail's block, so the library, the material and the shader all
+        // agree on the new name.
+        for channel in &self.channels {
+            let slot = hash_token(&channel.slot);
+            let name = hash_token(&channel.name);
+            rewritten += replace_hash(&mut group_data, slot, name);
+            rewritten += replace_hash(&mut preamble, slot, name);
+            for (_, tail) in &mut programs {
+                rewritten += replace_hash(tail, slot, name);
+            }
+        }
+
+        let device = self.build_device_with(&preamble, &programs, containers)?;
 
         let contexts_offset = 48usize;
         let conditions_offset = contexts_offset + self.contexts.len();
@@ -703,6 +775,7 @@ mod tests {
             tails: Vec::new(),
             variables: Vec::new(),
             clones: Vec::new(),
+            channels: Vec::new(),
         }
     }
 
@@ -845,6 +918,43 @@ mod tests {
         assert_eq!(old, Some((224, 16)));
         assert_eq!(u32_at(&data, 20 + 8), hash_token("mod_extra"));
         assert_eq!(u32_at(&data, 20 + 12), 240);
+    }
+
+    #[test]
+    fn channel_rename_replaces_the_name_everywhere() {
+        let mut preset = empty_preset();
+        let slot = hash_token("texture_map");
+        let name = hash_token("mod_map");
+
+        // The name appears in the group data and the preamble.
+        let mut group = Vec::new();
+        for word in [1u32, 0, slot, 72, 8] {
+            group.extend_from_slice(&word.to_le_bytes());
+        }
+        preset.group_data = group;
+        let mut preamble = Vec::new();
+        for word in [7u32, slot, 9] {
+            preamble.extend_from_slice(&word.to_le_bytes());
+        }
+        preset.device_preamble = preamble;
+        preset.channels.push(ChannelRename {
+            slot: "texture_map".to_string(),
+            name: "mod_map".to_string(),
+        });
+
+        let (section, rewritten, _) = preset.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!(rewritten, 2, "group and preamble");
+
+        // Group data starts at 48 with the other sections empty.
+        let group = &section[48..];
+        assert_eq!(u32_at(group, 8), name);
+        assert!(!group.windows(4).any(|window| window == slot.to_le_bytes()));
+
+        // A tail is patched the same way (the generate path needs a DXBC
+        // container per program, so this checks the replacement itself).
+        let mut tail = slot.to_le_bytes().to_vec();
+        assert_eq!(replace_hash(&mut tail, slot, name), 1);
+        assert_eq!(tail, name.to_le_bytes());
     }
 
     #[test]

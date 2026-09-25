@@ -256,6 +256,14 @@ interface when a section is generated:
 - `clone <template> <name> <offset> <size>` adds a slot: a copy of the
   template's record is appended to every run of records that contains it, with
   the run's count word bumped. The template stays intact.
+- `channel <shipped> <new-name>` renames a texture channel: the shipped channel's
+  32 bit name hash is replaced wherever it occurs - the group data (canonical
+  records and the cbuffer-keyed packed copies), the device preamble and every
+  program tail's block - so the library, the material and the shader agree on
+  the new name. Offsets, registers and texture formats are untouched, so the
+  material declares the texture under the new name and the shader keeps sampling
+  the same register. Verified against the UI base: `channel texture_map mod_map`
+  replaced all 264 occurrences (216 in the group data, 48 in the device data).
 
 Both are applied in `Preset::generate_with_report`, before the section is
 assembled, and both grow the constant buffer in the program tails when the new

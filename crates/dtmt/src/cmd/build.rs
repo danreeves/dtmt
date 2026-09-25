@@ -437,10 +437,10 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
 
                 let mut report = String::new();
                 if rewritten > 0 {
-                    report.push_str(&format!(", rewriting {rewritten} variable record(s)"));
+                    report.push_str(&format!(", rewriting {rewritten} shader record(s)"));
                 }
                 if cloned > 0 {
-                    report.push_str(&format!(", adding {cloned} variable record(s)"));
+                    report.push_str(&format!(", adding {cloned} shader record(s)"));
                 }
 
                 tracing::info!(
