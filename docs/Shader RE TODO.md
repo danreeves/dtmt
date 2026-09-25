@@ -114,14 +114,19 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   4 byte name hash in the group data, the preamble and every tail. Verified
   offline against the UI base (264 occurrences: 216 group, 48 device). In-game
   verification of a renamed channel is still pending.
-- Evidence from an external binary-patch mod (RainbowFlame): adding a variable
-  **within** an existing cbuffer's spare space works in game. Its shader patches
-  add `particle_max_size` at offset 64 of a region that already ran to 96 and
-  `material_variable` at offset 76, and repurpose an existing record, all without
-  changing the cbuffer size - while replacing every program with a custom one.
-  Our `clone` test that grew the cbuffer (240 -> 256) rendered black. This is
-  consistent with the block's cbuffer entries having fixed sizes: records can be
-  added inside the compiled size, the size itself is the library's.
+- Section-level evidence from an external binary-patch mod (RainbowFlame),
+  diffing a patched shipped material against the original: the programs are
+  replaced, the **tails** change only in their per-program cbuffer lists
+  (`c_material_exports` 80 -> 112 bytes, one program gains a `c_billboard:144`
+  entry), and the **group data** grows by 97 bytes with its count words adjusted
+  (variable records are added). The **preamble/block, contexts, conditions and
+  dependencies are byte-identical**. Cbuffers and variables are therefore not
+  part of the block: their interface lives in the group data's name-to-slot
+  tables and the per-program tails, and both sizes and entries can change. The
+  block stays the library's - the remaining authority for resources/channels.
+  (Our earlier `clone` test that grew the UI base's cbuffer rendered black, so
+  something else about that patch was wrong - most likely the base material's
+  variable list, which RainbowFlame patches in its materials as well.)
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
