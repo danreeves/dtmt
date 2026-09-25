@@ -65,17 +65,16 @@ as the decode allows.
    kind uses) and the block, so a tail can be generated from the compiled
    container's reflection instead of the preset's bytes.
 
-   Current understanding, verified in game: **material variables are matched
-   positionally** to the shader library's own variable slots, using the library's
-   offsets. The name is only the key the material and Lua use; it does not place
-   the value. With the shipped group tables untouched, a material declaring a
-   brand-new name (`mod_probe`, vector4) and a shader reading the shipped slot
-   (offset 224) has the tint cycling, driven from Lua under the new name. So a
-   mod can rename and drive the library's parameter slots, but the number and
-   positions of those slots are the library's compiled interface: the UI base
-   exposes one vector4 slot plus its texture channels. Patching tables, packed
-   copies or the material's `offset` (which is an offset into the material's own
-   `variable_data`, not a cbuffer offset) never moves a value.
+   Current understanding, verified in game: **material variables bind by name**
+   to the shader library's own variable names (its compiled cbuffer members and
+   offsets). A known name fills its slot wherever it sits in the material; a name
+   the library does not know stays out of the layout (verified: unknown
+   `zz_probe_a` declared first plus known `dev_wireframe_color` second has the
+   shader reading the known one's colour, and only-unknown names leave the slot
+   at zero; the known name driven from Lua gives the full hue rotation). The
+   material's `offset` field is an offset into the material's `variable_data`,
+   not a cbuffer offset. So a mod drives the library's known variable values and
+   channels and ships its own programs, but cannot rename or add parameters.
 2b. **Generator plan** - what a generated section is made of:
 
 | Piece | Source |
@@ -97,13 +96,12 @@ as the decode allows.
    write. New *channel names* still require the library's block to already list
    them, since the block is the library's own record set.
 
-2c. **Mod-defined parameters: what works** - a material can rename and drive the
-   library's parameter slots (they are matched positionally, so the material's
-   own names are the API it exposes to Lua and the material SJSON), but the
-   number and positions of the slots are the library's compiled interface. On the
-   UI base that is one vector4 slot plus the texture channels; extra values pack
-   into it four floats at a time. Adding or moving slots is not possible from
-   data.
+2c. **Mod-defined parameters: what works** - the library's known variable names,
+   driven from Lua or the material (`dev_wireframe_color` on the UI base, a
+   float4 at offset 224, is the one custom slot its tables expose), plus its
+   texture channels and our own programs. Values can be packed four floats at a
+   time into a known vector4. Renaming or adding parameters does not work: the
+   name set and offsets are the library's compiled interface.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
