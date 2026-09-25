@@ -118,15 +118,16 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   diffing a patched shipped material against the original: the programs are
   replaced, the **tails** change only in their per-program cbuffer lists
   (`c_material_exports` 80 -> 112 bytes, one program gains a `c_billboard:144`
-  entry), and the **group data** grows by 97 bytes with its count words adjusted
-  (variable records are added). The **preamble/block, contexts, conditions and
-  dependencies are byte-identical**. Cbuffers and variables are therefore not
-  part of the block: their interface lives in the group data's name-to-slot
-  tables and the per-program tails, and both sizes and entries can change. The
-  block stays the library's - the remaining authority for resources/channels.
-  (Our earlier `clone` test that grew the UI base's cbuffer rendered black, so
-  something else about that patch was wrong - most likely the base material's
-  variable list, which RainbowFlame patches in its materials as well.)
+  entry), the **group data** grows by 40 bytes (variable records and count
+  words) and the **default data** by 44 bytes. The **preamble/block, contexts,
+  conditions and dependencies are byte-identical**. Cbuffers and variables are
+  therefore not part of the block: their interface lives in the group data's
+  name-to-slot tables and the per-program tails, and both sizes and entries can
+  change. The block stays the library's - the remaining authority for
+  resources/channels. (Our earlier `clone` test that grew the UI base's cbuffer
+  rendered black, so something else about that patch was wrong - most likely the
+  base material's variable list, which RainbowFlame patches in its materials as
+  well.)
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
