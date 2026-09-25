@@ -53,10 +53,15 @@ What does not work yet:
 - Family census (from `variables.csv`): of 2036 mined materials and 3353
   distinct variable names, 129 names appear in at least half of the materials
   (the engine variables), and the material-specific remainder ranges from 0 to
-  86 per material with a long tail (most materials have 4 to 40). The top
-  families are candidate bases for mods that want many existing parameter slots
-  instead of cloned ones; naming them needs the bundle scan that maps each data
-  file to its resource name (in progress).
+  86 per material with a long tail (most materials have 4 to 40). The per-file
+  ranking was joined with a dump of every bundle's entries (the entry's
+  `dfn=...` field maps a data file to its resource name hash, which the
+  dictionaries resolve). The richest families are FX materials:
+  `content/fx/materials/abilities/cryptic_force_field_02` (86),
+  `content/weapons/materials/weapon_power_sword/weapon_power_effect_cryptic`
+  (62), `content/fx/materials/master/wind_render` (61). Many had no
+  dictionary entry, so a mod that needs many existing parameter slots should
+  prefer the named ones or use the `clone` preset lines.
 - Decoded (partially): contexts (`{name_hash, u32, count, count × {query_id,
   conditions_offset}}`), conditions tree (records `{tag, b, c, count}` +
   hashes + u16 payload; names are channels: `gui`, `red`, `green`, `blue`,

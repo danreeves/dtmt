@@ -172,7 +172,10 @@ fn normalize_sjson(text: &str) -> String {
                 pending_space = false;
             }
             ' ' | '\t' | '\r' => {
-                out.push(c);
+                // Drop the whitespace itself; a separator is inserted when the
+                // next token needs one. Leaving it in would put a space between
+                // two values on separate lines (`0  \n1`), which the parser's
+                // single-character horizontal whitespace rule rejects.
                 pending_space = true;
             }
             ',' => {
@@ -318,10 +321,6 @@ fn compile_stream(name: &str, data: &[f32], size: u32, components: usize) -> Res
         "BLENDWEIGHTS" => 8,
         other => bail!("Unsupported vertex channel '{other}'"),
     };
-    let value_count = |values: &[f32], count: usize| -> Vec<u16> {
-        values.iter().map(|v| f16(*v)).collect::<Vec<_>>()[..count].to_vec()
-    };
-    let _ = value_count;
     match name {
         // Positions are stored as half4 with w = 1.
         "POSITION" => {
@@ -808,4 +807,120 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
 /// The bundle name of a unit resource: murmur64 of the path without extension.
 pub fn resource_name(path: &str) -> IdString64 {
     IdString64::from(Murmur64::hash(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BSI: &str = r#"
+geometries = {
+    g_cube = {
+        indices = {
+            size = 3
+            streams = [ [ 0 1 2 ] ]
+            type = "TRIANGLE_LIST"
+        }
+        materials = [ {
+            name = "m_cube"
+            primitives = [ 0 ]
+        } ]
+        streams = [
+            {
+                channels = [ { index = 0 name = "POSITION" type = "CT_FLOAT3" } ]
+                data = [ 0 0 0  1 0 0  0 1 0 ]
+                size = 3
+                stride = 12
+            }
+            {
+                channels = [ { index = 0 name = "NORMAL" type = "CT_FLOAT3" } ]
+                data = [ 0 0 1  0 0 1  0 0 1 ]
+                size = 3
+                stride = 12
+            }
+            {
+                channels = [ { index = 0 name = "TEXCOORD" type = "CT_FLOAT2" } ]
+                data = [ 0 0  1 0  0 1 ]
+                size = 3
+                stride = 8
+            }
+        ]
+    }
+}
+nodes = {
+    g_cube = {
+        geometries = [ "g_cube" ]
+        local = [ 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 ]
+    }
+}
+"#;
+
+    const UNIT: &str = r##"
+materials = {
+    m_cube = "#1122334455667788"
+}
+renderables = {
+    g_cube = {
+        always_keep = false
+        culling = "bounding_volume"
+        occluder = false
+        shadow_caster = true
+        surface_queries = false
+        viewport_visible = true
+    }
+}
+"##;
+
+    fn u32_at(data: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes(data[at..at + 4].try_into().unwrap())
+    }
+
+    fn contains_u32(data: &[u8], value: u32) -> bool {
+        data.windows(4).any(|window| window == value.to_le_bytes())
+    }
+
+    fn contains_u64(data: &[u8], value: u64) -> bool {
+        data.windows(8).any(|window| window == value.to_le_bytes())
+    }
+
+    #[test]
+    fn compiles_a_minimal_unit() {
+        let name = resource_name("units/mods/test/cube");
+        let file = match compile(name, UNIT, BSI.as_bytes()) {
+            Ok(file) => file,
+            Err(error) => panic!("{error:?}"),
+        };
+        assert_eq!(file.file_type(), BundleFileType::Unit);
+
+        let payload = file.variants()[0].data();
+        assert_eq!(u32_at(payload, 0), UNIT_VERSION);
+        assert_eq!(u32_at(payload, 4), 1, "one mesh geometry");
+        assert_eq!(u32_at(payload, 8), 1, "mesh geometry version");
+        assert_eq!(u32_at(payload, 12), 3, "three vertex streams");
+
+        // The material slot, the material resource and the node name are all in
+        // the payload as murmur hashes.
+        assert!(contains_u32(payload, u32::from(Murmur32::hash("m_cube"))));
+        assert!(contains_u64(payload, 0x1122_3344_5566_7788));
+        assert!(contains_u32(payload, u32::from(Murmur32::hash("g_cube"))));
+
+        // Sixteen vertices' worth of half4 positions would be wrong here: the
+        // payload is small (three vertices).
+        assert!(payload.len() < 1024, "payload {} bytes", payload.len());
+    }
+
+    #[test]
+    fn normalizer_accepts_space_separated_values() {
+        #[derive(Deserialize)]
+        struct Test {
+            a: Vec<u32>,
+            b: BTreeMap<String, u32>,
+        }
+
+        let text = "a = [ 1 2 3 ]\nb = { c = 4 d = 5 }\n";
+        let parsed: Test = serde_sjson::from_str(&normalize_sjson(text)).unwrap();
+        assert_eq!(parsed.a, vec![1, 2, 3]);
+        assert_eq!(parsed.b["c"], 4);
+        assert_eq!(parsed.b["d"], 5);
+    }
 }
