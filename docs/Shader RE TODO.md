@@ -297,9 +297,15 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    base's pixel tails all show **eight counted resource lists** with counts
    `0,0,0,1,0,1,1,0` (lists 4, 6 and 7 carry the texture, the UAV and a
    vertex-data-like record), then the count-free input run and a counted run;
-   the vertex tails have seven empty lists then their counted output run. Which
-   lists exist by index and the pixel tail's trailing `{DA560F03, 0, 0}` run are
-   still open.
+   the vertex tails have seven empty lists then their counted output run. The
+   resource lists are **stage-level**: pixel tails 1/3/5 have byte-identical list
+   regions, and the pixel shader's DXBC resources line up with them (list 4 = the
+   `Texture2D` array at `t0 space2`, list 6 = the `RWBuffer` at `u0 space31`);
+   the vertex shader has one cbuffer and no resources, so its lists are empty.
+   Only the cbuffer list (vertex = `c_per_object`; pixel = `global_viewport` +
+   `c_per_object`) and the signature runs differ per program. Which lists exist
+   by index and the pixel tail's trailing `{DA560F03, 0, 0}` run are still
+   open.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
