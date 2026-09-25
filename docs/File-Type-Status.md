@@ -17,7 +17,7 @@
 | Wwise Event | [Partial](File%20Type%20-%20Wwise%20Event.-.md) | ✗ | ✗ |
 | Wwise Stream | [Full](File%20Type%20-%20Wwise%20Stream.-.md) | ✗ | ✗ |
 | Wwise Bank | [Partial](File%20Type%20-%20Wwise%20Bank.-.md) | ✗ | ✗ |
-| Unit            | None          | ✗           | ✗             |
+| Unit            | [Partial](File%20Type%20-%20Unit.-.md) | V           | ?             | DTMT compiles a `.unit` (SJSON) plus a `.bsi` (SJSON geometry) into the runtime payload; a static single-mesh unit spawns in game. Skins, animations, real LOD objects, streamed meshes and decompilation are still open. |
 | Level           | None          | ✗           | ✗             |
 | Particles       | None          | ✗           | ✗             |
 
