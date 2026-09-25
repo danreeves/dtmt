@@ -202,6 +202,11 @@ the game bundle) before trusting it.
 - `shader43` example: `--section <name>`, `--preamble`, `--tail <n>`,
   `--slots --hlsl <dir>`, `--variables <dict>`, `--decompile <dir>`,
   `--rebuild <dir>`.
+- `compile_unit` example: `<unit> <bsi> <out payload>` compiles an authoring
+  pair into the runtime payload (the same code the build uses).
+- `decompile_unit` example: `<payload> <out dir>` writes the `.unit`/`.bsi`
+  pair back out; static units only (skins, animations and actors are rejected
+  with a clear error).
 - `generate_shader` example: `--preset <out.txt> <material data file>`,
   `--generate <preset> <base.material> <out.material> --vs/--ps`.
 - `mine_materials` example: `--dict <csv> --out <dir> <game data dir>`.
