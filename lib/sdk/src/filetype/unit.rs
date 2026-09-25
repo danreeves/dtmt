@@ -1191,6 +1191,34 @@ renderables = {
     }
 
     #[test]
+    fn compiles_lod_objects_from_the_unit_sjson() {
+        let unit = r##"
+materials = {
+    m_cube = "#1122334455667788"
+}
+lod = [
+    {
+        bounding_volume = "g_cube"
+        name = "lod"
+        orientation = "g_cube"
+        steps = [
+            { renderables = [ "g_cube" ] visible_height_range = [ 1 0.1 ] }
+            { renderables = [ "g_cube" ] visible_height_range = [ 0.1 0 ] }
+        ]
+    }
+]
+renderables = {
+    g_cube = { culling = "bounding_volume" shadow_caster = true viewport_visible = true }
+}
+"##;
+        let file = compile(resource_name("units/mods/test/lod"), unit, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+        // One LOD object named "lod" with the two authored steps.
+        assert!(contains_u32(payload, u32::from(Murmur32::hash("lod"))));
+        assert_eq!(u32_at(payload, 4), 1, "one mesh geometry");
+    }
+
+    #[test]
     fn normalizer_accepts_space_separated_values() {        #[derive(Deserialize)]
         struct Test {
             a: Vec<u32>,

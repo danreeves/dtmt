@@ -125,6 +125,9 @@ list and in the unit's `materials` map.
 - Mesh flag words (`0x000C2001, 3, 1` on shipped static props) and the four
   bounding-volume extras are copied, not derived; their exact meaning is
   unknown.
-- Skin/animations, real LOD objects, streamed meshes (external `.stream` data)
-  and decompilation (payload -> `.unit`/`.bsi`) are not implemented.
-- The `lod` SJSON field is parsed but not compiled into LOD objects yet.
+- Skin/animations, streamed meshes (external `.stream` data) and decompilation
+  (payload -> `.unit`/`.bsi`) are not implemented.
+- LOD objects compile from the unit SJSON's `lod` entries (validated: names,
+  step ranges and step meshes). The `bounding_volume` and `orientation` names are
+  parsed but unused, and a step's `stream_offset` stays 0 because the compiler
+  always writes inline vertex data.
