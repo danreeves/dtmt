@@ -303,9 +303,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    `Texture2D` array at `t0 space2`, list 6 = the `RWBuffer` at `u0 space31`);
    the vertex shader has one cbuffer and no resources, so its lists are empty.
    Only the cbuffer list (vertex = `c_per_object`; pixel = `global_viewport` +
-   `c_per_object`) and the signature runs differ per program. Which lists exist
-   by index and the pixel tail's trailing `{DA560F03, 0, 0}` run are still
-   open.
+   `c_per_object`) and the signature runs differ per program. Across the seven
+   families the lists map to: list 3 = engine textures (`linear_depth` seen),
+   list 4 = the family's texture (`3AFC636C`), list 6 = the family's UAV
+   (`41B1CFF8`), list 7 = the vertex-data record (`4B42C5E6`); lists 1, 2, 5 and
+   8 are empty in every family. One family's list 7 carries four records, so the
+   7-word record shape is not universal - the record size may depend on the
+   resource kind. Which lists exist by index and the pixel tail's trailing
+   `{DA560F03, 0, 0}` run are still open.
 
    Current understanding, verified in game: **material variables bind by name**
    to the shader library's own variable names (its compiled cbuffer members and
