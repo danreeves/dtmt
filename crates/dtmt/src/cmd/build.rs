@@ -337,6 +337,20 @@ fn set_shader_data(sjson: &str, section: &[u8]) -> String {
     text
 }
 
+/// Resolve a mod file name to the bundle name, applying `name_overrides`.
+fn apply_name_override(name_overrides: &HashMap<String, String>, name: String) -> IdString64 {
+    if let Some(new_name) = name_overrides.get(&name) {
+        let resolved = match u64::from_str_radix(new_name, 16) {
+            Ok(hash) => IdString64::from(hash),
+            Err(_) => IdString64::from(new_name.clone()),
+        };
+        tracing::info!("Overriding '{}' -> '{}'", name, resolved.display());
+        resolved
+    } else {
+        IdString64::from(name)
+    }
+}
+
 /// Iterate over the paths in the given `Package` and
 /// compile each file by its file type.
 #[tracing::instrument(skip_all)]
@@ -359,6 +373,28 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
         })
         .map(|(file_type, name, root)| async move {
             let path = PathBuf::from(name);
+
+            // A `.unit` is compiled from the SJSON source and the `.bsi`
+            // geometry beside it, mirroring the SDK workflow.
+            if file_type == BundleFileType::Unit {
+                let unit_sjson = fs::read_to_string(&path)
+                    .await
+                    .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+                let bsi_path = path.with_extension("bsi");
+                let bsi = fs::read(&bsi_path).await.wrap_err_with(|| {
+                    format!(
+                        "Unit '{}' has no sibling BSI geometry at '{}'",
+                        path.display(),
+                        bsi_path.display()
+                    )
+                })?;
+                let name = apply_name_override(
+                    name_overrides,
+                    path.with_extension("").to_slash_lossy().to_string(),
+                );
+                return sdk::filetype::unit::compile(name, &unit_sjson, &bsi);
+            }
+
             let mut sjson = fs::read_to_string(&path)
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
@@ -413,17 +449,10 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 generated = true;
             }
 
-            let name = path.with_extension("").to_slash_lossy().to_string();
-            let name = if let Some(new_name) = name_overrides.get(&name) {
-                let new_name = match u64::from_str_radix(new_name, 16) {
-                    Ok(hash) => IdString64::from(hash),
-                    Err(_) => IdString64::from(new_name.clone()),
-                };
-                tracing::info!("Overriding '{}' -> '{}'", name, new_name.display());
-                new_name
-            } else {
-                IdString64::from(name.clone())
-            };
+            let name = apply_name_override(
+                name_overrides,
+                path.with_extension("").to_slash_lossy().to_string(),
+            );
             let mut file = BundleFile::from_sjson(name, file_type, sjson, root.as_ref()).await?;
 
             if !generated
