@@ -143,6 +143,11 @@ list and in the unit's `materials` map.
   emitted `.bsi` should use one index list shared by every stream (the unified
   form) and one node per mesh object with an identity local transform, which is
   exactly what the validated Python prototype emitted.
+- Decompiling a shipped static prop (`chain_8m_01`, 26033 bytes) and recompiling
+  the emitted pair gives 25901 bytes with the same geometry: 4 streams, 972
+  indices, one batch, and the same material slot (`945378ED`) and resource
+  (`2EDC32093F2CB485`). The 132 byte difference is the scene graph: the emitter
+  writes one node per mesh, while the shipped unit has a parent chain.
 - The decompilation path was validated end to end with a Python prototype: a
   compiled cube payload was parsed, its streams unpacked and a `.unit`/`.bsi`
   pair emitted, which `compile_unit` recompiled back into a 1277 byte payload
