@@ -65,17 +65,37 @@ as the decode allows.
    kind uses) and the block, so a tail can be generated from the compiled
    container's reflection instead of the preset's bytes.
 
-   Related finding, now settled in game: the engine's cbuffer upload layout comes
-   from its own compilation of the shipped shader. Moving a known variable's
-   record to new space in *every* representation (all 36 group-table records, the
-   material's own `offset` field, every tail's cbuffer size, the shader reading
-   the new slot) still leaves the slot at zero, and the byte-packed block is not
-   the source either (it holds only `texture_map`, no cbuffer variable names).
-   So our shaders can consume only the variables the shipped shader already has;
-   pass extra values by packing them into known `float4` slots. The block's own
-   role - a per-material, byte-packed *texture/parameter binding* stream
-   (`texture_map` at block offset 489 with `{size 4, count 1}`) - is still worth
-   decoding, since unlike the upload layout it is material data we control.
+   Current understanding (all verified in game unless noted): the **upload
+   layout is the canonical variable tables** - a fresh base material with a new
+   variable name (`mod_probe`) at a new offset (240) was uploaded and driven from
+   Lua; the **packed copies** are a library-side serialization that must parse
+   but whose variable records are not what uploads (the probe kept the shipped
+   records and still uploaded the new name from the canonical table); the
+   **block** is the shader library's compiled interface - replacing it with a
+   generated minimal one, or zeroing it, fails shader load (`dispatch_loadtime`,
+   `shader #ID[...]`), and keeping only 64 bytes loads then OOMs at draw. The
+   tails are load-bearing as well (cbuffer list is ours, the resource lists are
+   the library's).
+2b. **Generator plan** - what a generated section is made of:
+
+| Piece | Source |
+| --- | --- |
+| Header, section offsets | generated |
+| Contexts | generated (one `default` query, `0xFFFFFFFF`) or the family's |
+| Conditions | empty for a single group, the family's for permutations |
+| Dependencies (8 bytes) | the family's |
+| Group data: units, descriptors | generated (`X` = running 24/8 byte allocation, `flags` = space/kind) |
+| Group data: canonical tables | **ours**, from the material's channels and variables - this is the upload layout |
+| Group data: packed copies | the **library's** (required to parse, not used for uploads) |
+| Device: programs | ours (built from our HLSL) |
+| Device: tails | cbuffer list ours, resource lists the library's |
+| Device: preamble/block | the **library's** compiled interface |
+| Default data | ours (empty, or the material's defaults) |
+
+   The library constants (block, packed copies, resource lists, engine cbuffer
+   variable names) are a small per-family file; everything else the tool can
+   write. New *channel names* still require the library's block to already list
+   them, since the block is the library's own record set.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
