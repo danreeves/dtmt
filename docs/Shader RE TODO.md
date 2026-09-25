@@ -50,6 +50,13 @@ What does not work yet:
 - `mine_materials` example: dumps `materials/variables/groups/defaults/contexts/
   conditions/tails.csv` for the whole game (2037 shader materials) and writes
   `known.txt`/`unknown.txt` hash bounty lists.
+- Family census (from `variables.csv`): of 2036 mined materials and 3353
+  distinct variable names, 129 names appear in at least half of the materials
+  (the engine variables), and the material-specific remainder ranges from 0 to
+  86 per material with a long tail (most materials have 4 to 40). The top
+  families are candidate bases for mods that want many existing parameter slots
+  instead of cloned ones; naming them needs the bundle scan that maps each data
+  file to its resource name (in progress).
 - Decoded (partially): contexts (`{name_hash, u32, count, count × {query_id,
   conditions_offset}}`), conditions tree (records `{tag, b, c, count}` +
   hashes + u16 payload; names are channels: `gui`, `red`, `green`, `blue`,
