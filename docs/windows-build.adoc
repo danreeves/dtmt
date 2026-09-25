@@ -63,7 +63,7 @@ Alternatively, an import library can be generated from the game's
 [source,powershell]
 ----
 $dll   = "<game>\binaries\oo2core_9_win64.dll"
-$vcbin = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\<version>\bin\HostX64\x64"
+$vcbin = "<Visual Studio install>\VC\Tools\MSVC\<version>\bin\HostX64\x64"
 
 $exports = & "$vcbin\dumpbin.exe" /exports $dll |
   Select-String '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)' |
@@ -91,7 +91,7 @@ $game = "<path to the game>"
 
 # MinGW-w64 (w64devkit) first for the LuaJIT build, then the game's binaries
 # so the Oodle DLL is found when running the tools.
-$env:PATH = "$game\binaries;C:\Users\<you>\w64devkit\w64devkit\bin;$env:PATH"
+$env:PATH = "$game\binaries;<w64devkit>\w64devkit\bin;$env:PATH"
 
 # Required by some build scripts and by the nightly toolchain.
 $env:OS = "Windows_NT"
