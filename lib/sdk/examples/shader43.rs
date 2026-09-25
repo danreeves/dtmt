@@ -722,6 +722,26 @@ fn dump_preamble(path: &Path, dump_dir: Option<&Path>) -> Result<(), Box<dyn std
         .join(" ");
     println!("  first programs: {positions}");
 
+    // The block's header: group count, cbuffer count and record count + 8; the
+    // byte-packed 13-byte records follow at +0x78 and end at the stream's count
+    // word (see `docs/Shader RE TODO.md`).
+    if preamble.len() >= 0x78 {
+        let groups = u32_at(preamble, 4);
+        let cbuffers = u32_at(preamble, 8);
+        let records = u32_at(preamble, 12).saturating_sub(8) as usize;
+        let table_end = 0x78 + records * 13;
+        let stream = preamble
+            .get(table_end..table_end + 4)
+            .map(|bytes| u32_at(bytes, 0));
+        println!(
+            "  block: {groups} group(s), {cbuffers} cbuffer(s), {records} record(s), \
+             table +0x78..+{table_end:#x}, stream count {}",
+            stream
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "?".into())
+        );
+    }
+
     for (row, chunk) in preamble.chunks(16).enumerate() {
         let hex = chunk
             .iter()
