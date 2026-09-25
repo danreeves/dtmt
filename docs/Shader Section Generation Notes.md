@@ -304,6 +304,34 @@ UAV) among them - so the per-group header is a *resource* list, and the tables
 follow it. That is the structure to decode next: the entry shape, and therefore
 where a group's tables end and the next group's resources begin.
 
+### The walk rule, measured on all six families
+
+The four words immediately before every table are a header whose **last word is
+that table's record count**, and whose third word is `256`:
+
+| family | groups | first table | the four words before it |
+| --- | --- | --- | --- |
+| `004F18EA` | 3 | +184, 69 records | `120, 0, 4, 69` |
+| `17A3DC01` | 3 | +136, 69 records | `112, 256, 4, 69` |
+| `2A04418E` | 5 | +216, 69 records | `168, 256, 5, 69` |
+| `3F08AC44` | 5 | +216, 69 records | `168, 256, 5, 69` |
+| `427B5E6E` | 3 | +136, 69 records | `112, 256, 4, 69` |
+| `38ECBAD1` | 1 | +156, 68 records | different shape, not yet read |
+
+Five of six line up exactly: `256` in the third position, a count in the fourth
+that is also the table's record count, and a first word that scales with the
+group (`112` at four, `168` at five). The engine's table is 69 records in five of
+the six - the same table, the same cbuffer, in every family - and the sixth is a
+one-group family whose header reads differently.
+
+So the walk the emitter wants is: find `256` on a word boundary, read the count
+after it, expect a valid table 16 bytes on, and continue 12/16 + 20 x count bytes
+later. That is a specific signature rather than "any 20 bytes that look like a
+record", which is what made the scanning approach rewrite bytes it should not
+have. `38ECBAD1` is the family to read before trusting the rule everywhere: a
+single group may lay its header out differently, and that is exactly the case a
+rule fitted to five samples would get wrong.
+
 ## The compiler is DXC, reached through its DLL
 
 `dtmt build` compiles a material's shader sources today, but by **spawning
