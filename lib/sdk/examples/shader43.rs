@@ -46,6 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tails_mode = false;
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
+    let mut dependencies_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
@@ -111,6 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 section = Some(args.get(i).expect("--section needs a name").clone());
             }
             "--preamble" => preamble_mode = true,
+            "--dependencies" => dependencies_mode = true,
             "--build-block" => {
                 i += 1;
                 block_family = Some(PathBuf::from(
@@ -213,6 +215,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if preamble_mode {
         for path in &files {
             if let Err(err) = dump_preamble(path, dump_dir.as_deref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if dependencies_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = dependencies(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -730,6 +745,56 @@ fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std
 
 /// Reads a section's group data: the descriptors, the tables it can find, and
 /// whether rebuilding it from the table it already carries is a no-op.
+fn dependencies(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{Dependency, GroupData};
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let at = u32_at(shader, 24) as usize;
+    let count = u32_at(shader, 28) as usize;
+    let entries = Dependency::read(shader, at, count);
+
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let group_data = GroupData::new(
+        shader
+            .get(offset..offset + size)
+            .ok_or("group data is out of range")?
+            .to_vec(),
+    );
+
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+    println!("=== {} ===", path.display());
+    println!(
+        "  dependencies @{at} x{count}; group data {size} bytes, {} groups, hash {:08X}",
+        group_data.group_count(),
+        group_data.hash()
+    );
+    for (index, entry) in entries.iter().enumerate() {
+        let name = named(entry.name);
+        println!(
+            "    {index}: tag {:08X}  {:08X} {}  groups {}  hash {:08X}{}",
+            entry.tag,
+            entry.name,
+            name,
+            entry.groups,
+            entry.hash,
+            if entry.agrees_with(&group_data) {
+                "  agrees"
+            } else {
+                "  DOES NOT AGREE"
+            }
+        );
+    }
+    Ok(())
+}
+
 fn group_data(
     path: &Path,
     names: Option<&HashMap<u32, String>>,

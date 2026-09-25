@@ -155,7 +155,8 @@ group headers, and the block header blob.
    byte-identical across the 36 groups, so generation can emit them once and keep
    the template's descriptors and headers; whether one group can replace a
    permutation set is then just a matter of the copied conditions agreeing.
-3. Conditions: the payload encoding and what a leaf selects.
+3. Conditions: the payload encoding and what a leaf selects. (The *dependencies*
+   section is now read and writable - see below.)
 4. How a material chooses a context at runtime (which context query a material
    parameter answers), which decides whether a generated shader can ship a
    single context.
@@ -331,6 +332,42 @@ record", which is what made the scanning approach rewrite bytes it should not
 have. `38ECBAD1` is the family to read before trusting the rule everywhere: a
 single group may lay its header out differently, and that is exactly the case a
 rule fitted to five samples would get wrong.
+
+## The dependencies entry (one 16-byte record, and it is a pointer)
+
+The header's seventh and eighth words are the offset and the count of the
+dependencies table. Every shipped family has **one** entry, and it is 16 bytes:
+
+```text
+u32 tag     // C0A8C3A4, on all six
+u32 name    // 209FB8C3 = core/stingray_renderer/renderer, on all six
+u32 groups  // 3, 3, 5, 1, 5, 3
+u32 hash    // 8BE282AA, DC9EF937, C071FCF2, BC448AB8, F301AD0B, 2B35E80D
+```
+
+The last two words are **the group data's own**: `groups` equals the count in the
+group data's first word, and `hash` equals the hash in its second word, on all
+six families. That is what identifies the shape - an entry whose count and hash
+are both the group data's cannot be anything else.
+
+So a family declares what it was built *against* (`core/stingray_renderer/renderer`,
+the renderer library, on all six) and the count and hash are the build's own
+fingerprint, so the engine can tell one build of a family from another. It also
+means the entry is **writable from the group data**: `Dependency::of` reads the
+two words off the bytes just built, so a generated section's entry and its group
+data cannot disagree, and the only thing carried is the dependency's path - two
+words of constant.
+
+What the entry is *not*: the hash is not the murmur32 of the group data's own
+bytes, for any seed or any leading range tried. So a group data built from
+scratch has no way to compute it; a rebuilder takes it from the template, which
+is what it already does for every other word it does not own. `agrees_with` is
+the check for a template whose pair came from somewhere else.
+
+The group counts are worth having on their own: `3, 3, 5, 1, 5, 3` against the
+`standard_base` upper bound of sixteen, and against a family that permutes two
+sets per context. `permutations_for` is still an upper bound, but it now has a
+number to be measured against rather than a guess.
 
 ## The compiler is DXC, reached through its DLL
 

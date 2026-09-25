@@ -139,6 +139,108 @@ impl Record {
     }
 }
 
+/// The tag word that opens every dependencies entry, on every shipped family.
+const DEPENDENCY_TAG: u32 = 0xC0A8_C3A4;
+
+/// The record length of a dependencies entry.
+const DEPENDENCY_LEN: usize = 16;
+
+/// One entry of a section's dependencies table: what a family was built against,
+/// and the identity of what it built.
+///
+/// The entry is 16 bytes, and it is a *pointer at* the group data rather than a
+/// description of it:
+///
+/// ```text
+/// u32 tag     // C0A8C3A4 on every shipped family
+/// u32 name    // murmur32 of the dependency's path
+/// u32 groups  // the group count, equal to the group data's own
+/// u32 hash    // the group data's own header hash
+/// ```
+///
+/// The last two words are the same values the group data carries in its own
+/// first header, which is how the shape was recognised: a family declares what it
+/// was built against - `core/stingray_renderer/renderer`, on all six shipped
+/// families - and the count and hash are the build's own fingerprint, so the
+/// engine can tell one build of a family from another.
+///
+/// That is what makes the entry writable from the group data rather than carried
+/// beside it: [`Dependency::of`] reads the two words off the group data the
+/// emitter just built, so the entry and the data cannot disagree, and
+/// [`Dependency::agrees_with`] is the check for a template whose pair came from
+/// somewhere else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dependency {
+    /// The entry's tag, [`DEPENDENCY_TAG`] on every shipped family.
+    pub tag: u32,
+    /// murmur32 of the dependency's path, [`Dependency::RENDERER`] on every
+    /// shipped family.
+    pub name: u32,
+    /// The group count the dependency was built against.
+    pub groups: u32,
+    /// The group data header hash the dependency was built against.
+    pub hash: u32,
+}
+
+impl Dependency {
+    /// The murmur32 of `core/stingray_renderer/renderer`, the library every
+    /// shipped family names as its one dependency. This is a two-word carry: the
+    /// dependency's path and nothing else, because the count and the hash are
+    /// read off the group data being built.
+    pub const RENDERER: u32 = 0x209F_B8C3;
+    /// Reads the entry at an offset within a section.
+    pub fn parse(data: &[u8], at: usize) -> Option<Self> {
+        let entry = data.get(at..at + DEPENDENCY_LEN)?;
+        let word = |i: usize| u32::from_le_bytes(entry[i * 4..i * 4 + 4].try_into().unwrap());
+        Some(Self {
+            tag: word(0),
+            name: word(1),
+            groups: word(2),
+            hash: word(3),
+        })
+    }
+
+    /// Reads every entry of a section's dependencies table.
+    pub fn read(data: &[u8], at: usize, count: usize) -> Vec<Self> {
+        (0..count)
+            .filter_map(|index| Self::parse(data, at + index * DEPENDENCY_LEN))
+            .collect()
+    }
+
+    /// The entry for a group data, read off the group data itself.
+    ///
+    /// This is how a generated section writes the entry: the count and the hash
+    /// come from the bytes just built, so there is nothing to keep in step. The
+    /// name is the one thing the group data does not carry - it is what the
+    /// family was built *against* - so it is passed in, and
+    /// [`Dependency::RENDERER`] is the value every shipped family uses.
+    pub fn of(name: u32, group_data: &GroupData) -> Self {
+        Self {
+            tag: DEPENDENCY_TAG,
+            name,
+            groups: group_data.group_count(),
+            hash: group_data.hash(),
+        }
+    }
+
+    /// Whether this entry and a group data name the same build.
+    pub fn agrees_with(&self, group_data: &GroupData) -> bool {
+        self.groups == group_data.group_count() && self.hash == group_data.hash()
+    }
+
+    /// The bytes of the entry.
+    pub fn write(&self) -> [u8; DEPENDENCY_LEN] {
+        let mut bytes = [0u8; DEPENDENCY_LEN];
+        for (i, word) in [self.tag, self.name, self.groups, self.hash]
+            .into_iter()
+            .enumerate()
+        {
+            bytes[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        bytes
+    }
+}
+
 /// One variable a generated group data declares: its name, and where the
 /// compiled program put it.
 #[derive(Clone, Debug, PartialEq)]
@@ -225,6 +327,15 @@ impl GroupData {
     /// The number of groups the data carries.
     pub fn group_count(&self) -> u32 {
         self.word(0).unwrap_or(0)
+    }
+
+    /// The hash in the header, which a [`Dependency`] carries alongside the group
+    /// count. Nothing has established what it is a hash *of*: it is not the
+    /// murmur32 of the group data's own bytes for any seed tried, so a generated
+    /// group data takes it from its template and the dependency entry is written
+    /// to match rather than computed from scratch.
+    pub fn hash(&self) -> u32 {
+        self.word(4).unwrap_or(0)
     }
 
     /// One word at an offset within the group data.
@@ -846,8 +957,47 @@ mod tests {
     }
 
     #[test]
+    fn a_dependency_entry_is_written_from_the_group_data() {
+        // The entry is a pointer at the group data: its count and its hash are
+        // the group data's own, so a generated section has nothing to keep in
+        // step and cannot disagree with the bytes it just built.
+        let mut data = template().into_bytes();
+        data[4..8].copy_from_slice(&0x2B35_E80Du32.to_le_bytes()); // the header hash
+        let group_data = GroupData::new(data);
+        let dependency = Dependency::of(Dependency::RENDERER, &group_data);
+        assert_eq!(dependency.tag, DEPENDENCY_TAG);
+        assert_eq!(dependency.groups, 1);
+        assert_eq!(dependency.hash, 0x2B35_E80D);
+        assert!(
+            dependency.agrees_with(&group_data),
+            "an entry written from the data agrees with it"
+        );
+
+        // And it survives a trip through the bytes.
+        let bytes = dependency.write();
+        assert_eq!(Dependency::parse(&bytes, 0), Some(dependency));
+    }
+
+    #[test]
+    fn a_dependency_entry_catches_a_stale_group_data() {
+        // The point of carrying the hash: a section whose group data was rebuilt
+        // but whose dependency entry was copied from the template it replaced is
+        // detected, rather than loading a build that is not there.
+        let group_data = template();
+        let stale = Dependency {
+            tag: DEPENDENCY_TAG,
+            name: 0x209F_B8C3,
+            groups: 1,
+            hash: 0x1234_5678,
+        };
+        assert!(
+            !stale.agrees_with(&group_data),
+            "an entry from another build does not agree"
+        );
+    }
+
+    #[test]
     fn hashes_names_the_way_the_engine_does() {
         assert_eq!(var("texture_map", 0, 3).hash(), 0xE503152C);
     }
 }
-
