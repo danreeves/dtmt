@@ -310,4 +310,4 @@ program can be translated back to editable HLSL; see
    was exercised in game as a title-screen test: the shipped
    `dev_wireframe_color` record was renamed to `mod_tint` in all 36 copies while
    keeping offset 224/size 16, the instance material declared `mod_tint`, and
-   Lua drove it. Result pending.
+   Lua drove it. Result pending. DTMT now also supports `clone <template> <name> <offset> <size>` preset lines (`clone_variable`): a copy of the template record is appended to every run of records that contains it, with the run's count word bumped when one is found in the 16 bytes before the run. Unit-tested (canonical runs only; packed copies of channel records are not cloned yet), not yet exercised in game.
