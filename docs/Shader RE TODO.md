@@ -190,8 +190,13 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   UI base) and the values are small per-family masks/counts (1, 8, `0xF`,
   `0xFF`, `0x60`, `0x78`). Families with fewer programs have *more* block
   records (a 4-program family: 40-58 vs the 96-program UI base's 29), so the
-  table is sized by the variable set, not the program count. What the values
-  count is still open.
+  table is sized by the variable set, not the program count. The 120-byte header
+  is otherwise **constant across all seven families**; only three words vary:
+  `+0x04` = the group count, `+0x08` = the number of cbuffers the family uses (2
+  for the UI base, 3/5 elsewhere), and `+0x0C` = the block's record count + 8
+  (verified against the stream offset in all seven). Practical generation: copy
+  the template's block and rewrite those three words; the records themselves are
+  engine-variable entries and an over-inclusive set is harmless.
 - The group data holds a channel in **two framings**, 3 records each per group
   unit (108 + 108 = 216 for the UI base's `texture_map`; `shader43 --channel
   <name>` dumps them). **Canonical** 20-byte records
