@@ -134,6 +134,15 @@ list and in the unit's `materials` map.
   `write_decoded_geometry`, round-trip tested on a compiled payload). What
   remains is the rest of the payload (scene graph, meshes, materials, LOD
   objects) and the `.unit`/`.bsi` SJSON emitter.
+- The decompilation path was validated end to end with a Python prototype: a
+  compiled cube payload was parsed, its streams unpacked and a `.unit`/`.bsi`
+  pair emitted, which `compile_unit` recompiled back into a 1277 byte payload
+  with the same four streams (24 vertices, strides 8/4/4/8), 36 indices, one
+  batch and the same material resource. The only difference is the material slot
+  name hash, which the compiled form cannot recover; the Rust decompiler should
+  therefore accept `#HEX` names for slots, renderables and nodes so a
+  decompiled unit can reproduce them exactly. The compiler also now rejects
+  streams with too few components for their channel instead of panicking.
 - LOD objects compile from the unit SJSON's `lod` entries (validated: names,
   step ranges and step meshes). The `bounding_volume` and `orientation` names are
   parsed but unused, and a step's `stream_offset` stays 0 because the compiler

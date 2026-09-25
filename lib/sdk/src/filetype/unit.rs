@@ -442,6 +442,14 @@ fn compile_stream(
         "TANGENT" | "BINORMAL" => return Ok(None),
         other => bail!("Unsupported vertex channel '{other}'"),
     };
+    let minimum = match name {
+        "POSITION" | "NORMAL" | "COLOR" => 3,
+        "TEXCOORD" => 2,
+        _ => 4,
+    };
+    if components < minimum {
+        bail!("Channel '{name}' has {components} components, expected at least {minimum}");
+    }
     match name {
         // Positions are stored as half4 with w = 1.
         "POSITION" => {
