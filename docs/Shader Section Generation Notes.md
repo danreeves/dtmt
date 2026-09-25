@@ -505,6 +505,51 @@ A test pins the constant's length, its word count and both end words, and it
 earned its place immediately: the constant was first written with each word
 byte-reversed, and the end-word assertion is what caught it.
 
+### The whole layout, and the link table
+
+The link table is the piece between the contexts and the pool, and once it is
+there the section's layout is fully determined:
+
+| offset | size | contents |
+| --- | --- | --- |
+| 0 | 48 | the 12-word header |
+| 48 | 20 x contexts | the contexts table |
+| 48 + 20 x contexts | **8 x links** | the link table |
+| `conditions_offset` | 28 x links | the node pool |
+| `dependency_offset` | 16 x dependencies | the dependencies table |
+| `group_data_offset` | `group_data_size` | the group data |
+| `device_data_offset` | `device_data_size` | the programs |
+
+So `conditions_offset = 48 + 20 x contexts + 8 x links`, and **the link count and
+the node count are the same count** - which is what the pool measurement already
+showed, now confirmed from the other side. On the three families that have them:
+
+| family | contexts | links | `conditions_offset` | check |
+| --- | --- | --- | --- | --- |
+| `004F18EA` | 2 | 1 | 96 | 48 + 40 + 8 = 96 |
+| `2A04418E` | 3 | 2 | 124 | 48 + 60 + 16 = 124 |
+| `3F08AC44` | 3 | 2 | 124 | 48 + 60 + 16 = 124 |
+
+The three with no links have `conditions_offset` at `48 + 20 x contexts` exactly:
+`108` for the two three-context families, `68` for the one-context family. So the
+offset is a formula, not a coincidence, and a writer can lay the region out
+rather than copy it.
+
+A **link record is 8 bytes**: a hash, then a word that is `0x1C` or `0xFFFFFFFF`.
+On all three families `0xFFFFFFFF` is the *last* link's second word and `0x1C` -
+which is 28, the node length - is the other one's, so it reads as a terminator
+with a size in the other slots. **The second word is not decoded**: `0x1C` as a
+node length and `0x1C` as a "there is a node after this" both fit, and the two
+readings disagree about what a writer may put there, so it is left alone rather
+than guessed. It is the one field in the section whose value cannot be derived
+from what is on disk.
+
+A link is also visible from the contexts side: a context record whose `flags`
+word is `0xFFFFFFFF` is a link, and its `group` word is `0x5852A5B1` or
+`0x31305A92` - the same values in the two families that share them, which is what
+"shared" means here.
+
+
 ### What the section now is
 
 | region | status |
