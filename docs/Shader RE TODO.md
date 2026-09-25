@@ -26,8 +26,9 @@ interface.** Verified in game, a mod can:
 
 What does not work yet:
 
-- renaming or adding material variables, or adding channels - the name set,
-  offsets and channel list are the library's compiled interface;
+- **adding** material variables and **adding or renaming channels**. Renaming a
+  variable works (verified in game, see below); a cloned variable and a renamed
+  channel are implemented and awaiting their in-game observations;
 - a **custom interface** (our own cbuffers, resources and slots). The interface
   is carried by data we can only copy today: the device **block** (the preamble
   tail, repeated after each pixel program), the packed group-data copies, the
@@ -47,6 +48,15 @@ What does not work yet:
 - Verified in game: a generated section renders (title screen tint driven by Lua
   material values); a generated section *without* the device preamble makes the
   engine run out of memory at the title.
+- Verified in game: **renaming a library variable works**. `dev_wireframe_color`
+  (b1 + 224) was renamed to `mod_tint` in the group data (216 occurrences), the
+  preamble and all 36 tails; the material declares `mod_tint`, Lua drives it,
+  and the title background cycles hue under Lua control (its UV ripple and
+  brightness pulse are the demo shader's own effects). The engine resolves
+  material variables by the library's compiled names, and the name set is
+  patchable. Deployed next: a `clone dev_wireframe_color mod_extra 240 16`
+  build (tails grown to 256 bytes, the shader reads `_25_m0[15]`) to test
+  **adding** a variable; observation pending.
 - `mine_materials` example: dumps `materials/variables/groups/defaults/contexts/
   conditions/tails.csv` for the whole game (2037 shader materials) and writes
   `known.txt`/`unknown.txt` hash bounty lists.
@@ -104,6 +114,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   4 byte name hash in the group data, the preamble and every tail. Verified
   offline against the UI base (264 occurrences: 216 group, 48 device). In-game
   verification of a renamed channel is still pending.
+- Evidence from an external binary-patch mod (RainbowFlame): adding a variable
+  **within** an existing cbuffer's spare space works in game. Its shader patches
+  add `particle_max_size` at offset 64 of a region that already ran to 96 and
+  `material_variable` at offset 76, and repurpose an existing record, all without
+  changing the cbuffer size - while replacing every program with a custom one.
+  Our `clone` test that grew the cbuffer (240 -> 256) rendered black. This is
+  consistent with the block's cbuffer entries having fixed sizes: records can be
+  added inside the compiled size, the size itself is the library's.
 
 1. **Group descriptors** (`{name_hash, flags, X, Y}`): `X` is the resource's
    byte offset in the per-draw binding table, allocated in descriptor-list order
@@ -141,7 +159,8 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    at zero; the known name driven from Lua gives the full hue rotation). The
    material's `offset` field is an offset into the material's `variable_data`,
    not a cbuffer offset. So a mod drives the library's known variable values and
-   channels and ships its own programs, but cannot rename or add parameters.
+   channels and ships its own programs; renaming a variable works, adding one is
+   under test.
 2b. **Generator plan** - what a generated section is made of:
 
 | Piece | Source |
@@ -167,8 +186,9 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    driven from Lua or the material (`dev_wireframe_color` on the UI base, a
    float4 at offset 224, is the one custom slot its tables expose), plus its
    texture channels and our own programs. Values can be packed four floats at a
-   time into a known vector4. Renaming or adding parameters does not work: the
-   name set and offsets are the library's compiled interface.
+   time into a known vector4. Renaming a parameter works (verified in game:
+   `dev_wireframe_color` -> `mod_tint`); adding one is under test (a clone at
+   offset 240 is deployed). The set of offsets is still the library's.
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
