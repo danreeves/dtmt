@@ -23,6 +23,10 @@
 
 use std::collections::BTreeMap;
 
+use color_eyre::eyre::{Context, Result};
+
+use super::condition::{Condition, Defines};
+
 /// The stage a channel or variable belongs to. A `vertex` channel is written by
 /// the vertex program and interpolated into the pixel program; a `pixel` one is
 /// a pixel-program-only value.
@@ -210,45 +214,86 @@ impl Family {
         flags
     }
 
-    /// Enumerates the runtime interfaces: one per combination of the optional
-    /// variables, in the order the flags are named (bit 0 first). Each carries
-    /// the flags it defines, the variables and channels it exposes, and the mask
-    /// the conditions tree keys on.
-    pub fn interfaces(&self) -> Vec<Interface> {
+    /// The interface a material gets from the inputs it declares: the mask over
+    /// the flags those inputs enable, the variables they expose, and the
+    /// channels that follow them. An input the family does not declare is
+    /// ignored, which is what the engine does with a name it cannot bind.
+    ///
+    /// A family with many optional variables has a great many *possible*
+    /// interfaces - two to the power of its flags - but a section ships a handful
+    /// of groups, and the conditions tree is what maps an interface onto one of
+    /// them. So this answers one query; it does not enumerate.
+    pub fn interface(&self, inputs: &[String]) -> Interface {
         let flags = self.flags();
-        let count = 1u32 << flags.len();
-        (0..count)
-            .map(|mask| Interface {
-                mask,
-                flags: flags
-                    .iter()
-                    .enumerate()
-                    .filter(|(bit, _)| mask & (1 << bit) != 0)
-                    .map(|(_, flag)| (*flag).to_string())
-                    .collect(),
-                variables: self
-                    .variables
-                    .iter()
-                    .filter(|(_, variable)| match &variable.flag {
-                        None => true,
-                        Some(flag) => self.enabled(flag, mask, &flags),
-                    })
-                    .map(|(name, _)| name.clone())
-                    .collect(),
-                channels: self
-                    .channels
-                    .iter()
-                    .filter(|channel| {
-                        channel.required
-                            || self
-                                .gating_variable(&channel.name, channel)
-                                .and_then(|variable| variable.flag.as_ref())
-                                .is_some_and(|flag| self.enabled(flag, mask, &flags))
-                    })
-                    .map(|channel| channel.name.clone())
-                    .collect(),
+        let mut mask = 0u32;
+        for input in inputs {
+            let Some(variable) = self.variables.get(input) else {
+                continue;
+            };
+            let Some(flag) = variable.flag.as_deref() else {
+                continue;
+            };
+            if let Some(bit) = flags.iter().position(|declared| *declared == flag) {
+                mask |= 1 << bit;
+            }
+        }
+        Interface {
+            mask,
+            flags: flags
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, flag)| (*flag).to_string())
+                .collect(),
+            variables: self
+                .variables
+                .iter()
+                .filter(|(_, variable)| match &variable.flag {
+                    None => true,
+                    Some(flag) => flags
+                        .iter()
+                        .position(|declared| declared == &flag.as_str())
+                        .is_some_and(|bit| mask & (1 << bit) != 0),
+                })
+                .map(|(name, _)| name.clone())
+                .collect(),
+            channels: self
+                .channels
+                .iter()
+                .filter(|channel| {
+                    channel.required
+                        || self
+                            .gating_variable(&channel.name, channel)
+                            .and_then(|variable| variable.flag.as_ref())
+                            .is_some_and(|flag| {
+                                flags
+                                    .iter()
+                                    .position(|declared| declared == &flag.as_str())
+                                    .is_some_and(|bit| mask & (1 << bit) != 0)
+                            })
+                })
+                .map(|channel| channel.name.clone())
+                .collect(),
+        }
+    }
+
+    /// The interface of the mask, for a caller that works in masks rather than
+    /// in input names.
+    pub fn interface_of(&self, mask: u32) -> Interface {
+        let inputs: Vec<String> = self
+            .variables
+            .iter()
+            .filter(|(_, variable)| {
+                variable.flag.as_ref().is_some_and(|flag| {
+                    self.flags()
+                        .iter()
+                        .position(|declared| declared == &flag.as_str())
+                        .is_some_and(|bit| mask & (1 << bit) != 0)
+                })
             })
-            .collect()
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.interface(&inputs)
     }
 
     /// Enumerates the compile permutations: one per combination of a choice from
@@ -281,18 +326,43 @@ impl Family {
         self.permutations().len()
     }
 
-    /// The number of runtime interfaces: one per combination of the optional
-    /// variables.
-    pub fn interface_count(&self) -> usize {
-        1usize << self.flags().len()
+    /// The channels one group has: those whose conditions all hold under the
+    /// group's defines, and those no condition gates.
+    ///
+    /// A channel whose condition reaches an engine query - how many skin weights
+    /// a mesh has, which renderer is running - is left out, because a generated
+    /// family cannot answer it. That is the one thing to remember about this
+    /// list: it is what the *defines* say, not what a mesh would produce.
+    pub fn channels_of(&self, permutation: &Permutation) -> Result<Vec<&ChannelDef>> {
+        let defines = Defines::new(permutation.macros.iter().cloned());
+        let mut channels = Vec::new();
+        for channel in &self.channels {
+            let mut holds = true;
+            for text in &channel.conditions {
+                let condition = Condition::parse(text).wrap_err_with(|| {
+                    format!("channel {} has an unparsable condition", channel.name)
+                })?;
+                // An answer of "unknown" is not a yes, so a channel whose
+                // condition this group cannot decide is left out of it.
+                holds &= condition.holds(&defines) == Some(true);
+                if !holds {
+                    break;
+                }
+            }
+            if holds {
+                channels.push(channel);
+            }
+        }
+        Ok(channels)
     }
 
-    /// Whether `flag` is set in `mask`.
-    fn enabled(&self, flag: &str, mask: u32, flags: &[&str]) -> bool {
-        flags
+    /// The channel names one group has, which is what the group data records.
+    pub fn channel_names_of(&self, permutation: &Permutation) -> Result<Vec<String>> {
+        Ok(self
+            .channels_of(permutation)?
             .iter()
-            .position(|f| *f == flag)
-            .is_some_and(|bit| mask & (1 << bit) != 0)
+            .map(|channel| channel.name.clone())
+            .collect())
     }
 
     /// The variable that gates the channel `name`: the one it names, or the
@@ -622,38 +692,51 @@ mod tests {
     }
 
     #[test]
-    fn one_interface_per_optional_variable_subset() {
+    fn an_interface_per_declared_input() {
         let family = sample();
         assert_eq!(
             family.flags(),
             vec!["HAS_BASE_COLOR", "HAS_NORMAL_MAP", "HAS_OPACITY"]
         );
-        // Three optional variables: eight interfaces, bit 0 first.
-        assert_eq!(family.interface_count(), 8);
 
-        let interfaces = family.interfaces();
-        assert!(interfaces[0].flags.is_empty());
-        // Without the optional variables only the always-present one is left.
-        assert_eq!(interfaces[0].variables, vec!["mod_tint"]);
-        // The required channels ride along in every interface.
-        assert_eq!(
-            interfaces[0].channels,
-            vec!["texture_map", "vertex_position"]
-        );
-        // A gated channel joins when its gating variable's flag is set:
-        // HAS_NORMAL_MAP is bit 1, so interfaces 2 and 3 have it and 1 does not.
-        assert!(!interfaces[1].channels.contains(&"normal_map".to_string()));
-        assert_eq!(interfaces[1].channels.len(), 2);
-        assert!(interfaces[2].channels.contains(&"normal_map".to_string()));
-        assert!(interfaces[3].channels.contains(&"normal_map".to_string()));
+        // A material that declares no optional input gets the always-present
+        // variable and the required channels.
+        let bare = family.interface(&[]);
+        assert_eq!(bare.mask, 0);
+        assert!(bare.flags.is_empty());
+        assert_eq!(bare.variables, vec!["mod_tint"]);
+        assert_eq!(bare.channels, vec!["texture_map", "vertex_position"]);
 
-        assert!(interfaces[1].defines("HAS_BASE_COLOR"));
-        assert!(!interfaces[1].defines("HAS_OPACITY"));
-        assert_eq!(interfaces[1].variables, vec!["base_color", "mod_tint"]);
-        assert_eq!(interfaces[7].variables.len(), 4);
-        // The masks are distinct, so the conditions tree can key on them.
-        let masks: Vec<u32> = interfaces.iter().map(|i| i.mask).collect();
-        assert_eq!(masks, (0..8).collect::<Vec<u32>>());
+        // One input enables its flag, and with it the variable and the channel
+        // that follows it.
+        let base_color = family.interface(&["base_color".to_string()]);
+        assert_eq!(base_color.mask, 0b001);
+        assert!(base_color.defines("HAS_BASE_COLOR"));
+        assert!(!base_color.defines("HAS_OPACITY"));
+        assert_eq!(base_color.variables, vec!["base_color", "mod_tint"]);
+        assert!(!base_color.channels.contains(&"normal_map".to_string()));
+
+        // The gating variable's flag is bit 1, and it brings the channel with it.
+        let normal = family.interface(&["normal_strength".to_string()]);
+        assert_eq!(normal.mask, 0b010);
+        assert!(normal.channels.contains(&"normal_map".to_string()));
+
+        // Every optional input at once.
+        let all = family.interface(&[
+            "base_color".to_string(),
+            "normal_strength".to_string(),
+            "opacity".to_string(),
+        ]);
+        assert_eq!(all.mask, 0b111);
+        assert_eq!(all.variables.len(), 4);
+
+        // A mask gives the same answer as the names behind it.
+        assert_eq!(family.interface_of(0b111), all);
+
+        // An input the family does not declare is ignored, the way the engine
+        // ignores a name it cannot bind.
+        let unknown = family.interface(&["not_a_variable".to_string(), "opacity".to_string()]);
+        assert_eq!(unknown.mask, 0b100);
     }
 
     #[test]
@@ -744,6 +827,109 @@ mod tests {
         record[12..16].copy_from_slice(&0x1234u32.to_le_bytes());
         block.extend_from_slice(&record);
         block
+    }
+
+    #[test]
+    fn a_group_has_the_channels_its_conditions_allow() {
+        let mut family = sample();
+        // Two channels under a condition each, as a real declaration writes
+        // them: one on a macro a set defines, one on a macro nothing defines.
+        family.channels.push(ChannelDef {
+            name: "tsm0".to_string(),
+            kind: ValueType::Float3,
+            required: false,
+            conditions: vec!["defined(NEEDS_TANGENT_SPACE)".to_string()],
+            ..ChannelDef::default()
+        });
+        family.channels.push(ChannelDef {
+            name: "pixel_depth".to_string(),
+            kind: ValueType::Float,
+            required: false,
+            conditions: vec!["defined(NEEDS_PIXEL_DEPTH)".to_string()],
+            ..ChannelDef::default()
+        });
+        // A condition that reaches an engine query: no group can say.
+        family.channels.push(ChannelDef {
+            name: "skinned".to_string(),
+            kind: ValueType::Float,
+            required: false,
+            conditions: vec!["num_skin_weights() == 4".to_string()],
+            ..ChannelDef::default()
+        });
+        // Two conditions, both of which have to hold.
+        family.channels.push(ChannelDef {
+            name: "uv".to_string(),
+            kind: ValueType::Float2,
+            required: false,
+            conditions: vec![
+                "defined(NEEDS_UV_SCALE)".to_string(),
+                "!defined(NEEDS_UV_ANIMATION)".to_string(),
+            ],
+            ..ChannelDef::default()
+        });
+
+        // A family with no sets has the one group with no macros, so only the
+        // channels no condition gates are in it. A channel an *optional input's*
+        // flag gates is here too: that flag is a runtime thing, and the group is
+        // a compile permutation. The interface is where the flag applies.
+        let groups = family.permutations();
+        assert_eq!(groups.len(), 1);
+        let names = family.channel_names_of(&groups[0]).expect("names");
+        assert_eq!(names, vec!["texture_map", "vertex_position", "normal_map"]);
+
+        // Now a set that defines the two macros one of the channels needs.
+        family.permutation_sets = vec![PermutationSet {
+            name: "passes".to_string(),
+            choices: vec![
+                Choice {
+                    condition: Some("defined(PASS)".to_string()),
+                    macros: vec![
+                        "NEEDS_TANGENT_SPACE".to_string(),
+                        "NEEDS_UV_SCALE".to_string(),
+                    ],
+                    stages: vec![],
+                    is_default: false,
+                },
+                Choice {
+                    condition: None,
+                    macros: vec![],
+                    stages: vec![],
+                    is_default: true,
+                },
+            ],
+        }];
+        let permutations = family.permutations();
+        assert_eq!(permutations.len(), 2);
+
+        let with_macros = family.channel_names_of(&permutations[0]).expect("names");
+        assert_eq!(
+            with_macros,
+            vec!["texture_map", "vertex_position", "normal_map", "tsm0", "uv"],
+            "the two unconditional channels, the tangent basis, and the uv pair"
+        );
+
+        // The other group defines nothing, so the conditional channels drop out.
+        let without = family.channel_names_of(&permutations[1]).expect("names");
+        assert_eq!(
+            without,
+            vec!["texture_map", "vertex_position", "normal_map"]
+        );
+    }
+
+    #[test]
+    fn an_unparsable_condition_is_reported() {
+        let mut family = sample();
+        family.channels.push(ChannelDef {
+            name: "broken".to_string(),
+            required: false,
+            conditions: vec!["defined(".to_string()],
+            ..ChannelDef::default()
+        });
+        let permutations = family.permutations();
+        let err = family
+            .channel_names_of(&permutations[0])
+            .expect_err("unparsable");
+        assert!(err.to_string().contains("broken"), "{err}");
     }
 
     #[test]

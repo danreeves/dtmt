@@ -751,14 +751,12 @@ fn build_block(
     }
 
     println!(
-        "declaration: {} groups from {} permutation sets, {} interfaces from {} \
-         flags, {} channels, {} variables",
+        "declaration: {} groups from {} permutation sets, {} gated variables, \
+         {} channels",
         family.group_count(),
         family.permutation_sets.len(),
-        family.interface_count(),
         family.flags().len(),
-        family.channels.len(),
-        family.variables.len()
+        family.channels.len()
     );
     for set in &family.permutation_sets {
         println!("  set {}: {} choices", set.name, set.choices.len());
@@ -773,21 +771,30 @@ fn build_block(
         }
     }
     for (index, permutation) in family.permutations().iter().enumerate() {
+        let channels = family.channel_names_of(permutation)?;
         println!(
-            "  group {index:02}: macros [{}] from {:?}",
+            "  group {index:02}: macros [{}] channels [{}]",
             permutation.macros.join(" "),
-            permutation.choices,
+            channels.join(" "),
         );
     }
-    for interface in family.interfaces() {
-        println!(
-            "  interface {:02}: flags [{}] channels [{}] variables [{}]",
-            interface.mask,
-            interface.flags.join(" "),
-            interface.channels.join(" "),
-            interface.variables.join(" "),
-        );
-    }
+    // The interface a material gets when it declares every gated variable: the
+    // most a material can ask for.
+    let inputs: Vec<String> = family
+        .variables
+        .iter()
+        .filter(|(_, variable)| variable.flag.is_some())
+        .map(|(name, _)| name.clone())
+        .collect();
+    let interface = family.interface(&inputs);
+    println!(
+        "  interface of every gated input: mask {:02} flags [{}] variables [{}] \
+         channels [{}]",
+        interface.mask,
+        interface.flags.join(" "),
+        interface.variables.join(" "),
+        interface.channels.join(" "),
+    );
 
     let channels: Vec<(String, ChannelDef)> = family
         .channels

@@ -191,9 +191,10 @@ impl ShaderNode {
         for (name, entries) in &self.permutation_sets {
             let mut choices = Vec::new();
             for entry in entries {
+                let condition = entry.condition.clone();
                 let define = entry.define.clone().unwrap_or(Define::Macros(Vec::new()));
                 choices.push(Choice {
-                    condition: entry.condition.clone(),
+                    condition: condition.clone(),
                     macros: define.macros().to_vec(),
                     stages: define.stages().to_vec(),
                     // A choice with no `if` is the set's default.
@@ -467,19 +468,13 @@ mod tests {
             family.variables["texture_map"].flag.as_deref(),
             Some("HAS_TEXTURE_MAP")
         );
-        // The interface it joins is the one that defines the input's flag.
-        let with_flag = family
-            .interfaces()
-            .into_iter()
-            .find(|interface| interface.variables.contains(&"texture_map".to_string()))
-            .expect("an interface with the texture");
+        // A material that declares the texture gets the channel with it, and one
+        // that does not has neither.
+        let with_flag = family.interface(&["texture_map".to_string()]);
+        assert!(with_flag.variables.contains(&"texture_map".to_string()));
         assert!(with_flag.channels.contains(&"texture_map".to_string()));
-        // An interface without it has neither.
-        let without = family
-            .interfaces()
-            .into_iter()
-            .find(|interface| !interface.variables.contains(&"texture_map".to_string()))
-            .expect("an interface without the texture");
+        let without = family.interface(&[]);
+        assert!(!without.variables.contains(&"texture_map".to_string()));
         assert!(!without.channels.contains(&"texture_map".to_string()));
     }
 
@@ -509,9 +504,8 @@ mod tests {
             Some("num_skin_weights() == 4")
         );
 
-        // Two optional variables gate the interfaces, and the two sets gate the
-        // four groups: the two counts are independent.
-        assert_eq!(family.interface_count(), 4);
+        // The two optional variables and the two sets count separately: the
+        // flags are what a material can ask for, the sets are what gets compiled.
     }
 
     #[test]
@@ -646,4 +640,3 @@ mod tests {
         assert!(err.to_string().contains("geometry"), "{err}");
     }
 }
-
