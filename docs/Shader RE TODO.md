@@ -378,8 +378,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    uses `"dirt"`), and the base material ships an empty conditions section, so
    the tree is only needed for permuted families. The condition hashes are *not*
    in the group's variable tables, so they are neither cbuffer variables nor the
-   family's channels - whether they name the material's context values or its
-   optional properties is still open.
+   family's channels; and they are not `material_contexts` values either (the
+   shipped corpus only uses `surface_material = bone/metal_solid/dirt/...`, none
+   of which match). They do read as the family's **optional input names** - the
+   Stingray `type = { vector3: ["HAS_BASE_COLOR"] }` pattern, where a material
+   provides a subset and the tree maps that subset to a group - which also
+   explains why the base and 4-program families ship an empty conditions section.
+   Still to confirm by permuting one material's declared inputs and watching the
+   conditions change.
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry). Lead: the
    preamble's first words track the material's contexts - `{1, query_count, 2, …}`
