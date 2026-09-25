@@ -430,20 +430,24 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     containers.insert(Stage::Pixel, pixel);
                 }
 
-                let (section, rewritten) =
+                let (section, rewritten, cloned) =
                     preset.generate_with_report(&containers).wrap_err_with(|| {
                         format!("Failed to generate a shader section for '{}'", path.display())
                     })?;
+
+                let mut report = String::new();
+                if rewritten > 0 {
+                    report.push_str(&format!(", rewriting {rewritten} variable record(s)"));
+                }
+                if cloned > 0 {
+                    report.push_str(&format!(", adding {cloned} variable record(s)"));
+                }
 
                 tracing::info!(
                     "Generated a {} byte shader section from '{}'{}",
                     section.len(),
                     preset_path.display(),
-                    if rewritten > 0 {
-                        format!(", rewriting {rewritten} variable record(s)")
-                    } else {
-                        String::new()
-                    }
+                    report
                 );
                 sjson = set_shader_data(&sjson, &section);
                 generated = true;

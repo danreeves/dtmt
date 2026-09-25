@@ -113,6 +113,64 @@ fn patch_variable(data: &mut [u8], slot: u32, name: u32, offset: u32, size: u32)
     (patched, Some((slot_offset, slot_size)))
 }
 
+/// Appends a copy of the `template` record to every run of consecutive records
+/// that contains it, renamed to `name` with the given `offset` and `size`. The
+/// run's count word is bumped when one can be found (the word just before the
+/// run or, in copies that use a `{kind, count}` header, the word before that).
+/// Returns the number of records added.
+fn clone_variable(data: &mut Vec<u8>, template: u32, name: u32, offset: u32, size: u32) -> usize {
+    // Canonical occurrences of the template record (aligned or not).
+    let mut occurrences = Vec::new();
+    let mut at = 0;
+    while at + 20 <= data.len() {
+        if read_variable(data, at).map(|record| record.2) == Some(template) {
+            occurrences.push(at);
+            at += 20;
+        } else {
+            at += 1;
+        }
+    }
+
+    let mut cloned = 0;
+    // Work backwards so insertions do not move the occurrences still to come.
+    for occurrence in occurrences.into_iter().rev() {
+        let Some((kind, flags, ..)) = read_variable(data, occurrence) else {
+            continue;
+        };
+        // Expand to the surrounding run of records.
+        let mut start = occurrence;
+        while start >= 20 && read_variable(data, start - 20).is_some() {
+            start -= 20;
+        }
+        let mut end = occurrence + 20;
+        while read_variable(data, end).is_some() {
+            end += 20;
+        }
+        let records = (end - start) / 20;
+        // Look for the run's count in the 16 bytes before it (a `{kind, count}`
+        // header puts it one word before the first record).
+        let mut count_at = None;
+        for candidate in (start.saturating_sub(16)..start).step_by(4).rev() {
+            if u32_at(data, candidate) as usize == records {
+                count_at = Some(candidate);
+                break;
+            }
+        }
+
+        let mut record = Vec::with_capacity(20);
+        for word in [kind, flags, name, offset, size] {
+            record.extend_from_slice(&word.to_le_bytes());
+        }
+        data.splice(end..end, record);
+        if let Some(count_at) = count_at {
+            let count = (records + 1) as u32;
+            data[count_at..count_at + 4].copy_from_slice(&count.to_le_bytes());
+        }
+        cloned += 1;
+    }
+    cloned
+}
+
 fn from_hex(text: &str) -> Result<Vec<u8>> {
     if text.len() % 2 != 0 {
         bail!("hex string has an odd length");
@@ -152,6 +210,22 @@ pub struct VariableRewrite {
     pub size: u32,
 }
 
+/// A new variable slot: a copy of a shipped record is appended to every run of
+/// records that contains it, with a new name, offset and size. Unlike a
+/// [`VariableRewrite`] this does not take a shipped slot away; the group data
+/// grows by one record per copy. The run's count word is grown when it can be
+/// found (the word before the run, or in the `{kind, count}` header before it).
+#[derive(Clone, Debug)]
+pub struct VariableClone {
+    /// The shipped variable whose record is copied: a name or an 8 digit
+    /// murmur32 hash.
+    pub template: String,
+    /// The new variable's name (or its 8 digit hash), as Lua will address it.
+    pub name: String,
+    pub offset: u32,
+    pub size: u32,
+}
+
 /// The wrapper of one shader family.
 pub struct Preset {
     pub version: u32,
@@ -170,6 +244,8 @@ pub struct Preset {
     pub tails: Vec<Vec<u8>>,
     /// Variable slots to re-purpose when the section is generated.
     pub variables: Vec<VariableRewrite>,
+    /// Variable slots to add when the section is generated.
+    pub clones: Vec<VariableClone>,
 }
 
 impl Preset {
@@ -245,6 +321,7 @@ impl Preset {
             programs,
             tails: Vec::new(),
             variables: Vec::new(),
+            clones: Vec::new(),
         })
     }
 
@@ -263,6 +340,7 @@ impl Preset {
             programs: Vec::new(),
             tails: Vec::new(),
             variables: Vec::new(),
+            clones: Vec::new(),
         };
 
         for line in text.lines() {
@@ -320,6 +398,26 @@ impl Preset {
                 };
                 preset.variables.push(VariableRewrite {
                     slot: slot.to_string(),
+                    name: name.to_string(),
+                    offset: offset.parse()?,
+                    size: size.parse()?,
+                });
+                continue;
+            }
+
+            // Variable slot additions carry four fields too.
+            if let Some(rest) = line.strip_prefix("clone ") {
+                let mut fields = rest.split(' ');
+                let (Some(template), Some(name), Some(offset), Some(size)) = (
+                    fields.next(),
+                    fields.next(),
+                    fields.next(),
+                    fields.next(),
+                ) else {
+                    bail!("malformed clone line: {line}");
+                };
+                preset.clones.push(VariableClone {
+                    template: template.to_string(),
                     name: name.to_string(),
                     offset: offset.parse()?,
                     size: size.parse()?,
@@ -389,6 +487,13 @@ impl Preset {
             ));
         }
 
+        for clone in &self.clones {
+            text.push_str(&format!(
+                "clone {} {} {} {}\n",
+                clone.template, clone.name, clone.offset, clone.size
+            ));
+        }
+
         text
     }
 
@@ -434,14 +539,16 @@ impl Preset {
     }
 
     /// Like [`Preset::generate`], but also reports how many variable records the
-    /// preset's `variable` lines rewrote (zero when it declares none).
+    /// preset's `variable` and `clone` lines rewrote and added (zero when it
+    /// declares none).
     pub fn generate_with_report(
         &self,
         containers: &HashMap<Stage, Vec<u8>>,
-    ) -> Result<(Vec<u8>, usize)> {
+    ) -> Result<(Vec<u8>, usize, usize)> {
         let mut group_data = self.group_data.clone();
         let mut programs = self.programs.clone();
         let mut rewritten = 0usize;
+        let mut cloned = 0usize;
         for variable in &self.variables {
             if !matches!(variable.size, 4 | 8 | 12 | 16 | 64) {
                 bail!(
@@ -484,6 +591,23 @@ impl Preset {
             }
         }
 
+        for clone in &self.clones {
+            if !matches!(clone.size, 4 | 8 | 12 | 16 | 64) {
+                bail!(
+                    "clone '{}' has size {}, expected one of 4, 8, 12, 16, 64",
+                    clone.name,
+                    clone.size
+                );
+            }
+            cloned += clone_variable(
+                &mut group_data,
+                hash_token(&clone.template),
+                hash_token(&clone.name),
+                clone.offset,
+                clone.size,
+            );
+        }
+
         let device = self.build_device_with(&programs, containers)?;
 
         let contexts_offset = 48usize;
@@ -522,7 +646,7 @@ impl Preset {
             section.push(0);
         }
 
-        Ok((section, rewritten))
+        Ok((section, rewritten, cloned))
     }
 
     /// Extracts a preset straight from a material data file path.
@@ -548,7 +672,9 @@ mod tests {
             group_data: Vec::new(),
             device_preamble: Vec::new(),
             programs: Vec::new(),
+            tails: Vec::new(),
             variables: Vec::new(),
+            clones: Vec::new(),
         }
     }
 
@@ -570,7 +696,7 @@ mod tests {
             size: 16,
         });
 
-        let (section, rewritten) = preset.generate_with_report(&HashMap::new()).unwrap();
+        let (section, rewritten, _) = preset.generate_with_report(&HashMap::new()).unwrap();
         assert_eq!(rewritten, 1);
 
         // The group data starts right after the 48 byte header when the other
@@ -599,9 +725,51 @@ mod tests {
             size: 16,
         });
 
-        let (section, rewritten) = preset.generate_with_report(&HashMap::new()).unwrap();
+        let (section, rewritten, _) = preset.generate_with_report(&HashMap::new()).unwrap();
         assert_eq!(rewritten, 0);
         assert_eq!(&section[48..68], &preset.group_data[..]);
+    }
+
+    #[test]
+    fn clone_appends_a_record_to_each_run() {
+        let mut preset = empty_preset();
+
+        // Two runs: the first is a `{kind, count}` header plus one record, the
+        // second is a bare record with its count as the preceding word.
+        let slot = hash_token("dev_wireframe_color");
+        let mut group = Vec::new();
+        for word in [3u32, 1] {
+            group.extend_from_slice(&word.to_le_bytes());
+        }
+        for word in [3u32, 0, slot, 224, 16] {
+            group.extend_from_slice(&word.to_le_bytes());
+        }
+        group.extend_from_slice(&1u32.to_le_bytes());
+        for word in [3u32, 0, slot, 224, 16] {
+            group.extend_from_slice(&word.to_le_bytes());
+        }
+        preset.group_data = group;
+        preset.clones.push(VariableClone {
+            template: "dev_wireframe_color".to_string(),
+            name: "mod_extra".to_string(),
+            offset: 240,
+            size: 16,
+        });
+
+        let (section, rewritten, cloned) = preset.generate_with_report(&HashMap::new()).unwrap();
+        assert_eq!((rewritten, cloned), (0, 2));
+
+        let group = &section[48..];
+        // First run: its header count grew and the clone sits after record 1.
+        assert_eq!(u32_at(group, 4), 2);
+        assert_eq!(u32_at(group, 36), hash_token("mod_extra"));
+        assert_eq!(u32_at(group, 40), 240);
+        assert_eq!(u32_at(group, 44), 16);
+        // The second run's count word also grew; the first insertion shifted it
+        // to just before record 2 (which starts at 52).
+        assert_eq!(u32_at(group, 48), 2);
+        assert_eq!(u32_at(group, 52 + 8), slot);
+        assert_eq!(u32_at(group, 72 + 8), hash_token("mod_extra"));
     }
     #[test]
     fn tails_round_trip_through_dedup() {
