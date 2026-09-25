@@ -1388,6 +1388,68 @@ fn bsi_sjson(geometries: &[DecodedGeometry], meshes: &[DecodedMesh]) -> Result<S
     Ok(text)
 }
 
+/// Decompiles a static unit payload into its `.unit` and `.bsi` SJSON texts.
+///
+/// Skins, animations, actors, cameras, lights, terrains, joints and movers are
+/// not supported yet; a payload that uses them fails with a clear error.
+pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
+    let mut reader = Reader::new(payload);
+    let version = reader.u32()?;
+    if version != UNIT_VERSION {
+        bail!("unit payload version {version:#x}, expected {UNIT_VERSION:#x}");
+    }
+    let mut geometries = Vec::new();
+    for _ in 0..reader.u32()? {
+        geometries.push(parse_mesh_geometry(&mut reader)?);
+    }
+    if reader.u32()? != 0 {
+        bail!("skinned units are not supported yet");
+    }
+    if reader.byte_array()?.len() != 0 {
+        bail!("simple animations are not supported yet");
+    }
+    if reader.u32()? != 0 {
+        bail!("animation groups are not supported yet");
+    }
+    let _scene_graph = parse_scene_graph(&mut reader)?;
+    let meshes = parse_mesh_objects(&mut reader)?;
+    if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32_array()?.len() != 0 {
+        bail!("actors are not supported yet");
+    }
+    if reader.u32()? != 0 || reader.u32()? != 0 {
+        bail!("cameras and lights are not supported yet");
+    }
+    if reader.byte_array()?.len() != 0 {
+        bail!("an unknown device blob is not empty");
+    }
+    let lods = parse_lod_objects(&mut reader)?;
+    // Terrains, unknowns, joints and movers.
+    if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 || reader.u32()? != 0 {
+        bail!("terrains, joints or movers are not supported yet");
+    }
+    let _animation_bones = reader.bool()?;
+    let _animation_state_machine = reader.byte_array()?;
+    let _dynamic_data = reader.byte_array()?;
+    if reader.u32()? != 0 {
+        bail!("visibility groups are not supported yet");
+    }
+    let _flow = reader.byte_array()?;
+    let _flow_dynamic = reader.byte_array()?;
+    let _triangle_finder = reader.byte_array()?;
+    let _physics = reader.byte_array()?;
+    let _default_material = reader.u64()?;
+    let mut slots = Vec::new();
+    for _ in 0..reader.u32()? {
+        slots.push((reader.u32()?, reader.u64()?));
+    }
+
+    let mesh_names: Vec<u32> = meshes.iter().map(|mesh| mesh.name).collect();
+    Ok((
+        unit_sjson(&slots, &mesh_names, &lods),
+        bsi_sjson(&geometries, &meshes)?,
+    ))
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -2014,6 +2076,32 @@ renderables = {
         assert!(text.contains("name = \"TEXCOORD\" type = \"CT_HALF2\""), "{text}");
         assert!(text.contains("name = \"#44F4A503\""), "material slot: {text}");
         assert!(text.contains("primitives = [ 0 ]"), "{text}");
+    }
+
+    #[test]
+    fn decompile_round_trips_a_payload() {
+        let name = resource_name("units/mods/test/decompile");
+        let file = compile(name.clone(), UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        let (unit_text, bsi_text) = decompile(payload).unwrap();
+        assert!(bsi_text.contains("\"#553C252C\" = {"), "{bsi_text}");
+        assert!(unit_text.contains("\"#44F4A503\" = \"#1122334455667788\""), "{unit_text}");
+
+        // Recompiling the emitted pair gives an equivalent payload. Normals are
+        // octahedral-encoded, so their unpack/re-pack is not bit exact; compare
+        // the shape instead.
+        let again = compile(name.clone(), &unit_text, bsi_text.as_bytes()).unwrap();
+        let payload_again = again.variants()[0].data();
+        assert_eq!(payload.len(), payload_again.len());
+        let mut a = Reader::new(&payload[8..]);
+        let mut b = Reader::new(&payload_again[8..]);
+        let left = parse_mesh_geometry(&mut a).unwrap();
+        let right = parse_mesh_geometry(&mut b).unwrap();
+        assert_eq!(left.streams.len(), right.streams.len());
+        assert_eq!(left.index_count, right.index_count);
+        assert_eq!(left.batches, right.batches);
+        assert_eq!(left.materials, right.materials);
     }
 
     #[test]
