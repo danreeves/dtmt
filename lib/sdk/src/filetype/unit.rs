@@ -1160,6 +1160,82 @@ fn write_decoded_mesh_objects(w: &mut Writer, meshes: &[DecodedMesh]) {
     }
 }
 
+struct DecodedLodStep {
+    range: [f32; 2],
+    meshes: Vec<u32>,
+    stream_offset: u32,
+    unk5: u32,
+}
+
+struct DecodedLod {
+    name: u32,
+    unk2: u64,
+    unk3: u32,
+    steps: Vec<DecodedLodStep>,
+    bounds: [f32; 10],
+    unk4: u32,
+    unk5: u32,
+    order: Vec<u32>,
+    unk7: u32,
+    unk8: bool,
+}
+
+fn parse_lod_objects(reader: &mut Reader<'_>) -> Result<Vec<DecodedLod>> {
+    let mut lods = Vec::new();
+    for _ in 0..reader.u32()? {
+        let name = reader.u32()?;
+        let unk2 = reader.u64()?;
+        let unk3 = reader.u32()?;
+        let mut steps = Vec::new();
+        for _ in 0..reader.u32()? {
+            let range = [reader.f32()?, reader.f32()?];
+            let meshes = reader.u32_array()?;
+            steps.push(DecodedLodStep {
+                range,
+                meshes,
+                stream_offset: reader.u32()?,
+                unk5: reader.u32()?,
+            });
+        }
+        let mut bounds = [0.0f32; 10];
+        for value in &mut bounds {
+            *value = reader.f32()?;
+        }
+        let unk4 = reader.u32()?;
+        let unk5 = reader.u32()?;
+        let order = reader.u32_array()?;
+        let unk7 = reader.u32()?;
+        let unk8 = reader.bool()?;
+        lods.push(DecodedLod { name, unk2, unk3, steps, bounds, unk4, unk5, order, unk7, unk8 });
+    }
+    Ok(lods)
+}
+
+fn write_decoded_lods(w: &mut Writer, lods: &[DecodedLod]) {
+    w.u32(lods.len() as u32);
+    for lod in lods {
+        w.u32(lod.name);
+        w.u64(lod.unk2);
+        w.u32(lod.unk3);
+        w.u32(lod.steps.len() as u32);
+        for step in &lod.steps {
+            w.f32(step.range[0]);
+            w.f32(step.range[1]);
+            w.u32_array(&step.meshes);
+            w.u32(step.stream_offset);
+            w.u32(step.unk5);
+        }
+        for value in lod.bounds {
+            w.f32(value);
+        }
+        w.u32(lod.unk4);
+        w.u32(lod.unk5);
+        w.u32_array(&lod.order);
+        w.u32(lod.unk7);
+        w.bool(lod.unk8);
+    }
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1696,6 +1772,66 @@ renderables = {
         assert_eq!(reader.u64().unwrap(), 0, "skeleton name");
         assert_eq!(reader.u32().unwrap(), 0, "unknown 20");
         assert_eq!(reader.at, payload.len() - 8, "payload consumed exactly");
+    }
+
+    #[test]
+    fn lod_objects_parse_and_rewrite() {
+        let unit = r##"
+materials = {
+    m_cube = "#1122334455667788"
+}
+lod = [
+    {
+        name = "lod"
+        steps = [
+            { renderables = [ "g_cube" ] visible_height_range = [ 1 0.1 ] }
+            { renderables = [ "g_cube" ] visible_height_range = [ 0.1 0 ] }
+        ]
+    }
+]
+renderables = {
+    g_cube = { culling = "bounding_volume" shadow_caster = true viewport_visible = true }
+}
+"##;
+        let file = compile(resource_name("units/mods/test/lods"), unit, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        let mut reader = Reader::new(&payload[8..]);
+        let geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "skins");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "simple animation");
+        assert_eq!(reader.u32().unwrap(), 0, "simple animation groups");
+        let graph = parse_scene_graph(&mut reader).unwrap();
+        let meshes = parse_mesh_objects(&mut reader).unwrap();
+        assert_eq!(reader.u32().unwrap(), 0, "actors");
+        assert_eq!(reader.u32().unwrap(), 0, "actors 2");
+        assert_eq!(reader.u32_array().unwrap().len(), 0, "unknown list");
+        assert_eq!(reader.u32().unwrap(), 0, "cameras");
+        assert_eq!(reader.u32().unwrap(), 0, "lights");
+        assert_eq!(reader.byte_array().unwrap().len(), 0, "unknown blob");
+        let lods = parse_lod_objects(&mut reader).unwrap();
+        assert_eq!(lods.len(), 1);
+        assert_eq!(lods[0].name, u32::from(Murmur32::hash("lod")));
+        assert_eq!(lods[0].steps.len(), 2);
+        assert_eq!(lods[0].steps[0].range, [1.0, 0.1]);
+        assert_eq!(lods[0].steps[0].meshes, vec![0]);
+        assert_eq!(lods[0].order, vec![0, 0]);
+
+        let mut writer = Writer::new();
+        write_decoded_geometry(&mut writer, &geometry);
+        writer.u32(0);
+        writer.byte_array(&[]);
+        writer.u32(0);
+        write_decoded_scene_graph(&mut writer, &graph);
+        write_decoded_mesh_objects(&mut writer, &meshes);
+        writer.u32(0);
+        writer.u32(0);
+        writer.u32_array(&[]);
+        writer.u32(0);
+        writer.u32(0);
+        writer.byte_array(&[]);
+        write_decoded_lods(&mut writer, &lods);
+        assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
     }
 
     #[test]
