@@ -96,6 +96,16 @@ as the decode allows.
    variable names) are a small per-family file; everything else the tool can
    write. New *channel names* still require the library's block to already list
    them, since the block is the library's own record set.
+
+2c. **Recipe for mod-defined parameters (works today)** - a mod can re-purpose
+   any shipped variable slot: rewrite the record's `name_hash`, `offset` and
+   `size` in the canonical table, give the cbuffer a size that covers the new
+   offset in the HLSL (the tail's size field does not matter, a 256 byte shader
+   cbuffer with 240 byte tails renders), and drive the value from Lua under the
+   new name. The probe did exactly this: `dev_wireframe_color`'s slot became
+   `mod_probe` at offset 240 and the value arrived. What does not work: adding a
+   record (the count is fixed and shifting the tables is untested), or moving a
+   *shipped* name to a new offset (the engine pins the names it knows).
 3. **Conditions payload**: decode the u16 list per node (structure, names and
    node bounds are known). A material that does not permute anything needs no
    conditions at all: the minimal two program material ships an empty conditions
