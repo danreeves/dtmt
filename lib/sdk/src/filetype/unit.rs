@@ -818,6 +818,177 @@ fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
     }
 }
 
+/// A little little-endian reader for payload structures (the counterpart of
+/// [`Writer`], used by the decompiler).
+struct Reader<'a> {
+    data: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, at: 0 }
+    }
+
+    fn u32(&mut self) -> Result<u32> {
+        let bytes = self
+            .data
+            .get(self.at..self.at + 4)
+            .ok_or_else(|| eyre::eyre!("payload ends inside a u32 at {}", self.at))?;
+        self.at += 4;
+        Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn bool(&mut self) -> Result<bool> {
+        let byte = *self
+            .data
+            .get(self.at)
+            .ok_or_else(|| eyre::eyre!("payload ends inside a bool at {}", self.at))?;
+        self.at += 1;
+        Ok(byte != 0)
+    }
+
+    fn f32(&mut self) -> Result<f32> {
+        Ok(f32::from_bits(self.u32()?))
+    }
+
+    fn byte_array(&mut self) -> Result<Vec<u8>> {
+        let length = self.u32()? as usize;
+        let bytes = self
+            .data
+            .get(self.at..self.at + length)
+            .ok_or_else(|| eyre::eyre!("payload ends inside a byte array at {}", self.at))?;
+        self.at += length;
+        Ok(bytes.to_vec())
+    }
+
+    fn u32_array(&mut self) -> Result<Vec<u32>> {
+        let count = self.u32()? as usize;
+        (0..count).map(|_| self.u32()).collect()
+    }
+}
+
+/// One compiled vertex stream, kept packed for a byte-exact rewrite.
+struct DecodedStream {
+    data: Vec<u8>,
+    validity: u32,
+    stream_type: u32,
+    vertices: u32,
+    stride: u32,
+}
+
+struct DecodedChannel {
+    component: u32,
+    kind: u32,
+    set: u32,
+    stream: u32,
+    is_instance: bool,
+}
+
+struct DecodedGeometry {
+    version: u32,
+    streams: Vec<DecodedStream>,
+    channels: Vec<DecodedChannel>,
+    index_validity: u32,
+    index_stream_type: u32,
+    index_format: u32,
+    index_count: u32,
+    index_data: Vec<u8>,
+    batches: Vec<[u32; 4]>,
+    bounds: [f32; 10],
+    materials: Vec<u32>,
+    unk2: u32,
+}
+
+fn parse_mesh_geometry(reader: &mut Reader<'_>) -> Result<DecodedGeometry> {
+    let version = reader.u32()?;
+    let mut streams = Vec::new();
+    for _ in 0..reader.u32()? {
+        streams.push(DecodedStream {
+            data: reader.byte_array()?,
+            validity: reader.u32()?,
+            stream_type: reader.u32()?,
+            vertices: reader.u32()?,
+            stride: reader.u32()?,
+        });
+    }
+    let mut channels = Vec::new();
+    for _ in 0..reader.u32()? {
+        channels.push(DecodedChannel {
+            component: reader.u32()?,
+            kind: reader.u32()?,
+            set: reader.u32()?,
+            stream: reader.u32()?,
+            is_instance: reader.bool()?,
+        });
+    }
+    let index_validity = reader.u32()?;
+    let index_stream_type = reader.u32()?;
+    let index_format = reader.u32()?;
+    let index_count = reader.u32()?;
+    let index_data = reader.byte_array()?;
+    let mut batches = Vec::new();
+    for _ in 0..reader.u32()? {
+        batches.push([reader.u32()?, reader.u32()?, reader.u32()?, reader.u32()?]);
+    }
+    let mut bounds = [0.0f32; 10];
+    for value in &mut bounds {
+        *value = reader.f32()?;
+    }
+    let materials = reader.u32_array()?;
+    let unk2 = reader.u32()?;
+    Ok(DecodedGeometry {
+        version,
+        streams,
+        channels,
+        index_validity,
+        index_stream_type,
+        index_format,
+        index_count,
+        index_data,
+        batches,
+        bounds,
+        materials,
+        unk2,
+    })
+}
+
+fn write_decoded_geometry(w: &mut Writer, geometry: &DecodedGeometry) {
+    w.u32(geometry.version);
+    w.u32(geometry.streams.len() as u32);
+    for stream in &geometry.streams {
+        w.byte_array(&stream.data);
+        w.u32(stream.validity);
+        w.u32(stream.stream_type);
+        w.u32(stream.vertices);
+        w.u32(stream.stride);
+    }
+    w.u32(geometry.channels.len() as u32);
+    for channel in &geometry.channels {
+        w.u32(channel.component);
+        w.u32(channel.kind);
+        w.u32(channel.set);
+        w.u32(channel.stream);
+        w.bool(channel.is_instance);
+    }
+    w.u32(geometry.index_validity);
+    w.u32(geometry.index_stream_type);
+    w.u32(geometry.index_format);
+    w.u32(geometry.index_count);
+    w.byte_array(&geometry.index_data);
+    w.u32(geometry.batches.len() as u32);
+    for batch in &geometry.batches {
+        for word in batch {
+            w.u32(*word);
+        }
+    }
+    for value in geometry.bounds {
+        w.f32(value);
+    }
+    w.u32_array(&geometry.materials);
+    w.u32(geometry.unk2);
+}
+
 struct FlatNode<'a> {
     name: &'a str,
     node: &'a BsiNode,
@@ -1208,6 +1379,29 @@ renderables = {
         // Sixteen vertices' worth of half4 positions would be wrong here: the
         // payload is small (three vertices).
         assert!(payload.len() < 1024, "payload {} bytes", payload.len());
+    }
+
+    #[test]
+    fn mesh_geometry_round_trips() {
+        let name = resource_name("units/mods/test/roundtrip");
+        let file = compile(name, UNIT, BSI.as_bytes()).unwrap();
+        let payload = file.variants()[0].data();
+
+        // The payload opens with the version word and the geometry count; the
+        // first geometry follows.
+        let mut reader = Reader::new(&payload[8..]);
+        let geometry = parse_mesh_geometry(&mut reader).unwrap();
+        assert_eq!(geometry.version, 1);
+        assert_eq!(geometry.streams.len(), 3);
+        assert_eq!(geometry.channels.len(), 3);
+        assert_eq!(geometry.channels[0].component, 0, "POSITION first");
+        assert_eq!(geometry.index_count, 3);
+        assert_eq!(geometry.materials.len(), 1);
+        assert_eq!(geometry.batches.len(), 1);
+
+        let mut writer = Writer::new();
+        write_decoded_geometry(&mut writer, &geometry);
+        assert_eq!(writer.buf, payload[8..8 + writer.buf.len()]);
     }
 
     #[test]
