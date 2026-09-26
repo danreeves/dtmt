@@ -38,7 +38,7 @@ The mod-defined build flow is in place: a material can declare
 compiles the sibling shader sources and generates the section from them and the
 preset (byte-identical to the splice route), and snoopymod runs that way - its
 base material is a few hundred bytes, the preset is the only game-derived file.
-The preset holds the family's engine-side wrapper for now; shrinking it to only
+The preset holds the declaration's engine-side wrapper for now; shrinking it to only
 genuine engine constants (and generating the rest from the shader itself) is the
 remaining RE work listed above.
 
@@ -75,17 +75,17 @@ recomputable (that is how the splice flow already relocates them).
 | --- | --- | --- |
 | Header | `{version=43, opaque, contexts_offset, context_count, conditions_offset, default_data_offset, dependency_offset, dependency_count, group_data_offset, group_data_size, device_data_offset, device_data_size}` | Known |
 | Post-build | Recompute offsets and pads (4 bytes before the default data, 16 bytes at the end); update the material's `shader_size` | Known |
-| Contexts | Copy from a template with the same shader family. The query ids and their condition-entry offsets are engine-side constants tied to the shader's permutation space; the layout is `{name_hash, u32, count, count × {query_id, conditions_offset}}` | Layout known, ids only copyable |
+| Contexts | `{name, word2, count, count x {query_id, conditions_offset}}`, variable length, filling `[contexts_offset, conditions_offset)`; the queries are the groups. The ids are engine-side and copy from a template until a declaration-level pairing exists | Layout measured on seven sections; writable, ids copied |
 | Conditions | Copy from the same template. Records are `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes + a packed payload; they form a decision tree whose leaves select a group | Layout known, payload decoding still open |
 | Dependencies | Copy from the same template (8 bytes = one u64 id on the UI base) | Copyable only |
 | Group data | Generate per group. Each group needs a header (`{u32, query_id_of_the_group, descriptor words, …}`), the variable tables for that group's cbuffers, and the compact copy of those tables that follows. The variable records are `{type, flags, name_hash, cbuffer_offset, size}` runs with a count word; copies must all be consistent | Structure mapped (see `Shader RE TODO.md`): a 32-byte global header then 36 groups; the channel table, variable table and packed run are byte-identical across all 36 groups, only the descriptors' `Y` and the byte-packed group header vary. The tables are identified: 69 records = the `global_viewport` engine cbuffer's variables, 7 records = the group's `c_per_object` variables (incl. `texture_map`). Generation = emit the tables once, replicate them across the template's group count, keep the template's descriptors/headers |
-| Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the preset's preamble before the records | The preamble's 120-byte header is decoded: only `+0x04` (group count), `+0x08` (cbuffer count) and `+0x0C` (record count + 8) vary across seven shipped families, the rest is constant; the byte-packed `{index, value}` records after it are engine-variable binding entries shared across families (22-record common prefix). Generation = copy the template's block and rewrite the three header words |
+| Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the preset's preamble before the records | The preamble's 120-byte header is decoded: only `+0x04` (group count), `+0x08` (cbuffer count) and `+0x0C` (record count + 8) vary across seven shipped declarations, the rest is constant; the byte-packed `{index, value}` records after it are engine-variable binding entries shared across declarations (22-record common prefix). Generation = copy the template's block and rewrite the three header words |
 | Program tails | Still partly open. Cbuffer entries are 24-byte records whose `{name_hash, size}` sit at `+4`/`+12`, in register order; signature elements are listed by name hash with index/ordinal. What the engine does with the rest of the tail is unknown | Open |
 | Default data | Generate: `{u32 zero}{u32 count}` then `count × {name_hash, element_count, blob_offset}` then the value blob, with `element_count` = 1/2/3/4 for scalar/vec2/vec3/vec4 and `blob_offset` = byte offset of the value in the blob | Known |
 
 ## Shape decisions for a first generated shader
 
-- **Reuse one shader family per shader.** Pick the template base material whose
+- **Reuse one shader declaration per shader.** Pick the template base material whose
   resource model (bindless arrays, `c_per_object` layout, spaces) the shader
   needs, then emit our programs with the same interface. That is the current
   build flow's constraint and it stays until the tails' root-signature part is
@@ -109,7 +109,7 @@ recomputable (that is how the splice flow already relocates them).
 
 `C:\dev\vmb\mods\Badgers\core\stingray_renderer` implements the Stingray renderer
 and shows the shape a from-scratch declaration has to take. A `.shader_node`
-declares a whole family:
+declares a whole shader:
 
 - `inputs` - the material interface: `name`, `type` (`scalar`, `vector3`, ...),
   `domain` (`vertex`/`pixel`) and the **permutation flag that enables the input**
@@ -163,7 +163,7 @@ group headers, and the block header blob.
 
 ## The declaration front end (what the reader now covers)
 
-`filetype::shader_node` reads a `.shader_node` into the `Family` the emitters
+`filetype::shader_node` reads a `.shader_node` into the normalized view the emitters
 consume. It takes `inputs`, `channels`, `permutation_sets` and `shader_contexts`,
 and ignores the rest, so a declaration out ahead of the reader still parses. All
 fifteen real declarations in the Badgers mod read, and every condition in them
@@ -188,11 +188,11 @@ third was a genuine upstream bug - `deserialize_identifier` took bare words only
 so any derived struct rejected `"macros":`. Every change only accepts more than
 before, so the strict material files parse as they did.
 
-### Groups are per context, not per family
+### Groups are per context, not per declaration
 
 `compile_with` names the permutation sets a context permutes over, and that is
 what the group count is: `standard_base`'s two contexts permute two sets each,
-four groups, where the product over every set of the family is sixteen. A
+four groups, where the product over every set of the declaration is sixteen. A
 `permute_with` may nest - a list of entries that each name a set again, so the
 block can be commented - and the names are flattened out of whatever nesting is
 used.
@@ -200,16 +200,16 @@ used.
 Whether a context that names no set permutes over *all* of them is not settled.
 The toolchain also drops the sets whose macros a context's compiled HLSL never
 mentions, and that is a property of the code rather than of the declaration, so
-`Family::permutations_for` is an upper bound until a declaration can be paired
+`ShaderNode::permutations_for` is an upper bound until a declaration can be paired
 with its own section and the real count measured.
 
 ### An interface is a query, not an enumeration
 
 The first cut enumerated one interface per subset of the optional variables,
-which looks right until a real family does it: `standard_base` has 22 gated
+which looks right until a real declaration does it: `standard_base` has 22 gated
 variables, so 4194304 interfaces, against the 16 groups a section ships. A
 material's inputs pick an interface; the conditions tree is what maps one onto a
-group. So `Family::interface(&names)` and `Family::interface_of(mask)` answer one
+group. So `ShaderNode::interface(&names)` and `ShaderNode::interface_of(mask)` answer one
 query and nothing enumerates.
 
 ### Conditions are three-valued
@@ -218,7 +218,7 @@ query and nothing enumerates.
 `!`, `&&`, `||`, brackets, calls with or without arguments, comparisons - and
 evaluates it against a permutation's defines. A macro test is answered; a *call*
 is an engine query (`num_skin_weights()`, `on_platform(GL)`) that a generated
-family cannot answer, so it evaluates to `None` rather than a guess, and the
+declaration cannot answer, so it evaluates to `None` rather than a guess, and the
 combinators fold that through Kleene logic. The two consumers then differ on
 purpose, because the costs differ:
 
@@ -264,7 +264,7 @@ Two things follow, and both correct earlier assumptions:
   false runs - a table at 1528 also "reads" as 8 records from 1527, and the
   28-byte packed records read as 20-byte records one at a time, every 28 bytes.
   A rewrite that trusts such a run clobbers the bytes after it, which is why the
-  round trip fails on four of the six families while the two whose tables are
+  round trip fails on four of the six sections while the two whose tables are
   found cleanly come back byte for byte.
 
 So the emitter's open problem is not the byte layout - it is the walk. Given a
@@ -276,7 +276,7 @@ earlier - are what would settle both.
 
 ### The 12-byte table header, and what is still open in it
 
-The header is confirmed twice over on the same family, and the count is always
+The header is confirmed twice over on the same declaration, and the count is always
 its last word:
 
 ```
@@ -300,17 +300,17 @@ the group's own slice.
 
 The region between the descriptors (+56) and the first table's header (+124) is
 68 bytes of 16-byte entries whose hashes are the ones the tail's resource lists
-already name - `3AFC636C` (list 4, a family texture) and `41B1CFF8` (list 6, a
+already name - `3AFC636C` (list 4, a section texture) and `41B1CFF8` (list 6, a
 UAV) among them - so the per-group header is a *resource* list, and the tables
 follow it. That is the structure to decode next: the entry shape, and therefore
 where a group's tables end and the next group's resources begin.
 
-### The walk rule, measured on all six families
+### The walk rule, measured on all six sections
 
 The four words immediately before every table are a header whose **last word is
 that table's record count**, and whose third word is `256`:
 
-| family | groups | first table | the four words before it |
+| section | groups | first table | the four words before it |
 | --- | --- | --- | --- |
 | `004F18EA` | 3 | +184, 69 records | `120, 0, 4, 69` |
 | `17A3DC01` | 3 | +136, 69 records | `112, 256, 4, 69` |
@@ -322,57 +322,43 @@ that table's record count**, and whose third word is `256`:
 Five of six line up exactly: `256` in the third position, a count in the fourth
 that is also the table's record count, and a first word that scales with the
 group (`112` at four, `168` at five). The engine's table is 69 records in five of
-the six - the same table, the same cbuffer, in every family - and the sixth is a
-one-group family whose header reads differently.
+the six - the same table, the same cbuffer, in every section - and the sixth is a
+one-group section whose header reads differently.
 
 So the walk the emitter wants is: find `256` on a word boundary, read the count
 after it, expect a valid table 16 bytes on, and continue 12/16 + 20 x count bytes
 later. That is a specific signature rather than "any 20 bytes that look like a
 record", which is what made the scanning approach rewrite bytes it should not
-have. `38ECBAD1` is the family to read before trusting the rule everywhere: a
+have. `38ECBAD1` is the declaration to read before trusting the rule everywhere: a
 single group may lay its header out differently, and that is exactly the case a
 rule fitted to five samples would get wrong.
 
-## The dependencies entry (one 16-byte record, and it is a pointer)
+## The dependencies entry (8 bytes, one 64-bit hash)
 
 The header's seventh and eighth words are the offset and the count of the
-dependencies table. Every shipped family has **one** entry, and it is 16 bytes:
+dependencies table, and every shipped section has **one** entry of **8 bytes**:
 
 ```text
-u32 tag     // C0A8C3A4, on all six
-u32 name    // 209FB8C3 = core/stingray_renderer/renderer, on all six
-u32 groups  // 3, 3, 5, 1, 5, 3
-u32 hash    // 8BE282AA, DC9EF937, C071FCF2, BC448AB8, F301AD0B, 2B35E80D
+u64 dependency   // little-endian Murmur64 of the dependency's path
 ```
 
-The last two words are **the group data's own**: `groups` equals the count in the
-group data's first word, and `hash` equals the hash in its second word, on all
-six families. That is what identifies the shape - an entry whose count and hash
-are both the group data's cannot be anything else.
+`209FB8C3C0A8C3A4` is the long hash of `core/stingray_renderer/renderer` in the
+dictionary, and its two words in little-endian order are exactly the entry's
+two words. The first reading of this entry gave it sixteen bytes by counting
+the group data's first two words as part of it; the second gave it a `{tag,
+name}` split by reading one hash's two halves as two fields. Both errors came
+from the same habit: reading a fixed number of words and calling the window a
+record. The check is arithmetic - `group_data_offset - dependency_offset` is 8
+on all seven sections measured - and the dictionary is the confirmation.
 
-So a family declares what it was built *against* (`core/stingray_renderer/renderer`,
-the renderer library, on all six) and the count and hash are the build's own
-fingerprint, so the engine can tell one build of a family from another. It also
-means the entry is **writable from the group data**: `Dependency::of` reads the
-two words off the bytes just built, so a generated section's entry and its group
-data cannot disagree, and the only thing carried is the dependency's path - two
-words of constant.
-
-What the entry is *not*: the hash is not the murmur32 of the group data's own
-bytes, for any seed or any leading range tried. So a group data built from
-scratch has no way to compute it; a rebuilder takes it from the template, which
-is what it already does for every other word it does not own. `agrees_with` is
-the check for a template whose pair came from somewhere else.
-
-The group counts are worth having on their own: `3, 3, 5, 1, 5, 3` against the
-`standard_base` upper bound of sixteen, and against a family that permutes two
-sets per context. `permutations_for` is still an upper bound, but it now has a
-number to be measured against rather than a guess.
+So the dependency is one engine constant, computed from the path, and the
+group count and hash are the group data's own first two words, which is where
+they live and where a writer already has them.
 
 ## The channel table, and the stride that reaches it
 
-A group's third table is its **channels**, and the stride to it is measured rather
-than fitted:
+A group's third table is its **channels**, and the stride to it is the count
+rule the walk now implements:
 
 - a table's **record count is the word four bytes before its first record**;
 - the **next table's 12-byte header begins where this table's records end**.
@@ -383,33 +369,42 @@ header is at `start + 20 x len`, its count at `+ 8`, and its records at `+ 12`. 
 whose records are the nineteen channels. `GroupData::channel_table` reads it and
 `GroupData::channels` groups the records into channels.
 
-A channel is a **texture** channel of three records - a type 5 binding followed by
-two type 1 parameters, the UV scale and offset the sampler takes - and a *scalar*
-channel of one. So the record count is not the channel count, and the channels of
-the six families are:
+A channel is however many records it is: a *texture* channel is three - a type 5
+binding followed by two type 1 parameters, the UV scale and offset the sampler
+takes - and a scalar channel is one. The first reading of this assumed three for
+every channel and refused every section; the record count is not the channel
+count, and the channels of the six sections are:
 
-| family | groups | records | channels |
+| section | groups | records | channels |
 | --- | --- | --- | --- |
 | `004F18EA` | 3 | - | 11 |
 | `17A3DC01` | 3 | - | 18 |
 | `2A04418E` | 5 | - | 17 |
-| `38ECBAD1` | 1 | - | **0** |
+| `38ECBAD1` | 1 | - | 0 |
 | `3F08AC44` | 5 | - | 10 |
 | `427B5E6E` | 3 | 19 | 15 |
 
-`38ECBAD1` reads zero channels, and that is the **second** place the single-group
-family breaks a rule the other five obey - the first was its table header reading
-differently. It is a one-group family, so it is worth reading on its own before
-trusting either rule further; the canonical variable round trip is byte-identical
-on it regardless, because the rewrite never needed its channel table.
+`38ECBAD1` reads zero channels through this stride, and the earlier note called
+that a property of the single-group section. Re-reading it for this correction
+found a 20-record table at `+1528` whose first record is a kind 5 binding
+(`20BCBF88`) with two kind 1 parameters - a channel table, not "no table". So the
+section is not an exception to the channel rule; its layout is simply not decoded
+yet, and `38ECBAD1` is the section to read on its own before trusting any
+per-group rule.
 
-One trap, in the fixture as much as the data: the channel header's second word is
-`0`, and `{400, 0, 19}` has bytes inside it that read as a record, so a *scan* for
-the run merges the material table with the channel table across the header. The
-count-bounded read does not care, which is the argument for reading by count
-rather than by run.
+The UI base breaks the *stride*: its engine table sits between the material's and
+the channels', so the stride lands on the engine run. `channel_table` refuses
+that (a 69-record engine table is not a channel table), which means the UI base's
+channels are reported as none until the per-group headers are decoded. Refusing
+is the right failure; reading 69 engine variables as channels was the old one.
 
-## No pairing oracle, now measured rather than assumed
+One trap, in the fixture as much as the data: a header's tail can read as a
+record, so a *scan* for runs needs the count word to reject it - the UI base's
+material table was read at `+76` for exactly that reason. The count-validated
+walk now rejects it; the trap is why the count rule is implemented rather than
+documented.
+
+## Channel names do not pair; context names do
 
 The group's channel names resolve out of the game dictionary, and they are real
 material channels: `noise_texture`, `bca`, `orm`, `detail_nm`, `view_proj`,
@@ -423,175 +418,157 @@ declarations. `world_noise_size`, `wind_power`, `dirt_amount`, `noise_edge_fade`
 `sharpness`, `detail_scale`, `bc_blend`, `noise_str` and `orm2` are each in **zero**
 declarations, while `billboard` - the one name that is in the library - is in seven.
 
-So the pairing oracle does not exist, and this is now a measurement rather than an
-assumption: the Badgers declarations are the Stingray *library's* output nodes and
-the shipped sections are game materials, and the two do not share a channel name.
-That settles the question `permutations_for` was waiting on - not in its favour,
-but it means the upper bound is **unfalsifiable with what is on disk**, and the
-honest position is that the group count is *carried*, not derived. The dependency
-entry carries it, the group data header carries it, and `Dependency::of` keeps the
-two in step; a from-scratch build would have to take the count and the hash from a
+The earlier note generalised this to "the pairing oracle does not exist". That
+was too wide. **Context names do pair**: `default` is `F2760503` and
+`shadow_caster` is `3100C3D2` in the dictionary, and both appear in the
+declarations and in the shipped contexts tables. What does not pair is the
+channel names, and it is a declaration-level pairing that is still missing: the
+shipped sections and the Stingray-library declarations share generic context
+names (`default`, `shadow_caster`), not a declaration identity. The context name
+`5852A5B1`, which appears in every shipped section with two or three contexts,
+is not in any declaration and does not resolve.
+
+So `permutations_for` is still an upper bound pending a declaration-level pairing, and
+the honest position is that the group count is *carried*, not derived. The group
+data header carries it; a from-scratch build takes the count and the hash from a
 template, which is the same bargain the group data emitter already makes.
 
-## The contexts table, and the conditions node pool
+## The contexts table: variable length, and there is no link table
 
-The header's third and fourth words are the contexts table's offset and count.
-The records are **20 bytes**:
+The header's third and fourth words are the contexts table's offset and its
+context count. A record is **variable length**:
 
 ```text
 u32 name       // murmur32 of the context's name: F2760503 = default,
                // 3100C3D2 = shadow_caster, 5852A5B1 unnamed
-u32 flags      // 0 for an inline context, FFFFFFFF for a link
-u32 group      // the group index the context selects
-u32 group_hash // the group data's own hash
-u32 tail       // FFFFFFFF on an inline record
+u32 word2      // 0 on every context of every section measured
+u32 count      // the number of queries that follow
+count x {
+    u32 query_id         // selects a group; the first query of the first
+                         // context is the group data's own hash
+    u32 conditions       // a byte offset into the conditions blob, or
+                         // FFFFFFFF for none
+}
 ```
 
-The fourth word is the check that identifies it: on every family the `default`
-context's `group_hash` is **the group data's own header hash** - `8BE282AA`,
-`DC9EF937`, `C071FCF2`, `BC448AB8`, `F301AD0B`, `2B35E80D`, one for one. So a
-context is a *pointer at a group*, and the contexts table is writable from the
-group data the same way the dependency entry is.
+The records fill `[contexts_offset, conditions_offset)` **exactly** - there is
+nothing between them. Measured on all seven sections (six small sections and the
+UI base): 004F18EA's two records are 28 and 20 bytes, the UI base's two are 252
+and 60 (30 and 6 queries), and the sum always lands on `conditions_offset`.
 
-Read as 20-byte records, the families that disagree are not disagreements but the
-two forms a context takes:
+The invariant that settles the shape: **the queries across the contexts are the
+groups, one query per group.** `sum(count)` equals the group count in the group
+data header on all seven, and the first query of the first context is the group
+data's own hash. `Section::check` enforces both, together with a conditions
+offset that lands inside the blob.
 
-| family | contexts | shape |
-| --- | --- | --- |
-| `17A3DC01`, `427B5E6E`, `38ECBAD1` | 3, 3, 1 | all inline, `flags` 0, `tail` `FFFFFFFF` |
-| `004F18EA` | 2 | one inline, one **link** (`flags` `FFFFFFFF`) |
-| `2A04418E`, `3F08AC44` | 3 | one inline, two **links** |
-
-A **link** is a context whose conditions are shared rather than written out, and
-its second word is the node's key. That is what the header's fifth word is for -
-the conditions blob is a **node pool of 28-byte nodes, one per link record**, and
-it sits between the contexts and the dependencies:
-
-| family | links | blob |
-| --- | --- | --- |
-| `004F18EA` | 1 | 28 bytes = 1 node |
-| `2A04418E` | 2 | 56 bytes = 2 nodes |
-| `3F08AC44` | 2 | 56 bytes = 2 nodes |
-| `17A3DC01`, `427B5E6E`, `38ECBAD1` | 0 | empty |
-
-`2A04418E`'s two nodes are **byte-identical**, which is the point of sharing them
-and also the reason the link's key is not a node index - two different keys, the
-same node.
+What the earlier reading called a **link table** was the tail of the last context
+record read through the wrong record length. `004F18EA`'s "link context"
+`{99C09062, FFFFFFFF, 5852A5B1, 0, 1}` is `default`'s second query
+`{99C09062, FFFFFFFF}` followed by the next record's header `{5852A5B1, 0, 1}`;
+`2A04418E`'s "link second word 0x1C" is `shadow_caster`'s first query conditions
+offset (0x1C = 28, the second 28-byte node); and `FFFFFFFF` in that position is
+"no conditions". There is no link table, no link flag and no node-per-link rule:
+a 20-byte fixed record fits only the declarations whose every context has one query,
+which is why the model survived as long as it did.
 
 ## The conditions node is **not** a constant (correction)
 
 > **This section previously said the opposite, and it was wrong.** It claimed every
-> node on every family was the same 28 bytes, that the grammar therefore never had
+> node on every section was the same 28 bytes, that the grammar therefore never had
 > to be decoded, and that this "closed the section". The measurement was right and
 > the inference was not.
 
-Every node on the six families that have one *is* the same 28 bytes - five nodes
-across `004F18EA`, `2A04418E` and `3F08AC44`, and the three with no links have an
+Every node on the six sections that have one *is* the same 28 bytes - five nodes
+across `004F18EA`, `2A04418E` and `3F08AC44`, and the three with no conditions have an
 empty blob. But the conditions section is a **real permutation tree** over the
 material's texture channels: records of `{u16 tag, u16 b, u16 c, u16 count}`
 followed by `count` condition hashes and a u16 payload, with named roots (`gui`,
 `red`, `green`, `blue`, `alpha`) and records that are subsets of their parent
-(7 -> 5 -> 4 -> 2). The UI family's conditions section is **1436 bytes and 35
+(7 -> 5 -> 4 -> 2). The UI declaration's conditions section is **1436 bytes and 35
 records**, where its payload is a list of u16s per node - `2000 2001 2002 1002
 700B 2003 . 9000` - whose fields look like a target and a condition bitmask and
 are still to be decoded.
 
-The six families measured here have condition sections of 0, 28 and 56 bytes
-**because they are small families** - one to five groups, one to three contexts -
+The six sections measured here have condition sections of 0, 28 and 56 bytes
+**because they are small sections** - one to five groups, one to three contexts -
 not because the format is a constant. Reading their agreement as the format is the
 same error made four times this session: an observation from a small sample
 written down as a conclusion.
 
-So: `CONDITIONS_NODE` is the node those small families carry, `NodePool::of` is
-what a rebuilder over one of them needs, and **the conditions tree is open work.**
-A new family has to build its own.
+So the conditions region is carried as bytes, addressed by the offsets in the
+contexts queries, and **the conditions tree is open work.** The `CONDITIONS_NODE`
+constant and the node-per-link writer were deleted with the link model: they were
+a guess about a format from six small samples, and the UI base refused them. A
+new shader has to build its own tree.
 
 A test pins the constant's length, its word count and both end words, and it
 earned its place immediately: the constant was first written with each word
 byte-reversed, and the end-word assertion is what caught it.
 
-### The whole layout, and the link table
+### The whole layout
 
-The link table is the piece between the contexts and the pool, and once it is
-there the section's layout is fully determined:
+The contexts fill their region exactly and the conditions blob follows them, so
+the layout is arithmetic:
 
 | offset | size | contents |
 | --- | --- | --- |
 | 0 | 48 | the 12-word header |
-| 48 | 20 x contexts | the contexts table |
-| 48 + 20 x contexts | **8 x links** | the link table |
-| `conditions_offset` | 28 x links | the node pool |
-| `dependency_offset` | 16 x dependencies | the dependencies table |
+| 48 | sum of the context record lengths | the contexts table |
+| `conditions_offset` | `dependencies_offset - conditions_offset` | the conditions blob (a byte-addressed pool or tree, carried) |
+| `dependency_offset` | 8 x dependencies | the dependencies table (one 8-byte u64 entry) |
 | `group_data_offset` | `group_data_size` | the group data |
 | `group_data_offset + size` | 1-3 bytes | slack, carried |
 | `device_data_offset` | `device_data_size` | the programs |
 | after the programs | to the end | the default-data region, carried |
 
-so a writer lays the region out rather than copying offsets, and the link count and the node count are the same count - which is what the pool measurement already
-showed, now confirmed from the other side. On the three families that have them:
+`conditions_offset` is `48 + the sum of the context record lengths`, not
+`48 + 20 x contexts + 8 x links`: the second formula was fitted to records read
+at the wrong length, and the "links" were the bytes of the last record. A writer
+lays the region out rather than copying offsets, and `Section::parse` refuses a
+section whose contexts do not end exactly where the conditions begin.
 
-| family | contexts | links | `conditions_offset` | check |
-| --- | --- | --- | --- | --- |
-| `004F18EA` | 2 | 1 | 96 | 48 + 40 + 8 = 96 |
-| `2A04418E` | 3 | 2 | 124 | 48 + 60 + 16 = 124 |
-| `3F08AC44` | 3 | 2 | 124 | 48 + 60 + 16 = 124 |
+The old link table and node pool are gone from the code, the layout and this
+note. `Section::check` replaces them with the three measured invariants: the
+queries are the groups, every conditions offset lands inside the blob, and the
+first query is the group data's hash.
 
-The three with no links have `conditions_offset` at `48 + 20 x contexts` exactly:
-`108` for the two three-context families, `68` for the one-context family. So the
-offset is a formula, not a coincidence, and a writer can lay the region out
-rather than copy it.
 
-A **link record is 8 bytes**: a hash, then a word that is `0x1C` or `0xFFFFFFFF`.
-On all three families `0xFFFFFFFF` is the *last* link's second word and `0x1C` -
-which is 28, the node length - is the other one's, so it reads as a terminator
-with a size in the other slots. **The second word is not decoded**: `0x1C` as a
-node length and `0x1C` as a "there is a node after this" both fit, and the two
-readings disagree about what a writer may put there, so it is left alone rather
-than guessed. It is the one field in the section whose value cannot be derived
-from what is on disk.
+## The whole section round trips, and the dependencies entry is a u64
 
-A link is also visible from the contexts side: a context record whose `flags`
-word is `0xFFFFFFFF` is a link, and its `group` word is `0x5852A5B1` or
-`0x31305A92` - the same values in the two families that share them, which is what
-"shared" means here.
+`Section::parse` walks the layout above and `Section::into_bytes` recomputes it,
+and **all seven sections measured - the six small sections and the real UI base -
+come back byte for byte**, including the UI base with its 1436-byte conditions
+tree, which the link model could not even parse. That is necessary but not
+sufficient: a wrong reader and its writer can agree and still be wrong, which is
+why `Section::check`, the substitution tests and the query/group count are there.
 
-## The whole section round trips, and a correction to the dependencies entry
-
-`Section::parse` walks the formula above and `Section::into_bytes` recomputes it,
-and **all six shipped sections come back byte for byte**. That is the oracle the
-write path needed, and finding it turned up a mistake worth recording.
-
-**The dependencies entry is 8 bytes, not 16.** The earlier note gave it the group
-count and the group hash as well, on the strength of those two words matching the
-group data's header. They do match - and that is exactly why the reading was
-wrong. `group_data_offset - dependency_offset` is **8** on all six families, so
-the two words past the entry *are* the group data's first two, read through a
-window twice as wide as the entry. The entry is `{tag, name}` and nothing more:
-the renderer library, twice. The count and the hash are the group data's own, read
-from the group data, which is the only place they live.
-
-The diff said so before the arithmetic did. The first whole-section round trip
-differed at byte 32 - `group_data_offset` - on every family, and fixing the entry
-to 8 bytes moved the diff to byte 40, then to the very end, then to nothing.
+**The dependencies entry is 8 bytes, and it is one little-endian u64**: the
+Murmur64 of `core/stingray_renderer/renderer`, whose value the dictionary shows
+as `209FB8C3C0A8C3A4`. The first reading gave it sixteen bytes by counting the
+group data's own first two words; the second gave it a `{tag, name}` pair by
+reading the two halves of the one hash as fields. `group_data_offset -
+dependency_offset` is 8 on all seven sections, and the dictionary is the
+confirmation.
 
 Two regions are carried rather than derived, and both are named as such:
 
 - **The slack** between the group data and the programs. The header's group data
-  *size* is 1, 1, 3, 2, 3 and 1 bytes short of the distance to the device data.
-  Not constant, so neither alignment nor a fixed header.
+  *size* is 1, 1, 3, 2, 3 and 1 bytes short of the distance to the device data on
+  the six, and not constant, so it is neither alignment nor a fixed header.
 - **The default-data region** after the programs, which the header's sixth word
-  points into. It lands exactly at the end of the device data on three families
-  and two to three bytes before it on the others.
+  points into. It lands at the end of the device data on three of the six and two
+  to three bytes before it on the others.
 
-Both are kept whole rather than laid out, for the same reason the link's second
-word is: they are the fields this does not know the meaning of, and a change there
-is the one change in the section that could not be checked.
+Both are kept whole rather than laid out, for the same reason the context's
+second word is: they are fields this does not know the meaning of, and a change
+there is the one change in the section that could not be checked.
 
 ## The substitution test, which is the one the round trip cannot cover
 
-A round trip proves nothing moves when nothing is meant to change. It says nothing
-about what happens when something *is* meant to, which is the only case that
-matters for a writer. So three substitutions, run against all six families:
+A round trip proves nothing moves when nothing is meant to change. It says
+nothing about what happens when something *is* meant to, which is the only case
+that matters for a writer. Run against all six small sections:
 
 **A renamed context: 4 bytes, at +48, and only those.** The name word, nothing
 else. A rename is length-preserving, so it *should* leave every offset alone, and
@@ -599,77 +576,63 @@ it does.
 
 **A renamed material variable: 4 bytes, one run, entirely inside the group data.**
 The name hash of one record, reached through `GroupData::rebuild` rather than
-through the section, so this also says the group data's own rebuild does not drag
-the section's offsets with it. Three of the six skip it - their material tables
-hold only records the dictionary has no name for, which is a gap in the dictionary
-and not a failure, and the tool says which it skipped and why.
+through the section. Three of the six skip it - their material tables hold only
+records the dictionary has no name for, which is a gap in the dictionary and not
+a failure, and the tool says which it skipped and why.
 
-**A context added: the offsets followed the formula.** This is the half the round
-trip cannot reach, because it is the one that *alters a length* and so has to move
-everything after the contexts table. On all six the rebuilt section reads back,
-the conditions offset lands where `48 + 20 x contexts + 8 x links` says, and the
-group data comes back byte for byte - which is the claim that matters, since the
-group data is the one region whose contents come from somewhere else entirely.
+**A query added: the offsets followed the sum of the records.** A query is eight
+bytes and the group count has to rise with it, so the test raises both: the first
+context gains a query and the group data header's count word gains one. The
+rebuilt section reads back, `conditions_offset` lands at
+`48 + sum(context record lengths)`, and the group data is what was written. That
+is the half the round trip cannot reach, because it alters a length and so has to
+move everything after the contexts table.
 
-That last one covers the families with links as well as without, which is where a
-copy-the-offsets writer would have failed: `004F18EA` gains a context and lands at
-116, `2A04418E` and `3F08AC44` at 144 with two links, and the node pool and the
-dependency entry move with them.
-
-A bug in the first run of this is worth recording too, because it is the same
-shape as the ones earlier in the session: the tool skipped three families silently
-because an early return in one branch ran past the next test. Three families
-looked like failures and were a missing brace in a reporting path. A substitution
-test that only runs when a dictionary happens to be complete is not a test.
+The first version of this test compared against `48 + 20 x contexts + 8 x links`
+and added a whole context - both the wrong formula and an invalid section under
+the query/group invariant. It passed on the declarations whose records happened to be
+20 bytes and refused on the rest, which is how the wrong record length stayed
+alive. A substitution test that encodes the model it is testing proves nothing.
 
 ## The channel table is the one table a from-scratch group data writes
 
 The other two tables in a group are engine-side - `global_viewport` and the packed
 run - so they are carried. The **channel table is the declaration's own**, so it
-has to be writable rather than copied, and it is the last gap on the path to a
-group data built without a template. `GroupData::rebuild_channels` closes it, and
-rewriting the table with the channels it was read as comes back byte for byte on
-five of the six families - the sixth being `38ECBAD1`, which has no channel table
-at all, the single-group exception already noted twice.
+has to be writable rather than copied; `GroupData::rebuild_channels` keeps the
+engine's kind, flags and size for every slot and takes only the new name and
+offset, because a type 5 binding's width is the engine's and not something a
+declaration's type can say.
 
-A channel keeps the records the template gave it and takes only the new name and
-offset, exactly as the variable table does, because a type 5 binding's width is
-the engine's and not something a declaration's type can say. A rename moves the
-name hash in **each** of a channel's records - twelve bytes for a texture channel,
-four for a scalar one - and nothing else. More channels than the table has room
-for is refused rather than guessed at: a new channel needs a new cbuffer offset,
-and where that comes from is the compiled program's reflection.
+A rename moves the name hash in **each** of a channel's records - twelve bytes for
+a texture channel, four for a scalar one - and nothing else. The record count must
+be the template's: adding or dropping a channel moves the count word and the next
+table, and a new channel needs a cbuffer offset from the compiled program's
+reflection, which is not this call's input. The first version assumed every
+channel was three records and refused every section; the second wrote whatever fit
+over existing slots and left the count stale. Both are gone.
 
-That is the seam the from-scratch path needs, and it is the same shape as the
-section's: a caller with the program's reflection supplies the offsets, and
-everything else about the record is the engine's.
-
-A correction to the note above, which came out of writing the writer: the first
-version of `rebuild_channels` assumed three records per channel and refused every
-family, because the truth is that a channel is *however many* records it is. The
-assumption had come from the texture channels being the ones visible in a dump.
-
-
-
+On the UI base the channel table is not reached by the current stride (the engine
+table sits between the material's and the channels'), so its channels are reported
+as none rather than guessed at. `38ECBAD1` has a channel table at `+1528` that the
+earlier note said did not exist; reading it is open work.
 
 ### What the section now is
 
 | region | status |
 | --- | --- |
-| contexts table | **measured and writable** - 20-byte records, the group hash read off the group data |
-| conditions pool | **measured, a constant** - `count` copies of 28 bytes, one per link |
-| dependencies entry | **measured and writable** - count and hash read off the group data |
-| group data | **measured and writable** - byte-identical round trip on all six |
-| channels | **measured** - three records each, read by count |
-| packed run | **measured and readable** - per-slot bindings, not a projection |
-| block | **measured and writable** - 863/863 bytes |
-| programs | engine-side, Oodle-framed DXBC, rebuilt not constructed |
+| contexts table | **measured and writable** - variable length, `{name, word2, count, queries}`, filling the region exactly |
+| conditions blob | **measured as bytes, decoding open** - a query's offset addresses it; the UI base is a 1436-byte, 35-record tree, the small sections are pools of 28-byte nodes |
+| dependencies entry | **measured and writable** - one little-endian u64: Murmur64 of the renderer path |
+| group data | **measured and writable for the material's table** - the count word before every table is the walk rule; the engine table is the one whose first record is `6BC91D73` |
+| channels | **measured for the six, open on the UI base** - a table is a count word, records and the next header; the UI base's stride lands on the engine table and is refused |
+| packed run | **partly measured** - readable, not a projection of the material table; 6 of 7 copies found on `427B5E6E` |
+| block | **carried** - the library's compiled preamble; three header words are rewritten, nothing else |
+| programs | **carried** - Oodle-framed DXBC, rebuilt not constructed |
 
-The carried list is now: the group count, the group hash, the 28-byte node, the
-dependency path, and the engine's `global_viewport` table. Everything else is
-derived from the declaration or read off the group data being built.
-
-
+The carried list is: the opaque and default-data header words, each context's
+second word (0 on every section measured), the conditions blob, the slack between
+group data and programs, the programs, and the bytes after them. Everything else
+is derived from the declaration or read off the group data being built.
 
 ## The compiler is DXC, reached through its DLL
 
@@ -715,24 +678,24 @@ containers whose frames are Oodle-compressed - the SDK's `bundle` module plus th
 The declarations available on this machine are therefore *not* Darktide's:
 
 - `C:\dev\core_diff\shader_nodes` is a **Stingray library source drop** (it is a
-  git checkout, and its files are the classic Stingray node library - `group =
-  "Math"`, `type = "auto"`). It is the right *dialect* and the wrong families.
+  git checkout, and its files are the classic Stingray node library).
 - `C:\dev\vmb\...\stingray_renderer\output_nodes` is a mod's own
-  Stingray-renderer declarations. Also the right dialect, also not Darktide's
-  families.
+  Stingray-renderer declarations.
 
-Darktide is built on Stingray, so its declarations are Stingray-shaped and the
-dialect work transfers. But there is no declaration whose section we also have, so
-the group count cannot be settled by pairing. Two things can settle it instead:
+Both are the right dialect and the wrong declarations. Context names pair by identity
+(`default` = `F2760503`, `shadow_caster` = `3100C3D2`), but that is a shared
+vocabulary, not a declaration identity: the shipped context name `5852A5B1` is in no
+declaration. Channel names do not pair at all. So no declaration's group count can
+be checked against a shipped section's, and any number computed from a Stingray
+declaration is a hypothesis about Darktide, never a measurement of it.
 
-1. **Round-trip.** Read a shipped section into the emitters and write it back
-   byte-identically. This is what the block emitter does now (863/863 bytes on
-   `427B5E6E72E72FD7`) and it is the only offline oracle available.
-2. **The binary.** The `dependencies` and `conditions` sections record what the
-   toolchain decided, so decoding them answers the group count directly - which
-   is why those two sections are the remaining decode work rather than the
-   emitters.
+Three oracles remain, in order of strength:
 
-Treat any number computed from a Stingray declaration as a hypothesis about
-Darktide, never as a measurement of it.
-
+1. **Substitution**, which isolates a field: rename a context, rename a variable,
+   add a query and raise the group count. A round trip cannot do this - a wrong
+   reader and its writer agree - which is why the substitutions are the evidence
+   and the round trip only the regression check.
+2. **The count and bounds invariants**: the queries are the groups, a table is the
+   run its count word says it is, and a conditions offset lands inside the blob.
+   These caught the UI base's material table at +88 rather than +76.
+3. **Round-trip**, read-N-write-N, which is necessary and not sufficient.
