@@ -408,6 +408,41 @@ impl GroupData {
         Some(starts)
     }
 
+    /// The byte range of each group, from the query-id walk.
+    pub fn group_bounds(&self, query_ids: &[u32]) -> Option<Vec<(usize, usize)>> {
+        let starts = self.group_starts(query_ids)?;
+        let mut bounds = Vec::with_capacity(starts.len());
+        for (index, start) in starts.iter().enumerate() {
+            let end = starts.get(index + 1).copied().unwrap_or(self.data.len());
+            bounds.push((*start, end));
+        }
+        Some(bounds)
+    }
+
+    /// The material's own table in every group, found inside each group's
+    /// bounds: the first count-validated run that is not the engine's.
+    pub fn object_tables(&self, query_ids: &[u32]) -> Option<Vec<(usize, Vec<Record>)>> {
+        let bounds = self.group_bounds(query_ids)?;
+        let mut tables = Vec::new();
+        for (start, end) in bounds {
+            let mut at = start;
+            while at + 2 * RECORD_LEN <= end {
+                let run = self.run_at(at);
+                if run.is_empty() {
+                    at += 1;
+                    continue;
+                }
+                if is_engine_run(&run) {
+                    at += run.len() * RECORD_LEN;
+                    continue;
+                }
+                tables.push((at, run));
+                break;
+            }
+        }
+        Some(tables)
+    }
+
     /// The three descriptors of a group's header, at `+32`: the engine's
     /// `global_viewport` cbuffer, the section's texture and its UAV.
     ///
@@ -946,6 +981,43 @@ mod tests {
             "out of order is not a walk"
         );
         assert!(data.group_starts(&[0xDEAD_BEEF]).is_none());
+    }
+
+    #[test]
+    fn every_group_has_its_material_table_found() {
+        // The walk gives the bounds; inside them the count rule finds each
+        // group's own table, which is what a per-group rebuilder needs.
+        fn table(data: &mut Vec<u8>, hash: u32) {
+            data.extend_from_slice(&[0u8; 8]);
+            data.extend_from_slice(&2u32.to_le_bytes());
+            for offset in [0u32, 16] {
+                Record {
+                    kind: 0,
+                    flags: 0,
+                    hash: hash + offset,
+                    offset,
+                    size: 4,
+                }
+                .write(data);
+            }
+        }
+        let mut data = group_header();
+        table(&mut data, 0xAAAA_0000);
+        let mut second = group_header();
+        second[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        data.extend_from_slice(&second);
+        table(&mut data, 0xBBBB_0000);
+        let data = GroupData::new(data);
+        let tables = data
+            .object_tables(&[0x8BE2_82AA, 0x1234_5678])
+            .expect("tables");
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].1[0].hash, 0xAAAA_0000);
+        assert_eq!(tables[1].1[0].hash, 0xBBBB_0000);
+        assert!(
+            data.object_tables(&[0x8BE2_82AA]).is_some(),
+            "one group walks"
+        );
     }
 
     #[test]
