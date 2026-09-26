@@ -49,8 +49,24 @@ const RECORD_LEN: usize = 20;
 const PACKED_LEN: usize = 28;
 
 /// The cbuffer hash that keys the packed copies of the per-object table. The
-/// shipped families use this value for their per-object cbuffer.
+/// shipped sections use this value for their per-object cbuffer.
 const PACKED_KEY: u32 = 0xB563_9618;
+
+/// The first record of the engine's `global_viewport` table: `6BC91D73` on all
+/// seven sections measured - the six small families and the UI base - and one
+/// per group. The engine table is otherwise indistinguishable from the
+/// material's (both are runs of canonical records with a count word), so this
+/// measured word is what tells them apart. A section whose engine table starts
+/// elsewhere would be misidentified; `engine_records` exists so a caller can
+/// check.
+const ENGINE_FIRST_HASH: u32 = 0x6BC9_1D73;
+
+/// Whether a validated run is an engine table, by the one measured word that
+/// identifies its first record.
+fn is_engine_run(run: &[Record]) -> bool {
+    run.first()
+        .is_some_and(|record| record.hash == ENGINE_FIRST_HASH)
+}
 
 /// The largest cbuffer offset a record may carry, used to recognise a record by
 /// scanning.
@@ -348,14 +364,17 @@ impl GroupData {
         records
     }
 
-    /// A run of consecutive canonical records at `at`, with its length. This is
-    /// how a table is located: the descriptor does not say where it is, and two
-    /// tables laid down one after another are indistinguishable from a single
-    /// run by the records alone.
+    /// A table at `at`: the consecutive canonical records there, if the word
+    /// four bytes before them is their count.
+    ///
+    /// The count word is the rule that was measured and documented before the
+    /// reader implemented it, and without it a table's 12-byte header tail reads
+    /// as a one-record table of its own. The UI base's material table was read at
+    /// +76 for exactly that reason; the real table is at +88.
     pub fn run_at(&self, at: usize) -> Vec<Record> {
         // A run inside the descriptor table is not a table: the descriptors are
         // metadata, so header bytes that happen to read as records are skipped.
-        if at < self.descriptor_bytes() {
+        if at < self.descriptor_bytes() || at < 4 {
             return Vec::new();
         }
         let mut records = Vec::new();
@@ -364,7 +383,11 @@ impl GroupData {
             records.push(record);
             cursor += RECORD_LEN;
         }
-        records
+        if self.word(at - 4) == Some(records.len() as u32) {
+            records
+        } else {
+            Vec::new()
+        }
     }
 
     /// How far the descriptor table reaches: the 8-byte global header plus one
@@ -450,33 +473,30 @@ impl GroupData {
         runs
     }
 
-    /// The material's own variable table: the run of canonical records that sits
-    /// in *every* group, since a material's variables are declared once and the
-    /// groups differ only in the engine's table and the interface's length.
+    /// The material's own variable table: the first validated table that is not
+    /// the engine's.
     ///
     /// This is a heuristic, and the reason it is a heuristic is the one thing
     /// that would settle it: the per-group headers name each table's offset, and
-    /// they are not decoded yet. So the run is identified by shape - the engine's
-    /// table is the one repeated byte for byte in every group - and a caller that
-    /// knows the offset from the headers should use [`GroupData::rebuild_at`].
+    /// they are not decoded yet. The engine's table is identified by its first
+    /// record ([`ENGINE_FIRST_HASH`], measured on seven sections); everything
+    /// else that passes the count rule is a candidate, and the first one is the
+    /// material's table in every section measured - at +88 on the UI base, after
+    /// the engine's 69 records on the six small families. A caller that knows the
+    /// offset from the headers should use [`GroupData::rebuild_at`].
     pub fn object_table(&self) -> Option<(usize, Vec<Record>)> {
-        let runs = self.runs();
-        // The engine's table is the first run of the first group and recurs
-        // unchanged; everything else in that group is the material's.
-        let first = runs.first()?;
-        let engine = runs.iter().find(|run| *run == first)?.clone();
         let mut at = 0;
         while at + 2 * RECORD_LEN <= self.data.len() {
-            if Record::read(&self.data, at).is_some() {
-                let run = self.run_at(at);
-                let len = run.len();
-                if run != engine {
-                    return Some((at, run));
-                }
-                at += len * RECORD_LEN;
+            let run = self.run_at(at);
+            if run.is_empty() {
+                at += 1;
                 continue;
             }
-            at += 1;
+            if is_engine_run(&run) {
+                at += run.len() * RECORD_LEN;
+                continue;
+            }
+            return Some((at, run));
         }
         None
     }
@@ -495,6 +515,12 @@ impl GroupData {
     /// the sampler takes - and a scalar channel is one. So the record count is
     /// not the channel count, and [`GroupData::channels`] is what to read for
     /// that. `427B5E6E` is 19 records for 15 channels, which is the mix.
+    ///
+    /// The stride is only sound when the channel table follows the material's
+    /// immediately. On the UI base the engine table sits between them, so the
+    /// stride lands on the engine run; that is refused rather than read as 69
+    /// channels, and the UI base's channel table stays undecoded until the
+    /// per-group headers are.
     pub fn channel_table(&self) -> Option<(usize, Vec<Record>)> {
         let (at, table) = self.object_table()?;
         let header = at + table.len() * RECORD_LEN;
@@ -506,6 +532,9 @@ impl GroupData {
         let mut records = Vec::with_capacity(count);
         for index in 0..count {
             records.push(Record::read(&self.data, start + index * RECORD_LEN)?);
+        }
+        if is_engine_run(&records) {
+            return None;
         }
         Some((start, records))
     }
@@ -521,25 +550,23 @@ impl GroupData {
     /// declaration's type can say.
     ///
     /// So a table read from a section and rewritten with the channels it was read
-    /// as comes back byte for byte, which is what the tests pin. Writing a channel
-    /// the template has no slot for is refused rather than guessed at: a new
-    /// channel needs a new cbuffer offset, and where that comes from is the
-    /// compiled program's reflection, which is [`GroupData::rebuild`]'s input and
-    /// not this one's.
+    /// as comes back byte for byte, which is what the tests pin. The record count
+    /// must be the template's: adding or dropping a channel changes the count and
+    /// moves the next table, and a new channel needs a cbuffer offset from the
+    /// compiled program's reflection, which is not this call's input.
     pub fn rebuild_channels(&self, channels: &[Channel]) -> Result<Vec<u8>> {
         let (at, old) = self
             .channel_table()
             .ok_or_else(|| eyre::eyre!("the material's own channel table was not found"))?;
         // A channel is however many records it is, not a fixed three: a *texture*
         // channel is three - the type 5 binding and its two type 1 parameters -
-        // and a scalar channel is one. So the records go down by a running cursor
-        // over the channels in table order, which is the order
-        // `GroupData::channels` hands them back in, and the only check needed is
-        // that the whole set fits.
+        // and a scalar channel is one.
         let wanted: usize = channels.iter().map(|channel| channel.records.len()).sum();
-        if wanted > old.len() {
+        if wanted != old.len() {
             bail!(
-                "the template has room for {} channel records and {wanted} were asked for",
+                "the template has {} channel records and {wanted} were asked for; adding or \
+                 dropping channels needs the count word to move and the offsets from the \
+                 compiled program's reflection",
                 old.len()
             );
         }
@@ -547,24 +574,16 @@ impl GroupData {
         let mut slot = 0;
         for channel in channels {
             for record in &channel.records {
-                let Some(template) = old.get(slot) else {
-                    break;
-                };
-                let kind = if record.kind != 0 {
-                    record.kind
-                } else {
-                    template.kind
-                };
-                let size = TYPE_SIZES
-                    .iter()
-                    .find(|(code, ..)| *code == kind)
-                    .map_or(template.size, |(_, size)| *size);
+                // The slot's kind, flags and size are the engine's: a type 5
+                // binding is four bytes wide and no declaration's type can say
+                // it. Only the name and the offset change.
+                let template = &old[slot];
                 Record {
-                    kind,
+                    kind: template.kind,
                     flags: template.flags,
                     hash: channel.hash,
                     offset: record.offset,
-                    size,
+                    size: template.size,
                 }
                 .write_at(&mut data, at + slot * RECORD_LEN);
                 slot += 1;
@@ -599,17 +618,12 @@ impl GroupData {
         channels
     }
 
-    /// The engine's `global_viewport` records: the run that is the same in every
-    /// group, because the engine fills it whatever the material declares.
-    ///
-    /// A shipped section has three tables per group - the engine's, the material's
-    /// variables, and its channels - and the engine's is the one whose length and
-    /// bytes do not change from group to group. They are engine-side, so a
-    /// generated section does not get to rewrite them.
+    /// The engine's `global_viewport` records: the run whose first record is
+    /// [`ENGINE_FIRST_HASH`], measured on all seven sections. There is one per
+    /// group and they are byte-identical, which is what the engine's table being
+    /// engine-side means; this returns the first.
     pub fn engine_records(&self) -> Option<Vec<Record>> {
-        let runs = self.runs();
-        let first = runs.first()?;
-        runs.iter().find(|run| *run == first).cloned()
+        self.runs().into_iter().find(|run| is_engine_run(run))
     }
 
     /// Rebuilds the group data for a material's own variables: the canonical
@@ -734,6 +748,12 @@ fn rewrite_table(data: &mut [u8], at: usize, old: &[Record], variables: &[Variab
     // Any tail the shorter table leaves behind is zeroed, so it cannot be read
     // as a stale record.
     data[at + new..at + old_bytes].fill(0);
+    // The count word four bytes before the first record is the table's length,
+    // so a shrink moves it too: a stale count makes the table unreadable to the
+    // count-validated walk that found it.
+    if at >= 4 {
+        data[at - 4..at].copy_from_slice(&(variables.len() as u32).to_le_bytes());
+    }
     Ok(())
 }
 
@@ -836,12 +856,15 @@ mod tests {
                     .copy_from_slice(&word.to_le_bytes());
             }
         }
-        // The engine's own table: two records.
+        // The engine's own table: a 12-byte header whose count is 2, then two
+        // records. Its first record is the measured engine marker.
+        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&2u32.to_le_bytes());
         for record in [
             Record {
                 kind: 3,
                 flags: 0,
-                hash: var("camera_pos", 0, 3).hash(),
+                hash: ENGINE_FIRST_HASH,
                 offset: 0,
                 size: 16,
             },
@@ -855,9 +878,9 @@ mod tests {
         ] {
             record.write(&mut data);
         }
-        // A gap, so the two tables are separate runs as they are in a section.
-        data.extend_from_slice(&[0u8; 24]);
-        // The material's own table: three records.
+        // The material's own table: its header, then three records.
+        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&3u32.to_le_bytes());
         for (name, offset, kind) in [("texture_map", 0, 3), ("world", 16, 4), ("mod_tint", 80, 3)] {
             Record {
                 kind,
@@ -936,6 +959,33 @@ mod tests {
     }
 
     #[test]
+    fn the_engine_table_is_the_one_with_the_measured_first_record() {
+        let data = template();
+        let engine = data.engine_records().expect("the engine table");
+        assert_eq!(engine.len(), 2);
+        assert_eq!(engine[0].hash, ENGINE_FIRST_HASH);
+        let (_, object) = data.object_table().expect("the material table");
+        assert_ne!(object[0].hash, ENGINE_FIRST_HASH);
+    }
+
+    #[test]
+    fn a_run_without_its_count_word_is_not_a_table() {
+        // The UI base's material table was read eight bytes into its header,
+        // because the header's tail happened to read as one record. The count
+        // word four bytes before a table is what rejects it.
+        let data = template();
+        let (at, _) = data.object_table().expect("the material table");
+        let mut bytes = data.into_bytes();
+        bytes[at - 4..at].copy_from_slice(&0u32.to_le_bytes());
+        let without = GroupData::new(bytes);
+        assert!(
+            without.object_table().is_none(),
+            "a table whose count word does not match is not identified"
+        );
+        assert!(without.engine_records().is_some(), "the engine table is still there");
+    }
+
+    #[test]
     fn a_table_that_matches_round_trips_byte_for_byte() {
         let data = template();
         let rebuilt = data.rebuild(&template_variables()).expect("rebuild");
@@ -977,7 +1027,7 @@ mod tests {
             "the opt-in packed rewrite reaches the new name"
         );
         // The engine's own table is untouched.
-        assert_eq!(read.runs()[0][0].hash, var("camera_pos", 0, 3).hash());
+        assert_eq!(read.runs()[0][0].hash, ENGINE_FIRST_HASH);
         assert_eq!(read.bytes()[at], read.bytes()[at]);
     }
 
@@ -1012,10 +1062,10 @@ mod tests {
 
     #[test]
     fn a_packed_rewrite_without_a_run_is_reported() {
-        // The same template with the packed run cut off: 56 bytes of header, 40
-        // of engine table, a 24 byte gap and 60 of material table.
+        // The same template with the packed run cut off: header, engine header
+        // and table, material header and table.
         let mut data = template().into_bytes();
-        data.truncate(56 + 2 * RECORD_LEN + 24 + 3 * RECORD_LEN);
+        data.truncate(56 + 12 + 2 * RECORD_LEN + 12 + 3 * RECORD_LEN);
         let data = GroupData::new(data);
         assert!(data.packed_runs().is_empty());
         // The canonical table still rebuilds; the packed step says it found
@@ -1071,19 +1121,22 @@ mod tests {
         let mut data = vec![0u8; 56];
         data[0..4].copy_from_slice(&1u32.to_le_bytes()); // one group
         data[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
-        // The engine's table, then the material's: two records each, with a gap
-        // between them so the two are separate runs as they are in a section.
-        for name in ["camera_pos", "time"] {
+        // The engine's table (its header, then two records with the measured
+        // marker first), then the material's.
+        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&2u32.to_le_bytes());
+        for hash in [ENGINE_FIRST_HASH, var("time", 0, 3).hash()] {
             Record {
                 kind: 3,
                 flags: 0,
-                hash: var(name, 0, 3).hash(),
+                hash,
                 offset: 0,
                 size: 16,
             }
             .write(&mut data);
         }
-        data.extend_from_slice(&[0u8; 24]);
+        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&2u32.to_le_bytes());
         for name in ["texture_map", "world"] {
             Record {
                 kind: 3,
