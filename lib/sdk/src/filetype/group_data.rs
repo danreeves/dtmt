@@ -152,54 +152,41 @@ impl Record {
     }
 }
 
-/// The tag word that opens every dependencies entry, on every shipped family.
-const DEPENDENCY_TAG: u32 = 0xC0A8_C3A4;
-
 /// The record length of a dependencies entry.
 pub const DEPENDENCY_LEN: usize = 8;
 
 /// One entry of a section's dependencies table: the library a family was built
 /// against.
 ///
-/// The entry is **8 bytes** - `{tag, name}` - and nothing more:
+/// The entry is **8 bytes**, and it is one 64-bit MurmurHash of the dependency's
+/// path stored little-endian. The earlier readings of these bytes - first a
+/// 16-byte record, then a `{tag, name}` pair - were both wrong in the same way:
+/// the two words are the two halves of one hash, not two fields. The dictionary
+/// confirms it: `209FB8C3C0A8C3A4` is the long hash of
+/// `core/stingray_renderer/renderer`, and its two words in little-endian order
+/// are exactly the entry's words.
 ///
-/// ```text
-/// u32 tag     // C0A8C3A4 on every shipped family
-/// u32 name    // murmur32 of the dependency's path
-/// ```
-///
-/// An earlier reading of this took the entry to be sixteen bytes and gave it the
-/// group count and the group hash as well, on the strength of those two words
-/// matching the group data's own header. They do match, and that is exactly why
-/// the reading was wrong: the entry is eight bytes, so the two words past it
-/// *are* the group data's first two, read through the wrong window.
-/// `group_data_offset - dependency_offset` is 8 on all six families, and that
-/// difference is the check that settles it.
-///
-/// So the entry carries the dependency and nothing else, and the group count and
-/// hash are read from the group data itself - which is where they live, and where
-/// a writer already has them.
+/// The count and hash that an earlier reading gave this entry are the group
+/// data's own first two words, read through a window twice as wide as the entry.
+/// `group_data_offset - dependency_offset` is 8 on all seven sections measured,
+/// which is the check that settles it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dependency {
-    /// The entry's tag, [`DEPENDENCY_TAG`] on every shipped family.
-    pub tag: u32,
-    /// murmur32 of the dependency's path, [`Dependency::RENDERER`] on every
+    /// Murmur64 of the dependency's path, [`Dependency::RENDERER`] on every
     /// shipped family.
-    pub name: u32,
+    pub id: u64,
 }
 
 impl Dependency {
-    /// The murmur32 of `core/stingray_renderer/renderer`, the library every
-    /// shipped family names as its one dependency.
-    pub const RENDERER: u32 = 0x209F_B8C3;
+    /// `core/stingray_renderer/renderer`, the library every shipped family names
+    /// as its one dependency.
+    pub const RENDERER: u64 = 0x209F_B8C3_C0A8_C3A4;
 
     /// Reads the entry at an offset within a section.
     pub fn parse(data: &[u8], at: usize) -> Option<Self> {
         let entry = data.get(at..at + DEPENDENCY_LEN)?;
-        let word = |i: usize| u32::from_le_bytes(entry[i * 4..i * 4 + 4].try_into().unwrap());
         Some(Self {
-            tag: word(0),
-            name: word(1),
+            id: u64::from_le_bytes(entry.try_into().ok()?),
         })
     }
 
@@ -213,18 +200,13 @@ impl Dependency {
     /// The entry a generated section writes: the one every shipped family has.
     pub fn of() -> Self {
         Self {
-            tag: DEPENDENCY_TAG,
-            name: Self::RENDERER,
+            id: Self::RENDERER,
         }
     }
 
     /// The bytes of the entry.
     pub fn write(&self) -> [u8; DEPENDENCY_LEN] {
-        let mut bytes = [0u8; DEPENDENCY_LEN];
-        for (i, word) in [self.tag, self.name].into_iter().enumerate() {
-            bytes[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
-        }
-        bytes
+        self.id.to_le_bytes()
     }
 }
 
@@ -334,11 +316,12 @@ impl GroupData {
         self.word(0).unwrap_or(0)
     }
 
-    /// The hash in the header, which a [`Dependency`] carries alongside the group
-    /// count. Nothing has established what it is a hash *of*: it is not the
-    /// murmur32 of the group data's own bytes for any seed tried, so a generated
-    /// group data takes it from its template and the dependency entry is written
-    /// to match rather than computed from scratch.
+    /// The hash in the header. Nothing has established what it is a hash *of*:
+    /// it is not the murmur32 of the group data's own bytes for any seed tried,
+    /// so a generated group data takes it from its template. It is also not the
+    /// dependency entry's content - that entry is eight bytes and is the
+    /// dependency's own 64-bit hash; the count and hash here are the group data's
+    /// own first two words.
     pub fn hash(&self) -> u32 {
         self.word(4).unwrap_or(0)
     }
@@ -1213,15 +1196,21 @@ mod tests {
     }
 
     #[test]
-    fn a_dependency_entry_is_the_library_and_nothing_else() {
-        // Eight bytes: a tag and a path. The group count and the group hash that
-        // an earlier reading found here are the group data's own first two words,
-        // read through a sixteen byte window - and the entry is half that.
+    fn a_dependency_entry_is_the_library_hash_and_nothing_else() {
+        // Eight bytes: one 64-bit hash of `core/stingray_renderer/renderer`, the
+        // library every shipped family names. The `{tag, name}` pair an earlier
+        // reading saw in these bytes is the hash's low and high words, and the
+        // group count and hash an even earlier one found past them are the group
+        // data's own first two words, read through a sixteen byte window.
         let dependency = Dependency::of();
-        assert_eq!(dependency.tag, DEPENDENCY_TAG);
-        assert_eq!(dependency.name, Dependency::RENDERER);
+        assert_eq!(dependency.id, Dependency::RENDERER);
         let bytes = dependency.write();
         assert_eq!(bytes.len(), 8, "the entry is eight bytes");
+        assert_eq!(
+            bytes,
+            [0xA4, 0xC3, 0xA8, 0xC0, 0xC3, 0xB8, 0x9F, 0x20],
+            "stored little-endian"
+        );
         assert_eq!(Dependency::parse(&bytes, 0), Some(dependency));
         assert_eq!(Dependency::read(&bytes, 0, 1), vec![dependency]);
     }

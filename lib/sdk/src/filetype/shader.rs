@@ -62,6 +62,14 @@ fn u64_at(data: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap())
 }
 
+/// A byte range, or `None` when it is out of range or runs backwards.
+fn check_range(data: &[u8], from: usize, to: usize) -> Option<Vec<u8>> {
+    if to < from {
+        return None;
+    }
+    Some(data.get(from..to)?.to_vec())
+}
+
 /// Shader stage of a DXBC container, read from its `PSV0` chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Stage {
@@ -550,83 +558,6 @@ pub fn rebuild(data: &[u8], replace: impl Fn(&Program) -> Option<Vec<u8>>) -> Re
     Ok(new_data)
 }
 
-/// The record length of one conditions node.
-pub const NODE_LEN: usize = 28;
-
-/// The 28-byte node that the small shipped families carry in their conditions
-/// pool.
-///
-/// **This is not the conditions format.** The conditions section is a real
-/// permutation tree over a material's texture channels - records of `{u16 tag,
-/// u16 b, u16 c, u16 count}` followed by `count` condition hashes and a u16
-/// payload, with named roots and records that are subsets of their parent. The UI
-/// family's is 1436 bytes and 35 records. See `docs/File Type - Material.-.md`.
-///
-/// What this constant is: the node that six *small* families happen to share.
-/// Their condition sections are 0, 28 and 56 bytes - one and two nodes - because
-/// they have one to five groups, not because the format is a constant. Reading
-/// their agreement as the format is a mistake this constant is named to prevent,
-/// and `NodePool::is_known` exists to catch a family that does not carry it.
-///
-/// [`NodePool::of`] writes it because those families' pools *are* runs of it, so a
-/// rebuilder over one of them round trips. A new family has to build its own
-/// tree; nothing here will generate it.
-pub const CONDITIONS_NODE: [u8; NODE_LEN] = [
-    0x01, 0x00, 0x08, 0x00, 0x0C, 0x00, 0x01, 0x00, 0xFD, 0x89, 0x9E, 0x7F, 0x01, 0x30, 0x07, 0x70,
-    0x00, 0x20, 0x00, 0x10, 0x04, 0x30, 0x05, 0x50, 0x07, 0x50, 0x00, 0x90,
-];
-
-/// A section's conditions blob: a pool of [`CONDITIONS_NODE`] copies, one per
-/// link in the contexts table.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct NodePool {
-    nodes: Vec<u8>,
-}
-
-impl NodePool {
-    /// Reads the pool at an offset, up to the offset the dependencies table
-    /// starts at.
-    pub fn read(data: &[u8], at: usize, end: usize) -> Self {
-        let end = end.min(data.len());
-        let start = at.min(end);
-        Self {
-            nodes: data[start..end].to_vec(),
-        }
-    }
-
-    /// How many nodes the pool carries.
-    pub fn len(&self) -> usize {
-        self.nodes.len() / NODE_LEN
-    }
-
-    /// Whether the pool is empty.
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
-    }
-
-    /// The bytes.
-    pub fn bytes(&self) -> &[u8] {
-        &self.nodes
-    }
-
-    /// Whether every node is the known constant.
-    pub fn is_known(&self) -> bool {
-        self.nodes
-            .chunks(NODE_LEN)
-            .all(|node| node == CONDITIONS_NODE)
-    }
-
-    /// A pool of `count` copies of [`CONDITIONS_NODE`], which is what a generated
-    /// section writes: one per link record in its contexts table.
-    pub fn of(count: usize) -> Self {
-        let mut nodes = Vec::with_capacity(count * NODE_LEN);
-        for _ in 0..count {
-            nodes.extend_from_slice(&CONDITIONS_NODE);
-        }
-        Self { nodes }
-    }
-}
-
 /// One record of the contexts table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextRecord {
@@ -639,12 +570,11 @@ pub struct ContextRecord {
     /// tree each one selects.
     ///
     /// This is a **list, and the record is variable length**: 12 bytes of header
-    /// then eight per query. The six families measured this session all have
-    /// `count == 1`, so 12 + 8 = 20 bytes and a fixed-length record happened to
-    /// fit - the UI family has 36 queries and a record of 300 bytes, which a
-    /// fixed 20-byte reader gets wrong. So the count is read and honoured rather
-    /// than assumed, and [`CONTEXT_HEADER_LEN`] is what a record costs before its
-    /// queries.
+    /// then eight per query. Measured: the six small families carry one or two
+    /// queries per record (20 and 28 bytes), while the UI base's `default`
+    /// carries 30 and its second context six (252 and 60 bytes). A fixed 20-byte
+    /// reader fits only the families whose records all have one query, which is
+    /// why the fixed model survived as long as it did.
     ///
     /// The first query's id is the check that identifies the record: the `default`
     /// context of every shipped family carries the group data's own hash there.
@@ -667,9 +597,6 @@ pub struct Query {
 
 /// The `conditions` word of a query that selects no conditions tree.
 pub const NO_CONDITIONS: u32 = 0xFFFF_FFFF;
-
-/// The `flags` word of a context that is a link rather than an inline context.
-pub const LINK_FLAG: u32 = 0xFFFF_FFFF;
 
 /// The fixed part of a contexts record, before its queries: `{name, flags, count}`.
 pub const CONTEXT_HEADER_LEN: usize = 12;
@@ -697,23 +624,24 @@ impl ContextRecord {
 
     /// Reads a record at an offset, returning it and its length.
     pub fn parse(data: &[u8], at: usize) -> Option<(Self, usize)> {
-        let word = |i: usize| -> Option<u32> {
+        let word = |offset: usize| -> Option<u32> {
             Some(u32::from_le_bytes(
-                data.get(at + i..at + i + 4)?.try_into().ok()?,
+                data.get(at + offset..at + offset + 4)?.try_into().ok()?,
             ))
         };
         let name = word(0)?;
         let flags = word(4)?;
         let count = word(8)? as usize;
-        if count > (data.len() - at) / QUERY_LEN {
+        let len = CONTEXT_HEADER_LEN.checked_add(count.checked_mul(QUERY_LEN)?)?;
+        if at.checked_add(len)? > data.len() {
             return None;
         }
         let mut queries = Vec::with_capacity(count);
         for index in 0..count {
-            let at = at + CONTEXT_HEADER_LEN + index * QUERY_LEN;
+            let query = CONTEXT_HEADER_LEN + index * QUERY_LEN;
             queries.push(Query {
-                id: word(at - at + CONTEXT_HEADER_LEN + index * QUERY_LEN)?,
-                conditions: word(at - at + CONTEXT_HEADER_LEN + index * QUERY_LEN + 4)?,
+                id: word(query)?,
+                conditions: word(query + 4)?,
             });
         }
         Some((
@@ -722,43 +650,24 @@ impl ContextRecord {
                 flags,
                 queries,
             },
-            CONTEXT_HEADER_LEN + count * QUERY_LEN,
+            len,
         ))
     }
 }
-
-/// One record of the link table, eight bytes: a hash and a word carried verbatim.
-///
-/// The second word is `0x1C` - the node length - on every link but the last, and
-/// `0xFFFFFFFF` on the last, on all three shipped families that have links. Which
-/// of the two readings is right changes what a writer may put there, so it is
-/// carried rather than derived.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Link {
-    /// The link's key. The two families that share a node carry the same value.
-    pub hash: u32,
-    /// Carried verbatim; see the type's own note.
-    pub second: u32,
-}
-
-/// The record length of a link record.
-pub const LINK_LEN: usize = 8;
 
 /// The engine-side bytes a generated section has to be given, because nothing in a
 /// declaration and nothing in a compiled program produces them.
 ///
 /// This is the carried list, in one place: the header words the engine sets, the
-/// link records, the bytes between the group data and the programs, the programs
-/// themselves, and whatever follows them. A [`Section::build`] takes these and
-/// the declaration's own parts, and writes the rest.
+/// bytes between the group data and the programs, the programs themselves, and
+/// whatever follows them. A [`Section::build`] takes these and the declaration's
+/// own parts (the contexts, the conditions and a group data), and writes the rest.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Carried {
     /// The header's second word, which no declaration sets.
     pub opaque: u32,
     /// The header's sixth word, which points into the tail.
     pub default_data: u32,
-    /// The link table, one record per link the contexts declare.
-    pub links: Vec<Link>,
     /// The bytes between the group data and the programs.
     pub trailing: Vec<u8>,
     /// The programs, Oodle-framed DXBC.
@@ -774,7 +683,6 @@ impl Carried {
         Self {
             opaque: template.opaque,
             default_data: template.default_data,
-            links: template.links.clone(),
             trailing: template.trailing.clone(),
             device_data: template.device_data.clone(),
             tail: template.tail.clone(),
@@ -782,25 +690,31 @@ impl Carried {
     }
 }
 
-/// A whole shader section, read by the layout formula and laid out again by it.
+/// A whole shader section, read by the layout and laid out again by it.
 ///
-/// The regions are not independent offsets: `conditions_offset` is
-/// `48 + 20 x contexts + 8 x links`, and the link count and the node count are the
-/// same count. So a section is read by walking that formula and written by
-/// recomputing it, and a section that is read and written with what it was read
-/// comes back byte for byte - which is the oracle the whole write path is checked
-/// against.
+/// The regions are not independent offsets: the contexts are variable length and
+/// fill `[contexts_offset, conditions_offset)` exactly, so `conditions_offset` is
+/// `48 + the sum of the context record lengths`. The conditions are a byte blob
+/// that runs to `dependencies_offset` - a pool of 28-byte nodes on the small
+/// families, a permutation tree on the UI base - and the remaining regions follow
+/// it in order. A section read and written with what it was read comes back byte
+/// for byte, which is a necessary check but not a sufficient one: a wrong reader
+/// and its writer can agree and still be wrong, so the substitution tests and the
+/// query/group count check are what test the model.
 ///
-/// The words this does not own are carried: the header's version, opaque and
-/// default-data words, each context's `tail`, and each link's second word.
+/// The words this does not own are carried: the header's opaque and default-data
+/// words, the bytes between the group data and the programs, the programs and
+/// whatever follows them. The contexts' second word is carried too; every
+/// shipped section has zero there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Section {
     version: u32,
     opaque: u32,
     default_data: u32,
     contexts: Vec<ContextRecord>,
-    links: Vec<Link>,
-    pool: NodePool,
+    /// The conditions region, a byte-addressed blob: a query's `conditions` word
+    /// is a byte offset into it, or [`NO_CONDITIONS`].
+    conditions: Vec<u8>,
     dependencies: Vec<Dependency>,
     group_data: Vec<u8>,
     /// The bytes between the group data and the programs.
@@ -842,7 +756,11 @@ impl Section {
         let (group_at, group_len) = (word(8) as usize, word(9) as usize);
         let (device_at, device_len) = (word(10) as usize, word(11) as usize);
 
-        // The formula, read off the contexts table and the conditions offset.
+        // The contexts are variable length and fill [contexts_offset,
+        // conditions_offset) exactly - there is no link table between them. That
+        // is measured on all seven sections read so far: the six small families,
+        // whose records are 20 or 28 bytes, and the UI base, whose two records
+        // are 252 and 60 bytes and whose 36 queries are its 36 groups.
         let mut cursor = contexts_at;
         let mut contexts = Vec::with_capacity(contexts_n);
         for _ in 0..contexts_n {
@@ -851,23 +769,19 @@ impl Section {
             cursor += len;
             contexts.push(context);
         }
-        let links_at = cursor;
-        if conditions_at < links_at || (conditions_at - links_at) % LINK_LEN != 0 {
-            bail!("the conditions offset does not leave a whole number of links");
+        if cursor != conditions_at {
+            bail!("the contexts end at {cursor} but the conditions start at {conditions_at}");
         }
-        let links_n = (conditions_at - links_at) / LINK_LEN;
-        // Checked, because a header whose offsets run backwards is a header to
-        // refuse rather than an offset to subtract.
-        let Some(blob) = dependencies_at.checked_sub(conditions_at) else {
-            bail!("the dependencies table starts before the conditions blob");
+        // The conditions region is a byte blob addressed by the queries, so it is
+        // sliced whole rather than parsed: a pool of 28-byte nodes on the small
+        // families, a permutation tree on the UI base. Decoding the tree is open
+        // work; until then the bytes are carried.
+        let Some(conditions) = check_range(bytes, conditions_at, dependencies_at) else {
+            bail!(
+                "the conditions region {conditions_at}..{dependencies_at} is out of range \
+                 or runs backwards"
+            );
         };
-        if blob % NODE_LEN != 0 {
-            bail!("the conditions blob is not a whole number of nodes");
-        }
-        let nodes = blob / NODE_LEN;
-        if nodes != links_n {
-            bail!("{links_n} links but {nodes} nodes: the pool is one node per link");
-        }
 
         let slice = |at: usize, len: usize| -> Result<Vec<u8>> {
             bytes
@@ -876,22 +790,12 @@ impl Section {
                 .ok_or_else(|| eyre!("the region at {at} x {len} is out of range"))
         };
 
-        let mut links = Vec::with_capacity(links_n);
-        for index in 0..links_n {
-            let at = links_at + index * LINK_LEN;
-            links.push(Link {
-                hash: u32_at(bytes, at),
-                second: u32_at(bytes, at + 4),
-            });
-        }
-
-        Ok(Self {
+        let section = Self {
             version,
             opaque,
             default_data,
             contexts,
-            links,
-            pool: NodePool::read(bytes, conditions_at, dependencies_at),
+            conditions,
             dependencies: Dependency::read(bytes, dependencies_at, dependencies_n),
             group_data: slice(group_at, group_len)?,
             trailing: slice(
@@ -903,7 +807,55 @@ impl Section {
                 .get(device_at + device_len..)
                 .unwrap_or_default()
                 .to_vec(),
-        })
+        };
+        section.check()?;
+        Ok(section)
+    }
+
+    /// The two structural invariants that a wrong reader can miss.
+    ///
+    /// The first is measured on all seven sections read so far: the queries
+    /// across the contexts are the groups, one query per group. The second is
+    /// what makes a query's `conditions` word usable: it is a byte offset into
+    /// the conditions blob, or [`NO_CONDITIONS`].
+    ///
+    /// The default/group-0 relation is checked too: the first context's first
+    /// query is the group data's own hash on all seven, which is how a context
+    /// names the group it selects.
+    pub fn check(&self) -> Result<()> {
+        if self.group_data.len() < 8 {
+            bail!("the group data is too short for its header");
+        }
+        let groups = u32::from_le_bytes(self.group_data[0..4].try_into().unwrap());
+        let hash = u32::from_le_bytes(self.group_data[4..8].try_into().unwrap());
+        let queries: usize = self.contexts.iter().map(|context| context.queries.len()).sum();
+        if queries as u32 != groups {
+            bail!(
+                "the contexts carry {queries} queries and the group data has {groups} groups"
+            );
+        }
+        for (index, context) in self.contexts.iter().enumerate() {
+            for (query_index, query) in context.queries.iter().enumerate() {
+                if query.conditions != NO_CONDITIONS
+                    && query.conditions as usize >= self.conditions.len()
+                {
+                    bail!(
+                        "context {index} query {query_index} selects conditions at {:#x}, \
+                         past the {} byte blob",
+                        query.conditions,
+                        self.conditions.len()
+                    );
+                }
+            }
+        }
+        let default = self
+            .contexts
+            .first()
+            .and_then(|context| context.queries.first());
+        if !matches!(default, Some(query) if query.id == hash) {
+            bail!("the first context has no query for the group data's hash {hash:08X}");
+        }
+        Ok(())
     }
 
     /// The contexts, in table order.
@@ -917,11 +869,6 @@ impl Section {
         &mut self.contexts
     }
 
-    /// The links, for a section that is changing one.
-    pub fn links_mut(&mut self) -> &mut [Link] {
-        &mut self.links
-    }
-
     /// Replaces the group data, for a section whose group data has been rebuilt.
     ///
     /// This is the seam the write path uses: the group data is rebuilt by
@@ -933,14 +880,10 @@ impl Section {
         self.group_data = bytes;
     }
 
-    /// The link table.
-    pub fn links(&self) -> &[Link] {
-        &self.links
-    }
-
-    /// The conditions node pool.
-    pub fn pool(&self) -> &NodePool {
-        &self.pool
+    /// The conditions blob: the bytes between the contexts and the dependencies,
+    /// addressed by each query's `conditions` word.
+    pub fn conditions(&self) -> &[u8] {
+        &self.conditions
     }
 
     /// The dependencies table.
@@ -964,72 +907,47 @@ impl Section {
     /// way to make a [`Section`], so without this a section could only ever be a
     /// template with things changed in it - and the whole carried list exists
     /// because a declaration cannot produce these bytes. What a declaration *can*
-    /// produce is the contexts, and what the compiler produces is the group data,
-    /// and everything else arrives in `carried`.
+    /// produce is the contexts and the conditions, and what the compiler produces
+    /// is the group data; everything else arrives in `carried`.
     ///
-    /// What it checks is the pair that cannot be allowed to disagree: the number
-    /// of contexts, and the group count and hash the contexts point at. A context
-    /// whose `group_hash` is not the group data's own hash is refused here rather
-    /// than written, because it is the one mistake a generated section could make
-    /// that a round trip would never catch - there would be no template to catch
-    /// it against.
+    /// [`Section::check`] is what makes this a generator rather than a writer: the
+    /// queries must be the group data's groups, one each, and their conditions
+    /// offsets must land in the blob. A section whose contexts and group data
+    /// disagree is refused here rather than written, because that is the one
+    /// mistake a round trip could never catch - there would be no template to
+    /// catch it against.
     pub fn build(
         contexts: &[ContextRecord],
+        conditions: Vec<u8>,
         group_data: Vec<u8>,
         carried: &Carried,
     ) -> Result<Self> {
-        if group_data.len() < 8 {
-            bail!(
-                "the group data is {} bytes, too short for a header",
-                group_data.len()
-            );
-        }
-        let groups = u32::from_le_bytes(group_data[0..4].try_into().unwrap());
-        let hash = u32::from_le_bytes(group_data[4..8].try_into().unwrap());
         if contexts.is_empty() {
             bail!("a section needs at least the default context");
         }
-        for (index, context) in contexts.iter().enumerate() {
-            let first = context.queries.first();
-            if context.flags != LINK_FLAG && !matches!(first, Some(query) if query.id == hash) {
-                bail!("context {index} has no query for the group data's hash {hash:08X}");
-            }
-        }
-        let links = contexts
-            .iter()
-            .filter(|context| context.flags == LINK_FLAG)
-            .count();
-        if links != carried.links.len() {
-            bail!(
-                "{} contexts are links but {} link records were carried",
-                links,
-                carried.links.len()
-            );
-        }
-        Ok(Self {
+        let section = Self {
             version: VERSION,
             opaque: carried.opaque,
             default_data: carried.default_data,
             contexts: contexts.to_vec(),
-            links: carried.links.clone(),
-            pool: NodePool::of(links),
+            conditions,
             dependencies: vec![Dependency::of()],
             group_data,
             trailing: carried.trailing.clone(),
             device_data: carried.device_data.clone(),
             tail: carried.tail.clone(),
-        })
+        };
+        section.check()?;
+        Ok(section)
     }
 
-    /// Lays the section out again, recomputing every offset from the formula.
+    /// Lays the section out again, recomputing every offset.
     pub fn into_bytes(self) -> Vec<u8> {
         let contexts_len: usize = self.contexts.iter().map(ContextRecord::len).sum();
-        let links_len = self.links.len() * LINK_LEN;
         let dependencies_len = self.dependencies.len() * DEPENDENCY_LEN;
         let contexts_at = Self::HEADER_LEN;
-        let links_at = contexts_at + contexts_len;
-        let conditions_at = links_at + links_len;
-        let dependencies_at = conditions_at + self.pool.bytes().len();
+        let conditions_at = contexts_at + contexts_len;
+        let dependencies_at = conditions_at + self.conditions.len();
         let group_at = dependencies_at + dependencies_len;
         let device_at = group_at + self.group_data.len() + self.trailing.len();
 
@@ -1053,12 +971,7 @@ impl Section {
         for context in &self.contexts {
             context.write(&mut out);
         }
-        for link in &self.links {
-            for word in [link.hash, link.second] {
-                out.extend_from_slice(&word.to_le_bytes());
-            }
-        }
-        out.extend_from_slice(self.pool.bytes());
+        out.extend_from_slice(&self.conditions);
         for dependency in &self.dependencies {
             out.extend_from_slice(&dependency.write());
         }
@@ -1086,7 +999,6 @@ mod tests {
         let carried = Carried {
             opaque: 0x1234_5678,
             default_data: 0,
-            links: vec![],
             trailing: vec![0x00],
             device_data: vec![0x22; 24],
             tail: vec![0x33; 8],
@@ -1099,21 +1011,22 @@ mod tests {
                 conditions: NO_CONDITIONS,
             }],
         }];
-        let built = Section::build(&contexts, group_data.clone(), &carried).expect("built");
+        let built =
+            Section::build(&contexts, Vec::new(), group_data.clone(), &carried).expect("built");
         let bytes = built.into_bytes();
         let back = Section::parse(&bytes).expect("reads back");
         assert_eq!(back.contexts().len(), 1);
         assert_eq!(back.contexts()[0].queries[0].id, 0x8BE2_82AA);
+        assert_eq!(back.conditions(), b"", "a single group needs no conditions");
         assert_eq!(back.group_data(), group_data.clone());
         assert_eq!(back.device_data(), carried.device_data);
-        assert_eq!(back.pool().len(), 0, "no links, so no nodes");
         assert_eq!(back.into_bytes(), bytes, "and it is stable");
     }
 
     #[test]
-    fn a_built_section_refuses_a_context_that_points_at_nothing() {
-        // The one mistake a generated section could make that a round trip could
-        // never catch, because there would be no template to catch it against.
+    fn a_built_section_refuses_contexts_that_do_not_match_the_group_data() {
+        // The mistakes a round trip could never catch, because a generated
+        // section has no template to catch it against.
         let mut group_data = vec![0u8; 8];
         group_data[0..4].copy_from_slice(&1u32.to_le_bytes());
         group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
@@ -1127,22 +1040,45 @@ mod tests {
             }],
         };
         assert!(
-            Section::build(&[stale.clone()], group_data.clone(), &carried).is_err(),
-            "a context whose query id is not the group data's hash is refused"
+            Section::build(&[stale.clone()], Vec::new(), group_data.clone(), &carried).is_err(),
+            "a first context whose query is not the group data's hash is refused"
         );
         let empty = ContextRecord {
             queries: Vec::new(),
             ..stale.clone()
         };
         assert!(
-            Section::build(&[empty], group_data, &carried).is_err(),
+            Section::build(&[empty], Vec::new(), group_data.clone(), &carried).is_err(),
             "a context with no query at all is refused"
+        );
+        let two = ContextRecord {
+            name: 0xF276_0503,
+            flags: 0,
+            queries: vec![
+                Query {
+                    id: 0x8BE2_82AA,
+                    conditions: NO_CONDITIONS,
+                },
+                Query {
+                    id: 0x8BE2_82AA,
+                    conditions: NO_CONDITIONS,
+                },
+            ],
+        };
+        assert!(
+            Section::build(&[two], Vec::new(), group_data, &carried).is_err(),
+            "queries that do not equal the group count are refused"
         );
     }
 
-    /// A section with the shipped shape: two contexts, one of them a link, one
-    /// dependency, and both regions of engine data.
+    /// A section with variable-length contexts: the first record is 28 bytes (two
+    /// queries), the second 20 (one), three queries against three groups, and a
+    /// 28-byte conditions blob the first query addresses.
     fn section() -> Section {
+        let mut group_data = vec![0u8; 8];
+        group_data[0..4].copy_from_slice(&3u32.to_le_bytes());
+        group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
+        group_data.extend_from_slice(&[0x11; 96]);
         Section {
             version: VERSION,
             opaque: 0x1234_5678,
@@ -1151,27 +1087,29 @@ mod tests {
                 ContextRecord {
                     name: 0xF276_0503,
                     flags: 0,
-                    queries: vec![Query {
-                        id: 0x8BE2_82AA,
-                        conditions: NO_CONDITIONS,
-                    }],
+                    queries: vec![
+                        Query {
+                            id: 0x8BE2_82AA,
+                            conditions: 0,
+                        },
+                        Query {
+                            id: 0x99C0_9062,
+                            conditions: NO_CONDITIONS,
+                        },
+                    ],
                 },
                 ContextRecord {
-                    name: 0x99C0_9062,
-                    flags: LINK_FLAG,
+                    name: 0x3100_C3D2,
+                    flags: 0,
                     queries: vec![Query {
-                        id: 0x5852_A5B1,
+                        id: 0xC580_0413,
                         conditions: NO_CONDITIONS,
                     }],
                 },
             ],
-            links: vec![Link {
-                hash: 0xC580_0413,
-                second: 0xFFFF_FFFF,
-            }],
-            pool: NodePool::of(1),
+            conditions: vec![0xAB; 28],
             dependencies: vec![Dependency::of()],
-            group_data: vec![0x11; 96],
+            group_data,
             trailing: vec![0x00, 0x00, 0x00],
             device_data: vec![0x22; 40],
             tail: vec![0x33; 16],
@@ -1179,33 +1117,33 @@ mod tests {
     }
 
     #[test]
-    fn a_section_laid_out_by_the_formula_comes_back_byte_for_byte() {
-        // The oracle the whole write path is checked against: read a section,
-        // write it with what was read, and nothing may move.
+    fn a_section_laid_out_by_the_layout_comes_back_byte_for_byte() {
+        // Read a section and write it with what was read: nothing may move. This
+        // is necessary but not sufficient - a wrong reader and writer can agree -
+        // so it is paired with the query count and conditions bounds checks.
         let bytes = section().into_bytes();
         let read = Section::parse(&bytes).expect("the section reads");
         assert_eq!(read.contexts().len(), 2);
-        assert_eq!(read.links().len(), 1);
-        assert_eq!(read.pool().len(), 1);
-        assert!(read.pool().is_known());
+        assert_eq!(read.contexts()[0].len(), 28);
+        assert_eq!(read.contexts()[1].len(), 20);
+        assert_eq!(read.conditions().len(), 28);
         assert_eq!(read.dependencies().len(), 1);
-        assert_eq!(read.group_data().len(), 96);
+        assert_eq!(read.group_data().len(), 104);
         assert_eq!(read.device_data().len(), 40);
         assert_eq!(read.into_bytes(), bytes, "a section round trips");
     }
 
     #[test]
-    fn the_layout_is_a_formula_and_not_a_set_of_offsets() {
-        // 48 + 20 x 2 contexts + 8 x 1 link is where the conditions blob starts,
-        // and the header says so rather than the writer having copied it.
+    fn the_layout_is_the_sum_of_the_context_records() {
+        // 48 + 28 + 20 is where the conditions start, and the header says so
+        // rather than the writer having copied an offset.
         let bytes = section().into_bytes();
-        assert_eq!(u32_at(&bytes, 16), 48 + 20 * 2 + 8 * 1);
         assert_eq!(u32_at(&bytes, 8), 48, "contexts start after the header");
-        assert_eq!(u32_at(&bytes, 16), 48 + 20 * 2 + 8 * 1);
+        assert_eq!(u32_at(&bytes, 16), 48 + 28 + 20);
         assert_eq!(
             u32_at(&bytes, 24),
             u32_at(&bytes, 16) + 28,
-            "dependencies follow the pool"
+            "dependencies follow the conditions blob"
         );
         assert_eq!(
             u32_at(&bytes, 32),
@@ -1213,13 +1151,23 @@ mod tests {
             "the group data follows the eight byte entry"
         );
 
-        // And a link count that disagrees with the node count is caught rather
-        // than laid out wrong.
+        // An offset that runs backwards is a header to refuse, not to subtract.
         let mut wrong = bytes.clone();
         wrong[24..28].copy_from_slice(&0u32.to_le_bytes()); // dependencies at 0
         assert!(
             Section::parse(&wrong).is_err(),
-            "a node count that is not the link count is refused"
+            "a conditions offset that runs backwards is refused"
+        );
+    }
+
+    #[test]
+    fn a_conditions_offset_past_the_blob_is_refused() {
+        let mut wrong = section();
+        wrong.contexts[1].queries[0].conditions = 28; // the blob is 28 bytes
+        let bytes = wrong.into_bytes();
+        assert!(
+            Section::parse(&bytes).is_err(),
+            "a query whose conditions offset is past the blob is refused"
         );
     }
 
@@ -1231,45 +1179,6 @@ mod tests {
             Section::parse(&bytes).is_err(),
             "a version is not 43 is refused"
         );
-    }
-
-    #[test]
-    fn a_node_pool_is_a_run_of_one_known_node() {
-        // Every node on every shipped family is these 28 bytes, so the pool is
-        // `count` copies of a constant and the grammar is never decoded.
-        let pool = NodePool::of(2);
-        assert_eq!(pool.len(), 2);
-        assert!(pool.is_known());
-        assert_eq!(pool.bytes().len(), 2 * NODE_LEN);
-
-        // And it survives a trip through the bytes.
-        let read = NodePool::read(pool.bytes(), 0, pool.bytes().len());
-        assert_eq!(read, pool);
-        assert!(read.is_known());
-
-        // A pool with a node that is not the constant is caught, rather than
-        // assumed to be a sharing failure.
-        let mut other = pool.bytes().to_vec();
-        other[0] ^= 0xFF;
-        assert!(
-            !NodePool::read(&other, 0, other.len()).is_known(),
-            "a node that is not the constant is not known"
-        );
-    }
-
-    #[test]
-    fn the_node_is_twenty_eight_bytes_and_seven_words() {
-        // Pinned so a miscount of the record is a failing test rather than a pool
-        // of records that reads one word short.
-        assert_eq!(NODE_LEN, 28);
-        assert_eq!(CONDITIONS_NODE.len(), NODE_LEN);
-        let words: Vec<u32> = CONDITIONS_NODE
-            .chunks(4)
-            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
-            .collect();
-        assert_eq!(words.len(), 7);
-        assert_eq!(words[0], 0x0008_0001);
-        assert_eq!(words[6], 0x9000_5007);
     }
 
     #[test]

@@ -134,7 +134,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ));
             }
             "--group-data" => {
-                i += 1;
                 group_data_mode = true;
             }
             "--records" => records_mode = true,
@@ -867,30 +866,40 @@ fn substitute(
         }
     );
 
-    // Two: add a context, which alters a length and so has to move every offset
-    // after the contexts table. A rename never does this, so it is the half of
-    // the test the round trip cannot cover. Checked by reading the rebuilt
+    // Two: a length-changing edit, which has to move every offset after the
+    // contexts table. A rename never does, so this is the half of the test the
+    // round trip cannot cover. The query and the group count are raised together,
+    // because the section now checks that the queries are the groups; anything
+    // else would be testing an invalid section. Checked by reading the rebuilt
     // section back rather than against a known answer.
     let group = original.group_data().to_vec();
     let mut wider = original.clone();
-    wider.contexts_mut().push(original.contexts()[0].clone());
+    let groups = u32::from_le_bytes(group[0..4].try_into().unwrap());
+    wider.contexts_mut()[0].queries.push(sdk::filetype::shader::Query {
+        id: 0xC0DE_0001,
+        conditions: sdk::filetype::shader::NO_CONDITIONS,
+    });
+    let mut wider_group = group.clone();
+    wider_group[0..4].copy_from_slice(&(groups + 1).to_le_bytes());
+    wider.set_group_data(wider_group.clone());
     let rebuilt = wider.into_bytes();
     match Section::parse(&rebuilt) {
-        Err(err) => println!("  a context added: the rebuilt section did not read: {err}"),
+        Err(err) => println!("  a query added: the rebuilt section did not read: {err}"),
         Ok(back) => {
             let conditions = u32::from_le_bytes(rebuilt[16..20].try_into().unwrap()) as usize;
-            let expect = 48 + 20 * back.contexts().len() + 8 * back.links().len();
+            let expect: usize =
+                48 + back.contexts().iter().map(|context| context.len()).sum::<usize>();
             println!(
-                "  a context added: {} contexts, {} links, conditions at {conditions} (the formula says {expect}): {}",
+                "  a query added: {} contexts, conditions at {conditions} (48 + the {} record bytes = {expect}): {}",
                 back.contexts().len(),
-                back.links().len(),
+                expect - 48,
                 if conditions == expect
-                    && back.group_data() == group.as_slice()
-                    && back.contexts().len() == original.contexts().len() + 1
+                    && back.group_data() == wider_group.as_slice()
+                    && back.contexts()[0].queries.len() == original.contexts()[0].queries.len() + 1
                 {
-                    "the offsets followed the formula, the group data is untouched"
+                    "the offsets followed the sum of the records, the group data is what was written"
                 } else {
-                    "THE FORMULA DID NOT HOLD"
+                    "THE SUM DID NOT HOLD"
                 }
             );
         }
@@ -1000,16 +1009,20 @@ fn plan(
     };
     println!("  the first group's channels: {channels}");
 
-    let records = family.context_records(groups, hash);
+    let records = family.context_records(hash);
     let carried = sdk::filetype::shader::Carried::of(&template);
-    match Section::build(&records, template.group_data().to_vec(), &carried) {
+    // A generated single-group section writes no conditions tree: its one query
+    // selects no conditions. Handing it the template's blob would point at the
+    // template's query ids, which is the mismatch Section::check exists to catch.
+    match Section::build(&records, Vec::new(), template.group_data().to_vec(), &carried) {
         Err(err) => println!("  refused: {err}"),
         Ok(section) => {
             let bytes = section.into_bytes();
             let back = Section::parse(&bytes).expect("a built section reads back");
             println!(
-                "  built: {} contexts, {} bytes (the template is {}), {} of programs carried",
+                "  built: {} contexts against the template's {} groups, {} bytes (the template is {}), {} of programs carried",
                 back.contexts().len(),
+                groups,
                 bytes.len(),
                 template.into_bytes().len(),
                 back.device_data().len()
@@ -1029,14 +1042,9 @@ fn plan(
                     })
                     .collect();
                 println!(
-                    "    context {:08X} {}{}  {} quer{}",
+                    "    context {:08X} {}  {} quer{}",
                     context.name,
                     named(context.name),
-                    if context.flags == sdk::filetype::shader::LINK_FLAG {
-                        " (link)"
-                    } else {
-                        ""
-                    },
                     queries.join(" "),
                     if queries.len() == 1 { "y" } else { "ies" }
                 );
@@ -1062,10 +1070,9 @@ fn layout(
     let section = Section::parse(bytes)?;
     println!("=== {} ===", path.display());
     println!(
-        "  {} contexts, {} links, {} nodes, {} dependencies, {} bytes of group data, {} of programs",
+        "  {} contexts, {} bytes of conditions, {} dependencies, {} bytes of group data, {} of programs",
         section.contexts().len(),
-        section.links().len(),
-        section.pool().len(),
+        section.conditions().len(),
         section.dependencies().len(),
         section.group_data().len(),
         section.device_data().len()
@@ -1084,14 +1091,9 @@ fn layout(
             })
             .collect();
         println!(
-            "    context {index}: {:08X} {}  {}  {} quer{}",
+            "    context {index}: {:08X} {}  {} quer{}",
             context.name,
             named(context.name),
-            if context.flags == sdk::filetype::shader::LINK_FLAG {
-                "link"
-            } else {
-                "    "
-            },
             queries.join(" "),
             if context.queries.len() == 1 {
                 "y"
@@ -1100,22 +1102,6 @@ fn layout(
             }
         );
     }
-    for (index, link) in section.links().iter().enumerate() {
-        println!(
-            "    link {index}: {:08X} {}  second {:08X}",
-            link.hash,
-            named(link.hash),
-            link.second
-        );
-    }
-    println!(
-        "    the node pool is {} known",
-        if section.pool().is_known() {
-            "all"
-        } else {
-            "not all"
-        }
-    );
     match section.into_bytes() {
         rebuilt if rebuilt == bytes => println!("  section round trip: identical"),
         rebuilt => {
@@ -1212,10 +1198,6 @@ fn dependencies(
             .to_vec(),
     );
 
-    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
-        Some(name) => format!("{name}"),
-        None => String::new(),
-    };
     println!("=== {} ===", path.display());
     println!(
         "  dependencies @{at} x{count}; group data {size} bytes, {} groups, hash {:08X}",
@@ -1223,10 +1205,14 @@ fn dependencies(
         group_data.hash()
     );
     for (index, entry) in entries.iter().enumerate() {
-        let name = named(entry.name);
         println!(
-            "    {index}: tag {:08X}  {:08X} {}",
-            entry.tag, entry.name, name
+            "    {index}: dependency {:016X} ({})",
+            entry.id,
+            if entry.id == Dependency::RENDERER {
+                "core/stingray_renderer/renderer"
+            } else {
+                "unnamed"
+            }
         );
     }
     Ok(())

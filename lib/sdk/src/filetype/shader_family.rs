@@ -376,42 +376,33 @@ pub struct Family {
 }
 
 impl Family {
-    /// The context of that name, which is what the engine asks for.
-    /// The contexts a generated section carries, one per declared context.
+    /// The context records a single-group generated section writes: the `default`
+    /// context with one query for the group data's own hash.
     ///
-    /// This is the bridge from the declaration to the section: `shader_contexts`
-    /// are named, and the section's contexts table is a list of name hashes, so a
-    /// family that declares three contexts writes three records.
+    /// A declaration's other contexts (`shadow_caster`, `material_transfer`)
+    /// select further groups, and a group is selected by a *query id*. Nothing
+    /// can derive those ids yet: the shipped ids do not resolve and no pairing
+    /// with a declaration has been established, so a record per declared context
+    /// would be inventing keys. The single-group path is the one whose id is
+    /// known - the group data's own hash, which is what the minimal shipped
+    /// material's one `default` context carries.
     ///
-    /// Every record selects group 0 and carries the group data's own hash, because
-    /// that is what an inline context is on a shipped section: `default` points at
-    /// the group data, and the other contexts point at their own compiled hash.
-    /// A family that needs a context on a *different* group - the shape a link
-    /// takes - says so by building the record itself, which is why this returns
-    /// the records rather than only offering to make them.
-    ///
-    /// The `hash` is the group data's header hash and `groups` its count, and
-    /// both have to come from the group data rather than from the declaration: the
-    /// group count is a property of the compiled build, and `Section::build`
-    /// checks the two against each other.
-    pub fn context_records(
-        &self,
-        groups: u32,
-        hash: u32,
-    ) -> Vec<crate::filetype::shader::ContextRecord> {
+    /// The declared contexts are therefore *not* all written, and that is
+    /// deliberate: [`crate::filetype::shader::Section::check`] refuses a record
+    /// set whose query count does not equal the group data's group count, so a
+    /// multi-context declaration against carried multi-group data fails loudly
+    /// instead of writing placeholder query ids.
+    pub fn context_records(&self, hash: u32) -> Vec<crate::filetype::shader::ContextRecord> {
         use crate::filetype::shader::{ContextRecord, NO_CONDITIONS, Query};
         use crate::murmur::Murmur32;
-        self.contexts
-            .iter()
-            .map(|context| ContextRecord {
-                name: Murmur32::hash(context.name.as_bytes()).into(),
-                flags: 0,
-                queries: vec![Query {
-                    id: hash,
-                    conditions: NO_CONDITIONS,
-                }],
-            })
-            .collect()
+        vec![ContextRecord {
+            name: Murmur32::hash(b"default").into(),
+            flags: 0,
+            queries: vec![Query {
+                id: hash,
+                conditions: NO_CONDITIONS,
+            }],
+        }]
     }
 
     /// One declared shader context by name.
@@ -1127,11 +1118,13 @@ mod tests {
     }
 
     #[test]
-    #[test]
-    #[test]
-    fn a_family_writes_one_context_record_per_declared_context() {
-        // The bridge from the declaration to the section: three named contexts
-        // become three records, each pointing at the group data the build made.
+    fn a_family_writes_one_default_context_for_the_single_group_path() {
+        // The bridge from the declaration to the section. A declaration may name
+        // shadow_caster and material_transfer too, but their query ids are not
+        // derivable yet, so the one-group path writes the only context whose id is
+        // known: default, pointing at the group data's hash. A multi-group
+        // declaration against carried group data fails the section's query/group
+        // count check rather than writing placeholder ids.
         let family = Family {
             contexts: vec![
                 ShaderContext {
@@ -1145,8 +1138,8 @@ mod tests {
             ],
             ..Default::default()
         };
-        let records = family.context_records(3, 0x8BE2_82AA);
-        assert_eq!(records.len(), 2);
+        let records = family.context_records(0x8BE2_82AA);
+        assert_eq!(records.len(), 1, "only the default context is written");
         assert_eq!(
             records[0].queries[0].id, 0x8BE2_82AA,
             "the query is the group data's hash"
@@ -1156,13 +1149,13 @@ mod tests {
             crate::filetype::shader::NO_CONDITIONS
         );
         assert_eq!(records[0].len(), 20, "12 bytes plus one query");
-        assert_ne!(records[0].name, records[1].name, "names are hashed apart");
         assert_eq!(
             records[0].name,
             crate::murmur::Murmur32::hash("default".as_bytes()).into()
         );
     }
 
+    #[test]
     fn a_group_has_the_channels_its_conditions_allow() {
         let mut family = sample();
         // Two channels under a condition each, as a real declaration writes
