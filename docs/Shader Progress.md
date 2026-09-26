@@ -99,15 +99,17 @@ shader43 --plan <declaration.shader_node> <section>
    length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
    have 1/2); then confirm in game with a crafted tree.
 2. **Implement the group data walk and the from-scratch constructor.** The
-   header and descriptors are decoded and the descriptors now read correctly.
-   The relative layout inside a group (from the query id) is known on the UI
-   base: descriptors at `+28..+76`, `{u32 2, u32 7}` at `+76..+84`, the
-   material records at `+84`, and the engine records at `+236` with the count
-   `69` at `+232` and a 12-byte header `{240, 64, 69}` at `+228`. The channels
-   candidate sits near `+1608` (`{1768, 4, 1776, 0, 3, ...}`), and the group
-   size difference (1758 vs 1741) comes from this tail region. Next: dump the
-   tail across all 36 groups and diff it; that is what yields the group end and
-   the table offsets.
+   header and descriptors are decoded and the descriptors read correctly. The
+   relative layout inside a group (from the query id): descriptors `+28..+76`,
+   `{2, 7}` `+76..+84`, material records `+84`, engine records `+236` (count
+   `69` at `+232`, 12-byte header `{240, 64, 69}` at `+228`), the channels table
+   near `+1608`, the packed run, and then a **byte-packed group header** that is
+   the whole size difference: 74 bytes in groups 0-11 and 57 in 12-35 (17 = the
+   difference between 1758 and 1741). It carries the group's condition hash -
+   `9FCFE126` (`gui`) in groups 0-11, `BC4EE226` / `E2C8865F` later - and a few
+   trailing counts. Next: find the header's own length field (or a terminator)
+   so the walk can compute a group's end without knowing the family; then the
+   table offsets and the constructor.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.
@@ -118,6 +120,19 @@ shader43 --plan <declaration.shader_node> <section>
    screenshot the Darktide window (borderless fullscreen -> PrintWindow).
 6. **`.shader_source` parsing** (`hlsl_shaders = { name = { code } }`) and the
    code_blocks -> programs path.
+
+## In-game harness
+
+`C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\*.ps1` holds the scripts the
+previous session used to test in game. `title-tint-demo.ps1` is the shape to
+copy: kill Darktide, launch `launch.bat`, poll the newest console log for the
+title material line (`material set: background_image`), screenshot and average a
+region's colour a few times, and grep the log for the mod. Others:
+`shot-window.ps1`, `set-shader.ps1`, `sweep-defaults.ps1`, `title_material.ps1`.
+The deployable test mod is `C:\dev\snoopy-mod`. The payload experiment that
+needs this: a generated family whose groups render distinguishable colours and
+whose crafted conditions tree maps channel sets to them, then drive the material
+from Lua and read which colour appears.
 
 ## Open decode details worth keeping
 
