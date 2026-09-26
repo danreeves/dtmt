@@ -628,28 +628,104 @@ impl NodePool {
 }
 
 /// One record of the contexts table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextRecord {
     /// murmur32 of the context's name: `default`, `shadow_caster`, and the
     /// unnamed ones.
     pub name: u32,
-    /// [`LINK_FLAG`] for a context whose conditions are shared, 0 for one written
-    /// out inline.
+    /// The second word, carried because nothing here sets it.
     pub flags: u32,
-    /// The group index this context selects.
-    pub group: u32,
-    /// The group data's own header hash - the check that identifies the record,
-    /// since the `default` context of every shipped family carries it.
-    pub group_hash: u32,
-    /// The record's fifth word, carried because nothing here sets it.
-    pub tail: u32,
+    /// The query ids this context answers to, with the offset of the conditions
+    /// tree each one selects.
+    ///
+    /// This is a **list, and the record is variable length**: 12 bytes of header
+    /// then eight per query. The six families measured this session all have
+    /// `count == 1`, so 12 + 8 = 20 bytes and a fixed-length record happened to
+    /// fit - the UI family has 36 queries and a record of 300 bytes, which a
+    /// fixed 20-byte reader gets wrong. So the count is read and honoured rather
+    /// than assumed, and [`CONTEXT_HEADER_LEN`] is what a record costs before its
+    /// queries.
+    ///
+    /// The first query's id is the check that identifies the record: the `default`
+    /// context of every shipped family carries the group data's own hash there.
+    pub queries: Vec<Query>,
 }
+
+/// One query a context answers to: the group it selects and where its conditions
+/// start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Query {
+    /// The query id - for the first query of `default`, the group data's own
+    /// header hash.
+    pub id: u32,
+    /// The offset of the conditions tree this query selects, or
+    /// [`NO_CONDITIONS`] when it has none. All six small families are
+    /// [`NO_CONDITIONS`], which is why their conditions sections are 0, 28 and 56
+    /// bytes rather than the UI family's 1436.
+    pub conditions: u32,
+}
+
+/// The `conditions` word of a query that selects no conditions tree.
+pub const NO_CONDITIONS: u32 = 0xFFFF_FFFF;
 
 /// The `flags` word of a context that is a link rather than an inline context.
 pub const LINK_FLAG: u32 = 0xFFFF_FFFF;
 
-/// The record length of a contexts record.
-pub const CONTEXT_LEN: usize = 20;
+/// The fixed part of a contexts record, before its queries: `{name, flags, count}`.
+pub const CONTEXT_HEADER_LEN: usize = 12;
+
+/// The record length of one query: a query id and a conditions offset.
+pub const QUERY_LEN: usize = 8;
+
+impl ContextRecord {
+    /// The record's byte length: 12 bytes plus eight per query.
+    pub fn len(&self) -> usize {
+        CONTEXT_HEADER_LEN + self.queries.len() * QUERY_LEN
+    }
+
+    /// The record's bytes.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        for word in [self.name, self.flags, self.queries.len() as u32] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        for query in &self.queries {
+            for word in [query.id, query.conditions] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+    }
+
+    /// Reads a record at an offset, returning it and its length.
+    pub fn parse(data: &[u8], at: usize) -> Option<(Self, usize)> {
+        let word = |i: usize| -> Option<u32> {
+            Some(u32::from_le_bytes(
+                data.get(at + i..at + i + 4)?.try_into().ok()?,
+            ))
+        };
+        let name = word(0)?;
+        let flags = word(4)?;
+        let count = word(8)? as usize;
+        if count > (data.len() - at) / QUERY_LEN {
+            return None;
+        }
+        let mut queries = Vec::with_capacity(count);
+        for index in 0..count {
+            let at = at + CONTEXT_HEADER_LEN + index * QUERY_LEN;
+            queries.push(Query {
+                id: word(at - at + CONTEXT_HEADER_LEN + index * QUERY_LEN)?,
+                conditions: word(at - at + CONTEXT_HEADER_LEN + index * QUERY_LEN + 4)?,
+            });
+        }
+        Some((
+            Self {
+                name,
+                flags,
+                queries,
+            },
+            CONTEXT_HEADER_LEN + count * QUERY_LEN,
+        ))
+    }
+}
 
 /// One record of the link table, eight bytes: a hash and a word carried verbatim.
 ///
@@ -767,7 +843,15 @@ impl Section {
         let (device_at, device_len) = (word(10) as usize, word(11) as usize);
 
         // The formula, read off the contexts table and the conditions offset.
-        let links_at = contexts_at + contexts_n * CONTEXT_LEN;
+        let mut cursor = contexts_at;
+        let mut contexts = Vec::with_capacity(contexts_n);
+        for _ in 0..contexts_n {
+            let (context, len) = ContextRecord::parse(bytes, cursor)
+                .ok_or_else(|| eyre!("a context record at {cursor} did not read"))?;
+            cursor += len;
+            contexts.push(context);
+        }
+        let links_at = cursor;
         if conditions_at < links_at || (conditions_at - links_at) % LINK_LEN != 0 {
             bail!("the conditions offset does not leave a whole number of links");
         }
@@ -792,17 +876,6 @@ impl Section {
                 .ok_or_else(|| eyre!("the region at {at} x {len} is out of range"))
         };
 
-        let mut contexts = Vec::with_capacity(contexts_n);
-        for index in 0..contexts_n {
-            let at = contexts_at + index * CONTEXT_LEN;
-            contexts.push(ContextRecord {
-                name: u32_at(bytes, at),
-                flags: u32_at(bytes, at + 4),
-                group: u32_at(bytes, at + 8),
-                group_hash: u32_at(bytes, at + 12),
-                tail: u32_at(bytes, at + 16),
-            });
-        }
         let mut links = Vec::with_capacity(links_n);
         for index in 0..links_n {
             let at = links_at + index * LINK_LEN;
@@ -917,14 +990,9 @@ impl Section {
             bail!("a section needs at least the default context");
         }
         for (index, context) in contexts.iter().enumerate() {
-            if context.flags != LINK_FLAG && (context.group_hash != hash || context.group >= groups)
-            {
-                bail!(
-                    "context {index} selects group {} with hash {:08X}, and the group \
-                     data has {groups} groups and hash {hash:08X}",
-                    context.group,
-                    context.group_hash
-                );
+            let first = context.queries.first();
+            if context.flags != LINK_FLAG && !matches!(first, Some(query) if query.id == hash) {
+                bail!("context {index} has no query for the group data's hash {hash:08X}");
             }
         }
         let links = contexts
@@ -955,7 +1023,7 @@ impl Section {
 
     /// Lays the section out again, recomputing every offset from the formula.
     pub fn into_bytes(self) -> Vec<u8> {
-        let contexts_len = self.contexts.len() * CONTEXT_LEN;
+        let contexts_len: usize = self.contexts.iter().map(ContextRecord::len).sum();
         let links_len = self.links.len() * LINK_LEN;
         let dependencies_len = self.dependencies.len() * DEPENDENCY_LEN;
         let contexts_at = Self::HEADER_LEN;
@@ -983,15 +1051,7 @@ impl Section {
             out.extend_from_slice(&word.to_le_bytes());
         }
         for context in &self.contexts {
-            for word in [
-                context.name,
-                context.flags,
-                context.group,
-                context.group_hash,
-                context.tail,
-            ] {
-                out.extend_from_slice(&word.to_le_bytes());
-            }
+            context.write(&mut out);
         }
         for link in &self.links {
             for word in [link.hash, link.second] {
@@ -1034,17 +1094,18 @@ mod tests {
         let contexts = [ContextRecord {
             name: 0xF276_0503,
             flags: 0,
-            group: 0,
-            group_hash: 0x8BE2_82AA,
-            tail: 0xFFFF_FFFF,
+            queries: vec![Query {
+                id: 0x8BE2_82AA,
+                conditions: NO_CONDITIONS,
+            }],
         }];
         let built = Section::build(&contexts, group_data.clone(), &carried).expect("built");
         let bytes = built.into_bytes();
         let back = Section::parse(&bytes).expect("reads back");
         assert_eq!(back.contexts().len(), 1);
-        assert_eq!(back.contexts()[0].group_hash, 0x8BE2_82AA);
-        assert_eq!(back.group_data(), group_data.as_slice());
-        assert_eq!(back.device_data(), carried.device_data.as_slice());
+        assert_eq!(back.contexts()[0].queries[0].id, 0x8BE2_82AA);
+        assert_eq!(back.group_data(), group_data.clone());
+        assert_eq!(back.device_data(), carried.device_data);
         assert_eq!(back.pool().len(), 0, "no links, so no nodes");
         assert_eq!(back.into_bytes(), bytes, "and it is stable");
     }
@@ -1060,18 +1121,22 @@ mod tests {
         let stale = ContextRecord {
             name: 0xF276_0503,
             flags: 0,
-            group: 0,
-            group_hash: 0xDEAD_BEEF,
-            tail: 0,
+            queries: vec![Query {
+                id: 0xDEAD_BEEF,
+                conditions: NO_CONDITIONS,
+            }],
         };
         assert!(
-            Section::build(&[stale], group_data.clone(), &carried).is_err(),
-            "a context whose hash is not the group data's is refused"
+            Section::build(&[stale.clone()], group_data.clone(), &carried).is_err(),
+            "a context whose query id is not the group data's hash is refused"
         );
-        let out_of_range = ContextRecord { group: 5, ..stale };
+        let empty = ContextRecord {
+            queries: Vec::new(),
+            ..stale.clone()
+        };
         assert!(
-            Section::build(&[out_of_range], group_data, &carried).is_err(),
-            "a context past the last group is refused"
+            Section::build(&[empty], group_data, &carried).is_err(),
+            "a context with no query at all is refused"
         );
     }
 
@@ -1086,16 +1151,18 @@ mod tests {
                 ContextRecord {
                     name: 0xF276_0503,
                     flags: 0,
-                    group: 2,
-                    group_hash: 0x8BE2_82AA,
-                    tail: 0,
+                    queries: vec![Query {
+                        id: 0x8BE2_82AA,
+                        conditions: NO_CONDITIONS,
+                    }],
                 },
                 ContextRecord {
                     name: 0x99C0_9062,
                     flags: LINK_FLAG,
-                    group: 0x5852_A5B1,
-                    group_hash: 0,
-                    tail: 1,
+                    queries: vec![Query {
+                        id: 0x5852_A5B1,
+                        conditions: NO_CONDITIONS,
+                    }],
                 },
             ],
             links: vec![Link {
@@ -1134,6 +1201,7 @@ mod tests {
         let bytes = section().into_bytes();
         assert_eq!(u32_at(&bytes, 16), 48 + 20 * 2 + 8 * 1);
         assert_eq!(u32_at(&bytes, 8), 48, "contexts start after the header");
+        assert_eq!(u32_at(&bytes, 16), 48 + 20 * 2 + 8 * 1);
         assert_eq!(
             u32_at(&bytes, 24),
             u32_at(&bytes, 16) + 28,

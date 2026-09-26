@@ -873,7 +873,7 @@ fn substitute(
     // section back rather than against a known answer.
     let group = original.group_data().to_vec();
     let mut wider = original.clone();
-    wider.contexts_mut().push(original.contexts()[0]);
+    wider.contexts_mut().push(original.contexts()[0].clone());
     let rebuilt = wider.into_bytes();
     match Section::parse(&rebuilt) {
         Err(err) => println!("  a context added: the rebuilt section did not read: {err}"),
@@ -1015,12 +1015,30 @@ fn plan(
                 back.device_data().len()
             );
             for context in back.contexts() {
+                let queries: Vec<String> = context
+                    .queries
+                    .iter()
+                    .map(|query| {
+                        let conditions = if query.conditions == sdk::filetype::shader::NO_CONDITIONS
+                        {
+                            "none".to_string()
+                        } else {
+                            format!("@{:#x}", query.conditions)
+                        };
+                        format!("{:08X}->{}", query.id, conditions)
+                    })
+                    .collect();
                 println!(
-                    "    context {:08X} {}  group {}  hash {:08X}",
+                    "    context {:08X} {}{}  {} quer{}",
                     context.name,
                     named(context.name),
-                    context.group,
-                    context.group_hash
+                    if context.flags == sdk::filetype::shader::LINK_FLAG {
+                        " (link)"
+                    } else {
+                        ""
+                    },
+                    queries.join(" "),
+                    if queries.len() == 1 { "y" } else { "ies" }
                 );
             }
             println!("  the invariants hold; nothing was written");
@@ -1053,8 +1071,20 @@ fn layout(
         section.device_data().len()
     );
     for (index, context) in section.contexts().iter().enumerate() {
+        let queries: Vec<String> = context
+            .queries
+            .iter()
+            .map(|query| {
+                let conditions = if query.conditions == sdk::filetype::shader::NO_CONDITIONS {
+                    "none".to_string()
+                } else {
+                    format!("@{:#x}", query.conditions)
+                };
+                format!("{:08X}->{}", query.id, conditions)
+            })
+            .collect();
         println!(
-            "    context {index}: {:08X} {}  {}  group {}  hash {:08X}  tail {:08X}",
+            "    context {index}: {:08X} {}  {}  {} quer{}",
             context.name,
             named(context.name),
             if context.flags == sdk::filetype::shader::LINK_FLAG {
@@ -1062,9 +1092,12 @@ fn layout(
             } else {
                 "    "
             },
-            context.group,
-            context.group_hash,
-            context.tail
+            queries.join(" "),
+            if context.queries.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
         );
     }
     for (index, link) in section.links().iter().enumerate() {

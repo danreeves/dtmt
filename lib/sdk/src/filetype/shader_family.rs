@@ -399,16 +399,17 @@ impl Family {
         groups: u32,
         hash: u32,
     ) -> Vec<crate::filetype::shader::ContextRecord> {
-        use crate::filetype::shader::ContextRecord;
+        use crate::filetype::shader::{ContextRecord, NO_CONDITIONS, Query};
         use crate::murmur::Murmur32;
         self.contexts
             .iter()
             .map(|context| ContextRecord {
                 name: Murmur32::hash(context.name.as_bytes()).into(),
                 flags: 0,
-                group: 0,
-                group_hash: hash,
-                tail: 0xFFFF_FFFF,
+                queries: vec![Query {
+                    id: hash,
+                    conditions: NO_CONDITIONS,
+                }],
             })
             .collect()
     }
@@ -1146,9 +1147,15 @@ mod tests {
         };
         let records = family.context_records(3, 0x8BE2_82AA);
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].group_hash, 0x8BE2_82AA);
-        assert_eq!(records[0].group, 0);
-        assert_eq!(records[0].tail, 0xFFFF_FFFF);
+        assert_eq!(
+            records[0].queries[0].id, 0x8BE2_82AA,
+            "the query is the group data's hash"
+        );
+        assert_eq!(
+            records[0].queries[0].conditions,
+            crate::filetype::shader::NO_CONDITIONS
+        );
+        assert_eq!(records[0].len(), 20, "12 bytes plus one query");
         assert_ne!(records[0].name, records[1].name, "names are hashed apart");
         assert_eq!(
             records[0].name,
