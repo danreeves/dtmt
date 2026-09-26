@@ -59,8 +59,7 @@ shader43 --plan <declaration.shader_node> <section>
 - **Group data header**: a 4-byte global count, then back-to-back groups each
   `{query_id, 0x130, 4, c_per_object, 0, 0, 0, descriptor[3] {name_hash, flags,
   X, Y}, ...}`. UI base: `4 + 12 x 1758 + 24 x 1741 = 62884`, the whole region.
-  The descriptors are at `+32`, not `+8`; `Descriptors` in `group_data.rs` still
-  reads `+8` and is wrong.
+  `GroupData::descriptors` reads `+32`; the old `+8` reading is corrected.
 - **There is no link table and no node pool.** Those were 20-byte records read
   at the wrong length; `004F18EA`'s "link" is default's second query,
   `2A04418E`'s `0x1C` is a conditions byte offset. [7/7]
@@ -99,13 +98,12 @@ shader43 --plan <declaration.shader_node> <section>
    each record's result set with its group's descriptor `Y` fields and the
    length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
    have 1/2); then confirm in game with a crafted tree.
-2. **Implement the group data walk and correct `Descriptors`.** The header is
-   decoded: 4-byte global count, then groups `{query_id, 0x130, 4,
-   c_per_object, 0, 0, 0, descriptor[3] {name_hash, flags, X, Y}, ...}` with
-   sizes 1758 x 12 then 1741 x 24 on the UI base. `group_data.rs` still reads
-   descriptors at `+8` (`{offset, count, cbuffer, flags}`) and must read `+32`
-   as `{name_hash, flags, X, Y}`. With the group walk, a from-scratch group
-   data constructor can locate and generate each group's tables.
+2. **Implement the group data walk and the from-scratch constructor.** The
+   header is decoded and the descriptors now read correctly. The walk needs the
+   bytes between the descriptors (`+80`) and each group's first table header
+   (the resource list) so a group's tables can be found and the next group's
+   start computed; the UI base's group sizes are 1758 x 12 then 1741 x 24, and
+   the size difference is what that region and the tables add up to.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.

@@ -1331,19 +1331,19 @@ fn group_data(
     );
     if let Some(descriptors) = group_data.descriptors() {
         println!(
-            "  descriptors: engine {{{}, {}, {:08X}, {:X}}} object {{{}, {}, {:08X}, {:X}}} packed {{{}, {}, {:08X}, {:X}}}",
-            descriptors.engine.offset,
-            descriptors.engine.count,
-            descriptors.engine.cbuffer,
+            "  descriptors: engine {{name {:08X}, flags {:X}, X {}, Y {}}} texture {{name {:08X}, flags {:X}, X {}, Y {}}} uav {{name {:08X}, flags {:X}, X {}, Y {}}}",
+            descriptors.engine.name,
             descriptors.engine.flags,
-            descriptors.object.offset,
-            descriptors.object.count,
-            descriptors.object.cbuffer,
-            descriptors.object.flags,
-            descriptors.packed.offset,
-            descriptors.packed.count,
-            descriptors.packed.cbuffer,
-            descriptors.packed.flags,
+            descriptors.engine.x,
+            descriptors.engine.y,
+            descriptors.texture.name,
+            descriptors.texture.flags,
+            descriptors.texture.x,
+            descriptors.texture.y,
+            descriptors.uav.name,
+            descriptors.uav.flags,
+            descriptors.uav.x,
+            descriptors.uav.y,
         );
     }
 

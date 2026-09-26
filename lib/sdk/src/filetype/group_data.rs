@@ -72,30 +72,30 @@ fn is_engine_run(run: &[Record]) -> bool {
 /// scanning.
 const MAX_OFFSET: u32 = 8192;
 
-/// The three 16-byte descriptors of one group.
+/// The three descriptors of one group's header, at `+32`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptors {
-    /// The engine's `global_viewport` table: its offset, a type count, its
-    /// cbuffer hash and its flags.
+    /// The engine's `global_viewport` cbuffer.
     pub engine: Descriptor,
-    /// The material's own per-object table.
-    pub object: Descriptor,
-    /// The packed-copy run.
-    pub packed: Descriptor,
+    /// The section's own texture resource.
+    pub texture: Descriptor,
+    /// The section's UAV resource.
+    pub uav: Descriptor,
 }
 
-/// One 16-byte descriptor: where a table starts, how many kinds it has, which
-/// cbuffer it fills, and the flags.
+/// One 16-byte descriptor: the resource's name hash, its flags, its byte offset
+/// `X` in the per-draw binding table and the packed usage counts `Y`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct Descriptor {
-    /// Byte offset of the table within the group data.
-    pub offset: u32,
-    /// A count of kinds, as the engine writes it.
-    pub count: u32,
-    /// The cbuffer the table's offsets refer to.
-    pub cbuffer: u32,
-    /// The descriptor's flags.
+    /// murmur32 of the resource's name.
+    pub name: u32,
+    /// The resource's space in bits 16+ and its kind in the low bits.
     pub flags: u32,
+    /// The resource's byte offset in the per-draw binding table: 24 bytes per
+    /// constant buffer, 8 per other resource, in descriptor order.
+    pub x: u32,
+    /// Packed per-program usage counts, 16 two-bit fields.
+    pub y: u32,
 }
 
 /// One canonical variable record.
@@ -348,22 +348,6 @@ impl GroupData {
         (end <= self.data.len()).then(|| u32::from_le_bytes(self.data[at..end].try_into().unwrap()))
     }
 
-    /// The canonical records of a table, read from a descriptor.
-    ///
-    /// The record count is not in the descriptor, so a table is read until its
-    /// records stop being records. That only works when a table is followed by
-    /// something else, which is why a caller that must not read into the next
-    /// table uses [`GroupData::run_at`] instead.
-    pub fn table(&self, descriptor: Descriptor) -> Vec<Record> {
-        let mut records = Vec::new();
-        let mut at = descriptor.offset as usize;
-        while let Some(record) = Record::read(&self.data, at) {
-            records.push(record);
-            at += RECORD_LEN;
-        }
-        records
-    }
-
     /// A table at `at`: the consecutive canonical records there, if the word
     /// four bytes before them is their count.
     ///
@@ -400,27 +384,29 @@ impl GroupData {
         8 + 48
     }
 
-    /// The three descriptors: the engine's `global_viewport` table, the
-    /// material's own table, and the packed-copy run.
+    /// The three descriptors of a group's header, at `+32`: the engine's
+    /// `global_viewport` cbuffer, the section's texture and its UAV.
     ///
-    /// The group count is in the header but the descriptor set is not per group,
-    /// so this takes no group. What a *second* group adds is a table of its own,
-    /// laid out after the first group's, which is what makes the per-group
-    /// interface lengths differ.
+    /// The earlier reading took the words at `+8` - `{0x130, 4, c_per_object,
+    /// 0, 0, 0}` - for descriptors; those are the header's own words and are the
+    /// same in every group. The real descriptors are `{name_hash, flags, X, Y}`,
+    /// measured against the documented rule on the UI base: `global_viewport
+    /// {516D5CCD, 0x101, 24, 0}`, texture `{3AFC636C, 0x103, 48, 5}` and UAV
+    /// `{41B1CFF8, 0x105, 56, 10}`.
     pub fn descriptors(&self) -> Option<Descriptors> {
-        let at = 8;
+        let at = 32;
         let read = |i: usize| -> Option<Descriptor> {
             Some(Descriptor {
-                offset: self.word(at + i * 16)?,
-                count: self.word(at + i * 16 + 4)?,
-                cbuffer: self.word(at + i * 16 + 8)?,
-                flags: self.word(at + i * 16 + 12)?,
+                name: self.word(at + i * 16)?,
+                flags: self.word(at + i * 16 + 4)?,
+                x: self.word(at + i * 16 + 8)?,
+                y: self.word(at + i * 16 + 12)?,
             })
         };
         Some(Descriptors {
             engine: read(0)?,
-            object: read(1)?,
-            packed: read(2)?,
+            texture: read(1)?,
+            uav: read(2)?,
         })
     }
 
@@ -757,42 +743,6 @@ fn rewrite_table(data: &mut [u8], at: usize, old: &[Record], variables: &[Variab
     Ok(())
 }
 
-/// Rewrites a packed run: 28-byte records keyed by the run's cbuffer hash.
-/// Returns how many records were rewritten.
-fn rewrite_packed(
-    data: &mut [u8],
-    descriptor: Descriptor,
-    variables: &[Variable],
-) -> Result<usize> {
-    let start = descriptor.offset as usize;
-    if start + PACKED_LEN > data.len() {
-        bail!("the packed run at {start} is out of range");
-    }
-    // The run starts with its own count and key; find where the records begin by
-    // walking the 28-byte shape from the descriptor's offset.
-    let mut at = start;
-    let mut count = 0;
-    while at + PACKED_LEN <= data.len() && is_packed(data, at) {
-        count += 1;
-        at += PACKED_LEN;
-    }
-    if count == 0 {
-        return Ok(0);
-    }
-    let mut written = 0;
-    for (index, variable) in variables.iter().enumerate() {
-        if index >= count {
-            break;
-        }
-        let at = start + index * PACKED_LEN;
-        // Only the name hash is the variable's own; the rest of the packed record
-        // is the cbuffer binding the template laid down, which stays.
-        data[at..at + 4].copy_from_slice(&variable.hash().to_le_bytes());
-        written += 1;
-    }
-    Ok(written)
-}
-
 /// Whether the bytes at `at` are a packed record: a hash, then the cbuffer
 /// binding, then the run's key and a zero.
 fn is_packed(data: &[u8], at: usize) -> bool {
@@ -817,37 +767,42 @@ mod tests {
     ///
     /// The descriptors deliberately do *not* name where the tables are, because
     /// the shipped ones do not either: the emitter has to find them.
-    fn template() -> GroupData {
-        // 32 bytes of header, then room for the three descriptors at +8..+56.
-        let mut data = vec![0u8; 56];
+    /// A group header as the UI base writes it: a 4-byte global count, the
+    /// header words, then the three descriptors at +32.
+    fn group_header() -> Vec<u8> {
+        let mut data = vec![0u8; 80];
         data[0..4].copy_from_slice(&1u32.to_le_bytes()); // one group
+        data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes()); // the query id
+        data[8..12].copy_from_slice(&0x130u32.to_le_bytes());
+        data[12..16].copy_from_slice(&4u32.to_le_bytes());
+        data[16..20].copy_from_slice(&PACKED_KEY.to_le_bytes());
         let descriptors = [
             Descriptor {
-                offset: 928,
-                count: 7,
-                cbuffer: 0x516D5CCD,
+                name: 0x516D_5CCD,
                 flags: 0x101,
+                x: 24,
+                y: 0,
             },
             Descriptor {
-                offset: 0,
-                count: 0,
-                cbuffer: 0xB3A2EB88,
-                flags: 0x101,
+                name: 0x3AFC_636C,
+                flags: 0x103,
+                x: 48,
+                y: 5,
             },
             Descriptor {
-                offset: 24,
-                count: 0,
-                cbuffer: PACKED_KEY,
-                flags: 0,
+                name: 0x41B1_CFF8,
+                flags: 0x105,
+                x: 56,
+                y: 10,
             },
         ];
         for (index, descriptor) in descriptors.iter().enumerate() {
-            let at = 8 + index * 16;
+            let at = 32 + index * 16;
             for (word_index, word) in [
-                descriptor.offset,
-                descriptor.count,
-                descriptor.cbuffer,
+                descriptor.name,
                 descriptor.flags,
+                descriptor.x,
+                descriptor.y,
             ]
             .into_iter()
             .enumerate()
@@ -856,6 +811,11 @@ mod tests {
                     .copy_from_slice(&word.to_le_bytes());
             }
         }
+        data
+    }
+
+    fn template() -> GroupData {
+        let mut data = group_header();
         // The engine's own table: a 12-byte header whose count is 2, then two
         // records. Its first record is the measured engine marker.
         data.extend_from_slice(&[0u8; 8]);
@@ -933,11 +893,14 @@ mod tests {
         let data = template();
         assert_eq!(data.group_count(), 1);
         let descriptors = data.descriptors().expect("descriptors");
-        // The descriptor names the cbuffer, not the table.
-        assert_eq!(descriptors.engine.cbuffer, 0x516D5CCD);
+        // The descriptors are at +32 and are {name, flags, X, Y}.
+        assert_eq!(descriptors.engine.name, 0x516D_5CCD);
         assert_eq!(descriptors.engine.flags, 0x101);
-        assert_eq!(descriptors.object.cbuffer, 0xB3A2EB88);
-        assert_eq!(descriptors.packed.cbuffer, PACKED_KEY);
+        assert_eq!(descriptors.engine.x, 24);
+        assert_eq!(descriptors.texture.name, 0x3AFC_636C);
+        assert_eq!(descriptors.texture.y, 5);
+        assert_eq!(descriptors.uav.name, 0x41B1_CFF8);
+        assert_eq!(descriptors.uav.flags, 0x105);
     }
 
     #[test]
@@ -1065,7 +1028,7 @@ mod tests {
         // The same template with the packed run cut off: header, engine header
         // and table, material header and table.
         let mut data = template().into_bytes();
-        data.truncate(56 + 12 + 2 * RECORD_LEN + 12 + 3 * RECORD_LEN);
+        data.truncate(80 + 12 + 2 * RECORD_LEN + 12 + 3 * RECORD_LEN);
         let data = GroupData::new(data);
         assert!(data.packed_runs().is_empty());
         // The canonical table still rebuilds; the packed step says it found
@@ -1116,11 +1079,7 @@ mod tests {
     /// A group data with a material table and the channel table that follows it,
     /// which is the pair the stride rule is about.
     fn with_channels() -> GroupData {
-        // The 8-byte global header and the three descriptors, which a run inside
-        // is not a table - the tables start after them, as they do in a section.
-        let mut data = vec![0u8; 56];
-        data[0..4].copy_from_slice(&1u32.to_le_bytes()); // one group
-        data[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        let mut data = group_header();
         // The engine's table (its header, then two records with the measured
         // marker first), then the material's.
         data.extend_from_slice(&[0u8; 8]);

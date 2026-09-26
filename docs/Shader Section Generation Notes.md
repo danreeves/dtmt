@@ -482,9 +482,9 @@ the whole region: the first twelve groups are 1758 bytes and the rest 1741. The
 descriptors are the three at `+32`: `global_viewport` `{516D5CCD, 0x101, 24, 0}`,
 the section texture `{3AFC636C, 0x103, 48, 5}` and the UAV
 `{41B1CFF8, 0x105, 56, 10}`, with `X` the per-draw byte offset and `Y` the packed
-usage counts. The words at `+8` are **not** descriptors: the group data reader's
-`Descriptors` still reads `{offset, count, cbuffer, flags}` there, and that is a
-misreading to correct.
+usage counts. The words at `+8` are the header's own `{0x130, 4, c_per_object, 0, 0, 0}`; an
+earlier reading took them for descriptors and has been corrected in
+`GroupData::descriptors`.
 
 So a query id selects a group, and the conditions tree does not: it refines the
 interface *within* the group, which is why the payload's result indices are
