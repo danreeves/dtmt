@@ -98,21 +98,17 @@ shader43 --plan <declaration.shader_node> <section>
    each record's result set with its group's descriptor `Y` fields and the
    length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
    have 1/2); then confirm in game with a crafted tree.
-2. **Implement the group data walk and the from-scratch constructor.** The
-   header and descriptors are decoded and the descriptors read correctly. The
-   relative layout inside a group (from the query id): descriptors `+28..+76`,
-   `{2, 7}` `+76..+84`, material records `+84`, engine records `+236` (count
-   `69` at `+232`, 12-byte header `{240, 64, 69}` at `+228`), the channels table
-   near `+1608`, the packed run, and then a **byte-packed group header** that is
-   the whole size difference. Its bytes are now dumped (groups 0-11: 74 bytes,
-   groups 12-35: 57). It opens `E503152C 00000008 00000000 00000010 00000001
-   B5639618 00000000 <n>` with `<n>` 2 in groups 0-11 and 1 later; groups 0-11
-   then carry a 4-byte condition hash (`9FCFE126` / `BC4EE226`) followed by
-   twelve zero bytes, and both kinds end in a common 25-byte tail whose last
-   bytes are zero. There is **no trailing terminator**, so the header's length
-   is not self-delimiting at the end: the next step is the `<n>` word at `+28`
-   (or the record grammar of the opening fields) as the length determinant, then
-   the table offsets and the constructor.
+2. **The group walk is implemented; the from-scratch constructor is next.**
+   `GroupData::group_starts(query_ids)` walks the groups by the contexts' query
+   ids - every id appears exactly once, in its group's header, in order - so a
+   rebuilder needs no byte-packed header length. The constructor does: it has to
+   write that header, and its bytes are dumped (groups 0-11: 74, groups 12-35:
+   57) but its length is not self-delimiting at the end. The opening words are
+   `E503152C 00000008 00000000 00000010 00000001 B5639618 00000000 <n>` with
+   `<n>` 2 then 1; groups 0-11 then carry a condition hash plus twelve zero
+   bytes, and both kinds end in a common 25-byte zero-terminated tail. Next: the
+   `<n>` word or the opening record grammar as the length determinant, then the
+   table offsets and the constructor.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.

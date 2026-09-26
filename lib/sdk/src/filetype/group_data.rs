@@ -384,6 +384,30 @@ impl GroupData {
         8 + 48
     }
 
+    /// The byte offset of each group, found by the query ids the contexts name.
+    ///
+    /// Every query id appears exactly once in the group data, in its group's
+    /// header, on all seven sections measured, and in the contexts' order. So a
+    /// caller that has the contexts can walk the groups without decoding the
+    /// byte-packed header's length: find each id after the previous group's
+    /// start, in order. `None` when an id is missing, out of order, or the first
+    /// id is not at the start of the data.
+    pub fn group_starts(&self, query_ids: &[u32]) -> Option<Vec<usize>> {
+        let mut starts = Vec::with_capacity(query_ids.len());
+        let mut at = 0;
+        for id in query_ids {
+            let needle = id.to_le_bytes();
+            let end = self.data.len().checked_sub(4)?;
+            let found = (at..=end).find(|offset| self.data[*offset..*offset + 4] == needle)?;
+            starts.push(found);
+            at = found + 4;
+        }
+        if starts.first().is_some_and(|first| *first > 16) {
+            return None;
+        }
+        Some(starts)
+    }
+
     /// The three descriptors of a group's header, at `+32`: the engine's
     /// `global_viewport` cbuffer, the section's texture and its UAV.
     ///
@@ -901,6 +925,27 @@ mod tests {
         assert_eq!(descriptors.texture.y, 5);
         assert_eq!(descriptors.uav.name, 0x41B1_CFF8);
         assert_eq!(descriptors.uav.flags, 0x105);
+    }
+
+    #[test]
+    fn groups_are_found_by_their_query_ids() {
+        // Every query id appears exactly once, in its group's header, so the
+        // contexts are the walk: no byte-packed header length is needed.
+        let mut data = group_header();
+        let mut second = group_header();
+        second[4..8].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        let first_len = data.len();
+        data.extend_from_slice(&second);
+        let data = GroupData::new(data);
+        let starts = data
+            .group_starts(&[0x8BE2_82AA, 0x1234_5678])
+            .expect("starts");
+        assert_eq!(starts, vec![4, first_len + 4]);
+        assert!(
+            data.group_starts(&[0x1234_5678, 0x8BE2_82AA]).is_none(),
+            "out of order is not a walk"
+        );
+        assert!(data.group_starts(&[0xDEAD_BEEF]).is_none());
     }
 
     #[test]
