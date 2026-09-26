@@ -26,7 +26,8 @@ use sdk::filetype::condition::Defines;
 use sdk::filetype::group_data::GroupData;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
-use sdk::filetype::shader_decl::{self, BlockTemplate, ChannelDef};
+use sdk::filetype::shader_block::{self, BlockTemplate};
+use sdk::filetype::shader_decl::ChannelDef;
 use sdk::filetype::shader_node::ShaderNode;
 use sdk::filetype::shader_preset::channel_record_len;
 use sdk::murmur;
@@ -1449,7 +1450,7 @@ fn build_block(
         .map(|channel| (channel.name.clone(), channel.clone()))
         .collect();
     let cbuffers = node.programs.len() as u32;
-    let block = shader_decl::build_block(
+    let block = shader_block::build_block(
         &template,
         &channels,
         node.group_count() as u32,
@@ -1503,7 +1504,7 @@ fn build_block(
     );
 
     let rebuilt =
-        shader_decl::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
+        shader_block::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
     match rebuilt == preamble {
         true => println!("round trip: identical to the template preamble"),
         false => {

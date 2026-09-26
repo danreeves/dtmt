@@ -4,6 +4,7 @@ pub mod lua;
 pub mod material;
 pub mod package;
 pub mod shader;
+pub mod shader_block;
 pub mod shader_decl;
 pub mod shader_node;
 pub mod shader_preset;
