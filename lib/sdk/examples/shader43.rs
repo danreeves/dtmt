@@ -22,8 +22,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sdk::filetype::condition::Defines;
+use sdk::filetype::group_data::GroupData;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
+use sdk::filetype::shader_block::{self, BlockTemplate};
+use sdk::filetype::shader_decl::ChannelDef;
+use sdk::filetype::shader_node::ShaderNode;
 use sdk::filetype::shader_preset::channel_record_len;
 use sdk::murmur;
 use sdk::murmur::Dictionary;
@@ -43,8 +48,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut tails_mode = false;
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
+    let mut dependencies_mode = false;
+    let mut channels_mode = false;
+    let mut layout_mode = false;
+    let mut plan_declaration: Option<PathBuf> = None;
+    let mut substitute_mode = false;
     let mut records_mode = false;
+    let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
+    let mut block_declaration: Option<PathBuf> = None;
+    let mut group_data_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -81,6 +94,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     args.get(i).expect("--variables needs a dictionary"),
                 ));
             }
+            "--registry" => {
+                i += 1;
+                registry_mode = true;
+                variables_dict = Some(PathBuf::from(
+                    args.get(i).expect("--registry needs a dictionary"),
+                ));
+            }
             "--slots" => {
                 i += 1;
                 slots_dict = Some(PathBuf::from(
@@ -98,6 +118,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 section = Some(args.get(i).expect("--section needs a name").clone());
             }
             "--preamble" => preamble_mode = true,
+            "--dependencies" => dependencies_mode = true,
+            "--channels" => channels_mode = true,
+            "--layout" => layout_mode = true,
+            "--plan" => {
+                i += 1;
+                plan_declaration = Some(PathBuf::from(
+                    args.get(i).expect("--plan needs a declaration").clone(),
+                ));
+            }
+            "--substitute" => substitute_mode = true,
+            "--build-block" => {
+                i += 1;
+                block_declaration = Some(PathBuf::from(
+                    args.get(i).expect("--build-block needs a shader declaration"),
+                ));
+            }
+            "--group-data" => {
+                group_data_mode = true;
+            }
             "--records" => records_mode = true,
             "--channel" => {
                 i += 1;
@@ -196,6 +235,97 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if substitute_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = substitute(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(declaration) = &plan_declaration {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = plan(declaration, path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if layout_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = layout(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if channels_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = channels(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if dependencies_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = dependencies(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if group_data_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = group_data(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(declaration) = &block_declaration {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = build_block(path, declaration, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
     if let Some(dict) = &slots_dict {
         let names = load_dictionary(dict)?;
         for path in &files {
@@ -210,6 +340,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(path) => Some(load_dictionary(path)?),
         None => None,
     };
+
+    if registry_mode {
+        let names = variable_names.ok_or("--registry needs a dictionary")?;
+        for path in &files {
+            if let Err(err) = registry(path, &names) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
 
     if records_mode {
         for path in &files {
@@ -550,6 +690,836 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
         println!("  {name:<32} type={ty} offset={offset} size={size}");
     }
 
+    Ok(())
+}
+
+/// Pairs the block's binding records with the group's variable tables. A block
+/// record's index is the engine's global variable order, and a declaration's table
+/// lists the variables it uses in that order, so every run position that also
+/// appears in the block's index set names that index. This is the table a
+/// generated declaration needs for the engine variables it touches.
+fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let first = programs.first().map(|program| program.pos).unwrap_or(0);
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+
+    let count = u32_at(preamble, 12).saturating_sub(8) as usize;
+    let mut indices = BTreeMap::new();
+    for i in 0..count {
+        let at = 0x78 + i * 13;
+        if at + 13 > preamble.len() {
+            break;
+        }
+        indices.insert(u32_at(preamble, at), u32_at(preamble, at + 5));
+    }
+
+    let group_offset = u32_at(shader, 32) as usize;
+    let group_size = u32_at(shader, 36) as usize;
+    let group = shader
+        .get(group_offset..group_offset + group_size)
+        .ok_or("group data is out of range")?;
+
+    let record = |at: usize| -> Option<u32> {
+        if at + 20 > group.len() {
+            return None;
+        }
+        let ty = u32_at(group, at);
+        let flags = u32_at(group, at + 4);
+        let hash = u32_at(group, at + 8);
+        let offset = u32_at(group, at + 12);
+        let size = u32_at(group, at + 16);
+        let expected = match ty {
+            0 => 4,
+            1 => 8,
+            2 => 12,
+            3 => 16,
+            4 => 64,
+            _ => 0,
+        };
+        if ty > 12 || flags > 3 || offset > 4096 || (expected != 0 && size != expected) {
+            return None;
+        }
+        Some(hash)
+    };
+
+    // Collect the runs once, then report the positions the block also names.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut at = 0usize;
+    while at + 20 <= group.len() {
+        if record(at).is_some() {
+            let mut start = at;
+            while start >= 20 && record(start - 20).is_some() {
+                start -= 20;
+            }
+            let mut end = at + 20;
+            while record(end).is_some() {
+                end += 20;
+            }
+            let run = (start, (end - start) / 20);
+            if !runs.contains(&run) {
+                runs.push(run);
+            }
+            at = end;
+        } else {
+            at += 4;
+        }
+    }
+
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} block record(s), {} variable run(s)",
+        indices.len(),
+        runs.len()
+    );
+    let mut named = 0;
+    for (start, len) in &runs {
+        for i in 0..*len {
+            let Some(hash) = record(start + i * 20) else {
+                continue;
+            };
+            let Some(&value) = indices.get(&(i as u32)) else {
+                continue;
+            };
+            let index = i as u32;
+            let name = names.get(&hash).map(String::as_str).unwrap_or("?");
+            named += 1;
+            println!("  run+{start:#06x}[{i:>3}] = index {index:<3} value {value:<10} {name}");
+        }
+    }
+    println!("  {named} of the block's indices named by the tables");
+    let missing: Vec<String> = indices
+        .keys()
+        .copied()
+        .filter(|index| {
+            !runs.iter().any(|(start, len)| {
+                (0..*len).any(|i| record(start + i * 20).is_some() && *index == i as u32)
+            })
+        })
+        .map(|index| format!("{index}"))
+        .collect();
+    println!("  unnamed block indices: {}", missing.join(" "));
+    Ok(())
+}
+
+/// Reads a section's group data: the descriptors, the tables it can find, and
+/// whether rebuilding it from the table it already carries is a no-op.
+/// The byte ranges at which two versions of a section differ, as runs.
+fn diffs(old: &[u8], new: &[u8]) -> Vec<(usize, usize)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let end = old.len().min(new.len());
+    let mut at = 0;
+    while at < end {
+        if old[at] == new[at] {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < end && old[at] != new[at] {
+            at += 1;
+        }
+        runs.push((start, at - start));
+    }
+    runs
+}
+
+fn substitute(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{GroupData, Variable};
+    use sdk::filetype::shader::Section;
+    use sdk::murmur::Murmur32;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+    println!("=== {} ===", path.display());
+    let original = Section::parse(bytes)?;
+
+    // One: rename a context. Nothing but that context's name word may move.
+    let probe: u32 = Murmur32::hash("probe_context").into();
+    let mut section = original.clone();
+    let before = section.contexts()[0].name;
+    section.contexts_mut()[0].name = probe;
+    let runs = diffs(bytes, &section.into_bytes());
+    let at = 48;
+    println!(
+        "  a renamed context: {:08X} {} -> {:08X}: {}",
+        before,
+        named(before),
+        probe,
+        if runs == [(at, 4)] {
+            "4 bytes at +48, and only those"
+        } else {
+            println!("    {runs:?}");
+            "MOVED MORE"
+        }
+    );
+
+    // Two: a length-changing edit, which has to move every offset after the
+    // contexts table. A rename never does, so this is the half of the test the
+    // round trip cannot cover. The query and the group count are raised together,
+    // because the section now checks that the queries are the groups; anything
+    // else would be testing an invalid section. Checked by reading the rebuilt
+    // section back rather than against a known answer.
+    let group = original.group_data().to_vec();
+    let mut wider = original.clone();
+    let groups = u32::from_le_bytes(group[0..4].try_into().unwrap());
+    wider.contexts_mut()[0].queries.push(sdk::filetype::shader::Query {
+        id: 0xC0DE_0001,
+        conditions: sdk::filetype::shader::NO_CONDITIONS,
+    });
+    let mut wider_group = group.clone();
+    wider_group[0..4].copy_from_slice(&(groups + 1).to_le_bytes());
+    wider.set_group_data(wider_group.clone());
+    let rebuilt = wider.into_bytes();
+    match Section::parse(&rebuilt) {
+        Err(err) => println!("  a query added: the rebuilt section did not read: {err}"),
+        Ok(back) => {
+            let conditions = u32::from_le_bytes(rebuilt[16..20].try_into().unwrap()) as usize;
+            let expect: usize =
+                48 + back.contexts().iter().map(|context| context.len()).sum::<usize>();
+            println!(
+                "  a query added: {} contexts, conditions at {conditions} (48 + the {} record bytes = {expect}): {}",
+                back.contexts().len(),
+                expect - 48,
+                if conditions == expect
+                    && back.group_data() == wider_group.as_slice()
+                    && back.contexts()[0].queries.len() == original.contexts()[0].queries.len() + 1
+                {
+                    "the offsets followed the sum of the records, the group data is what was written"
+                } else {
+                    "THE SUM DID NOT HOLD"
+                }
+            );
+        }
+    }
+
+    // Three: rename one material variable, through the group data's own rebuild.
+    // Nothing outside the group data may move, and inside it only the one name.
+    let group_data = GroupData::new(group.clone());
+    let table = group_data.object_table().map(|(_, table)| table);
+    // The first record the dictionary can name, so the rename has a real name to
+    // go to and a real old name to replace.
+    let named_index = table.as_ref().and_then(|table| {
+        table
+            .iter()
+            .position(|record| names.is_some_and(|names| names.contains_key(&record.hash)))
+    });
+    let (Some(table), Some(index)) = (table, named_index) else {
+        println!("  a renamed variable: skipped, no named variable in the table");
+        return Ok(());
+    };
+    let mut variables: Vec<Variable> = table
+        .iter()
+        .map(
+            |record| match names.and_then(|names| names.get(&record.hash)) {
+                Some(name) => Variable::new(name.clone(), record.offset, record.kind),
+                None => Variable::from_hash(record.hash, record.offset, record.kind),
+            },
+        )
+        .collect();
+    let old_name = variables[index].name.clone();
+    variables[index].name = "probe_variable".to_string();
+    let rebuilt_group = group_data.rebuild(&variables)?;
+    let mut section = original;
+    section.set_group_data(rebuilt_group);
+    let section_bytes = section.into_bytes();
+    let runs = diffs(bytes, &section_bytes);
+    let group_at = u32::from_le_bytes(bytes[32..36].try_into().unwrap()) as usize;
+    let device_at = u32::from_le_bytes(bytes[40..44].try_into().unwrap()) as usize;
+    let inside = runs
+        .iter()
+        .all(|(at, _)| *at >= group_at && *at < device_at);
+    let total: usize = runs.iter().map(|(_, len)| len).sum();
+    println!(
+        "  a renamed variable: {old_name} -> probe_variable: {total} bytes in {} run(s): {}",
+        runs.len(),
+        if inside {
+            "all inside the group data"
+        } else {
+            println!("    {runs:?}");
+            "OUTSIDE THE GROUP DATA"
+        }
+    );
+    Ok(())
+}
+
+/// A dry run: what a generated section *would* contain, and whether it holds
+/// together. Reads only - it writes nothing, and touches no game install.
+///
+/// This is the check that makes a deploy safe. A generated declaration cannot be
+/// verified against a shipped one, because a declaration and a section cannot be
+/// paired, so the invariants are all there is. `Section::build` enforces the ones
+/// that can fail silently - a context pointing at a group or a hash the group data
+/// does not have - and refusing here means the same refusal happens before
+/// anything is deployed.
+fn plan(
+    declaration: &Path,
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let text = fs::read_to_string(declaration)?;
+    let node = sdk::filetype::shader_node::ShaderNode::from_sjson(&text)?;
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let template = Section::parse(bytes)?;
+    let group_data = GroupData::new(template.group_data().to_vec());
+    let groups = group_data.group_count();
+    let hash = group_data.hash();
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+
+    println!("=== {} + {} ===", declaration.display(), path.display());
+    println!(
+        "  declared: {} inputs, {} channels, {} permutation sets, {} contexts",
+        node.variables.len(),
+        node.channels.len(),
+        node.permutation_sets.len(),
+        node.contexts.len()
+    );
+    let channels = match node.contexts.first() {
+        None => Err(color_eyre::eyre::eyre!("the declaration has no contexts")),
+        Some(context) => match node.permutations_for(context).first() {
+            None => Err(color_eyre::eyre::eyre!("the context permutes over nothing")),
+            Some(permutation) => node.channels_of(permutation),
+        },
+    };
+    let channels = match channels {
+        Ok(channels) => channels
+            .iter()
+            .map(|channel| channel.name.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Err(err) => format!("unresolved: {err}"),
+    };
+    println!("  the first group's channels: {channels}");
+
+    let records = node.context_records(hash);
+    let carried = sdk::filetype::shader::Carried::of(&template);
+    // A generated single-group section writes no conditions tree: its one query
+    // selects no conditions. Handing it the template's blob would point at the
+    // template's query ids, which is the mismatch Section::check exists to catch.
+    match Section::build(&records, Vec::new(), template.group_data().to_vec(), &carried) {
+        Err(err) => println!("  refused: {err}"),
+        Ok(section) => {
+            let bytes = section.into_bytes();
+            let back = Section::parse(&bytes).expect("a built section reads back");
+            println!(
+                "  built: {} contexts against the template's {} groups, {} bytes (the template is {}), {} of programs carried",
+                back.contexts().len(),
+                groups,
+                bytes.len(),
+                template.into_bytes().len(),
+                back.device_data().len()
+            );
+            for context in back.contexts() {
+                let queries: Vec<String> = context
+                    .queries
+                    .iter()
+                    .map(|query| {
+                        let conditions = if query.conditions == sdk::filetype::shader::NO_CONDITIONS
+                        {
+                            "none".to_string()
+                        } else {
+                            format!("@{:#x}", query.conditions)
+                        };
+                        format!("{:08X}->{}", query.id, conditions)
+                    })
+                    .collect();
+                println!(
+                    "    context {:08X} {}  {} quer{}",
+                    context.name,
+                    named(context.name),
+                    queries.join(" "),
+                    if queries.len() == 1 { "y" } else { "ies" }
+                );
+            }
+            println!("  the invariants hold; nothing was written");
+        }
+    }
+    Ok(())
+}
+
+fn layout(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!("{name}"),
+        None => String::new(),
+    };
+    let section = Section::parse(bytes)?;
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} contexts, {} bytes of conditions, {} dependencies, {} bytes of group data, {} of programs",
+        section.contexts().len(),
+        section.conditions().len(),
+        section.dependencies().len(),
+        section.group_data().len(),
+        section.device_data().len()
+    );
+    for (index, context) in section.contexts().iter().enumerate() {
+        let queries: Vec<String> = context
+            .queries
+            .iter()
+            .map(|query| {
+                let conditions = if query.conditions == sdk::filetype::shader::NO_CONDITIONS {
+                    "none".to_string()
+                } else {
+                    format!("@{:#x}", query.conditions)
+                };
+                format!("{:08X}->{}", query.id, conditions)
+            })
+            .collect();
+        println!(
+            "    context {index}: {:08X} {}  {} quer{}",
+            context.name,
+            named(context.name),
+            queries.join(" "),
+            if context.queries.len() == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        );
+    }
+    match section.into_bytes() {
+        rebuilt if rebuilt == bytes => println!("  section round trip: identical"),
+        rebuilt => {
+            let at = rebuilt
+                .iter()
+                .zip(bytes)
+                .position(|(a, b)| a != b)
+                .unwrap_or(rebuilt.len().min(bytes.len()));
+            println!("  section round trip: differs at byte {at}");
+        }
+    }
+    Ok(())
+}
+
+fn channels(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let group_data = GroupData::new(
+        shader
+            .get(offset..offset + size)
+            .ok_or("group data is out of range")?
+            .to_vec(),
+    );
+
+    let channels = group_data.channels();
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} groups, {} channels",
+        group_data.group_count(),
+        channels.len()
+    );
+    for channel in &channels {
+        let name = names
+            .and_then(|names| names.get(&channel.hash))
+            .cloned()
+            .unwrap_or_default();
+        let records: Vec<String> = channel
+            .records
+            .iter()
+            .map(|record| format!("{}@{}", record.kind, record.offset))
+            .collect();
+        println!(
+            "    {:08X} offset {:4}  {:<28} {}",
+            channel.hash,
+            channel.offset(),
+            name,
+            records.join(" ")
+        );
+    }
+
+    // The channel table is the one a from-scratch group data has to write, so
+    // rewriting it with the channels it was read as must change nothing.
+    let rebuilt = group_data.rebuild_channels(&channels);
+    match rebuilt {
+        Ok(rebuilt) if rebuilt == group_data.bytes() => {
+            println!("  channel round trip: identical");
+        }
+        Ok(rebuilt) => {
+            let at = diffs(group_data.bytes(), &rebuilt)
+                .first()
+                .map_or(usize::MAX, |(at, _)| *at);
+            println!("  channel round trip: differs at +{at}");
+        }
+        Err(err) => println!("  channel round trip: {err}"),
+    }
+    Ok(())
+}
+
+fn dependencies(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{Dependency, GroupData};
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let at = u32_at(shader, 24) as usize;
+    let count = u32_at(shader, 28) as usize;
+    let entries = Dependency::read(shader, at, count);
+
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let group_data = GroupData::new(
+        shader
+            .get(offset..offset + size)
+            .ok_or("group data is out of range")?
+            .to_vec(),
+    );
+
+    println!("=== {} ===", path.display());
+    println!(
+        "  dependencies @{at} x{count}; group data {size} bytes, {} groups, hash {:08X}",
+        group_data.group_count(),
+        group_data.hash()
+    );
+    for (index, entry) in entries.iter().enumerate() {
+        println!(
+            "    {index}: dependency {:016X} ({})",
+            entry.id,
+            if entry.id == Dependency::RENDERER {
+                "core/stingray_renderer/renderer"
+            } else {
+                "unnamed"
+            }
+        );
+    }
+    Ok(())
+}
+
+fn group_data(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::{GroupData, Variable};
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let offset = u32_at(shader, 32) as usize;
+    let size = u32_at(shader, 36) as usize;
+    let bytes = shader
+        .get(offset..offset + size)
+        .ok_or("group data is out of range")?
+        .to_vec();
+    let group_data = GroupData::new(bytes);
+
+    println!("=== {} ===", path.display());
+    println!(
+        "group data: {size} bytes, {} groups",
+        group_data.group_count()
+    );
+    if let Some(descriptors) = group_data.descriptors() {
+        println!(
+            "  descriptors: engine {{{}, {}, {:08X}, {:X}}} object {{{}, {}, {:08X}, {:X}}} packed {{{}, {}, {:08X}, {:X}}}",
+            descriptors.engine.offset,
+            descriptors.engine.count,
+            descriptors.engine.cbuffer,
+            descriptors.engine.flags,
+            descriptors.object.offset,
+            descriptors.object.count,
+            descriptors.object.cbuffer,
+            descriptors.object.flags,
+            descriptors.packed.offset,
+            descriptors.packed.count,
+            descriptors.packed.cbuffer,
+            descriptors.packed.flags,
+        );
+    }
+
+    // Every run of canonical records, and the packed runs.
+    let runs = group_data.runs();
+    println!("  {} runs of variable records:", runs.len());
+    for (index, run) in runs.iter().enumerate() {
+        println!("    run {index}: {} records", run.len());
+        for record in run.iter().take(6) {
+            let name = names
+                .and_then(|names| names.get(&record.hash))
+                .cloned()
+                .unwrap_or_default();
+            println!(
+                "      type {} {:08X} offset {:5} size {:3} {}",
+                record.kind, record.hash, record.offset, record.size, name
+            );
+        }
+        if run.len() > 6 {
+            println!("      ... {} more", run.len() - 6);
+        }
+    }
+    for (key, hashes) in group_data.packed_runs() {
+        println!("  packed run {:08X}: {} copies", key, hashes.len());
+    }
+
+    // The material's own table, and the round trip: rebuilding from the table the
+    // section already carries must change nothing.
+    match group_data.object_table() {
+        None => println!("  no material variable table was found"),
+        Some((at, records)) => {
+            println!("  material table at +{at}: {} records", records.len());
+            let variables: Vec<Variable> = records
+                .iter()
+                .map(
+                    |record| match names.and_then(|names| names.get(&record.hash)) {
+                        // A name the dictionary knows: rebuild from the name.
+                        Some(name) => Variable::new(name.clone(), record.offset, record.kind),
+                        // Otherwise the hash is all there is, and a variable built
+                        // from it rewrites to the same bytes.
+                        None => Variable::from_hash(record.hash, record.offset, record.kind),
+                    },
+                )
+                .collect();
+            match group_data.rebuild(&variables) {
+                Ok(rebuilt) if rebuilt == group_data.bytes() => {
+                    println!("  round trip: identical");
+                }
+                Ok(rebuilt) => {
+                    let at = rebuilt
+                        .iter()
+                        .zip(group_data.bytes())
+                        .position(|(a, b)| a != b)
+                        .unwrap_or(rebuilt.len().min(group_data.bytes().len()));
+                    println!(
+                        "  round trip: differs at byte {at} ({} vs {} bytes)",
+                        rebuilt.len(),
+                        group_data.bytes().len()
+                    );
+                }
+                Err(err) => println!("  round trip failed: {err}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Builds a block from a declaration for a section, using the section's own preamble as
+/// the engine template, and reports the round trip: a declaration naming exactly
+/// the template's channels must rebuild the template byte for byte.
+fn build_block(
+    path: &Path,
+    declaration_path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let device_offset = u32_at(shader, 40) as usize;
+    let device_size = u32_at(shader, 44) as usize;
+    let device = shader
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let first = programs.first().ok_or("no programs")?.pos;
+    let preamble = device.get(..first).ok_or("preamble is out of range")?;
+    let template = BlockTemplate::from_preamble(preamble)?;
+
+    let node = ShaderNode::from_sjson(&fs::read_to_string(declaration_path)?)?;
+
+    println!("=== {} ===", path.display());
+    println!(
+        "template: {} groups, {} cbuffers, {} engine records, {} bytes",
+        template.groups(),
+        template.cbuffers(),
+        template.records().len(),
+        preamble.len()
+    );
+    for (index, value) in template.records() {
+        println!("  record {index} = {value}");
+    }
+    for hash in template.channel_names() {
+        match names.and_then(|names| names.get(&hash)) {
+            Some(name) => println!("  channel {hash:08X} {name}"),
+            None => println!("  channel {hash:08X}"),
+        }
+    }
+
+    println!(
+        "declaration: {} groups from {} permutation sets, {} gated variables, \
+         {} channels",
+        node.group_count(),
+        node.permutation_sets.len(),
+        node.flags().len(),
+        node.channels.len()
+    );
+    for set in &node.permutation_sets {
+        println!("  set {}: {} choices", set.name, set.choices.len());
+        for (index, choice) in set.choices.iter().enumerate() {
+            println!(
+                "    {index}: if [{}] macros [{}] stages [{}] default {}",
+                choice.condition.clone().unwrap_or_default(),
+                choice.macros.join(" "),
+                choice.stages.join(" "),
+                choice.is_default,
+            );
+        }
+    }
+    for (index, permutation) in node.permutations().iter().enumerate() {
+        let channels = node.channel_names_of(permutation)?;
+        println!(
+            "  group {index:02}: macros [{}] channels [{}]",
+            permutation.macros.join(" "),
+            channels.join(" "),
+        );
+    }
+    // The interface a material gets when it declares every gated variable: the
+    // most a material can ask for.
+    let inputs: Vec<String> = node
+        .variables
+        .iter()
+        .filter(|(_, variable)| variable.flag.is_some())
+        .map(|(name, _)| name.clone())
+        .collect();
+    let interface = node.interface(&inputs);
+    println!(
+        "  interface of every gated input: mask {:02} flags [{}] variables [{}] \
+         channels [{}]",
+        interface.mask,
+        interface.flags.join(" "),
+        interface.variables.join(" "),
+        interface.channels.join(" "),
+    );
+
+    // The contexts: what each one compiles, and the passes it draws. The
+    // interface's flags stand in for the defines, since a pass condition reads
+    // the same input flags.
+    for context in &node.contexts {
+        let defines = Defines::new(interface.flags.iter().cloned());
+        let passes = context.passes_of(&defines)?;
+        println!(
+            "  context {}: sort {} permutes {} sets, {} passes",
+            context.name,
+            context.sort_mode.clone().unwrap_or_default(),
+            node.permutations_for(context).len(),
+            passes.len(),
+        );
+        for entry in &context.compile_with {
+            println!(
+                "    compiles if [{}] over [{}]",
+                entry.condition.clone().unwrap_or_default(),
+                entry.permute_with.join(" ")
+            );
+        }
+        for pass in passes {
+            println!(
+                "    pass layer [{}] block {} macros [{}] state [{}]",
+                pass.layer.clone().unwrap_or_default(),
+                pass.code_block,
+                pass.macros().join(" "),
+                pass.render_state.clone().unwrap_or_default(),
+            );
+        }
+    }
+    println!(
+        "  groups: {} over the declaration's sets, {} over its contexts",
+        node.group_count(),
+        node.context_group_count(),
+    );
+
+    let channels: Vec<(String, ChannelDef)> = node
+        .channels
+        .iter()
+        .map(|channel| (channel.name.clone(), channel.clone()))
+        .collect();
+    let cbuffers = node.programs.len() as u32;
+    let block = shader_block::build_block(
+        &template,
+        &channels,
+        node.group_count() as u32,
+        cbuffers.max(1),
+    )?;
+    println!(
+        "built: {} bytes, {} channels, header says {} groups / {} cbuffers / {} records",
+        block.len(),
+        channels.len(),
+        u32_at(&block, 4),
+        u32_at(&block, 8),
+        u32_at(&block, 12),
+    );
+
+    // The round trip. The channel stream is keyed by name, so the declaration
+    // is emitted in the template's own channel order to make the comparison
+    // exact; a name the template lacks goes last and shows up as a difference.
+    let declared: Vec<(u32, String, ChannelDef)> = channels
+        .iter()
+        .map(|(name, def)| (hash_name(name), name.clone(), def.clone()))
+        .collect();
+    let template_channels = template.channel_names();
+    let mut ordered: Vec<(String, ChannelDef)> = Vec::new();
+    for hash in &template_channels {
+        if let Some((_, name, def)) = declared.iter().find(|(h, _, _)| h == hash) {
+            ordered.push((name.clone(), def.clone()));
+        }
+    }
+    for (hash, name, def) in &declared {
+        if !template_channels.contains(hash) {
+            ordered.push((name.clone(), def.clone()));
+        }
+    }
+    let missing: Vec<String> = template_channels
+        .iter()
+        .filter(|hash| !declared.iter().any(|(h, _, _)| h == *hash))
+        .map(|hash| match names.and_then(|names| names.get(hash)) {
+            Some(name) => format!("{name} ({hash:08X})"),
+            None => format!("{hash:08X}"),
+        })
+        .collect();
+    println!(
+        "declaration covers {}/{} of the template's channels; not declared: {}",
+        template_channels.len() - missing.len(),
+        template_channels.len(),
+        if missing.is_empty() {
+            "none".to_string()
+        } else {
+            missing.join(", ")
+        }
+    );
+
+    let rebuilt =
+        shader_block::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
+    match rebuilt == preamble {
+        true => println!("round trip: identical to the template preamble"),
+        false => {
+            let at = rebuilt
+                .iter()
+                .zip(preamble)
+                .position(|(a, b)| a != b)
+                .unwrap_or(rebuilt.len().min(preamble.len()));
+            println!(
+                "round trip: differs at byte {at} ({} vs {} bytes)",
+                rebuilt.len(),
+                preamble.len()
+            );
+        }
+    }
     Ok(())
 }
 
