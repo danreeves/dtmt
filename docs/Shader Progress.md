@@ -149,6 +149,11 @@ appears.
 
 ## Open decode details worth keeping
 
+- Block synthesis is **open work, not a proven impossibility**: a generated
+  minimal block fails at shader load, and the record stream's grammar is partly
+  fitted (record kinds, component flags, the three varying header words). The
+  block is carried from the library's own section until that grammar is
+  finished.
 - UI base channels: the stride from the material table lands on the engine table
   and is refused; the declared channel table at `+1620` (`{1776, 0, 3}`, records
   at `+1632`) is not reached. Refusing beats reading 69 engine variables as
