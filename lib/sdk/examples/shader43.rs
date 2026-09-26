@@ -1234,6 +1234,34 @@ fn conditions(
             hashes.join(" ")
         );
         println!("         payload: {}", payload.join(" "));
+        match node.branches() {
+            Some((branches, fallback)) => {
+                let branches: Vec<String> = branches
+                    .iter()
+                    .map(|branch| {
+                        let tests: Vec<String> = branch
+                            .tests
+                            .iter()
+                            .map(|index| {
+                                node.hashes
+                                    .get(*index as usize)
+                                    .map(|hash| format!("{hash:08X}"))
+                                    .unwrap_or_else(|| format!("#{index}"))
+                            })
+                            .collect();
+                        format!("[{} -> {}]", tests.join(" "), branch.result)
+                    })
+                    .collect();
+                println!(
+                    "         branches: {}{}",
+                    branches.join(" "),
+                    fallback
+                        .map(|result| format!(" fallback {result}"))
+                        .unwrap_or_default()
+                );
+            }
+            None => println!("         branches: not the mapped opcodes"),
+        }
         at += node.len();
     }
     Ok(())

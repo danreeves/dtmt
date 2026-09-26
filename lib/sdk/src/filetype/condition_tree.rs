@@ -32,9 +32,11 @@
 //!   9000`, and the branches' tests are subsets of the record's hashes.
 //!
 //! That is a reading, not a decode: the result values are small indices (0..7)
-//! whose mapping to groups or interfaces is not established, so the tree is
-//! still carried. The experiment that would settle it is a generated family
-//! with a crafted tree and an in-game observation of which group it selects.
+//! whose mapping to groups or interfaces is not established. Across all 35
+//! records the result is `tests.len() - 1` on every branch, and the fallback is
+//! 7 where a record has one. The experiment that would settle what the index
+//! selects is a generated family with a crafted tree and an in-game observation
+//! of which group the engine selects.
 //!
 //! The UI base's roots resolve through the dictionary: `gui` (`9FCFE126`),
 //! `red` (`9B8DE7E4`), `green` (`4BA4BD58`), `blue` (`0977913D`) and `alpha`
@@ -78,6 +80,47 @@ impl Node {
         for word in &self.payload {
             out.extend_from_slice(&word.to_le_bytes());
         }
+    }
+}
+
+/// One guarded result of a payload: a conjunction of tests and the result it
+/// yields.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Branch {
+    /// The indices into the record's hashes that the conjunction tests, in
+    /// order.
+    pub tests: Vec<u16>,
+    /// The result the engine gets when the conjunction holds. Measured on the
+    /// UI base's 35 records, it is `tests.len() - 1` on every branch.
+    pub result: u16,
+}
+
+impl Node {
+    /// The payload read as its branches and its fallback result.
+    ///
+    /// `0x20xx` tests hash `xx`, `0x10xx` is a result, `0x70xx` jumps to the
+    /// record's end after a result was taken, `0x50xx` is the fallback and
+    /// `0x90xx` ends the payload. `None` when a word is not one of those.
+    pub fn branches(&self) -> Option<(Vec<Branch>, Option<u16>)> {
+        let mut branches = Vec::new();
+        let mut tests = Vec::new();
+        let mut fallback = None;
+        for word in &self.payload {
+            match word >> 8 {
+                0x20 => tests.push(word & 0xFF),
+                0x10 => branches.push(Branch {
+                    tests: std::mem::take(&mut tests),
+                    result: word & 0xFF,
+                }),
+                0x70 => {
+                    // A jump to the record's end; the target is the 0x9000 word.
+                }
+                0x50 => fallback = Some(word & 0xFF),
+                0x90 => {}
+                _ => return None,
+            }
+        }
+        Some((branches, fallback))
     }
 }
 
@@ -185,6 +228,18 @@ mod tests {
         assert_eq!(node.payload.len(), 12);
         assert_eq!(node.len(), 60);
         assert_eq!(tree.bytes(), FIRST, "the framing is self-delimiting");
+    }
+
+    #[test]
+    fn the_payload_reads_as_branches() {
+        let tree = ConditionTree::parse(&FIRST).expect("parse");
+        let (branches, fallback) = tree.nodes()[0].branches().expect("branches");
+        assert_eq!(branches.len(), 2);
+        assert_eq!(branches[0].tests, vec![0, 1, 2]);
+        assert_eq!(branches[0].result, 2, "the result is tests - 1");
+        assert_eq!(branches[1].tests, vec![3, 4, 5, 6]);
+        assert_eq!(branches[1].result, 3);
+        assert_eq!(fallback, Some(7));
     }
 
     #[test]

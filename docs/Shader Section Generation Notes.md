@@ -513,9 +513,10 @@ record is `tests A, 10a, 70end, tests B, 10b, 5007, 9000` (rec0, rec1, rec12,
 rec13), and the branches' tests are subsets of the record's hashes.
 
 That is a reading from 35 records, not a decode: the result values are small
-indices (0..7) whose mapping to groups or interfaces is not established. So the
-tree is still carried, but the framing is no longer open work, and the payload's
-shape is.
+indices (0..7) whose mapping to groups or interfaces is not established. Across
+all 35 records the result equals the conjunction's test count minus one, and the
+fallback is 7 where a record has one. So the tree is still carried, but the
+framing is no longer open work, and the payload's shape is.
 
 The six sections measured here have condition sections of 0, 28 and 56 bytes
 **because they are small sections** - one to five groups, one to three contexts -
