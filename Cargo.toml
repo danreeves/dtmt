@@ -8,6 +8,7 @@ members = [
     "lib/sdk",
     "lib/luajit2-sys",
     "lib/color-eyre",
+    "lib/serde_sjson",
 ]
 exclude = ["lib/color-eyre"]
 
@@ -53,7 +54,7 @@ pin-project-lite = "0.2.9"
 promptly = "0.3.1"
 sdk = { path = "lib/sdk" }
 serde = { version = "1.0.152", features = ["derive", "rc"] }
-serde_sjson = "1.2.1"
+serde_sjson = { path = "lib/serde_sjson" }
 steamlocate = "2.0.0-beta.2"
 strip-ansi-escapes = "0.2.0"
 time = { version = "0.3.20", features = ["serde", "serde-well-known", "local-offset", "formatting", "macros"] }
@@ -83,3 +84,4 @@ inherits = "release"
 strip = false
 lto = true
 debug = "line-tables-only"
+

@@ -5,3 +5,7 @@
 [submodule "lib/luajit2-sys/luajit"]
 	path = lib/luajit2-sys/luajit
 	url = https://github.com/LuaJIT/LuaJIT.git
+[submodule "lib/serde_sjson"]
+	path = lib/serde_sjson
+	url = https://github.com/danreeves/serde_sjson
+	branch = master

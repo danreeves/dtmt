@@ -3431,8 +3431,6 @@ dependencies = [
 [[package]]
 name = "serde_sjson"
 version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c5b0d7af37492e99b8559436ee76b9ec8935c75449b1c2ef08c205a9e92ae6f"
 dependencies = [
  "nom 8.0.0",
  "nom_locate",
