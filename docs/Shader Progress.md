@@ -111,11 +111,14 @@ shader43 --plan <declaration.shader_node> <section>
    Next: the `<n>` word or the opening record grammar as the length determinant.
    Measured on all 37 group boundaries of the UI base: the header length is
    **57 + 17 x (n - 1)**, with `n` the word at header+28 (2 where the group
-   carries a condition hash, 1 where it does not). So the header is
-   self-delimiting once `n` is read, and `n` is one plus the condition count.
-   That is fitted on the UI base's two classes; the six small sections are the
-   next test. Then the constructor can either use the formula or carry the
-   header from the template.
+   carries a condition hash, 1 where it does not). Confirmed on the six small
+   sections too: `004F18EA` 91/91/57 (n 3,3,1), `17A3DC01` 125/57/57 (5,1,1),
+   `2A04418E` 125,125,57,57,57, `38ECBAD1` 74 (n 2), `3F08AC44`
+   125,125,57,57,57, `427B5E6E` 125,57,57. So the header is self-delimiting
+   once `n` is read, across four values of `n` and seven sections. Caveat: the
+   check reads `n` at the candidate offset, so it is self-consistency; what `n`
+   counts is still open (it is not simply the condition count). Then the
+   constructor can use the formula or carry the header from the template.
 3. **Group data constructor**: with the walk, a first constructor can carry each
    group's byte-packed header and descriptors from the template - they are the
    family's compiled interface metadata, like the block - generate the material
