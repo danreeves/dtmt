@@ -3,7 +3,8 @@
 param(
     [int]$BootStall = 2,
     [int[]]$Wait = @(5, 8, 11),
-    [string]$OutDir = "$env:TEMP\dt_shader"
+    [string]$OutDir = "$env:TEMP\dt_shader",
+    [string]$Launch = (Join-Path $PSScriptRoot "launch.bat")
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -37,7 +38,7 @@ function Shot([string]$path) {
 $g = "E:\SteamLibrary\steamapps\common\Warhammer 40,000 DARKTIDE"
 Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Seconds 3
-Start-Process -FilePath "$g\launch.bat" -WorkingDirectory $g | Out-Null
+Start-Process -FilePath $Launch -WorkingDirectory $g | Out-Null
 
 $elapsed = 0
 foreach ($t in $Wait) {

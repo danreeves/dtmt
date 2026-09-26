@@ -52,6 +52,9 @@ parameter or an environment default, so no machine-specific path is baked in.
   which is how the test fixtures are extracted.
 - `set-shader.ps1` - writes a compiled section's `shader_size` and `shader_data`
   back into a material SJSON.
+- `launch.bat` - the game ships no launcher; this one sets the Steam app id and
+  passes the bundle, ini and backend arguments to `binaries\Darktide.exe`. It
+  uses `%cd%`, so run it from the install directory (the harness scripts do).
 - `title-tint-demo.ps1` - the end-to-end harness: launch the game, wait for the
   title material line in the newest console log, screenshot and average a screen
   region a few times, then grep the log for the mod.

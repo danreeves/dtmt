@@ -1,6 +1,7 @@
 param(
     [int]$TimeoutSec = 180,
-    [string]$OutDir = "$env:TEMP\dt_shader"
+    [string]$OutDir = "$env:TEMP\dt_shader",
+    [string]$Launch = (Join-Path $PSScriptRoot "launch.bat")
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,7 +62,7 @@ if (Get-Process Darktide -ErrorAction SilentlyContinue) {
 $before = (Get-ChildItem $logDir -Filter "*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1).Name
 
 Write-Host "Launching..."
-Start-Process -FilePath (Join-Path $game "launch.bat") -WorkingDirectory $game | Out-Null
+Start-Process -FilePath $Launch -WorkingDirectory $game | Out-Null
 
 # Advance the splash pages until the mod reports the title material applied.
 $deadline = (Get-Date).AddSeconds($TimeoutSec)

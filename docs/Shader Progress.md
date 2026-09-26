@@ -124,10 +124,10 @@ shader43 --plan <declaration.shader_node> <section>
 ## In-game harness
 
 `docs/scripts/` holds the scripts used to test in game. `title-tint-demo.ps1`
-is the shape to copy: kill Darktide, launch `launch.bat`, poll the newest
-console log for the title material line (`material set: background_image`),
-screenshot and average a region's colour a few times, and grep the log for the
-mod. `shot-window.ps1` uses `PrintWindow` so a borderless-fullscreen window is
+is the shape to copy: kill Darktide, launch `scripts/launch.bat` from the
+install directory (the game ships no launcher), poll the newest console log for
+the title material line (`material set: background_image`), screenshot and
+average a region's colour a few times, and grep the log for the mod. `shot-window.ps1` uses `PrintWindow` so a borderless-fullscreen window is
 captured rather than the desktop; `set-shader.ps1` and `slice-sections.ps1` move
 a section in and out of a material. The deployable test mod is the snoopy-mod
 checkout. The payload experiment that needs this: a generated family whose
