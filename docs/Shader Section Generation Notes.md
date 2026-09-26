@@ -76,7 +76,7 @@ recomputable (that is how the splice flow already relocates them).
 | Header | `{version=43, opaque, contexts_offset, context_count, conditions_offset, default_data_offset, dependency_offset, dependency_count, group_data_offset, group_data_size, device_data_offset, device_data_size}` | Known |
 | Post-build | Recompute offsets and pads (4 bytes before the default data, 16 bytes at the end); update the material's `shader_size` | Known |
 | Contexts | `{name, word2, count, count x {query_id, conditions_offset}}`, variable length, filling `[contexts_offset, conditions_offset)`; the queries are the groups. The ids are engine-side and copy from a template until a declaration-level pairing exists | Layout measured on seven sections; writable, ids copied |
-| Conditions | Copy from the same template. Records are `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes + a packed payload; they form a decision tree whose leaves select a group | Layout known, payload decoding still open |
+| Conditions | Copy from a template: records are `{u16 tag=1, u16 payload_words, u16 payload_offset, u16 count}` + `count` hashes + `payload_words` payload words, and the framing is self-delimiting (`filetype::condition_tree`). The payload is a bytecode whose opcodes are mapped but not decoded | Framing decoded and writable; payload semantics open |
 | Dependencies | Copy from the same template (8 bytes = one u64 id on the UI base) | Copyable only |
 | Group data | Generate per group. Each group needs a header (`{u32, query_id_of_the_group, descriptor words, …}`), the variable tables for that group's cbuffers, and the compact copy of those tables that follows. The variable records are `{type, flags, name_hash, cbuffer_offset, size}` runs with a count word; copies must all be consistent | Structure mapped (see `Shader RE TODO.md`): a 32-byte global header then 36 groups; the channel table, variable table and packed run are byte-identical across all 36 groups, only the descriptors' `Y` and the byte-packed group header vary. The tables are identified: 69 records = the `global_viewport` engine cbuffer's variables, 7 records = the group's `c_per_object` variables (incl. `texture_map`). Generation = emit the tables once, replicate them across the template's group count, keep the template's descriptors/headers |
 | Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the preset's preamble before the records | The preamble's 120-byte header is decoded: only `+0x04` (group count), `+0x08` (cbuffer count) and `+0x0C` (record count + 8) vary across seven shipped declarations, the rest is constant; the byte-packed `{index, value}` records after it are engine-variable binding entries shared across declarations (22-record common prefix). Generation = copy the template's block and rewrite the three header words |
@@ -482,13 +482,31 @@ which is why the model survived as long as it did.
 Every node on the six sections that have one *is* the same 28 bytes - five nodes
 across `004F18EA`, `2A04418E` and `3F08AC44`, and the three with no conditions have an
 empty blob. But the conditions section is a **real permutation tree** over the
-material's texture channels: records of `{u16 tag, u16 b, u16 c, u16 count}`
-followed by `count` condition hashes and a u16 payload, with named roots (`gui`,
-`red`, `green`, `blue`, `alpha`) and records that are subsets of their parent
-(7 -> 5 -> 4 -> 2). The UI declaration's conditions section is **1436 bytes and 35
-records**, where its payload is a list of u16s per node - `2000 2001 2002 1002
-700B 2003 . 9000` - whose fields look like a target and a condition bitmask and
-are still to be decoded.
+material's texture channels, and its framing is now decoded:
+
+```text
+u16 tag            // 1
+u16 payload_words  // the u16 words that follow the hashes
+u16 payload_offset // 8 + 4 x count, the payload's byte offset in the record
+u16 count          // the number of condition hashes
+u32 hashes[count]
+u16 payload[payload_words]
+```
+
+The UI base's conditions section is **1436 bytes and 35 records**, and its record
+starts are exactly the 29 + 6 conditions offsets of its two contexts. The
+dictionary names the roots: `gui` (`9FCFE126`), `red` (`9B8DE7E4`), `green`
+(`4BA4BD58`), `blue` (`0977913D`), `alpha` (`3F697354`); `BDF72706`, `B5F45768`,
+`8FB860CF`, `E2C8865F` and `BC4EE226` are unnamed. Records are subsets of their
+parent (7 -> 5 -> 4 -> 2). Because `payload_offset` is the formula above, the
+framing is self-delimiting, and `filetype::condition_tree` reads and writes the
+region byte for byte; `shader43 --conditions` dumps it.
+
+The payload is a bytecode over the hashes. `0x20xx` reads as a test of hash `xx`,
+`0x10xx` as a jump, `0x70xx` as a count, `0x50xx` and `0x90xx` as the record's
+end - a reading from 35 records, not a decode, and a writer that emits it has to
+know the semantics. So the tree is still carried, but the framing is no longer
+open work.
 
 The six sections measured here have condition sections of 0, 28 and 56 bytes
 **because they are small sections** - one to five groups, one to three contexts -
@@ -621,7 +639,7 @@ earlier note said did not exist; reading it is open work.
 | region | status |
 | --- | --- |
 | contexts table | **measured and writable** - variable length, `{name, word2, count, queries}`, filling the region exactly |
-| conditions blob | **measured as bytes, decoding open** - a query's offset addresses it; the UI base is a 1436-byte, 35-record tree, the small sections are pools of 28-byte nodes |
+| conditions blob | **framing decoded and writable** - self-delimiting records, `payload_offset = 8 + 4 x count`; a query's offset addresses one. The payload bytecode is mapped, not decoded; the UI base is 1436 bytes / 35 records |
 | dependencies entry | **measured and writable** - one little-endian u64: Murmur64 of the renderer path |
 | group data | **measured and writable for the material's table** - the count word before every table is the walk rule; the engine table is the one whose first record is `6BC91D73` |
 | channels | **measured for the six, open on the UI base** - a table is a count word, records and the next header; the UI base's stride lands on the engine table and is refused |

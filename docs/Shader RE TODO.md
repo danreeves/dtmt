@@ -398,13 +398,15 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    section and a single `default` context pair `{query_id, 0xFFFFFFFF}`, with
    the group header carrying that same query id. So this only has to be decoded
    to support several groups/permutations in one material. Measured on the UI
-   base: 35 records of `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes +
-   a payload, sizes 24/30/36/42/48/54/60 bytes for counts 2/3/4/4/5/6/7 (so the
-   payload length is not a function of the count alone - it is bit-packed and
-   depends on the condition kinds). The payload is a sequence of u16
-   `flag << 8 | operand` pairs with flags `0x10/0x20/0x50/0x70/0x90` seen and
-   small operands; the condition hashes are material-side names (`gui`, `red`,
-   `green`, `blue`, `alpha` resolve), so the tree is derivable from a
+   base: 35 records of `{u16 tag=1, u16 payload_words, u16 payload_offset, u16
+   count}` + `count` hashes + `payload_words` payload words. The framing is
+   self-delimiting (`payload_offset = 8 + 4 x count`), read and written byte for
+   byte by `filetype::condition_tree`, and the record starts are exactly the 29
+   + 6 conditions offsets of the two contexts. The payload is a u16 bytecode
+   (`0x20xx` test, `0x10xx` jump, `0x70xx` count, `0x90xx` end) that is mapped,
+   not decoded. The condition hashes are material-side names (`gui` = 9FCFE126,
+   `red` = 9B8DE7E4, `green` = 4BA4BD58, `blue` = 0977913D, `alpha` = 3F697354),
+   so the tree is derivable from a
    declaration that names them (see the Stingray format in
    `Shader Section Generation Notes.md`). The material side declares `channels`
    (its texture channels), `textures`, `variables` and `material_contexts` (a

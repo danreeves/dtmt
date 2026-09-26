@@ -22,6 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sdk::filetype::condition_tree::ConditionTree;
 use sdk::filetype::condition::Defines;
 use sdk::filetype::group_data::GroupData;
 use sdk::filetype::material::{self, ShaderOverrides};
@@ -49,6 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut section: Option<String> = None;
     let mut preamble_mode = false;
     let mut dependencies_mode = false;
+    let mut conditions_mode = false;
     let mut channels_mode = false;
     let mut layout_mode = false;
     let mut plan_declaration: Option<PathBuf> = None;
@@ -119,6 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--preamble" => preamble_mode = true,
             "--dependencies" => dependencies_mode = true,
+            "--conditions" => conditions_mode = true,
             "--channels" => channels_mode = true,
             "--layout" => layout_mode = true,
             "--plan" => {
@@ -294,6 +297,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         for path in &files {
             if let Err(err) = dependencies(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if conditions_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = conditions(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -1174,6 +1190,51 @@ fn channels(
             println!("  channel round trip: differs at +{at}");
         }
         Err(err) => println!("  channel round trip: {err}"),
+    }
+    Ok(())
+}
+
+/// Dumps the conditions region: its records and, whole, their payload words.
+fn conditions(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let section = Section::parse(bytes)?;
+    let tree = ConditionTree::parse(section.conditions())?;
+    let named = |hash: u32| match names.and_then(|names| names.get(&hash)) {
+        Some(name) => format!(" {name}"),
+        None => String::new(),
+    };
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} bytes of conditions, {} records",
+        section.conditions().len(),
+        tree.len()
+    );
+    let mut at = 0;
+    for (index, node) in tree.nodes().iter().enumerate() {
+        let hashes: Vec<String> = node
+            .hashes
+            .iter()
+            .map(|hash| format!("{hash:08X}{}", named(*hash)))
+            .collect();
+        let payload: Vec<String> = node
+            .payload
+            .iter()
+            .map(|word| format!("{word:04X}"))
+            .collect();
+        println!(
+            "    {index:2} @{at:4} {} bytes, {} hashes: {}",
+            node.len(),
+            node.hashes.len(),
+            hashes.join(" ")
+        );
+        println!("         payload: {}", payload.join(" "));
+        at += node.len();
     }
     Ok(())
 }
