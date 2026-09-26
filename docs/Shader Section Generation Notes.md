@@ -478,29 +478,33 @@ it sits between the contexts and the dependencies:
 and also the reason the link's key is not a node index - two different keys, the
 same node.
 
-## The conditions node is a constant, and that closes the section
+## The conditions node is **not** a constant (correction)
 
-The node is seven words, and the next measurement is the one that matters:
+> **This section previously said the opposite, and it was wrong.** It claimed every
+> node on every family was the same 28 bytes, that the grammar therefore never had
+> to be decoded, and that this "closed the section". The measurement was right and
+> the inference was not.
 
-> **Every node on every shipped family is these same 28 bytes.**
+Every node on the six families that have one *is* the same 28 bytes - five nodes
+across `004F18EA`, `2A04418E` and `3F08AC44`, and the three with no links have an
+empty blob. But the conditions section is a **real permutation tree** over the
+material's texture channels: records of `{u16 tag, u16 b, u16 c, u16 count}`
+followed by `count` condition hashes and a u16 payload, with named roots (`gui`,
+`red`, `green`, `blue`, `alpha`) and records that are subsets of their parent
+(7 -> 5 -> 4 -> 2). The UI family's conditions section is **1436 bytes and 35
+records**, where its payload is a list of u16s per node - `2000 2001 2002 1002
+700B 2003 . 9000` - whose fields look like a target and a condition bitmask and
+are still to be decoded.
 
-Five nodes across the three families that have any - `004F18EA` one, `2A04418E`
-two, `3F08AC44` two - and all five are
-`00080001 0001000C 7F9E89FD 70073001 10002000 50053004 90005007`. The other three
-have an empty blob because they have no links.
+The six families measured here have condition sections of 0, 28 and 56 bytes
+**because they are small families** - one to five groups, one to three contexts -
+not because the format is a constant. Reading their agreement as the format is the
+same error made four times this session: an observation from a small sample
+written down as a conclusion.
 
-So a node does not vary with the family, the group count, the context or the
-interface. **The grammar never has to be decoded**, because a generated section
-writes `count` copies of the constant - `NodePool::of(count)` - and the only
-per-family part of the region is *how many* links the contexts table has, which is
-a count rather than a grammar. `NodePool::is_known` is the check for a template
-whose nodes are something else, which would mean the constant is not constant.
-
-This is the same category as the `global_viewport` table and the dependency's
-path: engine-side constant data, carried. It is also the answer to the question
-the previous section left open, and it is a better one than "undecoded" - the
-earlier note that the payload was the last real gap was measuring the wrong thing,
-because the payload was never per-family to begin with.
+So: `CONDITIONS_NODE` is the node those small families carry, `NodePool::of` is
+what a rebuilder over one of them needs, and **the conditions tree is open work.**
+A new family has to build its own.
 
 A test pins the constant's length, its word count and both end words, and it
 earned its place immediately: the constant was first written with each word

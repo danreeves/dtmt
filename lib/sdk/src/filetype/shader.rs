@@ -553,21 +553,24 @@ pub fn rebuild(data: &[u8], replace: impl Fn(&Program) -> Option<Vec<u8>>) -> Re
 /// The record length of one conditions node.
 pub const NODE_LEN: usize = 28;
 
-/// The one conditions node every shipped family carries.
+/// The 28-byte node that the small shipped families carry in their conditions
+/// pool.
 ///
-/// This is measured, and it is the reason the node's grammar does not have to be
-/// decoded. A section's conditions blob is a pool of 28-byte nodes, one per
-/// *link* record in its contexts table, and **every node on every shipped family
-/// is these same 28 bytes**: five nodes across `004F18EA`, `2A04418E` and
-/// `3F08AC44`, and the three families with no links have an empty blob. A node
-/// does not vary with the family, the group count, the context or the interface,
-/// so it is engine-side constant data of the same kind as the `global_viewport`
-/// table and the dependency's path - carried, not derived.
+/// **This is not the conditions format.** The conditions section is a real
+/// permutation tree over a material's texture channels - records of `{u16 tag,
+/// u16 b, u16 c, u16 count}` followed by `count` condition hashes and a u16
+/// payload, with named roots and records that are subsets of their parent. The UI
+/// family's is 1436 bytes and 35 records. See `docs/File Type - Material.-.md`.
 ///
-/// So a generated section writes `count` copies of [`CONDITIONS_NODE`], and the
-/// only per-family part of the region is *how many* links the contexts table has.
-/// [`NodePool::is_known`] is the check for a template whose nodes are something
-/// else, which would mean the constant is not constant after all.
+/// What this constant is: the node that six *small* families happen to share.
+/// Their condition sections are 0, 28 and 56 bytes - one and two nodes - because
+/// they have one to five groups, not because the format is a constant. Reading
+/// their agreement as the format is a mistake this constant is named to prevent,
+/// and `NodePool::is_known` exists to catch a family that does not carry it.
+///
+/// [`NodePool::of`] writes it because those families' pools *are* runs of it, so a
+/// rebuilder over one of them round trips. A new family has to build its own
+/// tree; nothing here will generate it.
 pub const CONDITIONS_NODE: [u8; NODE_LEN] = [
     0x01, 0x00, 0x08, 0x00, 0x0C, 0x00, 0x01, 0x00, 0xFD, 0x89, 0x9E, 0x7F, 0x01, 0x30, 0x07, 0x70,
     0x00, 0x20, 0x00, 0x10, 0x04, 0x30, 0x05, 0x50, 0x07, 0x50, 0x00, 0x90,
