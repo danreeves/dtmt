@@ -99,11 +99,15 @@ shader43 --plan <declaration.shader_node> <section>
    length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
    have 1/2); then confirm in game with a crafted tree.
 2. **Implement the group data walk and the from-scratch constructor.** The
-   header is decoded and the descriptors now read correctly. The walk needs the
-   bytes between the descriptors (`+80`) and each group's first table header
-   (the resource list) so a group's tables can be found and the next group's
-   start computed; the UI base's group sizes are 1758 x 12 then 1741 x 24, and
-   the size difference is what that region and the tables add up to.
+   header and descriptors are decoded and the descriptors now read correctly.
+   The relative layout inside a group (from the query id) is known on the UI
+   base: descriptors at `+28..+76`, `{u32 2, u32 7}` at `+76..+84`, the
+   material records at `+84`, and the engine records at `+236` with the count
+   `69` at `+232` and a 12-byte header `{240, 64, 69}` at `+228`. The channels
+   candidate sits near `+1608` (`{1768, 4, 1776, 0, 3, ...}`), and the group
+   size difference (1758 vs 1741) comes from this tail region. Next: dump the
+   tail across all 36 groups and diff it; that is what yields the group end and
+   the table offsets.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.
