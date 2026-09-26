@@ -54,6 +54,13 @@ shader43 --plan <declaration.shader_node> <section>
 - **The queries are the groups**: `sum(count)` equals the group data's group
   count, and the first query of the first context is the group data's hash.
   [7/7] `Section::check` enforces it.
+- **Queries and groups are one to one**: every query id appears exactly once in
+  the group data, in its group's header. [7/7]
+- **Group data header**: a 4-byte global count, then back-to-back groups each
+  `{query_id, 0x130, 4, c_per_object, 0, 0, 0, descriptor[3] {name_hash, flags,
+  X, Y}, ...}`. UI base: `4 + 12 x 1758 + 24 x 1741 = 62884`, the whole region.
+  The descriptors are at `+32`, not `+8`; `Descriptors` in `group_data.rs` still
+  reads `+8` and is wrong.
 - **There is no link table and no node pool.** Those were 20-byte records read
   at the wrong length; `004F18EA`'s "link" is default's second query,
   `2A04418E`'s `0x1C` is a conditions byte offset. [7/7]
@@ -85,16 +92,20 @@ shader43 --plan <declaration.shader_node> <section>
 
 1. **Map the conditions payload's result indices.** The pattern is confirmed on
    all 35 UI-base records: every branch's result is `tests.len() - 1`, and
-   `5007` is the fallback where a record has one. What the index selects (group
-   or interface variant) is not established. Next experiment: for each record,
-   take its context query id and the group headers' query ids, and see whether
-   the result index maps to a group position or to a Y-field interface. The
-   confirming test is in-game: a generated family with a crafted tree, observe
-   which group the engine selects.
-2. **Decode the per-group header** (the 74/57/29-byte structures between the
-   descriptors and the first table, e.g. UI base groups 0-11 carry
-   `9FCFE126`). It names each table's offset and is what unblocks a from-scratch
-   group data constructor.
+   `5007` is the fallback where a record has one. It is **not a group
+   selector**: every query id appears exactly once in the group data, one group
+   per query, on all seven sections [7/7]. So the result refines the interface
+   within the group (the per-group variable table). Next experiment: compare
+   each record's result set with its group's descriptor `Y` fields and the
+   length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
+   have 1/2); then confirm in game with a crafted tree.
+2. **Implement the group data walk and correct `Descriptors`.** The header is
+   decoded: 4-byte global count, then groups `{query_id, 0x130, 4,
+   c_per_object, 0, 0, 0, descriptor[3] {name_hash, flags, X, Y}, ...}` with
+   sizes 1758 x 12 then 1741 x 24 on the UI base. `group_data.rs` still reads
+   descriptors at `+8` (`{offset, count, cbuffer, flags}`) and must read `+32`
+   as `{name_hash, flags, X, Y}`. With the group walk, a from-scratch group
+   data constructor can locate and generate each group's tables.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.

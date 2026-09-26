@@ -462,6 +462,34 @@ data header on all seven, and the first query of the first context is the group
 data's own hash. `Section::check` enforces both, together with a conditions
 offset that lands inside the blob.
 
+The queries and the groups are also **one to one**: every query id appears
+exactly once in the group data, in its group's header, on all seven sections.
+[7/7] The group data opens with a **4-byte global header** - the group count -
+and then the groups run back to back, each starting with its query id:
+
+```text
+u32 query_id
+u32 0x130            // 304, the same in every group
+u32 4                // a count, the same in every group
+u32 c_per_object     // B5639618
+u32 0, 0, 0
+descriptor[3]        // {name_hash, flags, X, Y}, the documented rule
+...                  // resources, then the group's tables
+```
+
+The UI base's 36 groups are `4 + 12 x 1758 + 24 x 1741 = 62884` bytes, which is
+the whole region: the first twelve groups are 1758 bytes and the rest 1741. The
+descriptors are the three at `+32`: `global_viewport` `{516D5CCD, 0x101, 24, 0}`,
+the section texture `{3AFC636C, 0x103, 48, 5}` and the UAV
+`{41B1CFF8, 0x105, 56, 10}`, with `X` the per-draw byte offset and `Y` the packed
+usage counts. The words at `+8` are **not** descriptors: the group data reader's
+`Descriptors` still reads `{offset, count, cbuffer, flags}` there, and that is a
+misreading to correct.
+
+So a query id selects a group, and the conditions tree does not: it refines the
+interface *within* the group, which is why the payload's result indices are
+small (0..7) and not group numbers.
+
 What the earlier reading called a **link table** was the tail of the last context
 record read through the wrong record length. `004F18EA`'s "link context"
 `{99C09062, FFFFFFFF, 5852A5B1, 0, 1}` is `default`'s second query
