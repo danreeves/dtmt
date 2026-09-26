@@ -353,6 +353,10 @@ pub struct Choice {
     pub macros: Vec<String>,
     /// The stages those macros apply to. Empty means every stage.
     pub stages: Vec<String>,
+    /// The permutation sets this choice delegates to, if it names any. The
+    /// enumeration expands them under this choice, which is how a set is built
+    /// out of other sets.
+    pub permute_with: Vec<String>,
     /// Whether this is the set's `default` choice, taken when no `if` holds.
     pub is_default: bool,
 }
@@ -410,58 +414,96 @@ impl Family {
         self.contexts.iter().find(|context| context.name == name)
     }
 
-    /// The compile permutations of one context: the product of the choices of
-    /// the sets its `compile_with` names, or of every set when it names none.
+    /// The compile permutations of one context: the recursive product of the
+    /// choices of the sets its `compile_with` names, or of the family's root sets
+    /// when it names none.
     ///
-    /// A context that names a set permutes over that one alone, which is how a
-    /// shadow pass compiles its own permutation without multiplying the family's
-    /// groups. Whether a context that names none really permutes over all of them
-    /// is not settled: the toolchain also drops the sets a context's code does
-    /// not use, and that is a dependency of the compiled code rather than of the
-    /// declaration. So the count this returns is an upper bound.
+    /// A choice may `permute_with` another set, and that set is expanded under
+    /// the choice. That is how `instanced_and_non_instanced` delegates to
+    /// `instanced_modifiers` and `non_instanced_modifiers`, and how the real
+    /// `default` set reaches both - a set is not a flat list of macros. A cycle
+    /// stops the expansion rather than looping, and the depth is bounded.
+    ///
+    /// Whether a context that names none really permutes over all of them is not
+    /// settled: the toolchain also drops the sets a context's code does not use,
+    /// and that is a dependency of the compiled code rather than of the
+    /// declaration, so the count this returns is an upper bound.
     pub fn permutations_for(&self, context: &ShaderContext) -> Vec<Permutation> {
-        let names: Vec<&String> = context
+        let names: Vec<String> = context
             .compile_with
             .iter()
-            .filter_map(|entry| entry.permute_with.first())
+            .flat_map(|entry| entry.permute_with.iter().cloned())
             .collect();
-        let sets: Vec<&PermutationSet> = if names.is_empty() {
-            self.permutation_sets.iter().collect()
+        let roots: Vec<&PermutationSet> = if names.is_empty() {
+            self.root_sets()
         } else {
             let named: Vec<&PermutationSet> = names
                 .iter()
-                .filter_map(|name| {
-                    self.permutation_sets
-                        .iter()
-                        .find(|set| set.name == name.as_str())
-                })
+                .filter_map(|name| self.permutation_sets.iter().find(|set| set.name == *name))
                 .collect();
             // A name that matches no set is a declaration this reader does not
-            // understand; falling back to every set keeps the count honest rather
-            // than dropping permutations.
+            // understand; falling back to every root set keeps the count honest
+            // rather than dropping permutations.
             if named.len() == names.len() {
                 named
             } else {
-                self.permutation_sets.iter().collect()
+                self.root_sets()
             }
         };
-        let mut permutations = vec![Permutation {
-            choices: Vec::new(),
-            macros: Vec::new(),
-        }];
-        for set in sets {
-            let mut next = Vec::with_capacity(permutations.len() * set.choices.len());
-            for permutation in permutations {
-                for (index, choice) in set.choices.iter().enumerate() {
-                    let mut permutation = permutation.clone();
-                    permutation.choices.push((set.name.clone(), index));
-                    permutation.macros.extend(choice.macros.iter().cloned());
-                    next.push(permutation);
-                }
-            }
-            permutations = next;
+        let mut permutations = vec![Permutation::default()];
+        for set in roots {
+            permutations = self.expand(permutations, set, &mut Vec::new());
         }
         permutations
+    }
+
+    /// The sets no choice delegates to: the roots of the permutation graph.
+    fn root_sets(&self) -> Vec<&PermutationSet> {
+        let referenced: std::collections::BTreeSet<&str> = self
+            .permutation_sets
+            .iter()
+            .flat_map(|set| set.choices.iter())
+            .flat_map(|choice| choice.permute_with.iter().map(String::as_str))
+            .collect();
+        self.permutation_sets
+            .iter()
+            .filter(|set| !referenced.contains(set.name.as_str()))
+            .collect()
+    }
+
+    /// The product of `base` with one set's choices, expanding each choice's own
+    /// `permute_with` recursively. `visiting` stops a cycle.
+    fn expand(
+        &self,
+        base: Vec<Permutation>,
+        set: &PermutationSet,
+        visiting: &mut Vec<String>,
+    ) -> Vec<Permutation> {
+        if visiting.iter().any(|name| name == &set.name) || visiting.len() >= 16 {
+            return base;
+        }
+        visiting.push(set.name.clone());
+        let mut next = Vec::new();
+        for permutation in base {
+            for (index, choice) in set.choices.iter().enumerate() {
+                let mut permutation = permutation.clone();
+                permutation.choices.push((set.name.clone(), index));
+                permutation.add_defines(&choice.macros, &choice.stages);
+                let mut expanded = vec![permutation];
+                for nested in &choice.permute_with {
+                    if let Some(nested_set) = self
+                        .permutation_sets
+                        .iter()
+                        .find(|candidate| candidate.name == *nested)
+                    {
+                        expanded = self.expand(expanded, nested_set, visiting);
+                    }
+                }
+                next.extend(expanded);
+            }
+        }
+        visiting.pop();
+        next
     }
 
     /// The number of groups a context compiles: how many permutations of it there
@@ -584,26 +626,13 @@ impl Family {
         self.interface(&inputs)
     }
 
-    /// Enumerates the compile permutations: one per combination of a choice from
-    /// each permutation set, the first set varying slowest. Each carries the
-    /// choices that make it up and the macros the programs compile with. A
-    /// family with no sets has the one empty permutation.
+    /// Enumerates the compile permutations over the family's root sets: one per
+    /// combination of their choices, expanding every choice's `permute_with`
+    /// recursively. A family with no sets has the one empty permutation.
     pub fn permutations(&self) -> Vec<Permutation> {
-        let mut permutations = vec![Permutation {
-            choices: Vec::new(),
-            macros: Vec::new(),
-        }];
-        for set in &self.permutation_sets {
-            let mut next = Vec::with_capacity(permutations.len() * set.choices.len());
-            for permutation in permutations {
-                for (index, choice) in set.choices.iter().enumerate() {
-                    let mut permutation = permutation.clone();
-                    permutation.choices.push((set.name.clone(), index));
-                    permutation.macros.extend(choice.macros.iter().cloned());
-                    next.push(permutation);
-                }
-            }
-            permutations = next;
+        let mut permutations = vec![Permutation::default()];
+        for set in self.root_sets() {
+            permutations = self.expand(permutations, set, &mut Vec::new());
         }
         permutations
     }
@@ -622,9 +651,23 @@ impl Family {
     /// family cannot answer it. That is the one thing to remember about this
     /// list: it is what the *defines* say, not what a mesh would produce.
     pub fn channels_of(&self, permutation: &Permutation) -> Result<Vec<&ChannelDef>> {
-        let defines = Defines::new(permutation.macros.iter().cloned());
         let mut channels = Vec::new();
         for channel in &self.channels {
+            // A macro a choice limited to one stage is not defined for a channel
+            // of another stage: `SKINNED_4WEIGHTS` is a vertex macro and must not
+            // decide whether a pixel channel exists.
+            let defines = Defines::new(
+                permutation
+                    .macros
+                    .iter()
+                    .filter(|name| {
+                        permutation
+                            .macro_stages
+                            .get(*name)
+                            .is_none_or(|stages| stage_applies(stages, channel.domain))
+                    })
+                    .cloned(),
+            );
             let mut holds = true;
             for text in &channel.conditions {
                 let condition = Condition::parse(text).wrap_err_with(|| {
@@ -665,6 +708,18 @@ impl Family {
     }
 }
 
+/// Whether a stage-limited macro applies to a channel of `domain`. An empty
+/// stage list applies everywhere; a named stage that is not the channel's does
+/// not apply.
+fn stage_applies(stages: &[String], domain: Domain) -> bool {
+    stages.is_empty()
+        || stages.iter().any(|stage| match (stage.as_str(), domain) {
+            ("vertex", Domain::Vertex) => true,
+            ("pixel", Domain::Pixel) => true,
+            _ => false,
+        })
+}
+
 /// One runtime interface: the flags a material's inputs enable and the variables
 /// and channels they expose. `mask` is the bit set over [`Family::flags`] and is
 /// what the conditions tree indexes on.
@@ -689,18 +744,35 @@ impl Interface {
 
 /// One compile permutation: the choice it takes from each permutation set and
 /// the macros those choices define.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Permutation {
     /// The choice taken from each set, as `(set name, choice index)`.
     pub choices: Vec<(String, usize)>,
     /// The macros the permutation defines.
     pub macros: Vec<String>,
+    /// The stages each macro applies to, for the macros a choice limited to some
+    /// stages. A macro absent here applies to every stage.
+    pub macro_stages: BTreeMap<String, Vec<String>>,
 }
 
 impl Permutation {
     /// Whether the permutation defines `macro`.
     pub fn defines(&self, macro_name: &str) -> bool {
         self.macros.iter().any(|m| m == macro_name)
+    }
+
+    /// Adds one choice's macros, remembering the stages each applies to.
+    pub fn add_defines(&mut self, macros: &[String], stages: &[String]) {
+        for name in macros {
+            if !self.macros.contains(name) {
+                self.macros.push(name.clone());
+            }
+            if !stages.is_empty() {
+                self.macro_stages
+                    .entry(name.clone())
+                    .or_insert_with(|| stages.to_vec());
+            }
+        }
     }
 }
 
@@ -1039,12 +1111,14 @@ mod tests {
                         condition: Some("num_skin_weights() == 4".to_string()),
                         macros: vec!["SKINNED_4WEIGHTS".to_string()],
                         stages: vec!["vertex".to_string()],
+                        permute_with: Vec::new(),
                         is_default: false,
                     },
                     Choice {
                         condition: None,
                         macros: vec![],
                         stages: vec![],
+                        permute_with: Vec::new(),
                         is_default: true,
                     },
                 ],
@@ -1056,12 +1130,14 @@ mod tests {
                         condition: Some("instanced()".to_string()),
                         macros: vec!["INSTANCED".to_string()],
                         stages: vec![],
+                        permute_with: Vec::new(),
                         is_default: false,
                     },
                     Choice {
                         condition: None,
                         macros: vec![],
                         stages: vec![],
+                        permute_with: Vec::new(),
                         is_default: true,
                     },
                 ],
@@ -1084,6 +1160,92 @@ mod tests {
         assert_eq!(permutations[1].macros, vec!["SKINNED_4WEIGHTS".to_string()]);
         assert_eq!(permutations[2].macros, vec!["INSTANCED".to_string()]);
         assert!(permutations[3].macros.is_empty());
+    }
+
+    #[test]
+    fn a_choice_permutes_over_another_set() {
+        // The real files build sets out of sets: a choice names another set and
+        // the enumeration expands it under the choice, so the referenced set is
+        // not a second root and the product is not squared.
+        let mut family = sample();
+        family.permutation_sets = vec![
+            PermutationSet {
+                name: "inner".to_string(),
+                choices: vec![
+                    Choice {
+                        condition: Some("defined(A)".to_string()),
+                        macros: vec!["A".to_string()],
+                        stages: vec![],
+                        permute_with: Vec::new(),
+                        is_default: false,
+                    },
+                    Choice {
+                        condition: None,
+                        macros: vec![],
+                        stages: vec![],
+                        permute_with: Vec::new(),
+                        is_default: true,
+                    },
+                ],
+            },
+            PermutationSet {
+                name: "outer".to_string(),
+                choices: vec![Choice {
+                    condition: None,
+                    macros: vec![],
+                    stages: vec![],
+                    permute_with: vec!["inner".to_string()],
+                    is_default: true,
+                }],
+            },
+        ];
+        let permutations = family.permutations();
+        assert_eq!(
+            permutations.len(),
+            2,
+            "outer expands inner once instead of being a second root"
+        );
+        assert_eq!(
+            permutations[0].choices,
+            vec![
+                ("outer".to_string(), 0),
+                ("inner".to_string(), 0),
+            ]
+        );
+        assert!(permutations[0].defines("A"));
+        assert!(permutations[1].macros.is_empty());
+    }
+
+    #[test]
+    fn a_stage_limited_macro_does_not_decide_another_stage() {
+        // SKINNED_4WEIGHTS is a vertex macro: a pixel channel gated on it must
+        // not be included by a permutation that defines it for the vertex stage
+        // only.
+        let mut family = sample();
+        family.permutation_sets = vec![PermutationSet {
+            name: "vertex_modifiers".to_string(),
+            choices: vec![Choice {
+                condition: None,
+                macros: vec!["SKINNED_4WEIGHTS".to_string()],
+                stages: vec!["vertex".to_string()],
+                permute_with: Vec::new(),
+                is_default: true,
+            }],
+        }];
+        family.channels.push(ChannelDef {
+            name: "skinned".to_string(),
+            kind: ValueType::Float,
+            domain: Domain::Pixel,
+            required: false,
+            conditions: vec!["defined(SKINNED_4WEIGHTS)".to_string()],
+            ..ChannelDef::default()
+        });
+        let permutation = family.permutations().remove(0);
+        let names: Vec<String> = family.channel_names_of(&permutation).expect("names");
+        assert!(
+            !names.iter().any(|name| name == "skinned"),
+            "a vertex-only macro does not apply to a pixel channel"
+        );
     }
 
     /// The murmur32 the engine hashes channel names with, pinned against a name
@@ -1214,12 +1376,14 @@ mod tests {
                         "NEEDS_UV_SCALE".to_string(),
                     ],
                     stages: vec![],
+                    permute_with: Vec::new(),
                     is_default: false,
                 },
                 Choice {
                     condition: None,
                     macros: vec![],
                     stages: vec![],
+                    permute_with: Vec::new(),
                     is_default: true,
                 },
             ],

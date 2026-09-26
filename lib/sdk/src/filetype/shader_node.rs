@@ -1,10 +1,11 @@
 //! A reader for the Stingray `.shader_node` declaration: the source-side
 //! description of a shader family that mods already ship.
 //!
-//! The reader is deliberately partial. It takes `inputs`, `channels` and
-//! `permutation_sets` and ignores the rest (`shader_contexts`, `render_state`,
-//! `sampler_state`, `options`, ...), producing the [`Family`] the emitters
-//! consume. What each key means here:
+//! The reader takes `inputs`, `channels`, `permutation_sets` and
+//! `shader_contexts`, and ignores the rest (`render_state`, `sampler_state`,
+//! `options`, `code_blocks`, ...), producing the normalized view the emitters
+//! consume (`variables`, `channels`, `permutation_sets`, `contexts`, `programs`
+//! on the node itself). What each key means here:
 //!
 //! - `inputs` are the material variables, keyed by a uuid and named by `name`.
 //!   `is_required` says whether the material must always supply one; an optional
@@ -40,17 +41,53 @@ pub struct ShaderNode {
     /// The material variables, keyed by their uuid.
     #[serde(default)]
     pub inputs: BTreeMap<String, Input>,
-    /// The channels the stages exchange, keyed by the expression over
-    /// permutation macros that has to hold for them to exist. A key of
-    /// `Channels::One` names a channel that always exists.
+    /// The channels the stages exchange, in declaration order. The table nests,
+    /// and its order is the order the block's channel records are written in, so
+    /// it is kept as written rather than key-sorted.
     #[serde(default)]
-    pub channels: BTreeMap<String, Channels>,
+    pub channels: ChannelTable,
     /// The compile-time permutation sets, keyed by name.
     #[serde(default)]
     pub permutation_sets: BTreeMap<String, Vec<ChoiceEntry>>,
     /// The shader contexts, keyed by name: what the family compiles and draws.
     #[serde(default)]
     pub shader_contexts: BTreeMap<String, NodeContext>,
+}
+
+/// The `channels` table, kept in declaration order. A serde map would be a
+/// `BTreeMap` and lose it, and the order is what the block's channel stream is
+/// written in, so it is read as a sequence of entries instead.
+#[derive(Clone, Debug, Default)]
+pub struct ChannelTable(pub Vec<(String, Channels)>);
+
+impl<'de> Deserialize<'de> for ChannelTable {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TableVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for TableVisitor {
+            type Value = ChannelTable;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a channels table")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut entries = Vec::new();
+                while let Some((key, value)) = map.next_entry()? {
+                    entries.push((key, value));
+                }
+                Ok(ChannelTable(entries))
+            }
+        }
+
+        deserializer.deserialize_map(TableVisitor)
+    }
 }
 
 /// The value of one entry of the `channels` table. The table nests: a condition
@@ -113,6 +150,12 @@ pub struct ChoiceEntry {
     /// The macros the choice defines.
     #[serde(default, alias = "defines")]
     pub define: Option<DefinesValue>,
+    /// The permutation sets this choice delegates to. A set's choice can name
+    /// another set, and the enumeration expands it recursively, so a set can be
+    /// built out of others - `non_instanced_modifiers` is one
+    /// `permute_with: "vertex_modifiers"` entry.
+    #[serde(default)]
+    pub permute_with: Option<PermuteWith>,
     /// Whether this is the set's default choice, written default = true.
     #[serde(rename = "default", default)]
     pub is_default: Option<bool>,
@@ -273,8 +316,9 @@ pub struct PassValue {
     /// The code block the pass compiles.
     #[serde(default)]
     pub code_block: String,
-    /// The macros the pass defines.
-    #[serde(default)]
+    /// The macros the pass defines. Written `defines` or, in the passes the real
+    /// files carry at the top level, `define` - the two spellings mean the same.
+    #[serde(default, alias = "define")]
     pub defines: Option<DefinesValue>,
     /// The render state the pass draws with.
     #[serde(default)]
@@ -315,7 +359,7 @@ impl ShaderNode {
         // The channels table nests conditions, so it is walked rather than read:
         // a channel collects the conditions it sits under.
         let mut channels = Vec::new();
-        for (key, entry) in &self.channels {
+        for (key, entry) in &self.channels.0 {
             walk_channels(key, entry, &[], &family, &mut channels)?;
         }
         family.channels = channels;
@@ -328,6 +372,11 @@ impl ShaderNode {
                     condition: condition.clone(),
                     macros: define.macros().to_vec(),
                     stages: define.stages().to_vec(),
+                    permute_with: entry
+                        .permute_with
+                        .as_ref()
+                        .map(PermuteWith::names)
+                        .unwrap_or_default(),
                     // A choice with no `if` is the set's default.
                     is_default: entry.is_default.unwrap_or(entry.condition.is_none()),
                 });
@@ -952,6 +1001,30 @@ mod tests {
     }
 
     #[test]
+    fn a_pass_reads_define_as_well_as_defines() {
+        // The real files write the singular spelling on top-level passes:
+        // `{ code_block="depth_only" define="DRAW_OUTLINE" ... }`. Both mean the
+        // same, and dropping one silently loses the macro the pass draws with.
+        let text = r#"
+            shader_contexts = {
+                default = {
+                    passes = [
+                        { layer="outline" code_block="depth_only" define="DRAW_OUTLINE" }
+                    ]
+                }
+            }
+        "#;
+        let family = ShaderNode::from_sjson(text)
+            .expect("parse")
+            .family()
+            .expect("family");
+        let default = family.context("default").expect("the default context");
+        let passes = default.passes_of(&Defines::default()).expect("passes");
+        assert_eq!(passes.len(), 1);
+        assert_eq!(passes[0].macros(), ["DRAW_OUTLINE".to_string()]);
+    }
+
+    #[test]
     fn a_context_permutes_over_the_sets_it_names() {
         let mut family = ShaderNode::from_sjson(CONTEXTS)
             .expect("parse")
@@ -966,13 +1039,13 @@ mod tests {
                         condition: Some("defined(A)".to_string()),
                         macros: vec!["A".to_string()],
                         stages: vec![],
-                        is_default: false,
+                        permute_with: Vec::new(), is_default: false,
                     },
                     Choice {
                         condition: None,
                         macros: vec![],
                         stages: vec![],
-                        is_default: true,
+                        permute_with: Vec::new(), is_default: true,
                     },
                 ],
             },
@@ -983,13 +1056,13 @@ mod tests {
                         condition: Some("defined(B)".to_string()),
                         macros: vec!["B".to_string()],
                         stages: vec![],
-                        is_default: false,
+                        permute_with: Vec::new(), is_default: false,
                     },
                     Choice {
                         condition: None,
                         macros: vec![],
                         stages: vec![],
-                        is_default: true,
+                        permute_with: Vec::new(), is_default: true,
                     },
                 ],
             },
