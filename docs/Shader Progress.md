@@ -24,15 +24,15 @@ reference; this file is the pick-up point.
 
 - `cargo test -p sdk` needs `E:\SteamLibrary\steamapps\common\Warhammer 40,000
   DARKTIDE\binaries` on `PATH` (links `oo2core_9_win64.dll`).
-- Expected: 117 pass, 3 pre-existing `filetype::package` failures.
-- The six extracted sections are in
-  `C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\ui-mat\*.raw` (each is a
-  20-byte wrapper then the section; the example handles the wrapper). The UI
-  base is reconstructed from `uib.*.bin` parts or from `uib.material`, which the
-  tooling can also read. These live in the temp directory: if they are gone,
-  re-extract from the game or ask; the round-trip checks depend on them.
-- Dictionary: `C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\dt-dictionary.csv`
-  (or `C:\dev\dtmt\dictionary.csv`).
+- Expected: 118 pass, 3 pre-existing `filetype::package` failures.
+- Fixtures: the six extracted sections and the UI base's parts live in a scratch
+  directory outside the repository (each `.raw` is a 20-byte wrapper then the
+  section, which the example handles). `docs/scripts/slice-sections.ps1`
+  extracts them from a material data file, and the UI base can also be fed to
+  the tooling as `uib.material`. The round-trip checks depend on them, so keep a
+  copy.
+- Dictionary: `dictionary.csv` in this repository; an enriched dictionary is
+  available locally for the variable-name substitutions.
 
 Useful commands:
 
@@ -123,16 +123,17 @@ shader43 --plan <declaration.shader_node> <section>
 
 ## In-game harness
 
-`C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\*.ps1` holds the scripts the
-previous session used to test in game. `title-tint-demo.ps1` is the shape to
-copy: kill Darktide, launch `launch.bat`, poll the newest console log for the
-title material line (`material set: background_image`), screenshot and average a
-region's colour a few times, and grep the log for the mod. Others:
-`shot-window.ps1`, `set-shader.ps1`, `sweep-defaults.ps1`, `title_material.ps1`.
-The deployable test mod is `C:\dev\snoopy-mod`. The payload experiment that
-needs this: a generated family whose groups render distinguishable colours and
-whose crafted conditions tree maps channel sets to them, then drive the material
-from Lua and read which colour appears.
+`docs/scripts/` holds the scripts used to test in game. `title-tint-demo.ps1`
+is the shape to copy: kill Darktide, launch `launch.bat`, poll the newest
+console log for the title material line (`material set: background_image`),
+screenshot and average a region's colour a few times, and grep the log for the
+mod. `shot-window.ps1` uses `PrintWindow` so a borderless-fullscreen window is
+captured rather than the desktop; `set-shader.ps1` and `slice-sections.ps1` move
+a section in and out of a material. The deployable test mod is the snoopy-mod
+checkout. The payload experiment that needs this: a generated family whose
+groups render distinguishable colours and whose crafted conditions tree maps
+channel sets to them, then drive the material from Lua and read which colour
+appears.
 
 ## Open decode details worth keeping
 

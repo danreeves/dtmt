@@ -39,3 +39,24 @@ For the time being, here is a dump of a conversation in the Modders Discord:
 - XeNTaX Wiki kept alive at https://forum.xen-tax.com
 - UnknownCheats: https://www.unknowncheats.me
 - https://github.com/tylerha97/awesome-reversing
+
+## Shader in-game test scripts
+
+`scripts/` next to this page holds the PowerShell used to deploy a built
+material and read the result on screen. The game path comes from the Steam
+install (`launch.bat` under `Warhammer 40,000 DARKTIDE`); everything else is a
+parameter or an environment default, so no machine-specific path is baked in.
+
+- `slice-sections.ps1` - slices a material data file's `shader43` section into
+  `header/contexts/conditions/dependencies/group/device/default` `.bin` files,
+  which is how the test fixtures are extracted.
+- `set-shader.ps1` - writes a compiled section's `shader_size` and `shader_data`
+  back into a material SJSON.
+- `title-tint-demo.ps1` - the end-to-end harness: launch the game, wait for the
+  title material line in the newest console log, screenshot and average a screen
+  region a few times, then grep the log for the mod.
+- `capture-title.ps1`, `shot-window.ps1` - title-screen captures;
+  `shot-window.ps1` uses `PrintWindow`, so a borderless-fullscreen window is
+  captured rather than the desktop.
+- `lua-tint-demo.ps1`, `restore_title_material.ps1` - drive a material from Lua
+  and restore the original title material afterwards.
