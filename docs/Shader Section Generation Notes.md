@@ -502,11 +502,20 @@ parent (7 -> 5 -> 4 -> 2). Because `payload_offset` is the formula above, the
 framing is self-delimiting, and `filetype::condition_tree` reads and writes the
 region byte for byte; `shader43 --conditions` dumps it.
 
-The payload is a bytecode over the hashes. `0x20xx` reads as a test of hash `xx`,
-`0x10xx` as a jump, `0x70xx` as a count, `0x50xx` and `0x90xx` as the record's
-end - a reading from 35 records, not a decode, and a writer that emits it has to
-know the semantics. So the tree is still carried, but the framing is no longer
-open work.
+The payload reads as a list of **guarded results**: a run of `0x20xx` words is a
+conjunction of tests over the hashes (the operand indexes the record's hash
+list), `0x10xx` is the result when the conjunction holds, `0x70xx` jumps to the
+record's end when that result was taken, `0x50xx` is the fallback result, and
+`0x90xx` ends the record. Every `0x70xx` target is the record's own `0x9000`
+word (`700B` in a twelve-word payload, `7009` in ten, `7008` in nine); a
+one-result record is `2000 .. 200(N-1) 10(N-1) 9000` (rec17, rec24); a two-result
+record is `tests A, 10a, 70end, tests B, 10b, 5007, 9000` (rec0, rec1, rec12,
+rec13), and the branches' tests are subsets of the record's hashes.
+
+That is a reading from 35 records, not a decode: the result values are small
+indices (0..7) whose mapping to groups or interfaces is not established. So the
+tree is still carried, but the framing is no longer open work, and the payload's
+shape is.
 
 The six sections measured here have condition sections of 0, 28 and 56 bytes
 **because they are small sections** - one to five groups, one to three contexts -

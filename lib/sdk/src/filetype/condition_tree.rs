@@ -1,8 +1,8 @@
 //! The conditions region of a `shader43` section: a decision tree over a
 //! material's channels.
 //!
-//! The framing is decoded and self-delimiting; the payload's opcodes are only
-//! partly mapped, so the reader keeps each payload whole:
+//! The framing is decoded and self-delimiting; the payload reads as guarded
+//! results but is not decoded, so the reader keeps each payload whole:
 //!
 //! ```text
 //! u16 tag            // 1
@@ -16,10 +16,25 @@
 //! Measured on the UI base's 1436 bytes, 35 records, whose starts are exactly
 //! the 29 + 6 conditions offsets of its two contexts: sizes 24, 30, 36, 42, 48,
 //! 54 and 60 bytes, and `payload_offset == 8 + 4 x count` on every one. The
-//! payload is a bytecode over the hashes: `0x20xx` reads as a test of hash `xx`,
-//! `0x10xx` as a jump, `0x70xx` as a count and `0x90xx` as the end, but that is
-//! a reading, not a decode, and a writer that emits it must know the semantics.
-//! The tree is carried until then.
+//! payload reads as a list of **guarded results**. A run of `0x20xx` words is a
+//! conjunction of tests over the hashes (the operand indexes the record's hash
+//! list), a `0x10xx` word is the result when the conjunction holds, a `0x70xx`
+//! word jumps to the record's end when that result was taken (so a record can
+//! hold several guarded results), `0x50xx` is the fallback result, and `0x90xx`
+//! ends the record. The evidence from the 35 UI-base records:
+//!
+//! - every `0x70xx` target is the record's `0x9000` word: `700B` in a
+//!   twelve-word payload, `7009` in ten, `7008` in nine;
+//! - a record with one result is `2000 .. 200(N-1) 10(N-1) 9000`, e.g. rec17
+//!   `2000 2001 1001 9000` and rec24 `2000 2001 2002 2003 1003 9000`;
+//! - a record with two results is `tests A, 10a, 70end, tests B, 10b, 5007,
+//!   9000`, e.g. rec0 `2000 2001 2002 1002 700B 2003 2004 2005 2006 1003 5007
+//!   9000`, and the branches' tests are subsets of the record's hashes.
+//!
+//! That is a reading, not a decode: the result values are small indices (0..7)
+//! whose mapping to groups or interfaces is not established, so the tree is
+//! still carried. The experiment that would settle it is a generated family
+//! with a crafted tree and an in-game observation of which group it selects.
 //!
 //! The UI base's roots resolve through the dictionary: `gui` (`9FCFE126`),
 //! `red` (`9B8DE7E4`), `green` (`4BA4BD58`), `blue` (`0977913D`) and `alpha`
