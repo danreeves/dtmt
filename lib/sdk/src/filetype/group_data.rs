@@ -1,4 +1,4 @@
-//! Reading and writing a family's group data.
+//! Reading and writing a declaration's group data.
 //!
 //! The group data is what tells the engine, per group, which material variables
 //! live where. It is a 32-byte global header, then per group three 16-byte
@@ -155,7 +155,7 @@ impl Record {
 /// The record length of a dependencies entry.
 pub const DEPENDENCY_LEN: usize = 8;
 
-/// One entry of a section's dependencies table: the library a family was built
+/// One entry of a section's dependencies table: the library a declaration was built
 /// against.
 ///
 /// The entry is **8 bytes**, and it is one 64-bit MurmurHash of the dependency's
@@ -173,12 +173,12 @@ pub const DEPENDENCY_LEN: usize = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dependency {
     /// Murmur64 of the dependency's path, [`Dependency::RENDERER`] on every
-    /// shipped family.
+    /// shipped section.
     pub id: u64,
 }
 
 impl Dependency {
-    /// `core/stingray_renderer/renderer`, the library every shipped family names
+    /// `core/stingray_renderer/renderer`, the library every shipped section names
     /// as its one dependency.
     pub const RENDERER: u64 = 0x209F_B8C3_C0A8_C3A4;
 
@@ -197,7 +197,7 @@ impl Dependency {
             .collect()
     }
 
-    /// The entry a generated section writes: the one every shipped family has.
+    /// The entry a generated section writes: the one every shipped section has.
     pub fn of() -> Self {
         Self {
             id: Self::RENDERER,
@@ -289,7 +289,7 @@ impl Variable {
     }
 }
 
-/// A family's group data, kept as the bytes it is.
+/// A declaration's group data, kept as the bytes it is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroupData {
     data: Vec<u8>,
@@ -371,7 +371,7 @@ impl GroupData {
     /// set of three 16-byte descriptors.
     ///
     /// There is one set, not one per group, even when the header's group count is
-    /// higher: a shipped three-group family has its three descriptors at +8, +24
+    /// higher: a shipped three-group section has its three descriptors at +8, +24
     /// and +40 and its first table at +136.
     pub fn descriptor_bytes(&self) -> usize {
         8 + 48
@@ -424,7 +424,7 @@ impl GroupData {
     }
 
     /// Every run of packed copies, keyed by the run's cbuffer hash. A run of one
-    /// is real: a family may have a single material variable.
+    /// is real: a declaration may have a single material variable.
     pub fn packed_runs(&self) -> Vec<(u32, Vec<u32>)> {
         let mut runs: Vec<(u32, Vec<u32>)> = Vec::new();
         let mut at = 0;
@@ -602,7 +602,7 @@ impl GroupData {
     /// The engine's `global_viewport` records: the run that is the same in every
     /// group, because the engine fills it whatever the material declares.
     ///
-    /// A shipped family has three tables per group - the engine's, the material's
+    /// A shipped section has three tables per group - the engine's, the material's
     /// variables, and its channels - and the engine's is the one whose length and
     /// bytes do not change from group to group. They are engine-side, so a
     /// generated section does not get to rewrite them.
@@ -1198,7 +1198,7 @@ mod tests {
     #[test]
     fn a_dependency_entry_is_the_library_hash_and_nothing_else() {
         // Eight bytes: one 64-bit hash of `core/stingray_renderer/renderer`, the
-        // library every shipped family names. The `{tag, name}` pair an earlier
+        // library every shipped section names. The `{tag, name}` pair an earlier
         // reading saw in these bytes is the hash's low and high words, and the
         // group count and hash an even earlier one found past them are the group
         // data's own first two words, read through a sixteen byte window.

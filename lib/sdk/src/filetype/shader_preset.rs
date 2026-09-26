@@ -1,6 +1,6 @@
-//! Family presets: generating a `shader43` section from our own programs.
+//! Presets: generating a `shader43` section from our own programs.
 //!
-//! A shader *family* (the `gui` UI shader, the entity shader, ...) shares an
+//! A shader (the `gui` UI shader, the entity shader, ...) shares an
 //! engine-side wrapper: the contexts the engine queries, the conditions tree
 //! that selects a group, the group data with its variable tables, the packed
 //! device preamble and one metadata tail per program. A [`Preset`] captures
@@ -9,7 +9,7 @@
 //! shipped shader blob.
 //!
 //! ```text
-//! let preset = Preset::from_material(&data)?;          // extract once per family
+//! let preset = Preset::from_material(&data)?;          // extract once per shader
 //! std::fs::write("ui.preset", preset.to_text())?;
 //!
 //! let preset = Preset::from_text(&text)?;              // generate from it
@@ -477,7 +477,7 @@ pub struct ChannelClone {
     pub name: String,
 }
 
-/// The wrapper of one shader family.
+/// The wrapper of one shader declaration.
 pub struct Preset {
     pub version: u32,
     pub opaque: u32,
@@ -739,7 +739,7 @@ impl Preset {
         ));
 
         // Deduplicate the tails: programs that share one reference the same
-        // `tail` line, which shrinks family presets a lot (the UI family has 96
+        // `tail` line, which shrinks presets a lot (the UI shader has 96
         // programs but only about 20 distinct tails).
         let mut distinct: Vec<&Vec<u8>> = Vec::new();
         let mut indexes = Vec::with_capacity(self.programs.len());

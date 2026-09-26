@@ -1,5 +1,5 @@
 //! A reader for the Stingray `.shader_node` declaration: the source-side
-//! description of a shader family that mods already ship.
+//! description of a shader declaration that mods already ship.
 //!
 //! The reader takes `inputs`, `channels`, `permutation_sets` and
 //! `shader_contexts`, and ignores the rest (`render_state`, `sampler_state`,
@@ -24,34 +24,52 @@
 use std::collections::BTreeMap;
 
 use color_eyre::eyre;
-use color_eyre::eyre::{Result, bail};
+use color_eyre::eyre::{Context as _, Result, bail};
 use serde::Deserialize;
 
-use super::condition::Defines;
-use super::shader_family::{
-    ChannelDef, Choice, CompileWith, Define, DefineTable, Domain, Family, Pass, PassEntry,
-    PermutationSet, ShaderContext, ValueType, VariableDef,
+use super::condition::{Condition, Defines};
+use super::shader_decl::{
+    ChannelDef, Choice, CompileWith, Define, DefineTable, Domain, Interface, Pass, PassEntry,
+    Permutation, PermutationSet, ProgramDef, ShaderContext, ValueType, VariableDef,
 };
 
-/// A parsed `.shader_node` file, as far as this reader cares: the three sections
-/// it takes, keyed by the names the file uses. Every other key is ignored, so a
-/// file this reader has not caught up with still parses.
+/// A parsed `.shader_node` file: the declaration the emitters consume.
+///
+/// The fields the file names are deserialized as written, named `raw_*` where
+/// the normalized view has the same name. [`ShaderNode::from_sjson`] fills the
+/// normalized fields. Keys this reader does not model are ignored, so a
+/// declaration out ahead of the reader still parses.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ShaderNode {
-    /// The material variables, keyed by their uuid.
+    /// The material variables, keyed by their uuid, as the file writes them.
     #[serde(default)]
     pub inputs: BTreeMap<String, Input>,
-    /// The channels the stages exchange, in declaration order. The table nests,
-    /// and its order is the order the block's channel records are written in, so
-    /// it is kept as written rather than key-sorted.
-    #[serde(default)]
-    pub channels: ChannelTable,
-    /// The compile-time permutation sets, keyed by name.
-    #[serde(default)]
-    pub permutation_sets: BTreeMap<String, Vec<ChoiceEntry>>,
-    /// The shader contexts, keyed by name: what the family compiles and draws.
-    #[serde(default)]
-    pub shader_contexts: BTreeMap<String, NodeContext>,
+    /// The channels table, in declaration order, as the file writes it.
+    #[serde(rename = "channels", default)]
+    pub raw_channels: ChannelTable,
+    /// The compile-time permutation sets, keyed by name, as the file writes them.
+    #[serde(rename = "permutation_sets", default)]
+    pub raw_permutation_sets: BTreeMap<String, Vec<ChoiceEntry>>,
+    /// The shader contexts, keyed by name, as the file writes them.
+    #[serde(rename = "shader_contexts", default)]
+    pub raw_contexts: BTreeMap<String, NodeContext>,
+
+    /// The normalized material variables, keyed by name.
+    #[serde(skip)]
+    pub variables: BTreeMap<String, VariableDef>,
+    /// The normalized channels, in declaration order.
+    #[serde(skip)]
+    pub channels: Vec<ChannelDef>,
+    /// The normalized permutation sets, in name order.
+    #[serde(skip)]
+    pub permutation_sets: Vec<PermutationSet>,
+    /// The normalized shader contexts, in name order.
+    #[serde(skip)]
+    pub contexts: Vec<ShaderContext>,
+    /// The programs to compile, from the code blocks. Empty until the code
+    /// blocks are read; the emitters need the compiled program list eventually.
+    #[serde(skip)]
+    pub programs: BTreeMap<String, ProgramDef>,
 }
 
 /// The `channels` table, kept in declaration order. A serde map would be a
@@ -329,24 +347,26 @@ pub struct PassValue {
 }
 
 impl ShaderNode {
-    /// Parses a `.shader_node` file.
+    /// Parses a `.shader_node` file and fills the normalized view.
     pub fn from_sjson(sjson: &str) -> Result<Self> {
-        serde_sjson::from_str(sjson)
-            .map_err(|err| eyre::eyre!("failed to parse the shader node: {err}"))
+        let mut node: Self = serde_sjson::from_str(sjson)
+            .map_err(|err| eyre::eyre!("failed to parse the shader node: {err}"))?;
+        node.normalize()?;
+        Ok(node)
     }
 
-    /// The family the emitters consume: the variables, the channels, and the
-    /// permutation sets in name order.
+    /// Fills the normalized view the emitters consume: the variables, the
+    /// channels, the permutation sets and the contexts.
     ///
     /// An input's flag is the first macro of its type table, and only when the
     /// input is optional: a required input is in every interface, so it has no
     /// flag. A channel is required unless an input of the same name is optional,
     /// in which case the channel follows that input's flag.
-    pub fn family(&self) -> Result<Family> {
-        let mut family = Family::default();
+    fn normalize(&mut self) -> Result<()> {
+        let mut variables = BTreeMap::new();
         for (uuid, input) in &self.inputs {
             let (kind, flags) = input_type(uuid, input)?;
-            family.variables.insert(
+            variables.insert(
                 input.name.clone(),
                 VariableDef {
                     kind,
@@ -356,14 +376,16 @@ impl ShaderNode {
                 },
             );
         }
+        self.variables = variables;
         // The channels table nests conditions, so it is walked rather than read:
         // a channel collects the conditions it sits under.
         let mut channels = Vec::new();
-        for (key, entry) in &self.channels.0 {
-            walk_channels(key, entry, &[], &family, &mut channels)?;
+        for (key, entry) in &self.raw_channels.0 {
+            walk_channels(key, entry, &[], &self.variables, &mut channels)?;
         }
-        family.channels = channels;
-        for (name, entries) in &self.permutation_sets {
+        self.channels = channels;
+        let mut sets = Vec::new();
+        for (name, entries) in &self.raw_permutation_sets {
             let mut choices = Vec::new();
             for entry in entries {
                 let condition = entry.condition.clone();
@@ -381,16 +403,18 @@ impl ShaderNode {
                     is_default: entry.is_default.unwrap_or(entry.condition.is_none()),
                 });
             }
-            family.permutation_sets.push(PermutationSet {
+            sets.push(PermutationSet {
                 name: name.clone(),
                 choices,
             });
         }
         // The sets are a product, so their order decides the group order. The
         // file's own order is the one the toolchain compiles in, so it is kept.
-        family.permutation_sets.sort_by(|a, b| a.name.cmp(&b.name));
-        for (name, context) in &self.shader_contexts {
-            family.contexts.push(ShaderContext {
+        sets.sort_by(|a, b| a.name.cmp(&b.name));
+        self.permutation_sets = sets;
+        let mut contexts = Vec::new();
+        for (name, context) in &self.raw_contexts {
+            contexts.push(ShaderContext {
                 name: name.clone(),
                 sort_mode: context.passes_sort_mode.clone(),
                 compile_with: context
@@ -398,7 +422,11 @@ impl ShaderNode {
                     .iter()
                     .map(|entry| CompileWith {
                         condition: entry.condition.clone(),
-                        permute_with: entry.permute_with.as_ref().map(PermuteWith::names).unwrap_or_default(),
+                        permute_with: entry
+                            .permute_with
+                            .as_ref()
+                            .map(PermuteWith::names)
+                            .unwrap_or_default(),
                     })
                     .collect(),
                 passes: context
@@ -408,11 +436,12 @@ impl ShaderNode {
                     .collect::<Result<Vec<PassEntry>>>()?,
             });
         }
-        Ok(family)
+        self.contexts = contexts;
+        Ok(())
     }
 }
 
-/// One pass entry of a declaration, as the family carries it.
+/// One pass entry of a declaration, as the declaration carries it.
 fn walk_pass_entry(entry: &PassEntryValue) -> Result<PassEntry> {
     Ok(match entry {
         PassEntryValue::Branch(branch) => PassEntry::Branch {
@@ -444,12 +473,12 @@ fn walk_channels(
     key: &str,
     entry: &Channels,
     conditions: &[String],
-    family: &Family,
+    variables: &BTreeMap<String, VariableDef>,
     out: &mut Vec<ChannelDef>,
 ) -> Result<()> {
     match entry {
         Channels::One(channel) => {
-            out.push(channel_def(key, channel, conditions, family)?);
+            out.push(channel_def(key, channel, conditions, variables)?);
         }
         Channels::Set(set) => {
             let mut conditions = conditions.to_vec();
@@ -457,7 +486,7 @@ fn walk_channels(
                 conditions.push(key.to_string());
             }
             for (key, entry) in set {
-                walk_channels(key, entry, &conditions, family, out)?;
+                walk_channels(key, entry, &conditions, variables, out)?;
             }
         }
     }
@@ -496,21 +525,20 @@ impl InputType {
     }
 }
 
-/// One declared channel, as the family carries it. `conditions` is the path of
+/// One declared channel, as the declaration carries it. `conditions` is the path of
 /// conditions it sits under; the name of a bare channel is its own key in the
 /// table, which is the first entry of that path.
 fn channel_def(
     name: &str,
     channel: &Channel,
     conditions: &[String],
-    family: &Family,
+    variables: &BTreeMap<String, VariableDef>,
 ) -> Result<ChannelDef> {
     let Some(kind) = ValueType::parse(&channel.kind) else {
         bail!("channel {name} has the unknown type {}", channel.kind);
     };
     // A channel of the same name as an optional input follows that input's flag.
-    let gated_by_input = family
-        .variables
+    let gated_by_input = variables
         .get(name)
         .is_some_and(|variable| variable.flag.is_some());
     let domain = if channel.domains.is_empty() {
@@ -574,6 +602,337 @@ fn domains(names: &[String]) -> Result<Domain> {
     Ok(stage)
 }
 
+impl ShaderNode {
+    /// The context records a single-group generated section writes: the `default`
+    /// context with one query for the group data's own hash.
+    ///
+    /// A declaration's other contexts (`shadow_caster`, `material_transfer`)
+    /// select further groups, and a group is selected by a *query id*. Nothing
+    /// can derive those ids yet: the shipped ids do not resolve and no pairing
+    /// with a declaration has been established, so a record per declared context
+    /// would be inventing keys. The single-group path is the one whose id is
+    /// known - the group data's own hash, which is what the minimal shipped
+    /// material's one `default` context carries.
+    ///
+    /// The declared contexts are therefore *not* all written, and that is
+    /// deliberate: [`crate::filetype::shader::Section::check`] refuses a record
+    /// set whose query count does not equal the group data's group count, so a
+    /// multi-context declaration against carried multi-group data fails loudly
+    /// instead of writing placeholder query ids.
+    pub fn context_records(&self, hash: u32) -> Vec<crate::filetype::shader::ContextRecord> {
+        use crate::filetype::shader::{ContextRecord, NO_CONDITIONS, Query};
+        use crate::murmur::Murmur32;
+        vec![ContextRecord {
+            name: Murmur32::hash(b"default").into(),
+            flags: 0,
+            queries: vec![Query {
+                id: hash,
+                conditions: NO_CONDITIONS,
+            }],
+        }]
+    }
+
+    /// One declared shader context by name.
+    pub fn context(&self, name: &str) -> Option<&ShaderContext> {
+        self.contexts.iter().find(|context| context.name == name)
+    }
+
+    /// The compile permutations of one context: the recursive product of the
+    /// choices of the sets its `compile_with` names, or of the declaration's root sets
+    /// when it names none.
+    ///
+    /// A choice may `permute_with` another set, and that set is expanded under
+    /// the choice. That is how `instanced_and_non_instanced` delegates to
+    /// `instanced_modifiers` and `non_instanced_modifiers`, and how the real
+    /// `default` set reaches both - a set is not a flat list of macros. A cycle
+    /// stops the expansion rather than looping, and the depth is bounded.
+    ///
+    /// Whether a context that names none really permutes over all of them is not
+    /// settled: the toolchain also drops the sets a context's code does not use,
+    /// and that is a dependency of the compiled code rather than of the
+    /// declaration, so the count this returns is an upper bound.
+    pub fn permutations_for(&self, context: &ShaderContext) -> Vec<Permutation> {
+        let names: Vec<String> = context
+            .compile_with
+            .iter()
+            .flat_map(|entry| entry.permute_with.iter().cloned())
+            .collect();
+        let roots: Vec<&PermutationSet> = if names.is_empty() {
+            self.root_sets()
+        } else {
+            let named: Vec<&PermutationSet> = names
+                .iter()
+                .filter_map(|name| self.permutation_sets.iter().find(|set| set.name == *name))
+                .collect();
+            // A name that matches no set is a declaration this reader does not
+            // understand; falling back to every root set keeps the count honest
+            // rather than dropping permutations.
+            if named.len() == names.len() {
+                named
+            } else {
+                self.root_sets()
+            }
+        };
+        let mut permutations = vec![Permutation::default()];
+        for set in roots {
+            permutations = self.expand(permutations, set, &mut Vec::new());
+        }
+        permutations
+    }
+
+    /// The sets no choice delegates to: the roots of the permutation graph.
+    fn root_sets(&self) -> Vec<&PermutationSet> {
+        let referenced: std::collections::BTreeSet<&str> = self
+            .permutation_sets
+            .iter()
+            .flat_map(|set| set.choices.iter())
+            .flat_map(|choice| choice.permute_with.iter().map(String::as_str))
+            .collect();
+        self.permutation_sets
+            .iter()
+            .filter(|set| !referenced.contains(set.name.as_str()))
+            .collect()
+    }
+
+    /// The product of `base` with one set's choices, expanding each choice's own
+    /// `permute_with` recursively. `visiting` stops a cycle.
+    fn expand(
+        &self,
+        base: Vec<Permutation>,
+        set: &PermutationSet,
+        visiting: &mut Vec<String>,
+    ) -> Vec<Permutation> {
+        if visiting.iter().any(|name| name == &set.name) || visiting.len() >= 16 {
+            return base;
+        }
+        visiting.push(set.name.clone());
+        let mut next = Vec::new();
+        for permutation in base {
+            for (index, choice) in set.choices.iter().enumerate() {
+                let mut permutation = permutation.clone();
+                permutation.choices.push((set.name.clone(), index));
+                permutation.add_defines(&choice.macros, &choice.stages);
+                let mut expanded = vec![permutation];
+                for nested in &choice.permute_with {
+                    if let Some(nested_set) = self
+                        .permutation_sets
+                        .iter()
+                        .find(|candidate| candidate.name == *nested)
+                    {
+                        expanded = self.expand(expanded, nested_set, visiting);
+                    }
+                }
+                next.extend(expanded);
+            }
+        }
+        visiting.pop();
+        next
+    }
+
+    /// The number of groups a context compiles: how many permutations of it there
+    /// are. The section's groups are the sum over its contexts.
+    pub fn group_count_of(&self, context: &ShaderContext) -> usize {
+        self.permutations_for(context).len()
+    }
+
+    /// The number of groups the declaration compiles: the sum over its contexts. With
+    /// no contexts, the one permutation of the declaration itself.
+    pub fn context_group_count(&self) -> usize {
+        if self.contexts.is_empty() {
+            return self.group_count();
+        }
+        self.contexts
+            .iter()
+            .map(|context| self.group_count_of(context))
+            .sum()
+    }
+}
+
+impl ShaderNode {
+    /// The channel of that name, when the declaration declares it.
+    pub fn channel(&self, name: &str) -> Option<&ChannelDef> {
+        self.channels.iter().find(|channel| channel.name == name)
+    }
+
+    /// The flags the declaration's variables can gate on, in name order.
+    pub fn flags(&self) -> Vec<&str> {
+        let mut flags: Vec<&str> = Vec::new();
+        for variable in self.variables.values() {
+            if let Some(flag) = &variable.flag
+                && !flags.contains(&flag.as_str())
+            {
+                flags.push(flag);
+            }
+        }
+        flags
+    }
+
+    /// The interface a material gets from the inputs it declares: the mask over
+    /// the flags those inputs enable, the variables they expose, and the
+    /// channels that follow them. An input the declaration does not declare is
+    /// ignored, which is what the engine does with a name it cannot bind.
+    ///
+    /// A declaration with many optional variables has a great many *possible*
+    /// interfaces - two to the power of its flags - but a section ships a handful
+    /// of groups, and the conditions tree is what maps an interface onto one of
+    /// them. So this answers one query; it does not enumerate.
+    pub fn interface(&self, inputs: &[String]) -> Interface {
+        let flags = self.flags();
+        let mut mask = 0u32;
+        for input in inputs {
+            let Some(variable) = self.variables.get(input) else {
+                continue;
+            };
+            let Some(flag) = variable.flag.as_deref() else {
+                continue;
+            };
+            if let Some(bit) = flags.iter().position(|declared| *declared == flag) {
+                mask |= 1 << bit;
+            }
+        }
+        Interface {
+            mask,
+            flags: flags
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| mask & (1 << bit) != 0)
+                .map(|(_, flag)| (*flag).to_string())
+                .collect(),
+            variables: self
+                .variables
+                .iter()
+                .filter(|(_, variable)| match &variable.flag {
+                    None => true,
+                    Some(flag) => flags
+                        .iter()
+                        .position(|declared| declared == &flag.as_str())
+                        .is_some_and(|bit| mask & (1 << bit) != 0),
+                })
+                .map(|(name, _)| name.clone())
+                .collect(),
+            channels: self
+                .channels
+                .iter()
+                .filter(|channel| {
+                    channel.required
+                        || self
+                            .gating_variable(&channel.name, channel)
+                            .and_then(|variable| variable.flag.as_ref())
+                            .is_some_and(|flag| {
+                                flags
+                                    .iter()
+                                    .position(|declared| declared == &flag.as_str())
+                                    .is_some_and(|bit| mask & (1 << bit) != 0)
+                            })
+                })
+                .map(|channel| channel.name.clone())
+                .collect(),
+        }
+    }
+
+    /// The interface of the mask, for a caller that works in masks rather than
+    /// in input names.
+    pub fn interface_of(&self, mask: u32) -> Interface {
+        let inputs: Vec<String> = self
+            .variables
+            .iter()
+            .filter(|(_, variable)| {
+                variable.flag.as_ref().is_some_and(|flag| {
+                    self.flags()
+                        .iter()
+                        .position(|declared| declared == &flag.as_str())
+                        .is_some_and(|bit| mask & (1 << bit) != 0)
+                })
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.interface(&inputs)
+    }
+
+    /// Enumerates the compile permutations over the declaration's root sets: one per
+    /// combination of their choices, expanding every choice's `permute_with`
+    /// recursively. A declaration with no sets has the one empty permutation.
+    pub fn permutations(&self) -> Vec<Permutation> {
+        let mut permutations = vec![Permutation::default()];
+        for set in self.root_sets() {
+            permutations = self.expand(permutations, set, &mut Vec::new());
+        }
+        permutations
+    }
+
+    /// The number of groups the declaration generates: the product of the sets'
+    /// choice counts, or one when the declaration declares no sets.
+    pub fn group_count(&self) -> usize {
+        self.permutations().len()
+    }
+
+    /// The channels one group has: those whose conditions all hold under the
+    /// group's defines, and those no condition gates.
+    ///
+    /// A channel whose condition reaches an engine query - how many skin weights
+    /// a mesh has, which renderer is running - is left out, because a generated
+    /// declaration cannot answer it. That is the one thing to remember about this
+    /// list: it is what the *defines* say, not what a mesh would produce.
+    pub fn channels_of(&self, permutation: &Permutation) -> Result<Vec<&ChannelDef>> {
+        let mut channels = Vec::new();
+        for channel in &self.channels {
+            // A macro a choice limited to one stage is not defined for a channel
+            // of another stage: `SKINNED_4WEIGHTS` is a vertex macro and must not
+            // decide whether a pixel channel exists.
+            let defines = Defines::new(
+                permutation
+                    .macros
+                    .iter()
+                    .filter(|name| {
+                        permutation
+                            .macro_stages
+                            .get(*name)
+                            .is_none_or(|stages| {
+                                super::shader_decl::stage_applies(stages, channel.domain)
+                            })
+                    })
+                    .cloned(),
+            );
+            let mut holds = true;
+            for text in &channel.conditions {
+                let condition = Condition::parse(text).wrap_err_with(|| {
+                    format!("channel {} has an unparsable condition", channel.name)
+                })?;
+                // An answer of "unknown" is not a yes, so a channel whose
+                // condition this group cannot decide is left out of it.
+                holds &= condition.holds(&defines) == Some(true);
+                if !holds {
+                    break;
+                }
+            }
+            if holds {
+                channels.push(channel);
+            }
+        }
+        Ok(channels)
+    }
+
+    /// The channel names one group has, which is what the group data records.
+    pub fn channel_names_of(&self, permutation: &Permutation) -> Result<Vec<String>> {
+        Ok(self
+            .channels_of(permutation)?
+            .iter()
+            .map(|channel| channel.name.clone())
+            .collect())
+    }
+
+    /// The variable that gates the channel `name`: the one it names, or the
+    /// variable of the same name.
+    fn gating_variable<'a>(
+        &'a self,
+        name: &'a str,
+        channel: &'a ChannelDef,
+    ) -> Option<&'a VariableDef> {
+        self.variables
+            .get(channel.variable.as_deref().unwrap_or(name))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,54 +983,51 @@ mod tests {
         }
     "#;
 
-    fn sample() -> Family {
-        ShaderNode::from_sjson(SAMPLE)
-            .expect("parse")
-            .family()
-            .expect("family")
+    fn sample() -> ShaderNode {
+        ShaderNode::from_sjson(SAMPLE).expect("parse")
     }
 
     #[test]
     fn reads_the_variables_of_a_declaration() {
-        let family = sample();
-        assert_eq!(family.variables.len(), 3);
+        let node = sample();
+        assert_eq!(node.variables.len(), 3);
 
         // An optional input's flags hang off its type, and the first is the one
         // that gates the interface.
-        let base_color = &family.variables["base_color"];
+        let base_color = &node.variables["base_color"];
         assert_eq!(base_color.kind, ValueType::Float3);
         assert_eq!(base_color.flag.as_deref(), Some("HAS_BASE_COLOR"));
         assert_eq!(base_color.domain, Domain::Pixel);
 
         // A required input is in every interface, so it carries no flag even
         // though its type table has no macros either.
-        let texture_map = &family.variables["texture_map"];
+        let texture_map = &node.variables["texture_map"];
         assert_eq!(texture_map.kind, ValueType::Texture2D);
         assert_eq!(texture_map.flag, None);
 
         // Both flags of a two-macro type are read; the first gates.
-        let opacity = &family.variables["opacity"];
+        let opacity = &node.variables["opacity"];
         assert_eq!(opacity.kind, ValueType::Float);
         assert_eq!(opacity.flag.as_deref(), Some("HAS_OPACITY"));
     }
 
     #[test]
     fn reads_the_channels_of_a_declaration() {
-        let family = sample();
-        assert_eq!(family.channels.len(), 4);
+        let node = sample();
+        assert_eq!(node.channels.len(), 4);
 
-        let position = family.channel("vertex_position").expect("channel");
+        let position = node.channel("vertex_position").expect("channel");
         assert_eq!(position.kind, ValueType::Float4);
         assert_eq!(position.domain, Domain::Vertex);
         assert_eq!(position.semantic, None);
         assert!(position.required);
 
-        let normal = family.channel("vertex_normal").expect("channel");
+        let normal = node.channel("vertex_normal").expect("channel");
         assert_eq!(normal.kind, ValueType::Float3);
         assert_eq!(normal.semantic.as_deref(), Some("NORMAL"));
 
         // A channel in both domains is written by the vertex stage.
-        let eye = family.channel("eye_vector").expect("channel");
+        let eye = node.channel("eye_vector").expect("channel");
         assert_eq!(eye.domain, Domain::Vertex);
     }
 
@@ -683,36 +1039,34 @@ mod tests {
         assert_eq!(sample().variables["texture_map"].flag, None);
         // With the input optional, the flag of its type gates both.
         let text = SAMPLE.replace("is_required = true", "is_required = false");
-        let family = ShaderNode::from_sjson(&text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let map = family.channel("texture_map").expect("channel");
+        let node = ShaderNode::from_sjson(&text)
+            .expect("parse");
+        let map = node.channel("texture_map").expect("channel");
         assert!(!map.required);
         assert_eq!(
-            family.variables["texture_map"].flag.as_deref(),
+            node.variables["texture_map"].flag.as_deref(),
             Some("HAS_TEXTURE_MAP")
         );
         // A material that declares the texture gets the channel with it, and one
         // that does not has neither.
-        let with_flag = family.interface(&["texture_map".to_string()]);
+        let with_flag = node.interface(&["texture_map".to_string()]);
         assert!(with_flag.variables.contains(&"texture_map".to_string()));
         assert!(with_flag.channels.contains(&"texture_map".to_string()));
-        let without = family.interface(&[]);
+        let without = node.interface(&[]);
         assert!(!without.variables.contains(&"texture_map".to_string()));
         assert!(!without.channels.contains(&"texture_map".to_string()));
     }
 
     #[test]
     fn reads_the_permutation_sets_of_a_declaration() {
-        let family = sample();
+        let node = sample();
         // Two sets of two choices each, in name order.
-        assert_eq!(family.permutation_sets.len(), 2);
-        assert_eq!(family.permutation_sets[0].name, "instanced_modifiers");
-        assert_eq!(family.permutation_sets[1].name, "vertex_modifiers");
-        assert_eq!(family.group_count(), 4);
+        assert_eq!(node.permutation_sets.len(), 2);
+        assert_eq!(node.permutation_sets[0].name, "instanced_modifiers");
+        assert_eq!(node.permutation_sets[1].name, "vertex_modifiers");
+        assert_eq!(node.group_count(), 4);
 
-        let instanced = &family.permutation_sets[0].choices;
+        let instanced = &node.permutation_sets[0].choices;
         assert_eq!(instanced[0].condition.as_deref(), Some("instanced()"));
         assert_eq!(instanced[0].macros, vec!["INSTANCED"]);
         // A define with no stages means every stage, and the `=` spelling of the
@@ -721,7 +1075,7 @@ mod tests {
         assert!(!instanced[0].is_default);
         assert!(instanced[1].is_default);
 
-        let vertex = &family.permutation_sets[1].choices;
+        let vertex = &node.permutation_sets[1].choices;
         assert_eq!(vertex[0].macros, vec!["SKINNED_4WEIGHTS"]);
         assert_eq!(vertex[0].stages, vec!["vertex"]);
         assert_eq!(
@@ -738,11 +1092,9 @@ mod tests {
         let text = format!(
             "{SAMPLE}\nshader_contexts = {{\n\tbase = {{\n\t\tpasses_sort_mode = \"immediate\"\n\t}}\n}}\nsampler_state = {{\n}}\n"
         );
-        let family = ShaderNode::from_sjson(&text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        assert_eq!(family.group_count(), 4);
+        let node = ShaderNode::from_sjson(&text)
+            .expect("parse");
+        assert_eq!(node.group_count(), 4);
     }
 
     #[test]
@@ -765,21 +1117,19 @@ mod tests {
                 vertex_size = { type = "float2" }
             }
         "#;
-        let family = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        assert_eq!(family.channels.len(), 4);
+        let node = ShaderNode::from_sjson(text)
+            .expect("parse");
+        assert_eq!(node.channels.len(), 4);
 
         // One condition deep.
-        let basis = family.channel("basis0").expect("basis0");
+        let basis = node.channel("basis0").expect("basis0");
         assert_eq!(basis.conditions, vec!["defined(PARTICLE_LIGHTING)"]);
         assert!(!basis.required);
 
         // Two deep, and the same channel declared under both branches with a
         // different type each time. The conditions are in name order, so the
         // `!defined` branch comes first.
-        let animated: Vec<&ChannelDef> = family
+        let animated: Vec<&ChannelDef> = node
             .channels
             .iter()
             .filter(|channel| channel.name == "vertex_uv_data")
@@ -797,7 +1147,7 @@ mod tests {
         );
 
         // A channel with no condition of its own is unconditional.
-        let size = family.channel("vertex_size").expect("vertex_size");
+        let size = node.channel("vertex_size").expect("vertex_size");
         assert!(size.conditions.is_empty());
         assert!(size.required);
     }
@@ -839,13 +1189,11 @@ mod tests {
 
     #[test]
     fn reads_the_contexts_of_a_declaration() {
-        let family = ShaderNode::from_sjson(CONTEXTS)
-            .expect("parse")
-            .family()
-            .expect("family");
+        let node = ShaderNode::from_sjson(CONTEXTS)
+            .expect("parse");
         // Two contexts, in name order: `default` then `shadow_caster`.
-        assert_eq!(family.contexts.len(), 2);
-        let default = family.context("default").expect("the default context");
+        assert_eq!(node.contexts.len(), 2);
+        let default = node.context("default").expect("the default context");
         assert_eq!(default.sort_mode.as_deref(), Some("deferred"));
         assert_eq!(default.compile_with.len(), 1);
         assert_eq!(
@@ -862,23 +1210,21 @@ mod tests {
                     .expect("holds")
                     .is_none()
         );
-        let shadow = family.context("shadow_caster").expect("shadow");
+        let shadow = node.context("shadow_caster").expect("shadow");
         assert_eq!(shadow.sort_mode.as_deref(), Some("immediate"));
         // A single name, not a list.
         assert_eq!(
             shadow.compile_with[0].permute_with,
             vec!["shadow_caster".to_string()]
         );
-        assert!(family.context("nope").is_none());
+        assert!(node.context("nope").is_none());
     }
 
     #[test]
     fn a_pass_tree_is_read_and_selected() {
-        let family = ShaderNode::from_sjson(CONTEXTS)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let default = family.context("default").expect("the default context");
+        let node = ShaderNode::from_sjson(CONTEXTS)
+            .expect("parse");
+        let default = node.context("default").expect("the default context");
         // One entry, a branch over the whole tree.
         assert_eq!(default.passes.len(), 1);
         let PassEntry::Branch {
@@ -924,11 +1270,9 @@ mod tests {
 
     #[test]
     fn the_defines_choose_the_branch() {
-        let family = ShaderNode::from_sjson(CONTEXTS)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let default = family.context("default").expect("the default context");
+        let node = ShaderNode::from_sjson(CONTEXTS)
+            .expect("parse");
+        let default = node.context("default").expect("the default context");
         let passes = |defines: &Defines| -> Vec<(String, String)> {
             default
                 .passes_of(defines)
@@ -968,7 +1312,7 @@ mod tests {
     #[test]
     fn an_undecidable_branch_contributes_both_sides() {
         // A pass branch on an engine query: the engine decides it per material at
-        // runtime, so a generated family has to carry both sides rather than
+        // runtime, so a generated declaration has to carry both sides rather than
         // guess.
         let text = r#"
             shader_contexts = {
@@ -983,11 +1327,9 @@ mod tests {
                 }
             }
         "#;
-        let family = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let default = family.context("default").expect("the default context");
+        let node = ShaderNode::from_sjson(text)
+            .expect("parse");
+        let default = node.context("default").expect("the default context");
         let layers = |defines: &Defines| -> Vec<String> {
             default
                 .passes_of(defines)
@@ -1014,11 +1356,9 @@ mod tests {
                 }
             }
         "#;
-        let family = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let default = family.context("default").expect("the default context");
+        let node = ShaderNode::from_sjson(text)
+            .expect("parse");
+        let default = node.context("default").expect("the default context");
         let passes = default.passes_of(&Defines::default()).expect("passes");
         assert_eq!(passes.len(), 1);
         assert_eq!(passes[0].macros(), ["DRAW_OUTLINE".to_string()]);
@@ -1026,12 +1366,10 @@ mod tests {
 
     #[test]
     fn a_context_permutes_over_the_sets_it_names() {
-        let mut family = ShaderNode::from_sjson(CONTEXTS)
-            .expect("parse")
-            .family()
-            .expect("family");
+        let mut node = ShaderNode::from_sjson(CONTEXTS)
+            .expect("parse");
         // Two sets of two choices each.
-        family.permutation_sets = vec![
+        node.permutation_sets = vec![
             PermutationSet {
                 name: "default".to_string(),
                 choices: vec![
@@ -1067,28 +1405,28 @@ mod tests {
                 ],
             },
         ];
-        let default = family.context("default").expect("the default context");
-        let shadow = family.context("shadow_caster").expect("shadow");
+        let default = node.context("default").expect("the default context");
+        let shadow = node.context("shadow_caster").expect("shadow");
 
         // Each context names one set, so each permutes over that one alone: two
         // groups each, not four.
-        let default_groups = family.permutations_for(default);
+        let default_groups = node.permutations_for(default);
         assert_eq!(default_groups.len(), 2);
         assert_eq!(default_groups[0].macros, vec!["A".to_string()]);
-        let shadow_groups = family.permutations_for(shadow);
+        let shadow_groups = node.permutations_for(shadow);
         assert_eq!(shadow_groups.len(), 2);
         assert_eq!(shadow_groups[0].macros, vec!["B".to_string()]);
 
-        // The family's groups are the sum over its contexts.
-        assert_eq!(family.context_group_count(), 4);
+        // The declaration's groups are the sum over its contexts.
+        assert_eq!(node.context_group_count(), 4);
         // Without a name, a context permutes over every set.
-        let all = family.permutation_sets.len();
+        let all = node.permutation_sets.len();
         assert_eq!(all, 2);
         let unnamed = ShaderContext {
             name: "unnamed".to_string(),
             ..ShaderContext::default()
         };
-        assert_eq!(family.permutations_for(&unnamed).len(), 4);
+        assert_eq!(node.permutations_for(&unnamed).len(), 4);
     }
 
     /// A set of macros to test conditions against.
@@ -1109,11 +1447,9 @@ mod tests {
                 }
             }
         "#;
-        let family = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect("family");
-        let input = &family.variables["distortion_normal"];
+        let node = ShaderNode::from_sjson(text)
+            .expect("parse");
+        let input = &node.variables["distortion_normal"];
         assert_eq!(input.kind, ValueType::Float3);
         assert_eq!(input.flag, None);
     }
@@ -1121,30 +1457,21 @@ mod tests {
     #[test]
     fn rejects_an_input_with_no_type() {
         let text = "inputs = {\n\t\"1\" = { name = \"x\" }\n}";
-        let err = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect_err("no type");
+        let err = ShaderNode::from_sjson(text).expect_err("no type");
         assert!(err.to_string().contains("no type"), "{err}");
     }
 
     #[test]
     fn rejects_an_input_with_no_name() {
         let text = "inputs = {\n\t\"1\" = { type = { vector3: [] } }\n}";
-        let err = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect_err("no name");
+        let err = ShaderNode::from_sjson(text).expect_err("no name");
         assert!(err.to_string().contains("no name"), "{err}");
     }
 
     #[test]
     fn rejects_an_unknown_type() {
         let text = "inputs = {\n\t\"1\" = { name = \"x\" type = { texture_cube: [] } }\n}";
-        let err = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect_err("unknown type");
+        let err = ShaderNode::from_sjson(text).expect_err("unknown type");
         assert!(err.to_string().contains("texture_cube"), "{err}");
     }
 
@@ -1152,10 +1479,7 @@ mod tests {
     fn rejects_an_unknown_domain() {
         let text =
             "channels = {\n\tc = {\n\t\ttype = \"float3\"\n\t\tdomain = \"geometry\"\n\t}\n}";
-        let err = ShaderNode::from_sjson(text)
-            .expect("parse")
-            .family()
-            .expect_err("unknown domain");
+        let err = ShaderNode::from_sjson(text).expect_err("unknown domain");
         assert!(err.to_string().contains("geometry"), "{err}");
     }
 }

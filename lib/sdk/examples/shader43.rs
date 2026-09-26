@@ -26,7 +26,7 @@ use sdk::filetype::condition::Defines;
 use sdk::filetype::group_data::GroupData;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::shader;
-use sdk::filetype::shader_family::{self, BlockTemplate, ChannelDef};
+use sdk::filetype::shader_decl::{self, BlockTemplate, ChannelDef};
 use sdk::filetype::shader_node::ShaderNode;
 use sdk::filetype::shader_preset::channel_record_len;
 use sdk::murmur;
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut records_mode = false;
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
-    let mut block_family: Option<PathBuf> = None;
+    let mut block_declaration: Option<PathBuf> = None;
     let mut group_data_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
@@ -129,8 +129,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--substitute" => substitute_mode = true,
             "--build-block" => {
                 i += 1;
-                block_family = Some(PathBuf::from(
-                    args.get(i).expect("--build-block needs a shader family"),
+                block_declaration = Some(PathBuf::from(
+                    args.get(i).expect("--build-block needs a shader declaration"),
                 ));
             }
             "--group-data" => {
@@ -312,13 +312,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    if let Some(family) = &block_family {
+    if let Some(declaration) = &block_declaration {
         let names = match &variables_dict {
             Some(path) => Some(load_dictionary(path)?),
             None => None,
         };
         for path in &files {
-            if let Err(err) = build_block(path, family, names.as_ref()) {
+            if let Err(err) = build_block(path, declaration, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -693,10 +693,10 @@ fn variables(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn st
 }
 
 /// Pairs the block's binding records with the group's variable tables. A block
-/// record's index is the engine's global variable order, and a family's table
+/// record's index is the engine's global variable order, and a declaration's table
 /// lists the variables it uses in that order, so every run position that also
 /// appears in the block's index set names that index. This is the table a
-/// generated family needs for the engine variables it touches.
+/// generated declaration needs for the engine variables it touches.
 fn registry(path: &Path, names: &HashMap<u32, String>) -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(path)?;
     let shader = shader_section(&data)?;
@@ -958,7 +958,7 @@ fn substitute(
 /// A dry run: what a generated section *would* contain, and whether it holds
 /// together. Reads only - it writes nothing, and touches no game install.
 ///
-/// This is the check that makes a deploy safe. A generated family cannot be
+/// This is the check that makes a deploy safe. A generated declaration cannot be
 /// verified against a shipped one, because a declaration and a section cannot be
 /// paired, so the invariants are all there is. `Section::build` enforces the ones
 /// that can fail silently - a context pointing at a group or a hash the group data
@@ -972,7 +972,7 @@ fn plan(
     use sdk::filetype::shader::Section;
 
     let text = fs::read_to_string(declaration)?;
-    let family = sdk::filetype::shader_node::ShaderNode::from_sjson(&text)?.family()?;
+    let node = sdk::filetype::shader_node::ShaderNode::from_sjson(&text)?;
     let data = fs::read(path)?;
     let bytes = shader_section(&data)?;
     let template = Section::parse(bytes)?;
@@ -987,16 +987,16 @@ fn plan(
     println!("=== {} + {} ===", declaration.display(), path.display());
     println!(
         "  declared: {} inputs, {} channels, {} permutation sets, {} contexts",
-        family.variables.len(),
-        family.channels.len(),
-        family.permutation_sets.len(),
-        family.contexts.len()
+        node.variables.len(),
+        node.channels.len(),
+        node.permutation_sets.len(),
+        node.contexts.len()
     );
-    let channels = match family.contexts.first() {
+    let channels = match node.contexts.first() {
         None => Err(color_eyre::eyre::eyre!("the declaration has no contexts")),
-        Some(context) => match family.permutations_for(context).first() {
+        Some(context) => match node.permutations_for(context).first() {
             None => Err(color_eyre::eyre::eyre!("the context permutes over nothing")),
-            Some(permutation) => family.channels_of(permutation),
+            Some(permutation) => node.channels_of(permutation),
         },
     };
     let channels = match channels {
@@ -1009,7 +1009,7 @@ fn plan(
     };
     println!("  the first group's channels: {channels}");
 
-    let records = family.context_records(hash);
+    let records = node.context_records(hash);
     let carried = sdk::filetype::shader::Carried::of(&template);
     // A generated single-group section writes no conditions tree: its one query
     // selects no conditions. Handing it the template's blob would point at the
@@ -1321,12 +1321,12 @@ fn group_data(
     Ok(())
 }
 
-/// Builds a block for a family declaration, using the section's own preamble as
+/// Builds a block from a declaration for a section, using the section's own preamble as
 /// the engine template, and reports the round trip: a declaration naming exactly
 /// the template's channels must rebuild the template byte for byte.
 fn build_block(
     path: &Path,
-    family_path: &Path,
+    declaration_path: &Path,
     names: Option<&HashMap<u32, String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let data = fs::read(path)?;
@@ -1341,8 +1341,7 @@ fn build_block(
     let preamble = device.get(..first).ok_or("preamble is out of range")?;
     let template = BlockTemplate::from_preamble(preamble)?;
 
-    let node = ShaderNode::from_sjson(&fs::read_to_string(family_path)?)?;
-    let family = node.family()?;
+    let node = ShaderNode::from_sjson(&fs::read_to_string(declaration_path)?)?;
 
     println!("=== {} ===", path.display());
     println!(
@@ -1365,12 +1364,12 @@ fn build_block(
     println!(
         "declaration: {} groups from {} permutation sets, {} gated variables, \
          {} channels",
-        family.group_count(),
-        family.permutation_sets.len(),
-        family.flags().len(),
-        family.channels.len()
+        node.group_count(),
+        node.permutation_sets.len(),
+        node.flags().len(),
+        node.channels.len()
     );
-    for set in &family.permutation_sets {
+    for set in &node.permutation_sets {
         println!("  set {}: {} choices", set.name, set.choices.len());
         for (index, choice) in set.choices.iter().enumerate() {
             println!(
@@ -1382,8 +1381,8 @@ fn build_block(
             );
         }
     }
-    for (index, permutation) in family.permutations().iter().enumerate() {
-        let channels = family.channel_names_of(permutation)?;
+    for (index, permutation) in node.permutations().iter().enumerate() {
+        let channels = node.channel_names_of(permutation)?;
         println!(
             "  group {index:02}: macros [{}] channels [{}]",
             permutation.macros.join(" "),
@@ -1392,13 +1391,13 @@ fn build_block(
     }
     // The interface a material gets when it declares every gated variable: the
     // most a material can ask for.
-    let inputs: Vec<String> = family
+    let inputs: Vec<String> = node
         .variables
         .iter()
         .filter(|(_, variable)| variable.flag.is_some())
         .map(|(name, _)| name.clone())
         .collect();
-    let interface = family.interface(&inputs);
+    let interface = node.interface(&inputs);
     println!(
         "  interface of every gated input: mask {:02} flags [{}] variables [{}] \
          channels [{}]",
@@ -1411,14 +1410,14 @@ fn build_block(
     // The contexts: what each one compiles, and the passes it draws. The
     // interface's flags stand in for the defines, since a pass condition reads
     // the same input flags.
-    for context in &family.contexts {
+    for context in &node.contexts {
         let defines = Defines::new(interface.flags.iter().cloned());
         let passes = context.passes_of(&defines)?;
         println!(
             "  context {}: sort {} permutes {} sets, {} passes",
             context.name,
             context.sort_mode.clone().unwrap_or_default(),
-            family.permutations_for(context).len(),
+            node.permutations_for(context).len(),
             passes.len(),
         );
         for entry in &context.compile_with {
@@ -1439,21 +1438,21 @@ fn build_block(
         }
     }
     println!(
-        "  groups: {} over the family's sets, {} over its contexts",
-        family.group_count(),
-        family.context_group_count(),
+        "  groups: {} over the declaration's sets, {} over its contexts",
+        node.group_count(),
+        node.context_group_count(),
     );
 
-    let channels: Vec<(String, ChannelDef)> = family
+    let channels: Vec<(String, ChannelDef)> = node
         .channels
         .iter()
         .map(|channel| (channel.name.clone(), channel.clone()))
         .collect();
-    let cbuffers = family.programs.len() as u32;
-    let block = shader_family::build_block(
+    let cbuffers = node.programs.len() as u32;
+    let block = shader_decl::build_block(
         &template,
         &channels,
-        family.group_count() as u32,
+        node.group_count() as u32,
         cbuffers.max(1),
     )?;
     println!(
@@ -1504,7 +1503,7 @@ fn build_block(
     );
 
     let rebuilt =
-        shader_family::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
+        shader_decl::build_block(&template, &ordered, template.groups(), template.cbuffers())?;
     match rebuilt == preamble {
         true => println!("round trip: identical to the template preamble"),
         false => {

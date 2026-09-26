@@ -577,7 +577,7 @@ pub struct ContextRecord {
     /// why the fixed model survived as long as it did.
     ///
     /// The first query's id is the check that identifies the record: the `default`
-    /// context of every shipped family carries the group data's own hash there.
+    /// context of every shipped section carries the group data's own hash there.
     pub queries: Vec<Query>,
 }
 
@@ -591,7 +591,7 @@ pub struct Query {
     /// The offset of the conditions tree this query selects, or
     /// [`NO_CONDITIONS`] when it has none. All six small families are
     /// [`NO_CONDITIONS`], which is why their conditions sections are 0, 28 and 56
-    /// bytes rather than the UI family's 1436.
+    /// bytes rather than the UI declaration's 1436.
     pub conditions: u32,
 }
 

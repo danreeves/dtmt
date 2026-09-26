@@ -16,7 +16,7 @@
 //!
 //! Evaluation is three-valued. A macro test is answered by the defines of the
 //! permutation, but a call is an *engine* query - how many skin weights a mesh
-//! has, which renderer is running - and a generated family knows nothing of it.
+//! has, which renderer is running - and a generated declaration knows nothing of it.
 //! So a query evaluates to `None` rather than to a guess, and the combinators
 //! fold that through Kleene logic: `None && false` is `false`, `None || true` is
 //! `true`, and anything else stays unknown. A caller that needs a decision - the

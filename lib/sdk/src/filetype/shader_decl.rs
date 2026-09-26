@@ -1,25 +1,16 @@
-//! The intermediate representation of a shader family: what the emitters need to
-//! write a `shader43` section, and nothing else.
+//! The declaration's parts: the types a `.shader_node` normalizes to.
 //!
-//! This module is deliberately *not* a mod-facing file format. A mod describes a
-//! family the way the Stingray toolchain does, in a `.shader_node` file; the
-//! reader in [`super::shader_node`] turns that into the [`Family`] here, and the
-//! emitters turn a [`Family`] into bytes. Anything the mod writes that does not
-//! reach the emitters does not belong in these types.
+//! This module is not a file format. A mod describes a shader the way the
+//! Stingray toolchain does, in a `.shader_node` file; the reader in
+//! [`super::shader_node`] parses it and fills the normalized parts on the
+//! [`super::shader_node::ShaderNode`] itself. These are those parts: the
+//! interface ([`VariableDef`], [`ChannelDef`]), the permutation space
+//! ([`PermutationSet`], [`Choice`], [`Permutation`], [`ShaderContext`],
+//! [`Pass`]) and the programs. Each is its own type so it can be read and used
+//! on its own.
 //!
-//! Two enumerations live here, and they answer different questions:
-//!
-//! - [`Family::interfaces`] enumerates the *runtime* interfaces: one per
-//!   combination of the family's optional variables, each with the flags it
-//!   defines and the variables and channels it exposes. This is what the
-//!   conditions tree indexes on when it picks a group's interface.
-//! - [`Family::permutations`] enumerates the *compile* permutations: one per
-//!   combination of a choice from each [`PermutationSet`], with the macros the
-//!   programs are compiled with. The family's group count is this product.
-//!
-//! Everything the section still needs from the engine - the block header blob,
-//! the engine's variable registry, the bindless conventions - is not part of a
-//! family; it is carried by the toolchain as a [`BlockTemplate`].
+//! [`BlockTemplate`] still lives here while it is split out: it is the carried
+//! engine preamble, not part of a declaration.
 
 use std::collections::BTreeMap;
 
@@ -203,7 +194,7 @@ pub struct DefineTable {
     pub stages: Vec<String>,
 }
 
-/// A shader context: one named set of passes the family compiles and draws. Named
+/// A shader context: one named set of passes the declaration compiles and draws. Named
 /// for the section's contexts, and not for anything to do with errors.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShaderContext {
@@ -361,357 +352,10 @@ pub struct Choice {
     pub is_default: bool,
 }
 
-/// A whole family: what the emitters need, gathered from a `.shader_node` file
-/// and its companion.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Family {
-    /// The programs to compile, keyed by entry point name.
-    pub programs: BTreeMap<String, ProgramDef>,
-    /// The channels the family exchanges, in the order the declaration lists
-    /// them: the order of the conditions table decides the conditions section.
-    pub channels: Vec<ChannelDef>,
-    /// The material variables the family accepts, keyed by name. A declaration's
-    /// own inputs are keyed by uuid, so this is in name order instead.
-    pub variables: BTreeMap<String, VariableDef>,
-    /// The compile-time permutation sets, in name order.
-    pub permutation_sets: Vec<PermutationSet>,
-    /// The shader contexts, in name order: what the family compiles and draws.
-    pub contexts: Vec<ShaderContext>,
-}
-
-impl Family {
-    /// The context records a single-group generated section writes: the `default`
-    /// context with one query for the group data's own hash.
-    ///
-    /// A declaration's other contexts (`shadow_caster`, `material_transfer`)
-    /// select further groups, and a group is selected by a *query id*. Nothing
-    /// can derive those ids yet: the shipped ids do not resolve and no pairing
-    /// with a declaration has been established, so a record per declared context
-    /// would be inventing keys. The single-group path is the one whose id is
-    /// known - the group data's own hash, which is what the minimal shipped
-    /// material's one `default` context carries.
-    ///
-    /// The declared contexts are therefore *not* all written, and that is
-    /// deliberate: [`crate::filetype::shader::Section::check`] refuses a record
-    /// set whose query count does not equal the group data's group count, so a
-    /// multi-context declaration against carried multi-group data fails loudly
-    /// instead of writing placeholder query ids.
-    pub fn context_records(&self, hash: u32) -> Vec<crate::filetype::shader::ContextRecord> {
-        use crate::filetype::shader::{ContextRecord, NO_CONDITIONS, Query};
-        use crate::murmur::Murmur32;
-        vec![ContextRecord {
-            name: Murmur32::hash(b"default").into(),
-            flags: 0,
-            queries: vec![Query {
-                id: hash,
-                conditions: NO_CONDITIONS,
-            }],
-        }]
-    }
-
-    /// One declared shader context by name.
-    pub fn context(&self, name: &str) -> Option<&ShaderContext> {
-        self.contexts.iter().find(|context| context.name == name)
-    }
-
-    /// The compile permutations of one context: the recursive product of the
-    /// choices of the sets its `compile_with` names, or of the family's root sets
-    /// when it names none.
-    ///
-    /// A choice may `permute_with` another set, and that set is expanded under
-    /// the choice. That is how `instanced_and_non_instanced` delegates to
-    /// `instanced_modifiers` and `non_instanced_modifiers`, and how the real
-    /// `default` set reaches both - a set is not a flat list of macros. A cycle
-    /// stops the expansion rather than looping, and the depth is bounded.
-    ///
-    /// Whether a context that names none really permutes over all of them is not
-    /// settled: the toolchain also drops the sets a context's code does not use,
-    /// and that is a dependency of the compiled code rather than of the
-    /// declaration, so the count this returns is an upper bound.
-    pub fn permutations_for(&self, context: &ShaderContext) -> Vec<Permutation> {
-        let names: Vec<String> = context
-            .compile_with
-            .iter()
-            .flat_map(|entry| entry.permute_with.iter().cloned())
-            .collect();
-        let roots: Vec<&PermutationSet> = if names.is_empty() {
-            self.root_sets()
-        } else {
-            let named: Vec<&PermutationSet> = names
-                .iter()
-                .filter_map(|name| self.permutation_sets.iter().find(|set| set.name == *name))
-                .collect();
-            // A name that matches no set is a declaration this reader does not
-            // understand; falling back to every root set keeps the count honest
-            // rather than dropping permutations.
-            if named.len() == names.len() {
-                named
-            } else {
-                self.root_sets()
-            }
-        };
-        let mut permutations = vec![Permutation::default()];
-        for set in roots {
-            permutations = self.expand(permutations, set, &mut Vec::new());
-        }
-        permutations
-    }
-
-    /// The sets no choice delegates to: the roots of the permutation graph.
-    fn root_sets(&self) -> Vec<&PermutationSet> {
-        let referenced: std::collections::BTreeSet<&str> = self
-            .permutation_sets
-            .iter()
-            .flat_map(|set| set.choices.iter())
-            .flat_map(|choice| choice.permute_with.iter().map(String::as_str))
-            .collect();
-        self.permutation_sets
-            .iter()
-            .filter(|set| !referenced.contains(set.name.as_str()))
-            .collect()
-    }
-
-    /// The product of `base` with one set's choices, expanding each choice's own
-    /// `permute_with` recursively. `visiting` stops a cycle.
-    fn expand(
-        &self,
-        base: Vec<Permutation>,
-        set: &PermutationSet,
-        visiting: &mut Vec<String>,
-    ) -> Vec<Permutation> {
-        if visiting.iter().any(|name| name == &set.name) || visiting.len() >= 16 {
-            return base;
-        }
-        visiting.push(set.name.clone());
-        let mut next = Vec::new();
-        for permutation in base {
-            for (index, choice) in set.choices.iter().enumerate() {
-                let mut permutation = permutation.clone();
-                permutation.choices.push((set.name.clone(), index));
-                permutation.add_defines(&choice.macros, &choice.stages);
-                let mut expanded = vec![permutation];
-                for nested in &choice.permute_with {
-                    if let Some(nested_set) = self
-                        .permutation_sets
-                        .iter()
-                        .find(|candidate| candidate.name == *nested)
-                    {
-                        expanded = self.expand(expanded, nested_set, visiting);
-                    }
-                }
-                next.extend(expanded);
-            }
-        }
-        visiting.pop();
-        next
-    }
-
-    /// The number of groups a context compiles: how many permutations of it there
-    /// are. The section's groups are the sum over its contexts.
-    pub fn group_count_of(&self, context: &ShaderContext) -> usize {
-        self.permutations_for(context).len()
-    }
-
-    /// The number of groups the family compiles: the sum over its contexts. With
-    /// no contexts, the one permutation of the family itself.
-    pub fn context_group_count(&self) -> usize {
-        if self.contexts.is_empty() {
-            return self.group_count();
-        }
-        self.contexts
-            .iter()
-            .map(|context| self.group_count_of(context))
-            .sum()
-    }
-}
-
-impl Family {
-    /// The channel of that name, when the family declares it.
-    pub fn channel(&self, name: &str) -> Option<&ChannelDef> {
-        self.channels.iter().find(|channel| channel.name == name)
-    }
-
-    /// The flags the family's variables can gate on, in name order.
-    pub fn flags(&self) -> Vec<&str> {
-        let mut flags: Vec<&str> = Vec::new();
-        for variable in self.variables.values() {
-            if let Some(flag) = &variable.flag
-                && !flags.contains(&flag.as_str())
-            {
-                flags.push(flag);
-            }
-        }
-        flags
-    }
-
-    /// The interface a material gets from the inputs it declares: the mask over
-    /// the flags those inputs enable, the variables they expose, and the
-    /// channels that follow them. An input the family does not declare is
-    /// ignored, which is what the engine does with a name it cannot bind.
-    ///
-    /// A family with many optional variables has a great many *possible*
-    /// interfaces - two to the power of its flags - but a section ships a handful
-    /// of groups, and the conditions tree is what maps an interface onto one of
-    /// them. So this answers one query; it does not enumerate.
-    pub fn interface(&self, inputs: &[String]) -> Interface {
-        let flags = self.flags();
-        let mut mask = 0u32;
-        for input in inputs {
-            let Some(variable) = self.variables.get(input) else {
-                continue;
-            };
-            let Some(flag) = variable.flag.as_deref() else {
-                continue;
-            };
-            if let Some(bit) = flags.iter().position(|declared| *declared == flag) {
-                mask |= 1 << bit;
-            }
-        }
-        Interface {
-            mask,
-            flags: flags
-                .iter()
-                .enumerate()
-                .filter(|(bit, _)| mask & (1 << bit) != 0)
-                .map(|(_, flag)| (*flag).to_string())
-                .collect(),
-            variables: self
-                .variables
-                .iter()
-                .filter(|(_, variable)| match &variable.flag {
-                    None => true,
-                    Some(flag) => flags
-                        .iter()
-                        .position(|declared| declared == &flag.as_str())
-                        .is_some_and(|bit| mask & (1 << bit) != 0),
-                })
-                .map(|(name, _)| name.clone())
-                .collect(),
-            channels: self
-                .channels
-                .iter()
-                .filter(|channel| {
-                    channel.required
-                        || self
-                            .gating_variable(&channel.name, channel)
-                            .and_then(|variable| variable.flag.as_ref())
-                            .is_some_and(|flag| {
-                                flags
-                                    .iter()
-                                    .position(|declared| declared == &flag.as_str())
-                                    .is_some_and(|bit| mask & (1 << bit) != 0)
-                            })
-                })
-                .map(|channel| channel.name.clone())
-                .collect(),
-        }
-    }
-
-    /// The interface of the mask, for a caller that works in masks rather than
-    /// in input names.
-    pub fn interface_of(&self, mask: u32) -> Interface {
-        let inputs: Vec<String> = self
-            .variables
-            .iter()
-            .filter(|(_, variable)| {
-                variable.flag.as_ref().is_some_and(|flag| {
-                    self.flags()
-                        .iter()
-                        .position(|declared| declared == &flag.as_str())
-                        .is_some_and(|bit| mask & (1 << bit) != 0)
-                })
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-        self.interface(&inputs)
-    }
-
-    /// Enumerates the compile permutations over the family's root sets: one per
-    /// combination of their choices, expanding every choice's `permute_with`
-    /// recursively. A family with no sets has the one empty permutation.
-    pub fn permutations(&self) -> Vec<Permutation> {
-        let mut permutations = vec![Permutation::default()];
-        for set in self.root_sets() {
-            permutations = self.expand(permutations, set, &mut Vec::new());
-        }
-        permutations
-    }
-
-    /// The number of groups the family generates: the product of the sets'
-    /// choice counts, or one when the family declares no sets.
-    pub fn group_count(&self) -> usize {
-        self.permutations().len()
-    }
-
-    /// The channels one group has: those whose conditions all hold under the
-    /// group's defines, and those no condition gates.
-    ///
-    /// A channel whose condition reaches an engine query - how many skin weights
-    /// a mesh has, which renderer is running - is left out, because a generated
-    /// family cannot answer it. That is the one thing to remember about this
-    /// list: it is what the *defines* say, not what a mesh would produce.
-    pub fn channels_of(&self, permutation: &Permutation) -> Result<Vec<&ChannelDef>> {
-        let mut channels = Vec::new();
-        for channel in &self.channels {
-            // A macro a choice limited to one stage is not defined for a channel
-            // of another stage: `SKINNED_4WEIGHTS` is a vertex macro and must not
-            // decide whether a pixel channel exists.
-            let defines = Defines::new(
-                permutation
-                    .macros
-                    .iter()
-                    .filter(|name| {
-                        permutation
-                            .macro_stages
-                            .get(*name)
-                            .is_none_or(|stages| stage_applies(stages, channel.domain))
-                    })
-                    .cloned(),
-            );
-            let mut holds = true;
-            for text in &channel.conditions {
-                let condition = Condition::parse(text).wrap_err_with(|| {
-                    format!("channel {} has an unparsable condition", channel.name)
-                })?;
-                // An answer of "unknown" is not a yes, so a channel whose
-                // condition this group cannot decide is left out of it.
-                holds &= condition.holds(&defines) == Some(true);
-                if !holds {
-                    break;
-                }
-            }
-            if holds {
-                channels.push(channel);
-            }
-        }
-        Ok(channels)
-    }
-
-    /// The channel names one group has, which is what the group data records.
-    pub fn channel_names_of(&self, permutation: &Permutation) -> Result<Vec<String>> {
-        Ok(self
-            .channels_of(permutation)?
-            .iter()
-            .map(|channel| channel.name.clone())
-            .collect())
-    }
-
-    /// The variable that gates the channel `name`: the one it names, or the
-    /// variable of the same name.
-    fn gating_variable<'a>(
-        &'a self,
-        name: &'a str,
-        channel: &'a ChannelDef,
-    ) -> Option<&'a VariableDef> {
-        self.variables
-            .get(channel.variable.as_deref().unwrap_or(name))
-    }
-}
-
 /// Whether a stage-limited macro applies to a channel of `domain`. An empty
 /// stage list applies everywhere; a named stage that is not the channel's does
 /// not apply.
-fn stage_applies(stages: &[String], domain: Domain) -> bool {
+pub(crate) fn stage_applies(stages: &[String], domain: Domain) -> bool {
     stages.is_empty()
         || stages.iter().any(|stage| match (stage.as_str(), domain) {
             ("vertex", Domain::Vertex) => true,
@@ -721,11 +365,11 @@ fn stage_applies(stages: &[String], domain: Domain) -> bool {
 }
 
 /// One runtime interface: the flags a material's inputs enable and the variables
-/// and channels they expose. `mask` is the bit set over [`Family::flags`] and is
-/// what the conditions tree indexes on.
+/// and channels they expose. `mask` is the bit set over the declaration's flags
+/// and is what the conditions tree indexes on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Interface {
-    /// The bit set over [`Family::flags`].
+    /// The bit set over the declaration's flags.
     pub mask: u32,
     /// The permutation flags, in name order.
     pub flags: Vec<String>,
@@ -980,20 +624,21 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::filetype::shader_node::ShaderNode;
 
-    /// A family as the `.shader_node` reader hands it over: two required
+    /// A declaration as the `.shader_node` reader hands it over: two required
     /// channels and one gated by an optional variable.
-    fn sample() -> Family {
-        let mut family = Family::default();
+    fn sample() -> ShaderNode {
+        let mut node = ShaderNode::default();
         for name in ["texture_map", "vertex_position"] {
-            family.channels.push(ChannelDef {
+            node.channels.push(ChannelDef {
                 name: name.to_string(),
                 kind: ValueType::Texture2D,
                 required: true,
                 ..ChannelDef::default()
             });
         }
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "normal_map".to_string(),
             kind: ValueType::Texture2D,
             required: false,
@@ -1004,7 +649,7 @@ mod tests {
             ("base_color", Some("HAS_BASE_COLOR")),
             ("opacity", Some("HAS_OPACITY")),
         ] {
-            family.variables.insert(
+            node.variables.insert(
                 name.to_string(),
                 VariableDef {
                     kind: ValueType::Float3,
@@ -1014,7 +659,7 @@ mod tests {
                 },
             );
         }
-        family.variables.insert(
+        node.variables.insert(
             "normal_strength".to_string(),
             VariableDef {
                 kind: ValueType::Float,
@@ -1022,17 +667,17 @@ mod tests {
                 ..VariableDef::default()
             },
         );
-        family.variables.insert(
+        node.variables.insert(
             "mod_tint".to_string(),
             VariableDef {
                 kind: ValueType::Float4,
                 ..VariableDef::default()
             },
         );
-        family
+        node
     }
 
-    /// The texture channel of the sample family.
+    /// The texture channel of the sample declaration.
     fn texture_channel() -> ChannelDef {
         ChannelDef {
             name: "texture_map".to_string(),
@@ -1053,15 +698,15 @@ mod tests {
 
     #[test]
     fn an_interface_per_declared_input() {
-        let family = sample();
+        let node = sample();
         assert_eq!(
-            family.flags(),
+            node.flags(),
             vec!["HAS_BASE_COLOR", "HAS_NORMAL_MAP", "HAS_OPACITY"]
         );
 
         // A material that declares no optional input gets the always-present
         // variable and the required channels.
-        let bare = family.interface(&[]);
+        let bare = node.interface(&[]);
         assert_eq!(bare.mask, 0);
         assert!(bare.flags.is_empty());
         assert_eq!(bare.variables, vec!["mod_tint"]);
@@ -1069,7 +714,7 @@ mod tests {
 
         // One input enables its flag, and with it the variable and the channel
         // that follows it.
-        let base_color = family.interface(&["base_color".to_string()]);
+        let base_color = node.interface(&["base_color".to_string()]);
         assert_eq!(base_color.mask, 0b001);
         assert!(base_color.defines("HAS_BASE_COLOR"));
         assert!(!base_color.defines("HAS_OPACITY"));
@@ -1077,12 +722,12 @@ mod tests {
         assert!(!base_color.channels.contains(&"normal_map".to_string()));
 
         // The gating variable's flag is bit 1, and it brings the channel with it.
-        let normal = family.interface(&["normal_strength".to_string()]);
+        let normal = node.interface(&["normal_strength".to_string()]);
         assert_eq!(normal.mask, 0b010);
         assert!(normal.channels.contains(&"normal_map".to_string()));
 
         // Every optional input at once.
-        let all = family.interface(&[
+        let all = node.interface(&[
             "base_color".to_string(),
             "normal_strength".to_string(),
             "opacity".to_string(),
@@ -1091,19 +736,19 @@ mod tests {
         assert_eq!(all.variables.len(), 4);
 
         // A mask gives the same answer as the names behind it.
-        assert_eq!(family.interface_of(0b111), all);
+        assert_eq!(node.interface_of(0b111), all);
 
-        // An input the family does not declare is ignored, the way the engine
+        // An input the declaration does not declare is ignored, the way the engine
         // ignores a name it cannot bind.
-        let unknown = family.interface(&["not_a_variable".to_string(), "opacity".to_string()]);
+        let unknown = node.interface(&["not_a_variable".to_string(), "opacity".to_string()]);
         assert_eq!(unknown.mask, 0b100);
     }
 
     #[test]
     fn one_permutation_per_choice_combination() {
-        let mut family = sample();
-        assert_eq!(family.group_count(), 1);
-        family.permutation_sets = vec![
+        let mut node = sample();
+        assert_eq!(node.group_count(), 1);
+        node.permutation_sets = vec![
             PermutationSet {
                 name: "vertex_modifiers".to_string(),
                 choices: vec![
@@ -1144,8 +789,8 @@ mod tests {
             },
         ];
         // Two sets of two choices: four permutations, the first set slowest.
-        assert_eq!(family.group_count(), 4);
-        let permutations = family.permutations();
+        assert_eq!(node.group_count(), 4);
+        let permutations = node.permutations();
         assert_eq!(
             permutations[0].choices,
             vec![
@@ -1167,8 +812,8 @@ mod tests {
         // The real files build sets out of sets: a choice names another set and
         // the enumeration expands it under the choice, so the referenced set is
         // not a second root and the product is not squared.
-        let mut family = sample();
-        family.permutation_sets = vec![
+        let mut node = sample();
+        node.permutation_sets = vec![
             PermutationSet {
                 name: "inner".to_string(),
                 choices: vec![
@@ -1199,7 +844,7 @@ mod tests {
                 }],
             },
         ];
-        let permutations = family.permutations();
+        let permutations = node.permutations();
         assert_eq!(
             permutations.len(),
             2,
@@ -1221,8 +866,8 @@ mod tests {
         // SKINNED_4WEIGHTS is a vertex macro: a pixel channel gated on it must
         // not be included by a permutation that defines it for the vertex stage
         // only.
-        let mut family = sample();
-        family.permutation_sets = vec![PermutationSet {
+        let mut node = sample();
+        node.permutation_sets = vec![PermutationSet {
             name: "vertex_modifiers".to_string(),
             choices: vec![Choice {
                 condition: None,
@@ -1232,7 +877,7 @@ mod tests {
                 is_default: true,
             }],
         }];
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "skinned".to_string(),
             kind: ValueType::Float,
             domain: Domain::Pixel,
@@ -1240,8 +885,8 @@ mod tests {
             conditions: vec!["defined(SKINNED_4WEIGHTS)".to_string()],
             ..ChannelDef::default()
         });
-        let permutation = family.permutations().remove(0);
-        let names: Vec<String> = family.channel_names_of(&permutation).expect("names");
+        let permutation = node.permutations().remove(0);
+        let names: Vec<String> = node.channel_names_of(&permutation).expect("names");
         assert!(
             !names.iter().any(|name| name == "skinned"),
             "a vertex-only macro does not apply to a pixel channel"
@@ -1280,14 +925,14 @@ mod tests {
     }
 
     #[test]
-    fn a_family_writes_one_default_context_for_the_single_group_path() {
+    fn a_declaration_writes_one_default_context_for_the_single_group_path() {
         // The bridge from the declaration to the section. A declaration may name
         // shadow_caster and material_transfer too, but their query ids are not
         // derivable yet, so the one-group path writes the only context whose id is
         // known: default, pointing at the group data's hash. A multi-group
         // declaration against carried group data fails the section's query/group
         // count check rather than writing placeholder ids.
-        let family = Family {
+        let node = ShaderNode {
             contexts: vec![
                 ShaderContext {
                     name: "default".to_string(),
@@ -1300,7 +945,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let records = family.context_records(0x8BE2_82AA);
+        let records = node.context_records(0x8BE2_82AA);
         assert_eq!(records.len(), 1, "only the default context is written");
         assert_eq!(
             records[0].queries[0].id, 0x8BE2_82AA,
@@ -1319,17 +964,17 @@ mod tests {
 
     #[test]
     fn a_group_has_the_channels_its_conditions_allow() {
-        let mut family = sample();
+        let mut node = sample();
         // Two channels under a condition each, as a real declaration writes
         // them: one on a macro a set defines, one on a macro nothing defines.
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "tsm0".to_string(),
             kind: ValueType::Float3,
             required: false,
             conditions: vec!["defined(NEEDS_TANGENT_SPACE)".to_string()],
             ..ChannelDef::default()
         });
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "pixel_depth".to_string(),
             kind: ValueType::Float,
             required: false,
@@ -1337,7 +982,7 @@ mod tests {
             ..ChannelDef::default()
         });
         // A condition that reaches an engine query: no group can say.
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "skinned".to_string(),
             kind: ValueType::Float,
             required: false,
@@ -1345,7 +990,7 @@ mod tests {
             ..ChannelDef::default()
         });
         // Two conditions, both of which have to hold.
-        family.channels.push(ChannelDef {
+        node.channels.push(ChannelDef {
             name: "uv".to_string(),
             kind: ValueType::Float2,
             required: false,
@@ -1356,17 +1001,17 @@ mod tests {
             ..ChannelDef::default()
         });
 
-        // A family with no sets has the one group with no macros, so only the
+        // A declaration with no sets has the one group with no macros, so only the
         // channels no condition gates are in it. A channel an *optional input's*
         // flag gates is here too: that flag is a runtime thing, and the group is
         // a compile permutation. The interface is where the flag applies.
-        let groups = family.permutations();
+        let groups = node.permutations();
         assert_eq!(groups.len(), 1);
-        let names = family.channel_names_of(&groups[0]).expect("names");
+        let names = node.channel_names_of(&groups[0]).expect("names");
         assert_eq!(names, vec!["texture_map", "vertex_position", "normal_map"]);
 
         // Now a set that defines the two macros one of the channels needs.
-        family.permutation_sets = vec![PermutationSet {
+        node.permutation_sets = vec![PermutationSet {
             name: "passes".to_string(),
             choices: vec![
                 Choice {
@@ -1388,10 +1033,10 @@ mod tests {
                 },
             ],
         }];
-        let permutations = family.permutations();
+        let permutations = node.permutations();
         assert_eq!(permutations.len(), 2);
 
-        let with_macros = family.channel_names_of(&permutations[0]).expect("names");
+        let with_macros = node.channel_names_of(&permutations[0]).expect("names");
         assert_eq!(
             with_macros,
             vec!["texture_map", "vertex_position", "normal_map", "tsm0", "uv"],
@@ -1399,7 +1044,7 @@ mod tests {
         );
 
         // The other group defines nothing, so the conditional channels drop out.
-        let without = family.channel_names_of(&permutations[1]).expect("names");
+        let without = node.channel_names_of(&permutations[1]).expect("names");
         assert_eq!(
             without,
             vec!["texture_map", "vertex_position", "normal_map"]
@@ -1408,15 +1053,15 @@ mod tests {
 
     #[test]
     fn an_unparsable_condition_is_reported() {
-        let mut family = sample();
-        family.channels.push(ChannelDef {
+        let mut node = sample();
+        node.channels.push(ChannelDef {
             name: "broken".to_string(),
             required: false,
             conditions: vec!["defined(".to_string()],
             ..ChannelDef::default()
         });
-        let permutations = family.permutations();
-        let err = family
+        let permutations = node.permutations();
+        let err = node
             .channel_names_of(&permutations[0])
             .expect_err("unparsable");
         assert!(err.to_string().contains("broken"), "{err}");
