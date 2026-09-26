@@ -5,9 +5,10 @@ what is verified, with sample sizes, and what is still a reading.
 
 ## Repo state (2026-09-26)
 
-`main` was rewritten. It is the trusted baseline plus three reviewed commits:
+`main` is the trusted baseline plus reviewed commits:
 
 ```
+b69d8e9 condition_tree: the payload's branches, and the tests-1 result
 4be58e5 condition_tree: the payload reads as guarded results
 8b89277 condition_tree: the conditions framing is decoded
 45bb351 docs: the shader notes, corrected and scoped
@@ -16,11 +17,8 @@ ab4f385 build: vendor the SJSON dialect fork
 2c79541 docs: tail signature runs and trailing run are family-independent   <- trusted baseline
 ```
 
-The pre-rewrite history is preserved as the tag
-`archive/shader-session-2026-09-26` and the branch `fix/shader-section`, both
-pushed. Do not trust its commit messages; several assert retracted models.
-`docs/Shader Section Generation Notes.md` and `docs/Shader RE TODO.md` were
-rewritten to one consistent truth and are the reference.
+`docs/Shader Section Generation Notes.md` and `docs/Shader RE TODO.md` are the
+reference; this file is the pick-up point.
 
 ## Build and test
 
@@ -124,10 +122,11 @@ shader43 --plan <declaration.shader_node> <section>
 
 ## Standing rules
 
-- After claiming a format fact, deliberately look for the family or section that
-  would break it. Write the sample size into the note. Five claims in the
-  archived session failed this way.
+- After claiming a format fact, deliberately look for the section that would
+  break it. Write the sample size into the note. Five claims in the previous
+  session failed this way.
 - A read-N-write-N round trip proves the writer did not move bytes; it proves
   nothing about the reader. Substitution tests and count/bounds invariants are
   the evidence.
-- Do not trust the archived commits or the old versions of the shader docs.
+- The shader docs in this repository are the reference; anything that
+  contradicts them is superseded.
