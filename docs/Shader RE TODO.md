@@ -6,14 +6,46 @@ Working notes and next steps for the `shader43` reverse engineering. See
 
 ## Priority order
 
-1. **Group data channel records** (current): parse the canonical and packed
-   framings precisely so a cloned channel can be inserted with correct counts -
-   the last piece before a family can add its own texture channel.
-2. **New-family path proper**: generate a whole family (block config, packed
-   copies, tail resource lists, conditions), not just patch a shipped one.
-3. **Unit workstream**: streamed meshes first, then skins/animations.
+Items 1 and 2 are done and verified against the sections on disk; item 3 turned
+out to be done already. What is left is the group data constructor, the
+conditions tree, and the in-game test that no round trip can replace.
+
+1. ~~**Group data channel records**~~ **done for the six small sections.** The
+   canonical 20-byte records are read through the count word before every table,
+   and the packed 28-byte copies are readable; the packed framing still misses
+   the kind 5 binding on `427B5E6E` (6 of 7 copies) and the UI base's channel
+   table is not reached by the stride. The channel table is the one table a
+   from-scratch group data *writes*, and `rebuild_channels` keeps the engine's
+   kind, flags and size for every slot.
+2. ~~**New-shader path proper**~~ **done for the section codec.** Contexts,
+   conditions (as bytes), dependencies, group data and programs are read and
+   written, and **all seven sections measured - the six small ones and the real
+   UI base - come back byte for byte**. The contexts are variable length and fill
+   their region exactly; `conditions_offset` is `48 + the sum of the record
+   lengths`, and there is no link table. The carried list is: the opaque and
+   default-data header words, each context's second word (0 on every section
+   measured), the conditions blob, the slack between group data and programs, the
+   programs, and the bytes after them. The substitution test covers the half a
+   round trip cannot: a renamed context is 4 bytes at +48, a renamed variable
+   4 bytes inside the group data, and a query added moves every later offset by
+   the sum with the group data as written. See `Shader Section Generation
+   Notes.md`.
+3. ~~**Unit workstream**~~ **was already done.** `filetype::unit` has compiled
+   *and* decompiled the version `0x73` payload for some time, with 16 passing
+   tests including four round trips - mesh geometry, the scene graph, mesh objects
+   and a full decompile. Verified rather than assumed; the roadmap was stale.
 4. **Particles**: a new file type (compile/decompile) so particle-based mods
-   like RainbowFlame can be replicated.
+   like RainbowFlame can be replicated. `File-Type-Status.md` still has this as
+   `None`, and it is the last format on the list.
+5. **From-scratch end to end**, in game. The declaration front end reads the 15
+   real `.shader_node` files - inputs, channels, permutation sets with choice
+   recursion, contexts and passes - and a single-group dry run builds a section
+   with no shipped blob. What is missing is the generated group data and the
+   conditions tree, so a multi-group declaration against a carried template is
+   refused by the query/group count check rather than written with placeholder
+   ids. Context names pair by identity (`default`, `shadow_caster`); channel
+   names do not, so the oracle left is whether the game loads it.
+
 
 ## Goal
 
@@ -71,20 +103,21 @@ What does not work yet:
 - `mine_materials` example: dumps `materials/variables/groups/defaults/contexts/
   conditions/tails.csv` for the whole game (2037 shader materials) and writes
   `known.txt`/`unknown.txt` hash bounty lists.
-- Family census (from `variables.csv`): of 2036 mined materials and 3353
+- Shader census (from `variables.csv`): of 2036 mined materials and 3353
   distinct variable names, 129 names appear in at least half of the materials
   (the engine variables), and the material-specific remainder ranges from 0 to
   86 per material with a long tail (most materials have 4 to 40). The per-file
   ranking was joined with a dump of every bundle's entries (the entry's
   `dfn=...` field maps a data file to its resource name hash, which the
-  dictionaries resolve). The richest families are FX materials:
+  dictionaries resolve). The richest shaders are FX materials:
   `content/fx/materials/abilities/cryptic_force_field_02` (86),
   `content/weapons/materials/weapon_power_sword/weapon_power_effect_cryptic`
   (62), `content/fx/materials/master/wind_render` (61). Many had no
   dictionary entry, so a mod that needs many existing parameter slots should
   prefer the named ones or use the `clone` preset lines.
-- Decoded (partially): contexts (`{name_hash, u32, count, count × {query_id,
-  conditions_offset}}`), conditions tree (records `{tag, b, c, count}` +
+- Contexts: read and written as `{name, word2, count, count x {query_id,
+  conditions_offset}}`; the queries are the groups (measured on seven
+  sections). Conditions tree (records `{tag, b, c, count}` +
   hashes + u16 payload; names are channels: `gui`, `red`, `green`, `blue`,
   `alpha`, `fog_volume`, `linear_depth`, ...), group header descriptor shape
   `{name_hash, flags, X, Y}`, group variable tables, default data table,
@@ -96,15 +129,15 @@ What does not work yet:
 **Next action (decides whether custom interfaces are a compiler problem or a
 dead end): decode the block's record grammar.** The block is the one structure
 whose authority is still unproven, and the name-to-slot map lives in it or
-beside it. Method: dump the device preamble of families with known, different
+beside it. Method: dump the device preamble of shaders with known, different
 variable sets (the miner's CSVs give the sets and hashes), diff them and locate
 the record for a known variable (e.g. `dev_wireframe_color` = `795CF4A7` on the
-UI base family). Then clone that record with a new name hash and offset, patch
+UI base shader). Then clone that record with a new name hash and offset, patch
 it consistently (block, canonical records, packed copies, descriptors, tails)
 and test in game whether a material declaring the new name binds. If the block
 can be grown, generation is a matter of modelling its record stream; if not, the
 interface is engine-compiled and custom base materials stay bound to shipped
-families. Supporting decodes, as the experiment needs them: descriptor `Y`
+shaders. Supporting decodes, as the experiment needs them: descriptor `Y`
 semantics, the packed copies' generation grammar, and the tail resource-list
 kinds.
 
@@ -114,7 +147,7 @@ record stream is now framed: record lengths follow the record's `kind` (4 -> 60
 bytes, 5 -> 73 bytes), the engine prologue (`linear_depth`, `global_diffuse_map`,
 `sun_shadow_map`, `fog_volume`) is at fixed offsets and the stream ends exactly
 at the preamble's end. `shader43 --records` parses it end to end on three shipped
-families, and a `clone_channel` preset line clones a record into the preamble,
+shaders, and a `clone_channel` preset line clones a record into the preamble,
 every tail's block and the group data's variable records (unit-tested). In game
 the cloned name **binds**: with the clone and a material naming it, the title
 screen renders the mod texture with the cycling tint (a block-only clone left
@@ -159,9 +192,9 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   --records`, exactly reaching the preamble's end (staff-49: 6 records from
   `+0x20F` to `+0x391`; the enemy warpfire material `bb79ba7a5b92d132`: 7
   records from `+0x20F` to `+0x3E7`; the UI base: 1 record at `+0x1F5`). Every
-  family has the same engine prologue - `linear_depth` (kind 4, `+0x20F`),
+  shader has the same engine prologue - `linear_depth` (kind 4, `+0x20F`),
   `global_diffuse_map` (kind 4, `+0x24B`), `sun_shadow_map` (kind 5, `+0x287`)
-  and `fog_volume` (kind 4, `+0x2D0`) - and family channels follow (the first at
+  and `fog_volume` (kind 4, `+0x2D0`) - and shader channels follow (the first at
   `+0x30C`). The stream is preceded by its **record count** in the word right
   before the first record (1 for the UI base, 6 for staff-49), and a clone has
   to bump it. In-game channel-clone tests: cloning the block record **and** the
@@ -183,22 +216,23 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
   and resource/signature lists - the 112-byte vertex tails do not carry it) is
   120 bytes of header (group count, table counts/sizes) then byte-packed 13-byte
   records `{u32 index, u8 0, u32 value, u32 0}` and the stream count. The same
-  records appear across families: a **22-record common prefix** (`12:1 16:1 15:8
+  records appear across shaders: a **22-record common prefix** (`12:1 16:1 15:8
   19:8 10:FF 14:1 18:1 1A:1 11:FF 13:1 17:1 5E:F 5F:F 60:F 61:F 62:F 63:F 64:F
-  65:F 0C:1 0E:4 0D:1`) then family-specific records, so the index space is the
+  65:F 0C:1 0E:4 0D:1`) then shader-specific records, so the index space is the
   engine's global variable order (16..26 is `time` .. `upscaling_enabled` in the
-  UI base) and the values are small per-family masks/counts (1, 8, `0xF`,
-  `0xFF`, `0x60`, `0x78`). Families with fewer programs have *more* block
-  records (a 4-program family: 40-58 vs the 96-program UI base's 29), so the
+  UI base) and the values are small per-shader masks/counts (1, 8, `0xF`,
+  `0xFF`, `0x60`, `0x78`). Shaders with fewer programs have *more* block
+  records (a 4-program shader: 40-58 vs the 96-program UI base's 29), so the
   table is sized by the variable set, not the program count. The 120-byte header
-  is otherwise **constant across all seven families**; only three words vary:
-  `+0x04` = the group count, `+0x08` = the number of cbuffers the family uses (2
+  is otherwise **constant across all seven shaders**; only three words vary:
+  `+0x04` = the group count, `+0x08` = the number of cbuffers the shader uses (2
   for the UI base, 3/5 elsewhere), and `+0x0C` = the block's record count + 8
   (verified against the stream offset in all seven). Practical generation: copy
   the template's block and rewrite those three words; the records themselves are
   engine-variable entries and an over-inclusive set is harmless.
-- The group data holds a channel in **two framings**, 3 records each per group
-  unit (108 + 108 = 216 for the UI base's `texture_map`; `shader43 --channel
+- The group data holds a channel in **two framings**, however many records the
+  channel has per group unit (a texture channel is three, a scalar one is one;
+  108 + 108 = 216 for the UI base's `texture_map`; `shader43 --channel
   <name>` dumps them). **Canonical** 20-byte records
   `{type, flags, name_hash, cbuffer_offset, size}`: type 5/offset 0/size 4,
   type 1/offset 4/size 8, type 1/offset 16/size 8. **Packed** copies sit in a
@@ -252,9 +286,9 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    variables: `texture_map` x3 plus `view_proj`, `world_view_proj`, `world` and
    `dev_wireframe_color`. The packed 28-byte copies are keyed by `c_per_object`.
    The group descriptors are `global_viewport` (kind 1 cbuffer), an unnamed
-   texture (kind 3) and an unnamed UAV (kind 5). Families differ in how they
+   texture (kind 3) and an unnamed UAV (kind 5). Shaders differ in how they
    organize the tables: the UI base has two runs (the `c_per_object` variables
-   and the `global_viewport` variables), while a 4-program environment family
+   and the `global_viewport` variables), while a 4-program environment shader
    (`38ECBAD13742E4E1`) has a single merged run with engine and material
    variables interleaved by offset (`camera_unprojection` 0, `camera_pos` 16,
    `texture_map_1453a433` 24, `camera_view` 32, `world_view_proj` 48, ...).
@@ -304,18 +338,18 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    the vertex shader has one cbuffer and no resources, so its lists are empty.
    Only the cbuffer list (vertex = `c_per_object`; pixel = `global_viewport` +
    `c_per_object`) and the signature runs differ per program. Across the seven
-   families the lists map to: list 3 = engine textures (`linear_depth` seen),
-   list 4 = the family's texture (`3AFC636C`), list 6 = the family's UAV
+   shaders the lists map to: list 3 = engine textures (`linear_depth` seen),
+   list 4 = the shader's texture (`3AFC636C`), list 6 = the shader's UAV
    (`41B1CFF8`), list 7 = the vertex-data record (`4B42C5E6`); lists 1, 2, 5 and
-   8 are empty in every family. One family's list 7 carries four records, so the
+   8 are empty in every shader. One shader's list 7 carries four records, so the
    7-word record shape is not universal - the record size may depend on the
    resource kind. Which lists exist by index and the pixel tail's trailing
-   `{DA560F03, 0, 0}` run are still open. The trailing run is **family-independent**
-   (identical in the UI base and the 4-program family), and the 4-program
-   family's pixel tail confirms the run shapes: `{SV_POSITION, 0, 0}` then four
+   `{DA560F03, 0, 0}` run are still open. The trailing run is **shader-independent**
+   (identical in the UI base and the 4-program shader), and the 4-program
+   shader's pixel tail confirms the run shapes: `{SV_POSITION, 0, 0}` then four
    `{CUSTOM, i, i}` records, the counted `{DA560F03, 0, 0}` run and a final `2`.
-   The tail's block placement varies per family: the UI base's pixel tail embeds
-   `preamble[12..]` (549 bytes) at +252, while the 4-program family's block is 840
+   The tail's block placement varies per shader: the UI base's pixel tail embeds
+   `preamble[12..]` (549 bytes) at +252, while the 4-program shader's block is 840
    bytes and mostly matches the preamble's first 840 bytes (116 differing bytes),
    so the tail's block is not always a straight preamble copy.
 
@@ -335,9 +369,9 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
 | Piece | Source |
 | --- | --- |
 | Header, section offsets | generated |
-| Contexts | generated (one `default` query, `0xFFFFFFFF`) or the family's |
-| Conditions | empty for a single group, the family's for permutations |
-| Dependencies (8 bytes) | the family's |
+| Contexts | generated (one `default` query, `0xFFFFFFFF`) or the shader's |
+| Conditions | empty for a single group, the shader's for permutations |
+| Dependencies (8 bytes) | the shader's |
 | Group data: units, descriptors | generated (`X` = running 24/8 byte allocation, `flags` = space/kind) |
 | Group data: canonical tables | **ours**, from the material's channels and variables - this is the upload layout |
 | Group data: packed copies | the **library's** (required to parse, not used for uploads) |
@@ -347,7 +381,7 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
 | Default data | ours (empty, or the material's defaults) |
 
    The library constants (block, packed copies, resource lists, engine cbuffer
-   variable names) are a small per-family file; everything else the tool can
+   variable names) are a small per-shader file; everything else the tool can
    write. New *channel names* still require the library's block to already list
    them, since the block is the library's own record set.
 
@@ -363,7 +397,29 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    conditions at all: the minimal two program material ships an empty conditions
    section and a single `default` context pair `{query_id, 0xFFFFFFFF}`, with
    the group header carrying that same query id. So this only has to be decoded
-   to support several groups/permutations in one material.
+   to support several groups/permutations in one material. Measured on the UI
+   base: 35 records of `{u16 tag=1, u16 b, u16 c, u16 count}` + `count` hashes +
+   a payload, sizes 24/30/36/42/48/54/60 bytes for counts 2/3/4/4/5/6/7 (so the
+   payload length is not a function of the count alone - it is bit-packed and
+   depends on the condition kinds). The payload is a sequence of u16
+   `flag << 8 | operand` pairs with flags `0x10/0x20/0x50/0x70/0x90` seen and
+   small operands; the condition hashes are material-side names (`gui`, `red`,
+   `green`, `blue`, `alpha` resolve), so the tree is derivable from a
+   declaration that names them (see the Stingray format in
+   `Shader Section Generation Notes.md`). The material side declares `channels`
+   (its texture channels), `textures`, `variables` and `material_contexts` (a
+   key = value map, e.g. `surface_material = "bone"`; the shipped base material
+   uses `"dirt"`), and the base material ships an empty conditions section, so
+   the tree is only needed for permuted shaders. The condition hashes are *not*
+   in the group's variable tables, so they are neither cbuffer variables nor the
+   shader's channels; and they are not `material_contexts` values either (the
+   shipped corpus only uses `surface_material = bone/metal_solid/dirt/...`, none
+   of which match). They do read as the shader's **optional input names** - the
+   Stingray `type = { vector3: ["HAS_BASE_COLOR"] }` pattern, where a material
+   provides a subset and the tree maps that subset to a group - which also
+   explains why the base and 4-program shaders ship an empty conditions section.
+   Still to confirm by permuting one material's declared inputs and watching the
+   conditions change.
 4. **Device preamble**: split the engine-constant middle from the per-material
    suffix (two same-shader materials differ by one list entry). Lead: the
    preamble's first words track the material's contexts - `{1, query_count, 2, …}`
@@ -372,10 +428,12 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    preamble holds the material's variable list (`texture_map` sits at `+0x1F4`).
    Next step: dump the preamble of a few hundred varied materials next to their
    contexts/conditions/programs and fit the table, then generate it.
-5. **Mod-side shader declaration**: a small file next to the material (entry
-   points, channels, variables/defaults, which engine-constant file to use),
-   wired into `dtmt build`; then a **new family** (new root shader material)
-   generated end to end and verified in game.
+5. **Mod-side shader declaration**: `filetype::shader_node` reads the
+   toolchain's own `.shader_node` (entry points, channels, variables/defaults,
+   permutation sets and contexts), so a declaration is already a file next to
+   the material rather than a dialect of ours. What is left is the generated
+   group data and conditions tree, wiring `Section::build` into `dtmt build`,
+   and a new shader generated end to end and verified in game.
 
 ## Bounties
 
