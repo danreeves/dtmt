@@ -109,6 +109,13 @@ shader43 --plan <declaration.shader_node> <section>
    <n>` with `<n>` 2 then 1; groups 0-11 then carry a condition hash plus twelve
    zero bytes, and both kinds end in a common 25-byte zero-terminated tail.
    Next: the `<n>` word or the opening record grammar as the length determinant.
+   Measured on all 37 group boundaries of the UI base: the header length is
+   **57 + 17 x (n - 1)**, with `n` the word at header+28 (2 where the group
+   carries a condition hash, 1 where it does not). So the header is
+   self-delimiting once `n` is read, and `n` is one plus the condition count.
+   That is fitted on the UI base's two classes; the six small sections are the
+   next test. Then the constructor can either use the formula or carry the
+   header from the template.
 3. **Group data constructor**: with the walk, a first constructor can carry each
    group's byte-packed header and descriptors from the template - they are the
    family's compiled interface metadata, like the block - generate the material
