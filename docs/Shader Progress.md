@@ -104,12 +104,15 @@ shader43 --plan <declaration.shader_node> <section>
    `{2, 7}` `+76..+84`, material records `+84`, engine records `+236` (count
    `69` at `+232`, 12-byte header `{240, 64, 69}` at `+228`), the channels table
    near `+1608`, the packed run, and then a **byte-packed group header** that is
-   the whole size difference: 74 bytes in groups 0-11 and 57 in 12-35 (17 = the
-   difference between 1758 and 1741). It carries the group's condition hash -
-   `9FCFE126` (`gui`) in groups 0-11, `BC4EE226` / `E2C8865F` later - and a few
-   trailing counts. Next: find the header's own length field (or a terminator)
-   so the walk can compute a group's end without knowing the family; then the
-   table offsets and the constructor.
+   the whole size difference. Its bytes are now dumped (groups 0-11: 74 bytes,
+   groups 12-35: 57). It opens `E503152C 00000008 00000000 00000010 00000001
+   B5639618 00000000 <n>` with `<n>` 2 in groups 0-11 and 1 later; groups 0-11
+   then carry a 4-byte condition hash (`9FCFE126` / `BC4EE226`) followed by
+   twelve zero bytes, and both kinds end in a common 25-byte tail whose last
+   bytes are zero. There is **no trailing terminator**, so the header's length
+   is not self-delimiting at the end: the next step is the `<n>` word at `+28`
+   (or the record grammar of the opening fields) as the length determinant, then
+   the table offsets and the constructor.
 3. **Group data constructor**: with (2), generate the material and channel
    tables and the descriptors; carry the engine table, the group hash and the
    block. `rebuild`/`rebuild_channels` already write the tables correctly.
