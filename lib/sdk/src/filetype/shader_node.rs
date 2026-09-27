@@ -271,6 +271,31 @@ pub fn defines_for(macros: &[String]) -> String {
     out
 }
 
+/// The DXC target profile for a stage name, when it is one DXC has. Darktide
+/// ships DXBC, so the SM 5.0 profiles are what the engine consumes.
+pub fn profile_for(stage: &str) -> Option<&'static str> {
+    Some(match stage {
+        "vertex" => "vs_5_0",
+        "pixel" => "ps_5_0",
+        _ => return None,
+    })
+}
+
+/// The profiles a job compiles for: the named stages' profiles, in order and
+/// without repeats. Empty when the job names no stage, which the caller has to
+/// resolve rather than guess.
+pub fn profiles_for(stages: &[String]) -> Vec<&'static str> {
+    let mut out: Vec<&'static str> = Vec::new();
+    for stage in stages {
+        if let Some(profile) = profile_for(stage)
+            && !out.contains(&profile)
+        {
+            out.push(profile);
+        }
+    }
+    out
+}
+
 /// One program the declaration asks to compile: a context, a permutation, and
 /// the pass's code block with the macros it compiles under. The stage and the
 /// assembled HLSL are the compiler's next step.
@@ -1531,6 +1556,14 @@ mod tests {
         let defines = defines_for(&["A".to_string(), "B".to_string()]);
         assert!(defines.contains("#define A"));
         assert!(defines.contains("#define B"));
+    }
+
+    #[test]
+    fn a_job_maps_its_stages_to_profiles() {
+        let profiles = profiles_for(&["pixel".to_string(), "vertex".to_string(), "pixel".to_string()]);
+        assert_eq!(profiles, vec!["ps_5_0", "vs_5_0"]);
+        assert_eq!(profile_for("geometry"), None);
+        assert!(profiles_for(&[]).is_empty(), "an undecided job guesses nothing");
     }
 
     #[test]
