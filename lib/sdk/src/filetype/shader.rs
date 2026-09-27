@@ -320,12 +320,13 @@ fn parse_signature(chunk: &[u8]) -> Option<Vec<SignatureElement>> {
     Some(elements)
 }
 
-/// Checks that a replacement container can stand in for the original.
+/// Checks that a replacement container can stand in for the original: why it
+/// cannot, or `None` when it can.
 ///
 /// The shader stage and the semantic layout of both signatures must match. The
 /// exact bytes may differ (compiler versions encode signatures differently),
 /// so the decoded semantics are compared instead.
-fn interface_mismatch(original: &[u8], replacement: &[u8]) -> Option<String> {
+pub fn interface_mismatch(original: &[u8], replacement: &[u8]) -> Option<String> {
     let original_stage = stage_of(original);
     let replacement_stage = stage_of(replacement);
     if original_stage != replacement_stage {

@@ -11,7 +11,7 @@
 //!   shader43 --tail <program index> <material data file>
 //!   shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>]
 //!       <material data file>
-//!   shader43 --compile <dir> <declaration.shader_node>
+//!   shader43 --compile <dir> [--against <material>] <declaration.shader_node>
 //!       <library.shader_source | directory>...
 //!
 //! `dtmt build` performs the same replacement automatically for shader sources
@@ -64,6 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut channel_filter: Option<String> = None;
     let mut block_declaration: Option<PathBuf> = None;
     let mut compile_dir: Option<PathBuf> = None;
+    let mut against: Option<PathBuf> = None;
     let mut group_data_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
@@ -157,6 +158,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     args.get(i).expect("--compile needs a directory"),
                 ));
             }
+            "--against" => {
+                i += 1;
+                against = Some(PathBuf::from(
+                    args.get(i).expect("--against needs a material or section"),
+                ));
+            }
             "--records" => records_mode = true,
             "--channel" => {
                 i += 1;
@@ -214,8 +221,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              [--spirv-cross <exe>] <material data file>...\n       \
              shader43 --tail <program index> <material data file>\n       \
              shader43 --tails [--variables <dictionary.csv>] <material data file>\n       \
-             shader43 --compile <dir> <declaration.shader_node> \
-             <library.shader_source | directory>...\n       \
+             shader43 --compile <dir> [--against <material>] \
+             <declaration.shader_node> <library.shader_source | directory>...\n       \
              shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>] \
              <material data file>..."
         );
@@ -226,7 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (declaration, libraries) = files
             .split_first()
             .ok_or("--compile needs a declaration and its libraries")?;
-        return compile(declaration, libraries, dir);
+        return compile(declaration, libraries, dir, against.as_deref());
     }
 
     if let Some(index) = tail_index {
@@ -1237,10 +1244,13 @@ fn plan(
 
 /// Compiles the declaration's programs with DXC: every job's source is the
 /// macros, its block's includes and its body; the containers land in `out_dir`.
+/// With `against`, each container is also compared with the first program of
+/// its stage in that material, so a replacement can be checked before it ships.
 fn compile(
     declaration: &Path,
     libraries: &[PathBuf],
     out_dir: &Path,
+    against: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use sdk::filetype::shader_compile::{compile as dxc_compile, find_dxc};
     use sdk::filetype::shader_node::{STAGES, entry_for, profile_for};
@@ -1258,6 +1268,21 @@ fn compile(
             sources.push(ShaderSource::from_sjson(&fs::read_to_string(path)?)?);
         }
     }
+
+    // The programs to compare interfaces against, when one was given.
+    let originals = match against {
+        Some(path) => {
+            let data = fs::read(path)?;
+            let section = shader_section(&data)?;
+            let device_offset = u32_at(section, 40) as usize;
+            let device_size = u32_at(section, 44) as usize;
+            let device = section
+                .get(device_offset..device_offset + device_size)
+                .ok_or("device data is out of range")?;
+            Some(shader::parse_programs(device)?)
+        }
+        None => None,
+    };
 
     let dxc = find_dxc().ok_or("no dxc.exe found: set DTMT_DXC or install the Windows SDK")?;
     let jobs = node.compile_jobs()?;
@@ -1291,6 +1316,29 @@ fn compile(
                         container.len()
                     );
                     written += 1;
+
+                    if let Some(programs) = &originals {
+                        let wanted = if stage == "vertex" {
+                            shader::Stage::Vertex
+                        } else {
+                            shader::Stage::Pixel
+                        };
+                        match programs.iter().find(|program| program.stage == wanted) {
+                            Some(original) => {
+                                match shader::interface_mismatch(&original.container, &container) {
+                                    None => println!(
+                                        "    interface matches program {} {:?}",
+                                        original.index, original.stage
+                                    ),
+                                    Some(reason) => println!(
+                                        "    interface MISMATCH with program {} {:?}: {reason}",
+                                        original.index, original.stage
+                                    ),
+                                }
+                            }
+                            None => println!("    no {wanted:?} program to compare against"),
+                        }
+                    }
                 }
                 Err(err) => println!(
                     "  {} p{} {} {profile}/{entry}: failed: {err}",

@@ -14,7 +14,9 @@ use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
+use sdk::filetype::shader_node::{ShaderNode, STAGES, entry_for, profile_for};
 use sdk::filetype::shader_preset::Preset;
+use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};
 use tokio::fs::{self, File};
@@ -199,10 +201,18 @@ async fn compile_hlsl(dxc: &Path, source: &Path, entry: &str, target: &str) -> R
 
 /// Looks for shader sources next to a material and compiles them.
 ///
-/// The supported layouts are a single `<name>.hlsl` containing `vs_main`
-/// and/or `ps_main`, or separate `<name>.vs.hlsl` / `<name>.ps.hlsl` files.
+/// A sibling `.shader_node` declaration (the Stingray dialect) is preferred; its
+/// code blocks include from the `.shader_source` libraries under the mod root.
+/// The older layouts are the fallback: a single `<name>.hlsl` containing
+/// `vs_main` and/or `ps_main`, or separate `<name>.vs.hlsl` / `<name>.ps.hlsl`
+/// files.
 async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option<ShaderOverrides>> {
     let stem = path.with_extension("");
+    let declaration = stem.with_extension("shader_node");
+    if declaration.exists() {
+        return Ok(Some(compile_declaration(&declaration, cfg).await?));
+    }
+
     let combined = stem.with_extension("hlsl");
     let vs_path = stem.with_extension("vs.hlsl");
     let ps_path = stem.with_extension("ps.hlsl");
@@ -249,6 +259,108 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
     }
 
     Ok(Some(overrides))
+}
+
+/// Compiles a `.shader_node` declaration into the stage overrides a material
+/// needs.
+///
+/// The declaration's single job is assembled per stage against the
+/// `.shader_source` libraries under the mod root and compiled with DXC. A
+/// declaration with more than one job is refused: the override flow names one
+/// container per stage, and mapping several jobs to a section's programs needs
+/// the conditions decode.
+async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<ShaderOverrides> {
+    let text = fs::read_to_string(declaration)
+        .await
+        .wrap_err_with(|| format!("Failed to read '{}'", declaration.display()))?;
+    let node = ShaderNode::from_sjson(&text)
+        .wrap_err_with(|| format!("Failed to parse '{}'", declaration.display()))?;
+
+    let jobs = node.compile_jobs()?;
+    if jobs.len() != 1 {
+        eyre::bail!(
+            "'{}' has {} compile jobs; the material flow replaces one program pair per \
+             stage, so the declaration must have exactly one pass for now",
+            declaration.display(),
+            jobs.len()
+        );
+    }
+    let job = &jobs[0];
+
+    let libraries = load_libraries(&cfg.dir)?;
+    let dxc = find_dxc(cfg).ok_or_else(|| {
+        eyre::eyre!(
+            "'{}' declares shaders, but no dxc.exe was found. Set `dxc` in \
+             {PROJECT_CONFIG_NAME} or the DTMT_DXC environment variable.",
+            declaration.display()
+        )
+    })?;
+
+    let mut overrides = ShaderOverrides::default();
+    for stage in STAGES {
+        let Some(profile) = profile_for(stage) else {
+            continue;
+        };
+        let Some(entry) = entry_for(profile) else {
+            continue;
+        };
+        let source = node.job_source(job, stage, &libraries);
+        let dxc = dxc.clone();
+        let profile_arg = profile.to_string();
+        let entry_arg = entry.to_string();
+        let container = tokio::task::spawn_blocking(move || {
+            shader_compile::compile(&dxc, &source, &profile_arg, &entry_arg)
+        })
+        .await
+        .wrap_err("The shader compiler task panicked")??;
+
+        tracing::info!(
+            "Compiled '{}' ({} block '{}', {profile}/{entry}, {} bytes)",
+            declaration.display(),
+            stage,
+            job.code_block,
+            container.len()
+        );
+
+        match stage {
+            "vertex" => overrides.vertex = Some(container),
+            "pixel" => overrides.pixel = Some(container),
+            _ => {}
+        }
+    }
+
+    Ok(overrides)
+}
+
+/// Every `.shader_source` under the mod root, parsed as a library, in path
+/// order.
+fn load_libraries(root: &Path) -> Result<Vec<ShaderSource>> {
+    let mut paths = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir)
+            .wrap_err_with(|| format!("Failed to read '{}'", dir.display()))?;
+        for entry in entries {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "shader_source") {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+
+    let mut libraries = Vec::with_capacity(paths.len());
+    for path in paths {
+        let text = std::fs::read_to_string(&path)
+            .wrap_err_with(|| format!("Failed to read '{}'", path.display()))?;
+        libraries.push(
+            ShaderSource::from_sjson(&text)
+                .wrap_err_with(|| format!("Failed to parse '{}'", path.display()))?,
+        );
+    }
+    Ok(libraries)
 }
 
 /// Reads the `shader_preset = "..."` declaration of a material SJSON, if it has
