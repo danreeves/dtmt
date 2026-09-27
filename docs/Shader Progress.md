@@ -213,10 +213,7 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    any deploy. The compile side is in place (`shader_compile::compile`), the
    declaration path feeds the engine data flow, and snoopy-mod is migrated to it;
    what remains is programs -> device data without the engine data, and the mapping
-   of several jobs to a section's programs (needs the conditions decode). Related
-   proposal: carry the generated section in a sibling `<name>.shader_data` file
-   instead of stringifying it into the material SJSON's `shader_data` field; the
-   material source would keep only `shader_engine_data`.
+   of several jobs to a section's programs (needs the conditions decode).
 6. **In-game test**: **passed** for the declaration path (see the verified list).
    The harness's `title-tint-demo.ps1` captures with `CopyFromScreen`, which
    grabbed the desktop rather than the game window on the run that verified the
@@ -274,6 +271,13 @@ The path is now complete up to the compiler:
   `shader::VERSION`, not a field. The old `variable`/`clone`/`channel`/
   `clone_channel` rewrite lines are gone: the shader's own variable names are
   what a material addresses (snoopy-mod drives `dev_wireframe_color`).
+- The compiled section is carried by a sibling **`<name>.shader_data`** file,
+  not by a `shader_data` hex field in the material SJSON. `dtmt build` writes
+  the generated section there (only when it changed) and compiles the material
+  with the bytes directly (`material::compile_with_shader`); a material with a
+  `.shader_data` file and no engine data compiles from the file, and the splice
+  route still applies to it. Verified: snoopy-mod's compiled material data is
+  byte-identical before and after the change.
 
 Next: graph code generation for the real output-node declarations (see open
 item 4), the in-game title test of the migrated mod, and then the multi-job

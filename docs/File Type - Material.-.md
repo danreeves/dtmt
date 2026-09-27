@@ -209,6 +209,13 @@ the engine data from a shipped base material once; shrinking it to only genuine
 engine constants is an open item (see
 [Shader Section Generation Notes](Shader%20Section%20Generation%20Notes.md)).
 
+The compiled section itself lives in a sibling **`<name>.shader_data`** file, not
+in a `shader_data` hex field: `dtmt build` writes the generated section there
+(only when the bytes changed) and compiles the material with it directly. A
+material with a `.shader_data` file and no engine data compiles from that file,
+so a prebuilt section can be shipped the same way, and the splice route
+(`<name>.shader_node` or sibling HLSL replacing programs) still applies to it.
+
 Otherwise, `dtmt build` performs these steps:
 
 1. **Compile.** Each shader source is compiled with `dxc` to a DXBC/DXIL
