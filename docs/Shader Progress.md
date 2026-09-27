@@ -50,6 +50,7 @@ shader43 --conditions --variables <dict> <section>
 shader43 --group-data <section>
 shader43 --dependencies <section>
 shader43 --plan <declaration.shader_node> <section>
+shader43 --reconstruct <dir> --variables <dict> <section>   # declaration skeleton
 ```
 
 ## Verified (sample size in brackets)
@@ -90,6 +91,12 @@ shader43 --plan <declaration.shader_node> <section>
 - **Declaration front end**: reads the 15 real `.shader_node` files; `define=`
   and `defines=`; choice-level `permute_with` recursion (91 uses); stage-limited
   macros; declaration channel order. [15 files, manual run + unit tests]
+- **Decompile to source, first slice**: `shader43 --reconstruct` writes a
+  `.shader_node` skeleton from a section - the group data's named variables and
+  channels become `inputs` and `channels`, the resolvable contexts become
+  `shader_contexts` - and the result parses back through the declaration reader
+  (`427B5E6E`: 32 inputs, 13 channels, 2 contexts; the UI base: 2 contexts).
+  Permutation sets and HLSL are compiled away and named in the header comment.
 - **Conditions roots**: `gui` 9FCFE126, `red` 9B8DE7E4, `green` 4BA4BD58,
   `blue` 0977913D, `alpha` 3F697354; `BDF72706`, `B5F45768`, `8FB860CF`,
   `E2C8865F`, `BC4EE226` unnamed. [dictionary + 35 records]

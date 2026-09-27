@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut channels_mode = false;
     let mut layout_mode = false;
     let mut plan_declaration: Option<PathBuf> = None;
+    let mut reconstruct_dir: Option<PathBuf> = None;
     let mut substitute_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
@@ -128,6 +129,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 plan_declaration = Some(PathBuf::from(
                     args.get(i).expect("--plan needs a declaration").clone(),
+                ));
+            }
+            "--reconstruct" => {
+                i += 1;
+                reconstruct_dir = Some(PathBuf::from(
+                    args.get(i).expect("--reconstruct needs a directory").clone(),
                 ));
             }
             "--substitute" => substitute_mode = true,
@@ -245,6 +252,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         for path in &files {
             if let Err(err) = substitute(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(dir) = &reconstruct_dir {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = reconstruct(path, dir, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -968,6 +988,96 @@ fn substitute(
             println!("    {runs:?}");
             "OUTSIDE THE GROUP DATA"
         }
+    );
+    Ok(())
+}
+
+/// Reconstructs a `.shader_node`-shaped declaration from a compiled section.
+///
+/// This is the decompile-to-source direction, first slice: the group data's
+/// named variables and channels become `inputs` and `channels`, the contexts
+/// become `shader_contexts`, and a header says what is not recoverable
+/// (permutation sets, HLSL, unnamed hashes). It is not the original source and
+/// is not expected to rebuild the same bytes; it is meant to be editable.
+fn reconstruct(
+    path: &Path,
+    dir: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let section = Section::parse(bytes)?;
+    let group = GroupData::new(section.group_data().to_vec());
+    let query_ids: Vec<u32> = section
+        .contexts()
+        .iter()
+        .flat_map(|context| context.queries.iter().map(|query| query.id))
+        .collect();
+    let name_of = |hash: u32| names.and_then(|names| names.get(&hash)).cloned();
+    let type_of = |kind: u32| match kind {
+        0 => "scalar",
+        1 => "vector2",
+        2 => "vector3",
+        3 => "vector4",
+        4 => "matrix",
+        5 => "texture",
+        _ => "scalar",
+    };
+
+    let mut out = String::new();
+    out.push_str("// Reconstructed from a compiled shader43 section. This is not the\n");
+    out.push_str("// original declaration: permutation sets and HLSL are compiled away, and\n");
+    out.push_str("// records whose hashes the dictionary cannot name are omitted.\n\n");
+
+    out.push_str("inputs = {\n");
+    if let Some((_, records)) = group
+        .object_tables(&query_ids)
+        .and_then(|tables| tables.into_iter().next())
+    {
+        for record in records {
+            if let Some(name) = name_of(record.hash) {
+                out.push_str(&format!(
+                    "    {name} = {{ name = \"{name}\" type = \"{}\" }}\n",
+                    type_of(record.kind)
+                ));
+            }
+        }
+    }
+    out.push_str("}\n\nchannels = {\n");
+    for channel in group.channels() {
+        if let Some(name) = name_of(channel.hash) {
+            let kind = channel.records.first().map_or(0, |record| record.kind);
+            out.push_str(&format!(
+                "    {name} = {{ type = \"{}\" }}\n",
+                type_of(kind)
+            ));
+        }
+    }
+    out.push_str("}\n\nshader_contexts = {\n");
+    let mut wrote_context = false;
+    for context in section.contexts() {
+        if let Some(name) = name_of(context.name) {
+            out.push_str(&format!("    {name} = {{}}\n"));
+            wrote_context = true;
+        }
+    }
+    if !wrote_context {
+        out.push_str("    default = {}\n");
+    }
+    out.push_str("}\n");
+
+    fs::create_dir_all(dir)?;
+    let tag = path.file_stem().unwrap_or_default().to_string_lossy();
+    let out_path = dir.join(format!("{tag}.shader_node"));
+    fs::write(&out_path, &out)?;
+    println!(
+        "wrote {} ({} bytes, {} contexts)",
+        out_path.display(),
+        out.len(),
+        section.contexts().len()
     );
     Ok(())
 }
