@@ -4,11 +4,11 @@ This is the pick-up point. Read this before the other shader notes; it names
 what is verified, with sample sizes, and what is still a reading.
 
 Two goals, in order: **build a shader from source** (declaration + HLSL ->
-section) and **decompile a compiled section to usable source** (the material
-SJSON, a declaration-shaped reconstruction, HLSL through the decompiler).
-Byte-for-byte round trips are the codec's correctness oracle, not the goal: a
-reconstruction is useful even where it cannot reproduce bytes, and a build is
-useful even where some engine constants are carried.
+section) and **bundle -> source -> bundle** (extract, decompile to editable
+source, build it back). Both directions are goals. Byte-for-byte round trips are
+the codec's correctness oracle, not the goal: a reconstruction is useful even
+where it cannot reproduce bytes, and a build is useful even where some engine
+constants are carried.
 
 ## Repo state (2026-09-26)
 
