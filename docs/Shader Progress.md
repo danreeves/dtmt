@@ -154,6 +154,13 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   DTMM's, not the legacy `mods/` folder: sync `out/` into
   `%APPDATA%\dtmm\mods\snoopymod`, then `dtmm --reset` and `dtmm --deploy`.
   [one run]
+- **In game, after the engine-data rename**: the same shader built from
+  `ui_default_base.engine_data` and driving `dev_wireframe_color` renders too -
+  the title background cycles blue -> teal -> green across 9 second samples
+  (region averages `4,20,103` / `4,56,37` / `28,43,15`), so the removed rename
+  is not needed to bind the variable. Note: `user_settings.config`'s
+  `log_level` was `1` for these runs, which suppresses the `ModLoader` info
+  lines; set it to `2` or higher to read them. [one run]
 
 ## Open, in the order to attack
 
