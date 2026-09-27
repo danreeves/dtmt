@@ -10,17 +10,19 @@ the codec's correctness oracle, not the goal: a reconstruction is useful even
 where it cannot reproduce bytes, and a build is useful even where some engine
 constants are carried.
 
-## Repo state (2026-09-26)
+## Repo state (2026-09-27)
 
 `main` is the trusted baseline plus reviewed commits:
 
 ```
-b69d8e9 condition_tree: the payload's branches, and the tests-1 result
-4be58e5 condition_tree: the payload reads as guarded results
-8b89277 condition_tree: the conditions framing is decoded
-45bb351 docs: the shader notes, corrected and scoped
-e0c2153 sdk: the shader declaration reader, section codec and group data, reviewed
-ab4f385 build: vendor the SJSON dialect fork
+899b6fe shader: read the real code shapes, compile with DXC
+1657273 shader_node: map a job's stages to DXC profiles
+cd18f54 shader_node: a compile job carries its stages
+e0446a2 shader_node: assemble a code block's HLSL
+96b9d2a shader_node: enumerate the compile jobs
+332f388 shader_source: resolve path#chunk includes across libraries
+668a473 shader_node: read code_blocks and link passes to them
+2e93df5 docs: the authoring format is the Stingray dialect, HLSL only
 2c79541 docs: tail signature runs and trailing run are family-independent   <- trusted baseline
 ```
 
@@ -31,7 +33,7 @@ reference; this file is the pick-up point.
 
 - `cargo test -p sdk` needs `E:\SteamLibrary\steamapps\common\Warhammer 40,000
   DARKTIDE\binaries` on `PATH` (links `oo2core_9_win64.dll`).
-- Expected: 118 pass, 3 pre-existing `filetype::package` failures.
+- Expected: 129 pass, 3 pre-existing `filetype::package` failures.
 - Fixtures: the six extracted sections and the UI base's parts live in a scratch
   directory outside the repository (each `.raw` is a 20-byte wrapper then the
   section, which the example handles). `docs/scripts/slice-sections.ps1`
@@ -51,6 +53,7 @@ shader43 --group-data <section>
 shader43 --dependencies <section>
 shader43 --plan <declaration.shader_node> <section>
 shader43 --reconstruct <dir> --variables <dict> <section>   # declaration skeleton
+shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>...
 ```
 
 ## Verified (sample size in brackets)
@@ -100,6 +103,35 @@ shader43 --reconstruct <dir> --variables <dict> <section>   # declaration skelet
 - **Conditions roots**: `gui` 9FCFE126, `red` 9B8DE7E4, `green` 4BA4BD58,
   `blue` 0977913D, `alpha` 3F697354; `BDF72706`, `B5F45768`, `8FB860CF`,
   `E2C8865F`, `BC4EE226` unnamed. [dictionary + 35 records]
+- **Code block shape**: a `.shader_node` code block's body is
+  `code = { shared = ..., hlsl = ... }` or a bare string; `include` names
+  library chunks (`path#chunk`) or other code blocks of the same declaration,
+  and an include is taken once. The top-level `hlsl` field the reader first
+  read occurs **0 times**; there are 14 `code` tables across the 15
+  output-node declarations. [14 blocks, 15 files]
+- **Library shape**: a `.shader_source` chunk carries `code` (a string, or the
+  same `shared`/`hlsl`/`glsl` table) and `includes` (chunk names, resolved
+  recursively); a file carries `includes` as full paths. Top-level chunk
+  `hlsl`/`glsl` fields occur 0 times. [134 `code` chunks, 117 chunk
+  `includes`, one table form: `skinning`]
+- **Programs are DXIL**: every shipped program's container carries a `DXIL`
+  chunk (SM 6.x), so the compile profiles are `vs_6_0`/`ps_6_0`. The `DXBC`
+  magic is the container format, which DXIL shares; the earlier "Darktide ships
+  DXBC" reading and the `vs_5_0` profiles built on it are retracted. [UI base
+  programs 0-9 inspected; `dtmt build` compiles its own overrides at 6.0]
+- **Engine defines**: the library sources branch on `RENDERER_D3D12` and
+  `STAGE_VERTEX` / `STAGE_FRAGMENT`; without them they take the GLSL or stub
+  branches (`#define CBUFFER_START` becomes a comment, `Sampler2D` becomes
+  `sampler2D`). `job_source` prepends them. [common.shader_source guards;
+  verified by compiling]
+- **From source to containers**: `shader43 --compile <dir> <declaration>
+  <libraries|dir>` enumerates the jobs, assembles each stage's source and
+  compiles it with DXC (`filetype::shader_compile`, shared with `dtmt build`).
+  A mod-authored blit block including the real `common#common` chunk produced
+  a 2921-byte `vs_6_0` and a 2774-byte `ps_6_0` container, both `DXBC` with a
+  `DXIL` chunk. The real `decal_base` declaration now fails only on the
+  toolchain-generated graph macros (`GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`,
+  `GRAPH_MATERIAL_EXPORTS`, `GraphVertexParams`, `GraphVertexResults`).
 
 ## Open, in the order to attack
 
@@ -139,13 +171,22 @@ shader43 --reconstruct <dir> --variables <dict> <section>   # declaration skelet
    and channel tables, and keep the engine table. Generating the header itself
    needs the grammar in (2). `rebuild`/`rebuild_channels` already write the
    tables correctly.
-4. **Wire `Section::build` into `dtmt build`** with generated group data and a
+4. **Graph code generation** for the real game declarations. The Stingray
+   toolchain expands the declaration's channels and graph nodes into
+   `GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`, `GRAPH_MATERIAL_EXPORTS`,
+   `GraphVertexParams`, `GraphVertexResults`; without them every output-node
+   block fails to compile (only these names are left in `decal_base`). The
+   channel table is read, so this is code generation from data that is already
+   parsed, not a decode. Mod-authored blocks that avoid the graph macros compile
+   today.
+5. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
-   any deploy.
-5. **In-game test** via snoopy-mod: title screen only, no space at boot,
-   screenshot the Darktide window (borderless fullscreen -> PrintWindow).
-6. **`.shader_source` parsing** (`hlsl_shaders = { name = { code } }`) and the
-   code_blocks -> programs path.
+   any deploy. The compile side is in place (`shader_compile::compile`); what is
+   missing is programs -> device data and the section around it.
+6. **In-game test** via snoopy-mod: title screen only, no space at boot,
+   screenshot the Darktide window (borderless fullscreen -> PrintWindow). The
+   blit block in the scratch `compile-test/` directory is a working container
+   source for this.
 
 ## In-game harness
 
@@ -164,28 +205,30 @@ appears.
 ## Authoring format decision
 
 Mods author shaders in the Stingray dialect only: a `.shader_node` declaration
-and `.shader_source` libraries (`hlsl_shaders = { <name> = { code / hlsl } }`),
-**HLSL only** - the `glsl` variants are portability scaffolding for the
-renderer's other backends and are ignored. The sibling `.vs.hlsl` / `.ps.hlsl`
-convention is dropped once this path builds; it exists only in the preset flow
-and snoopymod today.
+and `.shader_source` libraries (`hlsl_shaders = { <name> = { code } }`),
+**HLSL only** - the `glsl` parts are portability scaffolding for the renderer's
+other backends and are ignored. The sibling `.vs.hlsl` / `.ps.hlsl` convention
+is dropped once this path builds; it exists only in the preset flow and
+snoopymod today.
 
-That needs, in order: a `shader_source` reader (prefer `hlsl`, fall back to
-`code`) - **done**: `filetype::shader_source` reads `hlsl_shaders` and its
-three variants, tested against triple-quoted bodies; `glsl` is kept but never
-selected. Step 2 is done for parsing: `code_blocks` reads `include` and `hlsl`,
-and a pass links to its block by name (`CodeBlock`, tested; the 15 real
-declarations still parse). Include resolution is done too: `include_chunk` and
-`resolve_include` find the `path#chunk` body across libraries, tested. The
-program list is done too: `ShaderNode::compile_jobs` enumerates context x
-permutation x selected pass, with the macros each compiles under (tested; a
-branch no define decides contributes both sides). HLSL assembly is done too:
-`CodeBlock::hlsl_with` concatenates the resolved includes and the block body,
-and `defines_for` emits the macros. Stage selection is done too: a compile job
-carries the stages its macros and pass define table name (empty means the
-compiler profile must decide). Next: the DXC call with the assembled source;
-then `dtmt build` sources programs from the declaration instead of sibling
-files. Snoopymod is the migration test.
+The path is now complete up to the compiler:
+
+- `filetype::shader_source` reads the real library shape: chunk `code` (a
+  string or the `shared`/`hlsl`/`glsl` table), chunk `includes` (names) and
+  file `includes` (paths); `glsl` is kept but never selected.
+- `code_blocks` reads the real block shape (`include`, `code`), and a pass
+  links to its block by name.
+- `ShaderNode::job_source` assembles each stage's source: the engine defines
+  (`RENDERER_D3D12`, `STAGE_VERTEX`/`STAGE_FRAGMENT`), the job's macros
+  filtered by their stage limits, then the block's includes (recursively, once
+  each) and its body.
+- `filetype::shader_compile` finds DXC and invokes it; `dtmt build` shares it.
+- `shader43 --compile <dir> <declaration> <libraries|dir>` runs the lot and
+  writes a container per job and stage; a mod-authored block compiles today.
+
+Next: graph code generation for the real output-node declarations (see open
+item 4), then `dtmt build` sources programs from the declaration instead of
+sibling files, with snoopymod as the migration test.
 
 ## Open decode details worth keeping
 
