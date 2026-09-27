@@ -284,6 +284,10 @@ pub struct CompileJob {
     pub code_block: String,
     /// The permutation's macros plus the pass's own.
     pub macros: Vec<String>,
+    /// The stages the job compiles for, from the macros' stage limits and the
+    /// pass's define table. Empty means the caller has to decide (the compiler
+    /// profile is the next step).
+    pub stages: Vec<String>,
 }
 
 /// One `compile_with` entry.
@@ -432,11 +436,25 @@ impl ShaderNode {
                 for pass in context.passes_of(&defines)? {
                     let mut macros = permutation.macros.clone();
                     macros.extend(pass.macros().iter().cloned());
+                    // The stages come from the macros' own limits and the
+                    // pass's define table; an empty set means the job does not
+                    // say, and the compiler profile has to.
+                    let mut stages: Vec<String> = permutation
+                        .macros
+                        .iter()
+                        .filter_map(|name| permutation.macro_stages.get(name))
+                        .flatten()
+                        .cloned()
+                        .collect();
+                    stages.extend(pass.defines.stages().iter().cloned());
+                    stages.sort();
+                    stages.dedup();
                     jobs.push(CompileJob {
                         context: context.name.clone(),
                         permutation: index,
                         code_block: pass.code_block.clone(),
                         macros,
+                        stages,
                     });
                 }
             }
@@ -1481,7 +1499,7 @@ mod tests {
             shader_contexts = {
                 default = {
                     passes = [
-                        { if: "defined(A)" then: [ { code_block="base" defines=["A"] } ] else: [ { code_block="base" } ] }
+                        { if: "defined(A)" then: [ { code_block="base" defines=["A"] } ] else: [ { code_block="base" defines={ macros: ["X"] stages: ["pixel"] } } ] }
                     ]
                 }
             }
@@ -1491,6 +1509,7 @@ mod tests {
         assert_eq!(jobs.len(), 1, "no sets, and nothing defines A");
         assert_eq!(jobs[0].context, "default");
         assert_eq!(jobs[0].code_block, "base");
+        assert_eq!(jobs[0].stages, vec!["pixel".to_string()]);
     }
 
     #[test]

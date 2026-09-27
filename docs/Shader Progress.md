@@ -181,7 +181,9 @@ program list is done too: `ShaderNode::compile_jobs` enumerates context x
 permutation x selected pass, with the macros each compiles under (tested; a
 branch no define decides contributes both sides). HLSL assembly is done too:
 `CodeBlock::hlsl_with` concatenates the resolved includes and the block body,
-and `defines_for` emits the macros. Next: stage selection and the DXC call;
+and `defines_for` emits the macros. Stage selection is done too: a compile job
+carries the stages its macros and pass define table name (empty means the
+compiler profile must decide). Next: the DXC call with the assembled source;
 then `dtmt build` sources programs from the declaration instead of sibling
 files. Snoopymod is the migration test.
 
