@@ -1181,8 +1181,7 @@ pub fn compile(name: IdString64, sjson: impl AsRef<str>) -> Result<BundleFile> {
 
 /// Like [`compile`], but with the shader section to embed: the SJSON's own
 /// `shader_data` field is ignored when `shader` is given, so a build can hand
-/// over a generated section (or a sibling `.shader_data` file) without
-/// stringifying it into the material source.
+/// over a generated section without stringifying it into the material source.
 #[tracing::instrument(skip_all, fields(name = %name.display()))]
 pub fn compile_with_shader(
     name: IdString64,

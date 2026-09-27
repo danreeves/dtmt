@@ -1178,10 +1178,8 @@ fn reconstruct(
             material_out
                 .push_str("// Reconstructed from a compiled material. The shader section is\n");
             material_out.push_str(&format!(
-                "// generated from {tag}.engine_data + {tag}.shader_node + {tag}.shader_source;\n"
+                "// generated at build time from {tag}.engine_data + {tag}.shader_node + {tag}.shader_source.\n"
             ));
-            material_out
-                .push_str("// `dtmt build` writes the compiled section to the sibling .shader_data.\n");
             for line in without_shader_data(&material_sjson).lines() {
                 material_out.push_str(line);
                 material_out.push('\n');
@@ -1214,7 +1212,8 @@ fn reconstruct(
 }
 
 /// Drops a decompiled material's `shader_size`/`shader_data` fields: the
-/// reconstructed section lives in the sibling `.shader_data` file instead.
+/// reconstructed section is generated from the engine data and shader source
+/// instead.
 fn without_shader_data(sjson: &str) -> String {
     let mut out = String::with_capacity(sjson.len());
     for line in sjson.lines() {

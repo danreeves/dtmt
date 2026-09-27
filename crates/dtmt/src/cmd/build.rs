@@ -396,21 +396,6 @@ fn to_hex(bytes: &[u8]) -> String {
     text
 }
 
-/// Writes the generated section to the material's sibling `.shader_data` file.
-/// When the bytes are already there the file is left alone, so a rebuild does
-/// not touch it.
-async fn write_shader_data(path: &Path, section: &[u8]) -> Result<()> {
-    if let Ok(existing) = fs::read(path).await
-        && existing == section
-    {
-        return Ok(());
-    }
-
-    fs::write(path, section)
-        .await
-        .wrap_err_with(|| format!("Failed to write '{}'", path.display()))
-}
-
 /// Resolve a mod file name to the bundle name, applying `name_overrides`.
 fn apply_name_override(name_overrides: &HashMap<String, String>, name: String) -> IdString64 {
     if let Some(new_name) = name_overrides.get(&name) {
@@ -473,74 +458,60 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
 
-            // A material can declare the engine data to generate from, or carry
-            // a sibling `<name>.shader_data` section file. Either way the
-            // section is embedded at compile time and never stringified into
-            // the material source.
+            // A material can declare the engine data to generate from; the
+            // section is built in memory and handed to the material compile, so
+            // neither the material source nor a side file carries it. A material
+            // with no engine data compiles as it is (its own `shader_data` field
+            // or the splice route).
             let mut section: Option<Vec<u8>> = None;
             let mut generated_from_engine_data = false;
-            if file_type == BundleFileType::Material {
-                let shader_data_path = path.with_extension("").with_extension("shader_data");
-
-                if let Some(engine_data_name) = shader_engine_data_path(&sjson) {
-                    let engine_data_path =
-                        resolve_engine_data_path(&path, root.as_ref(), &engine_data_name);
-                    let engine_data_text =
-                        fs::read_to_string(&engine_data_path).await.wrap_err_with(|| {
-                            format!(
-                                "Failed to read engine data '{}'",
-                                engine_data_path.display()
-                            )
-                        })?;
-                    let engine_data =
-                        EngineData::from_text(&engine_data_text).wrap_err_with(|| {
-                            format!(
-                                "Failed to parse engine data '{}'",
-                                engine_data_path.display()
-                            )
-                        })?;
-
-                    let overrides =
-                        compile_shader_overrides(&path, cfg).await?.ok_or_else(|| {
-                            eyre::eyre!(
-                                "'{}' declares engine data '{}' but has no sibling shader sources",
-                                path.display(),
-                                engine_data_name
-                            )
-                        })?;
-
-                    let mut containers = HashMap::new();
-                    if let Some(vertex) = overrides.vertex {
-                        containers.insert(Stage::Vertex, vertex);
-                    }
-                    if let Some(pixel) = overrides.pixel {
-                        containers.insert(Stage::Pixel, pixel);
-                    }
-
-                    let generated = engine_data.generate(&containers).wrap_err_with(|| {
-                        format!("Failed to generate a shader section for '{}'", path.display())
+            if file_type == BundleFileType::Material
+                && let Some(engine_data_name) = shader_engine_data_path(&sjson)
+            {
+                let engine_data_path =
+                    resolve_engine_data_path(&path, root.as_ref(), &engine_data_name);
+                let engine_data_text =
+                    fs::read_to_string(&engine_data_path).await.wrap_err_with(|| {
+                        format!(
+                            "Failed to read engine data '{}'",
+                            engine_data_path.display()
+                        )
+                    })?;
+                let engine_data =
+                    EngineData::from_text(&engine_data_text).wrap_err_with(|| {
+                        format!(
+                            "Failed to parse engine data '{}'",
+                            engine_data_path.display()
+                        )
                     })?;
 
-                    write_shader_data(&shader_data_path, &generated).await?;
-                    tracing::info!(
-                        "Generated a {} byte shader section from '{}' -> '{}'",
-                        generated.len(),
-                        engine_data_path.display(),
-                        shader_data_path.display(),
-                    );
-                    section = Some(generated);
-                    generated_from_engine_data = true;
-                } else if fs::try_exists(&shader_data_path).await? {
-                    let file_section = fs::read(&shader_data_path).await.wrap_err_with(|| {
-                        format!("Failed to read '{}'", shader_data_path.display())
-                    })?;
-                    tracing::info!(
-                        "Using the {} byte shader section from '{}'",
-                        file_section.len(),
-                        shader_data_path.display(),
-                    );
-                    section = Some(file_section);
+                let overrides = compile_shader_overrides(&path, cfg).await?.ok_or_else(|| {
+                    eyre::eyre!(
+                        "'{}' declares engine data '{}' but has no sibling shader sources",
+                        path.display(),
+                        engine_data_name
+                    )
+                })?;
+
+                let mut containers = HashMap::new();
+                if let Some(vertex) = overrides.vertex {
+                    containers.insert(Stage::Vertex, vertex);
                 }
+                if let Some(pixel) = overrides.pixel {
+                    containers.insert(Stage::Pixel, pixel);
+                }
+
+                let generated = engine_data.generate(&containers).wrap_err_with(|| {
+                    format!("Failed to generate a shader section for '{}'", path.display())
+                })?;
+
+                tracing::info!(
+                    "Generated a {} byte shader section from '{}'",
+                    generated.len(),
+                    engine_data_path.display(),
+                );
+                section = Some(generated);
+                generated_from_engine_data = true;
             }
 
             let name = apply_name_override(
