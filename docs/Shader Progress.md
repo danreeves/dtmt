@@ -33,7 +33,7 @@ reference; this file is the pick-up point.
 
 - `cargo test -p sdk` needs `E:\SteamLibrary\steamapps\common\Warhammer 40,000
   DARKTIDE\binaries` on `PATH` (links `oo2core_9_win64.dll`).
-- Expected: 129 pass, 3 pre-existing `filetype::package` failures.
+- Expected: 119 pass, 3 pre-existing `filetype::package` failures (122 tests).
 - Fixtures: the six extracted sections and the UI base's parts live in a scratch
   directory outside the repository (each `.raw` is a 20-byte wrapper then the
   section, which the example handles). `docs/scripts/slice-sections.ps1`
@@ -206,10 +206,24 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    `Y` 0/5/10 in every group, the results are only 1..3 (fallback 7), and the
    section has 96 programs (48 pairs) - so the result is not a table length, a
    `Y` field or a program index, and since it equals `tests.len() - 1` it
-   carries no information beyond the branch's shape. The next step is the
-   in-game crafted tree: a record whose branch tests two distinguishable
-   conditions, to see which one drives the outcome and what the caller does
-   with the value.
+   carries no information beyond the branch's shape.
+
+   **The first in-game probe is a negative:** all 85 result/fallback words of
+   the UI base's 35 records were rewritten to 64 in the engine data, the mod
+   rebuilt and deployed, and the title screen renders identically to the
+   baseline (same blue wavy title, tint still cycling, no crash, no new
+   `[Shaders] could not find any pipeline` warnings). So on this path the
+   engine does not index anything with the result. It also **cannot** be
+   observed there: the UI base's 96 programs collapse to **two distinct DXIL
+   payloads** (48 vertex + 48 pixel copies), on the shipped section and the
+   rebuilt one alike, and the per-group tables are byte-identical, so all 36
+   groups are functionally the same. A variant-rich shader is needed to see a
+   selection at all: the six small families carry 9-17 distinct payloads across
+   14-26 programs, but most of their queries select no conditions
+   (`record@0xffffffff`) and their trees use a second opcode (`0x30xx`) the UI
+   base does not. Next: craft the tree on a family whose variants differ (or
+   author a declaration with two real code variants) and watch the log and the
+   render.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`
@@ -231,6 +245,23 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    check reads `n` at the candidate offset, so it is self-consistency; what `n`
    counts is still open (it is not simply the condition count). Then the
    constructor can use the formula or carry the header from the template.
+
+   **Decoded on all 36 UI-base groups:** the header is the **last** `40 + 17 x
+   n` bytes of the group (74 at `n` 2, 57 at `n` 1), ending exactly where the
+   next group's hash word starts. It is a 28-byte packed record (the third of
+   the packed table's three, `E503152C 00000008 00000000 00000010 00000001
+   B5639618 00000000`), the `n` word, `n` **17-byte condition entries** (`u32
+   condition hash` plus thirteen zero bytes), and an 8-byte `01 00 00 00 00 00
+   00 00` trailer. So `n` is the number of condition entries - the old
+   "condition hash plus twelve zero bytes" is one entry, not a special case.
+   The entries, measured on all 36 groups: `9FCFE126` (`gui`) for groups 0-5
+   and 24-29, `BC4EE226` for 6-11 and 18-23, `625D415E` for 12-17, and zero for
+   the second context's groups 30-35; groups 0-11 carry two entries
+   (`gui`+`625D415E` or `BC4EE226`+`625D415E`). A group also starts with its own
+   hash: the group data is `{u32 count}` then the groups, and the first query's
+   id is the global hash at +4 (group 0's id). What the entries select is still
+   open; they are the group's condition set, and the group's tree record tests
+   them among others.
 3. **Group data constructor**: with the walk, a first constructor can carry each
    group's byte-packed header and descriptors from the template - they are the
    family's compiled interface metadata, like the block - generate the material
