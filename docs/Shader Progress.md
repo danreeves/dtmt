@@ -161,6 +161,21 @@ groups render distinguishable colours and whose crafted conditions tree maps
 channel sets to them, then drive the material from Lua and read which colour
 appears.
 
+## Authoring format decision
+
+Mods author shaders in the Stingray dialect only: a `.shader_node` declaration
+and `.shader_source` libraries (`hlsl_shaders = { <name> = { code / hlsl } }`),
+**HLSL only** - the `glsl` variants are portability scaffolding for the
+renderer's other backends and are ignored. The sibling `.vs.hlsl` / `.ps.hlsl`
+convention is dropped once this path builds; it exists only in the preset flow
+and snoopymod today.
+
+That needs, in order: a `shader_source` reader (prefer `hlsl`, fall back to
+`code`), `code_blocks` parsing in the node reader and pass linking
+(`code_block = "name"`), the program list from contexts and passes compiled per
+stage with DXC, and `dtmt build` sourcing programs from the declaration instead
+of sibling files. Snoopymod is the migration test.
+
 ## Open decode details worth keeping
 
 - Block synthesis is **open work, not a proven impossibility**: a generated
