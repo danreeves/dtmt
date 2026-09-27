@@ -139,8 +139,11 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   permutations yet). [verified on snoopy-mod: the `ui_default_base` title
   shader built from its declaration, vs 4533 / ps 6079 bytes, and generated the
   431056-byte section; the sibling `.vs.hlsl`/`.ps.hlsl` were renamed away for
-  the test] `shader43 --compile --against <material>` reports whether a compiled
-  container's interface matches the material's program of its stage.
+  the test. The built material carries the new containers: every program's
+  decoded length is 4533 (VS) or 6079 (PS), the frame keys check, and the
+  section round trip is identical. The in-game title test has not been run on
+  this build yet.] `shader43 --compile --against <material>` reports whether a
+  compiled container's interface matches the material's program of its stage.
 
 ## Open, in the order to attack
 
