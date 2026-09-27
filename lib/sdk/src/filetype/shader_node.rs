@@ -242,6 +242,21 @@ pub struct CodeBlock {
     pub hlsl: Option<String>,
 }
 
+/// One program the declaration asks to compile: a context, a permutation, and
+/// the pass's code block with the macros it compiles under. The stage and the
+/// assembled HLSL are the compiler's next step.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompileJob {
+    /// The context the pass belongs to.
+    pub context: String,
+    /// The permutation's index within that context.
+    pub permutation: usize,
+    /// The code block the pass names.
+    pub code_block: String,
+    /// The permutation's macros plus the pass's own.
+    pub macros: Vec<String>,
+}
+
 /// One `compile_with` entry.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct CompileWithEntry {
@@ -374,6 +389,30 @@ impl ShaderNode {
     /// The code block a pass names, when the declaration defines it.
     pub fn code_block(&self, name: &str) -> Option<&CodeBlock> {
         self.code_blocks.get(name)
+    }
+
+    /// The programs the declaration asks to compile, context by context: each
+    /// permutation of the context's sets, and each pass that permutation
+    /// selects. The branch a define cannot decide contributes both sides, which
+    /// is why a job list can be longer than the programs a section ships.
+    pub fn compile_jobs(&self) -> Result<Vec<CompileJob>> {
+        let mut jobs = Vec::new();
+        for context in &self.contexts {
+            for (index, permutation) in self.permutations_for(context).iter().enumerate() {
+                let defines = Defines::new(permutation.macros.iter().cloned());
+                for pass in context.passes_of(&defines)? {
+                    let mut macros = permutation.macros.clone();
+                    macros.extend(pass.macros().iter().cloned());
+                    jobs.push(CompileJob {
+                        context: context.name.clone(),
+                        permutation: index,
+                        code_block: pass.code_block.clone(),
+                        macros,
+                    });
+                }
+            }
+        }
+        Ok(jobs)
     }
 
     /// Fills the normalized view the emitters consume: the variables, the
@@ -1404,6 +1443,25 @@ mod tests {
             other => panic!("expected a pass, got {other:?}"),
         }
         assert!(node.code_block("nope").is_none());
+    }
+
+    #[test]
+    fn a_context_lists_its_compile_jobs() {
+        let text = r#"
+            code_blocks = { base = { hlsl = """ void main() {} """ } }
+            shader_contexts = {
+                default = {
+                    passes = [
+                        { if: "defined(A)" then: [ { code_block="base" defines=["A"] } ] else: [ { code_block="base" } ] }
+                    ]
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let jobs = node.compile_jobs().expect("jobs");
+        assert_eq!(jobs.len(), 1, "no sets, and nothing defines A");
+        assert_eq!(jobs[0].context, "default");
+        assert_eq!(jobs[0].code_block, "base");
     }
 
     #[test]

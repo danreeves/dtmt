@@ -176,10 +176,12 @@ three variants, tested against triple-quoted bodies; `glsl` is kept but never
 selected. Step 2 is done for parsing: `code_blocks` reads `include` and `hlsl`,
 and a pass links to its block by name (`CodeBlock`, tested; the 15 real
 declarations still parse). Include resolution is done too: `include_chunk` and
-`resolve_include` find the `path#chunk` body across libraries, tested. Next:
-build the program list from contexts and passes, compile per stage with DXC;
-then `dtmt build` sources programs from the declaration instead of sibling
-files. Snoopymod is the migration test.
+`resolve_include` find the `path#chunk` body across libraries, tested. The
+program list is done too: `ShaderNode::compile_jobs` enumerates context x
+permutation x selected pass, with the macros each compiles under (tested; a
+branch no define decides contributes both sides). Next: assemble the HLSL and
+compile per stage with DXC; then `dtmt build` sources programs from the
+declaration instead of sibling files. Snoopymod is the migration test.
 
 ## Open decode details worth keeping
 
