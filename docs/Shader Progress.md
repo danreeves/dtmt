@@ -52,7 +52,8 @@ shader43 --conditions --variables <dict> <section>
 shader43 --group-data <section>
 shader43 --dependencies <section>
 shader43 --plan <declaration.shader_node> <section>
-shader43 --reconstruct <dir> --variables <dict> <section>   # declaration skeleton
+shader43 --reconstruct <dir> [--variables <dict>] [--dxil-spirv <exe>]
+    [--spirv-cross <exe>] <section>   # declaration + shader_source + engine_data
 shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>...
 ```
 
@@ -161,6 +162,17 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   is not needed to bind the variable. Note: `user_settings.config`'s
   `log_level` was `1` for these runs, which suppresses the `ModLoader` info
   lines; set it to `2` or higher to read them. [one run]
+- **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
+  writes the three files `dtmt build` needs - `<name>.shader_node` (with a code
+  block and a pass so it builds), `<name>.shader_source` (the first program of
+  each stage decompiled with dxil-spirv/spirv-cross, merged under
+  `STAGE_VERTEX`/`STAGE_FRAGMENT` guards) and `<name>.engine_data` - and drops
+  the old `.preamble.bin`/`.constants.txt` side files. [verified on the UI base:
+  `uib.shader_node` + `uib.shader_source` (4087 bytes) + `uib.engine_data`
+  (162068 bytes); compiling the reconstruction with `--compile --against`
+  reproduces both interfaces exactly ("interface matches program 0 Vertex" /
+  "program 1 Pixel"). The decompiler tools are skipped with a note when they
+  are not found.]
 
 ## Open, in the order to attack
 

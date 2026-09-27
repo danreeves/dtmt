@@ -221,6 +221,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              [--spirv-cross <exe>] <material data file>...\n       \
              shader43 --tail <program index> <material data file>\n       \
              shader43 --tails [--variables <dictionary.csv>] <material data file>\n       \
+             shader43 --reconstruct <dir> [--variables <dictionary.csv>] \
+             [--dxil-spirv <exe>] [--spirv-cross <exe>] <material data file>...\n       \
              shader43 --compile <dir> [--against <material>] \
              <declaration.shader_node> <library.shader_source | directory>...\n       \
              shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>] \
@@ -289,8 +291,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(path) => Some(load_dictionary(path)?),
             None => None,
         };
+        let dxil = decompiler(&dxil_spirv, "DXIL_SPIRV", "dxil-spirv");
+        let cross = decompiler(&spirv_cross, "SPIRV_CROSS", "spirv-cross");
         for path in &files {
-            if let Err(err) = reconstruct(path, dir, names.as_ref()) {
+            if let Err(err) = reconstruct(path, dir, names.as_ref(), &dxil, &cross) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -432,12 +436,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let dxil_spirv = dxil_spirv.unwrap_or_else(|| {
-        PathBuf::from(std::env::var("DXIL_SPIRV").unwrap_or_else(|_| "dxil-spirv".to_string()))
-    });
-    let spirv_cross = spirv_cross.unwrap_or_else(|| {
-        PathBuf::from(std::env::var("SPIRV_CROSS").unwrap_or_else(|_| "spirv-cross".to_string()))
-    });
+    let dxil_spirv = decompiler(&dxil_spirv, "DXIL_SPIRV", "dxil-spirv");
+    let spirv_cross = decompiler(&spirv_cross, "SPIRV_CROSS", "spirv-cross");
 
     for path in &files {
         let result = match (&rebuild_dir, &variable_names, &decompile_dir) {
@@ -1018,20 +1018,29 @@ fn substitute(
     Ok(())
 }
 
-/// Reconstructs a `.shader_node`-shaped declaration from a compiled section.
-///
-/// This is the decompile-to-source direction, first slice: the group data's
-/// named variables and channels become `inputs` and `channels`, the contexts
-/// become `shader_contexts`, and a header says what is not recoverable
-/// (permutation sets, HLSL, unnamed hashes). It is not the original source and
-/// is not expected to rebuild the same bytes; it is meant to be editable.
+/// A decompiler tool path: the explicit flag, the environment variable, or the
+/// tool's name on `PATH`.
+fn decompiler(explicit: &Option<PathBuf>, env: &str, default: &str) -> PathBuf {
+    explicit.clone().unwrap_or_else(|| {
+        PathBuf::from(std::env::var(env).unwrap_or_else(|_| default.to_string()))
+    })
+}
+
+/// Reconstructs the dialect source of a compiled section: a `.shader_node`
+/// declaration skeleton, a `.shader_source` with the decompiled programs (when
+/// the decompiler tools are available), and the `.engine_data` carry. This is
+/// the bundle -> source direction; the three files are what `dtmt build` needs
+/// to generate the section again.
 fn reconstruct(
     path: &Path,
     dir: &Path,
     names: Option<&HashMap<u32, String>>,
+    dxil_spirv: &Path,
+    spirv_cross: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use sdk::filetype::group_data::GroupData;
     use sdk::filetype::shader::Section;
+    use sdk::filetype::shader_engine_data::EngineData;
 
     let data = fs::read(path)?;
     let bytes = shader_section(&data)?;
@@ -1053,10 +1062,30 @@ fn reconstruct(
         _ => "scalar",
     };
 
+    let tag = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+    let device_offset = u32_at(bytes, 40) as usize;
+    let device_size = u32_at(bytes, 44) as usize;
+    let device = bytes
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let preamble_len = programs.first().map_or(device.len(), |program| program.pos);
+
     let mut out = String::new();
     out.push_str("// Reconstructed from a compiled shader43 section. This is not the\n");
     out.push_str("// original declaration: permutation sets and HLSL are compiled away, and\n");
-    out.push_str("// records whose hashes the dictionary cannot name are omitted.\n\n");
+    out.push_str("// records whose hashes the dictionary cannot name are omitted.\n");
+    out.push_str(&format!(
+        "// Engine data: {tag}.engine_data ({} groups, hash {:08X}, {} programs, \
+         preamble {preamble_len} bytes)\n",
+        group.group_count(),
+        group.hash(),
+        programs.len(),
+    ));
+    out.push_str(&format!(
+        "// Shader source: {tag}.shader_source (the first program of each stage,\n\
+         // under the engine's stage guards)\n\n"
+    ));
 
     out.push_str("inputs = {\n");
     if let Some((_, records)) = group
@@ -1082,64 +1111,187 @@ fn reconstruct(
             ));
         }
     }
-    out.push_str("}\n\nshader_contexts = {\n");
-    let mut wrote_context = false;
+    out.push_str("}\n\ncode_blocks = {\n");
+    out.push_str(&format!("    {tag} = {{\n    }}\n}}\n\nshader_contexts = {{\n"));
     for context in section.contexts() {
         if let Some(name) = name_of(context.name) {
             out.push_str(&format!("    {name} = {{}}\n"));
-            wrote_context = true;
         }
     }
-    if !wrote_context {
-        out.push_str("    default = {}\n");
-    }
-    out.push_str("}\n");
+    out.push_str("    default = {\n        passes = [\n");
+    out.push_str(&format!(
+        "            {{ layer=\"default\" code_block=\"{tag}\" render_state=\"default\" }}\n"
+    ));
+    out.push_str("        ]\n    }\n}\n");
 
     fs::create_dir_all(dir)?;
-    let tag = path.file_stem().unwrap_or_default().to_string_lossy();
     let out_path = dir.join(format!("{tag}.shader_node"));
     fs::write(&out_path, &out)?;
 
-    // The carried constants: the device preamble is the library's compiled
-    // block and cannot currently be derived, so it is written beside the declaration for
-    // the build to reuse, with a summary of what is carried.
-    let device_offset = u32_at(bytes, 40) as usize;
-    let device_size = u32_at(bytes, 44) as usize;
-    let device = bytes
-        .get(device_offset..device_offset + device_size)
-        .ok_or("device data is out of range")?;
-    let preamble_len = shader::parse_programs(device)?
-        .first()
-        .map_or(device.len(), |program| program.pos);
-    let preamble_path = dir.join(format!("{tag}.preamble.bin"));
-    fs::write(&preamble_path, &device[..preamble_len])?;
-    let group = GroupData::new(section.group_data().to_vec());
-    let mut constants = String::new();
-    constants.push_str(&format!(
-        "group data: {} bytes, {} groups, hash {:08X}\n",
-        section.group_data().len(),
-        group.group_count(),
-        group.hash()
-    ));
-    for dependency in section.dependencies() {
-        constants.push_str(&format!("dependency: {:016X}\n", dependency.id));
+    // The engine data: the parts of the section the generator cannot currently
+    // derive, captured from this material. `dtmt build` generates the section
+    // from it and the shader source.
+    let engine_data = EngineData::from_path(path)?;
+    let engine_data_path = dir.join(format!("{tag}.engine_data"));
+    fs::write(&engine_data_path, engine_data.to_text())?;
+
+    // The decompiled programs, when the tools are there.
+    let source = reconstruct_source(bytes, dxil_spirv, spirv_cross)?;
+    let mut wrote_source = None;
+    if let Some(body) = source {
+        if body.contains("\"\"\"") {
+            return Err("the decompiled HLSL contains triple quotes and cannot be embedded".into());
+        }
+        let source_path = dir.join(format!("{tag}.shader_source"));
+        let text = format!(
+            "// The decompiled programs of the section, one entry point per stage.\n\n\
+             hlsl_shaders = {{\n\t{tag} = {{\n\t\tcode = \"\"\"\n{body}\t\t\"\"\"\n\t}}\n}}\n"
+        );
+        fs::write(&source_path, text)?;
+        wrote_source = Some(source_path);
     }
-    constants.push_str(&format!(
-        "preamble: {preamble_len} bytes -> {}\n",
-        preamble_path.file_name().unwrap_or_default().to_string_lossy()
-    ));
-    let constants_path = dir.join(format!("{tag}.constants.txt"));
-    fs::write(&constants_path, constants)?;
 
     println!(
-        "wrote {} ({} bytes, {} contexts) and {} (preamble {} bytes)",
+        "wrote {} ({} contexts) + {} + {}{}",
         out_path.display(),
-        out.len(),
         section.contexts().len(),
-        constants_path.display(),
-        preamble_len
+        engine_data_path.display(),
+        wrote_source
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "no shader source (decompiler tools not found)".to_string()),
+        if wrote_source.is_some() {
+            ""
+        } else {
+            ""
+        }
     );
     Ok(())
+}
+
+/// The decompiled programs as one `.shader_source` body: the first program of
+/// each stage, each under the engine's stage macro. `None` when a decompiler
+/// tool cannot be found or the section has no vertex or pixel program.
+fn reconstruct_source(
+    section: &[u8],
+    dxil_spirv: &Path,
+    spirv_cross: &Path,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let device_offset = u32_at(section, 40) as usize;
+    let device_size = u32_at(section, 44) as usize;
+    let device = section
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+
+    let mut vertex = None;
+    let mut pixel = None;
+    for program in &programs {
+        match program.stage {
+            shader::Stage::Vertex if vertex.is_none() => {
+                match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
+                    Some(hlsl) => vertex = Some(hlsl),
+                    None => return Ok(None),
+                }
+            }
+            shader::Stage::Pixel if pixel.is_none() => {
+                match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
+                    Some(hlsl) => pixel = Some(hlsl),
+                    None => return Ok(None),
+                }
+            }
+            _ => {}
+        }
+        if vertex.is_some() && pixel.is_some() {
+            break;
+        }
+    }
+
+    let mut body = String::new();
+    match (&vertex, &pixel) {
+        (Some(vs), Some(ps)) => {
+            body.push_str("#if defined(STAGE_VERTEX)\n");
+            body.push_str(vs);
+            body.push_str("\n#elif defined(STAGE_FRAGMENT)\n");
+            body.push_str(ps);
+            body.push_str("\n#endif\n");
+        }
+        (Some(vs), None) => {
+            body.push_str("#if defined(STAGE_VERTEX)\n");
+            body.push_str(vs);
+            body.push_str("\n#endif\n");
+        }
+        (None, Some(ps)) => {
+            body.push_str("#if defined(STAGE_FRAGMENT)\n");
+            body.push_str(ps);
+            body.push_str("\n#endif\n");
+        }
+        (None, None) => return Ok(None),
+    }
+
+    Ok(Some(body))
+}
+
+/// Decompiles one container to HLSL with `dxil-spirv` and `spirv-cross`, with
+/// the entry point and semantics restored. `None` when a tool is not found;
+/// other failures are errors.
+fn decompile_container(
+    container: &[u8],
+    stage: shader::Stage,
+    dxil_spirv: &Path,
+    spirv_cross: &Path,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir();
+    let stem = format!("dtmt-reconstruct-{}-{stage:?}", std::process::id());
+    let container_path = dir.join(format!("{stem}.dxbc"));
+    let spv_path = dir.join(format!("{stem}.spv"));
+    let hlsl_path = dir.join(format!("{stem}.hlsl"));
+    fs::write(&container_path, container)?;
+
+    let output = match Command::new(dxil_spirv)
+        .arg(&container_path)
+        .arg("--output")
+        .arg(&spv_path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("Failed to run '{}': {err}", dxil_spirv.display()).into()),
+    };
+    if !output.status.success() {
+        return Err(format!(
+            "dxil-spirv failed on the {stage:?} program: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+
+    let output = match Command::new(spirv_cross)
+        .args(["--hlsl", "--shader-model", "60"])
+        .arg(&spv_path)
+        .arg("--output")
+        .arg(&hlsl_path)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(format!("Failed to run '{}': {err}", spirv_cross.display()).into());
+        }
+    };
+    if !output.status.success() {
+        return Err(format!(
+            "spirv-cross failed on the {stage:?} program: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+
+    let hlsl = fs::read_to_string(&hlsl_path)?;
+    let _ = fs::remove_file(&container_path);
+    let _ = fs::remove_file(&spv_path);
+    let _ = fs::remove_file(&hlsl_path);
+    Ok(Some(fix_up_hlsl(&hlsl, stage, container)))
 }
 
 /// A dry run: what a generated section *would* contain, and whether it holds
