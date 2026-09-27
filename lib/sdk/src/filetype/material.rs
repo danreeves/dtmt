@@ -1303,17 +1303,24 @@ pub async fn decompile(
         None => variant.data().to_vec(),
     };
 
-    let material = Material::from_binary(&data).wrap_err("Failed to parse material")?;
+    let sjson = decompile_data(ctx, &data)?;
+    Ok(vec![UserFile::with_name(sjson.into_bytes(), name)])
+}
+
+/// Decompiles raw material data (a material data file's bytes) to SJSON.
+///
+/// This is the raw-data form of [`decompile`]: the caller has the bytes rather
+/// than a bundle file and its data file.
+pub fn decompile_data(ctx: &crate::Context, data: &[u8]) -> Result<String> {
+    let material = Material::from_binary(data).wrap_err("Failed to parse material")?;
     if !material.shader.is_empty() {
         tracing::debug!(
-            "Material '{name}' embeds a {}-byte shader; it is preserved through \
-             'shader_data'.",
+            "Material embeds a {}-byte shader; it is preserved through 'shader_data'.",
             material.shader.len()
         );
     }
 
-    let sjson = material.to_sjson(ctx)?;
-    Ok(vec![UserFile::with_name(sjson.into_bytes(), name)])
+    material.to_sjson(ctx)
 }
 
 fn data_file_name_path(ctx: &crate::Context, data_file_name: &str) -> PathBuf {

@@ -164,16 +164,23 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   `log_level` was `1` for these runs, which suppresses the `ModLoader` info
   lines; set it to `2` or higher to read them. [one run]
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
-  writes the three files `dtmt build` needs - `<name>.shader_node` (with a code
+  writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of
   each stage decompiled with dxil-spirv/spirv-cross, merged under
-  `STAGE_VERTEX`/`STAGE_FRAGMENT` guards) and `<name>.engine_data` - and drops
-  the old `.preamble.bin`/`.constants.txt` side files. [verified on the UI base:
-  `uib.shader_node` + `uib.shader_source` (4087 bytes) + `uib.engine_data`
-  (162068 bytes); compiling the reconstruction with `--compile --against`
-  reproduces both interfaces exactly ("interface matches program 0 Vertex" /
-  "program 1 Pixel"). The decompiler tools are skipped with a note when they
-  are not found.]
+  `STAGE_VERTEX`/`STAGE_FRAGMENT` guards), `<name>.engine_data`, and (for a full
+  material data file; a sliced section has no material template) `<name>.material`
+  with the section fields stripped and `shader_engine_data` pointing at the
+  engine data. The old `.preamble.bin`/`.constants.txt` side files are gone.
+  [verified on the UI base: `uib.shader_node` + `uib.shader_source` (4087 bytes)
+  + `uib.engine_data` (162068 bytes); compiling the reconstruction with
+  `--compile --against` reproduces both interfaces exactly ("interface matches
+  program 0 Vertex" / "program 1 Pixel"). The decompiler tools are skipped with
+  a note when they are not found.]
+- **Source -> section from a reconstruction**: the four reconstructed files
+  build in a scratch mod (`dtmt build`: vs 4533, ps 6115 bytes) into a section
+  with the original's 2 contexts, 1436 condition bytes, 1 dependency and 62884
+  group-data bytes, 368556 bytes of programs, and an identical round trip. So
+  the loop shipped section -> source -> section closes end to end.
 
 ## Open, in the order to attack
 

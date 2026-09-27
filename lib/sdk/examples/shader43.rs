@@ -1166,22 +1166,66 @@ fn reconstruct(
         wrote_source = Some(source_path);
     }
 
+    // The material SJSON, so the source tree is complete: the shader section is
+    // carried by the sibling `.shader_data` file (written by `dtmt build`) and
+    // the material points at the engine data. Only a full material data file
+    // decompiles; a sliced section has no material template to read.
+    let context = sdk::Context::new();
+    let mut wrote_material = None;
+    match sdk::filetype::material::decompile_data(&context, &data) {
+        Ok(material_sjson) => {
+            let mut material_out = String::with_capacity(material_sjson.len() + 128);
+            material_out
+                .push_str("// Reconstructed from a compiled material. The shader section is\n");
+            material_out.push_str(&format!(
+                "// generated from {tag}.engine_data + {tag}.shader_node + {tag}.shader_source;\n"
+            ));
+            material_out
+                .push_str("// `dtmt build` writes the compiled section to the sibling .shader_data.\n");
+            for line in without_shader_data(&material_sjson).lines() {
+                material_out.push_str(line);
+                material_out.push('\n');
+            }
+            material_out.push_str(&format!("shader_engine_data = \"{tag}.engine_data\"\n"));
+            let material_path = dir.join(format!("{tag}.material"));
+            fs::write(&material_path, material_out)?;
+            wrote_material = Some(material_path);
+        }
+        Err(err) => {
+            println!("  no material SJSON written: {err}");
+        }
+    }
+
     println!(
-        "wrote {} ({} contexts) + {} + {}{}",
+        "wrote {} ({} contexts){} + {}{}",
         out_path.display(),
         section.contexts().len(),
+        wrote_material
+            .as_ref()
+            .map(|path| format!(" + {}", path.display()))
+            .unwrap_or_default(),
         engine_data_path.display(),
         wrote_source
             .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "no shader source (decompiler tools not found)".to_string()),
-        if wrote_source.is_some() {
-            ""
-        } else {
-            ""
-        }
+            .map(|path| format!(" + {}", path.display()))
+            .unwrap_or_else(|| " + no shader source (decompiler tools not found)".to_string()),
     );
     Ok(())
+}
+
+/// Drops a decompiled material's `shader_size`/`shader_data` fields: the
+/// reconstructed section lives in the sibling `.shader_data` file instead.
+fn without_shader_data(sjson: &str) -> String {
+    let mut out = String::with_capacity(sjson.len());
+    for line in sjson.lines() {
+        let key = line.trim_start();
+        if key.starts_with("shader_size") || key.starts_with("shader_data") {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// The decompiled programs as one `.shader_source` body: the first program of
