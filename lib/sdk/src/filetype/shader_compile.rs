@@ -40,9 +40,31 @@ pub fn find_dxc() -> Option<PathBuf> {
 /// Compiles one HLSL source for a profile and entry point, returning the
 /// container DXC wrote.
 ///
+/// The in-process `dxcompiler.dll` is used when it can be found (it keeps the
+/// source and the container in memory); otherwise the `dxc.exe` at `dxc` is
+/// run with temporary files, because the executable has no stdin mode.
+///
 /// On failure the temporary source is kept and named in the error, so the
 /// message points at the exact translation unit that did not compile.
 pub fn compile(dxc: &Path, source: &str, profile: &str, entry: &str) -> Result<Vec<u8>> {
+    #[cfg(windows)]
+    if let Some(dll) = dxc::find_dll(dxc) {
+        match dxc::Compiler::load(&dll).and_then(|compiler| compiler.compile(source, profile, entry))
+        {
+            Ok(container) => {
+                tracing::debug!("Compiled in process with '{}'", dll.display());
+                return Ok(container);
+            }
+            Err(err) => {
+                tracing::debug!(
+                    "In-process compile with '{}' failed, falling back to '{}': {err}",
+                    dll.display(),
+                    dxc.display()
+                );
+            }
+        }
+    }
+
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     profile.hash(&mut hasher);

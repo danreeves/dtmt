@@ -9,6 +9,7 @@ bitflags = { workspace = true }
 byteorder = { workspace = true }
 color-eyre = { workspace = true }
 csv-async = { workspace = true }
+dxc = { workspace = true }
 fastrand = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }

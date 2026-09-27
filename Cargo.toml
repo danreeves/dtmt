@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/dtmt",
     "crates/dtmm",
+    "lib/dxc",
     "lib/dtmt-shared",
     "lib/oodle",
     "lib/sdk",
@@ -30,6 +31,7 @@ csv-async = { version = "1.2.4", features = ["tokio", "serde"] }
 druid = { version = "0.8", features = ["im", "serde", "image", "png", "jpeg", "bmp", "webp", "svg"] }
 druid-widget-nursery = "0.1"
 dtmt-shared = { path = "lib/dtmt-shared" }
+dxc = { path = "lib/dxc" }
 fastrand = "2.1.0"
 flate2 = "1.0.30"
 fs_extra = "1.1.0"

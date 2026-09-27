@@ -163,6 +163,14 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   is not needed to bind the variable. Note: `user_settings.config`'s
   `log_level` was `1` for these runs, which suppresses the `ModLoader` info
   lines; set it to `2` or higher to read them. [one run]
+- **In-process DXC**: `lib/dxc` is a workspace crate (like `oodle`) that loads
+  `dxcompiler.dll` at runtime and calls `DxcCreateInstance` through a
+  hand-written `extern "system"` vtable transcribed from the SDK's `dxcapi.h`;
+  `shader_compile::compile` prefers it and falls back to the `dxc.exe`
+  shell-out. [verified on the blit block: both paths produce containers whose
+  only difference is the container header's 16-byte hash (bytes 4..19); the
+  DXIL payloads are byte-identical (1232 and 1164 bytes), and the in-process
+  path leaves no temporary files]
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
   writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of
@@ -226,7 +234,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    and channel tables, and keep the engine table. Generating the header itself
    needs the grammar in (2). `rebuild`/`rebuild_channels` already write the
    tables correctly.
-4. **Graph code generation** for the real game declarations. The Stingray
+4. **In-process DXC (`dxcompiler.dll`)** - **done**: `lib/dxc` (a workspace
+   crate, like `oodle`) runtime-loads the DLL and calls `DxcCreateInstance`
+   through a hand-written vtable transcribed from the SDK's `dxcapi.h`;
+   `shader_compile::compile` prefers it and falls back to the `dxc.exe`
+   shell-out, so a machine without the DLL still builds. The shell-out's
+   temporary files are gone on the in-process path (dxc.exe cannot read stdin,
+   which is why they existed). Next, if wanted: ship `dxcompiler.dll` beside
+   the tool so no SDK install is needed.
+5. **Graph code generation** for the real game declarations. The Stingray
    toolchain expands the declaration's channels and graph nodes into
    `GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`, `GRAPH_MATERIAL_EXPORTS`,
    `GraphVertexParams`, `GraphVertexResults`; without them every output-node
@@ -234,13 +250,13 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    channel table is read, so this is code generation from data that is already
    parsed, not a decode. Mod-authored blocks that avoid the graph macros compile
    today.
-5. **Wire `Section::build` into `dtmt build`** with generated group data and a
+6. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
    any deploy. The compile side is in place (`shader_compile::compile`), the
    declaration path feeds the engine data flow, and snoopy-mod is migrated to it;
    what remains is programs -> device data without the engine data, and the mapping
    of several jobs to a section's programs (needs the conditions decode).
-6. **In-game test**: **passed** for the declaration path (see the verified list).
+7. **In-game test**: **passed** for the declaration path (see the verified list).
    The harness's `title-tint-demo.ps1` captures with `CopyFromScreen`, which
    grabbed the desktop rather than the game window on the run that verified the
    tint; `shot-window.ps1`'s `PrintWindow` on the Darktide window is the fix for
