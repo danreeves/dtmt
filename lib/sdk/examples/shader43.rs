@@ -1073,11 +1073,45 @@ fn reconstruct(
     let tag = path.file_stem().unwrap_or_default().to_string_lossy();
     let out_path = dir.join(format!("{tag}.shader_node"));
     fs::write(&out_path, &out)?;
+
+    // The carried constants: the device preamble is the library's compiled
+    // block and cannot be derived, so it is written beside the declaration for
+    // the build to reuse, with a summary of what is carried.
+    let device_offset = u32_at(bytes, 40) as usize;
+    let device_size = u32_at(bytes, 44) as usize;
+    let device = bytes
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let preamble_len = shader::parse_programs(device)?
+        .first()
+        .map_or(device.len(), |program| program.pos);
+    let preamble_path = dir.join(format!("{tag}.preamble.bin"));
+    fs::write(&preamble_path, &device[..preamble_len])?;
+    let group = GroupData::new(section.group_data().to_vec());
+    let mut constants = String::new();
+    constants.push_str(&format!(
+        "group data: {} bytes, {} groups, hash {:08X}\n",
+        section.group_data().len(),
+        group.group_count(),
+        group.hash()
+    ));
+    for dependency in section.dependencies() {
+        constants.push_str(&format!("dependency: {:016X}\n", dependency.id));
+    }
+    constants.push_str(&format!(
+        "preamble: {preamble_len} bytes -> {}\n",
+        preamble_path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let constants_path = dir.join(format!("{tag}.constants.txt"));
+    fs::write(&constants_path, constants)?;
+
     println!(
-        "wrote {} ({} bytes, {} contexts)",
+        "wrote {} ({} bytes, {} contexts) and {} (preamble {} bytes)",
         out_path.display(),
         out.len(),
-        section.contexts().len()
+        section.contexts().len(),
+        constants_path.display(),
+        preamble_len
     );
     Ok(())
 }
