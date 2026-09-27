@@ -80,6 +80,20 @@ impl ShaderSource {
     }
 }
 
+/// The chunk name an `include` names: the part after the last `#`. An include
+/// without a `#` is a chunk name on its own.
+pub fn include_chunk(include: &str) -> &str {
+    include.rsplit('#').next().unwrap_or(include)
+}
+
+/// The HLSL an `include` names, searched across the given libraries in order.
+/// `None` when no library defines the chunk; the caller decides whether that is
+/// an error or a chunk from another source.
+pub fn resolve_include<'a>(libraries: &'a [ShaderSource], include: &str) -> Option<&'a str> {
+    let name = include_chunk(include);
+    libraries.iter().find_map(|library| library.hlsl(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +132,26 @@ mod tests {
     fn a_missing_chunk_is_none() {
         let source = ShaderSource::from_sjson(LIBRARY).expect("parse");
         assert!(source.hlsl("nope").is_none());
+    }
+
+    #[test]
+    fn includes_resolve_across_libraries() {
+        let first = ShaderSource::from_sjson(LIBRARY).expect("first");
+        let second =
+            ShaderSource::from_sjson(r#"hlsl_shaders = { extra = { code = """ void extra() {} """ } }"#)
+                .expect("second");
+        let libraries = [first, second];
+        let resolved =
+            resolve_include(&libraries, "core/stingray_renderer/shader_libraries/common#gbuffer")
+                .expect("gbuffer");
+        assert!(resolved.contains("hlsl_only"), "{resolved}");
+        assert!(
+            resolve_include(&libraries, "somewhere#extra")
+                .expect("extra")
+                .contains("extra")
+        );
+        assert!(resolve_include(&libraries, "somewhere#missing").is_none());
+        assert_eq!(include_chunk("path#chunk"), "chunk");
+        assert_eq!(include_chunk("plain"), "plain");
     }
 }
