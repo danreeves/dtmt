@@ -15,7 +15,7 @@ use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
 use sdk::filetype::shader_node::{ShaderNode, STAGES, entry_for, profile_for};
-use sdk::filetype::shader_preset::Preset;
+use sdk::filetype::shader_engine_data::EngineData;
 use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};
@@ -363,11 +363,11 @@ fn load_libraries(root: &Path) -> Result<Vec<ShaderSource>> {
     Ok(libraries)
 }
 
-/// Reads the `shader_preset = "..."` declaration of a material SJSON, if it has
-/// one. The field is DTMT's own; the material parser ignores it.
-fn shader_preset_path(sjson: &str) -> Option<String> {
+/// Reads the `shader_engine_data = "..."` declaration of a material SJSON, if
+/// it has one. The field is DTMT's own; the material parser ignores it.
+fn shader_engine_data_path(sjson: &str) -> Option<String> {
     for line in sjson.lines() {
-        let Some(rest) = line.trim().strip_prefix("shader_preset") else {
+        let Some(rest) = line.trim().strip_prefix("shader_engine_data") else {
             continue;
         };
         let rest = rest.trim_start().strip_prefix('=')?.trim();
@@ -377,8 +377,8 @@ fn shader_preset_path(sjson: &str) -> Option<String> {
     None
 }
 
-/// Resolves a preset path next to the material, then against the mod root.
-fn resolve_preset_path(material: &Path, root: &Path, name: &str) -> PathBuf {
+/// Resolves an engine data path next to the material, then against the mod root.
+fn resolve_engine_data_path(material: &Path, root: &Path, name: &str) -> PathBuf {
     let sibling = material
         .parent()
         .unwrap_or(Path::new("."))
@@ -478,26 +478,32 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
 
-            // A material can declare a shader preset and sibling shader sources;
-            // DTMT then generates its `shader_data` instead of the material
-            // carrying a compiled shader blob.
+            // A material can declare the engine data to generate from and
+            // sibling shader sources; DTMT then generates its `shader_data`
+            // instead of the material carrying a compiled shader blob.
             let mut generated = false;
             if file_type == BundleFileType::Material
-                && let Some(preset_name) = shader_preset_path(&sjson)
+                && let Some(engine_data_name) = shader_engine_data_path(&sjson)
             {
-                let preset_path = resolve_preset_path(&path, root.as_ref(), &preset_name);
-                let preset_text = fs::read_to_string(&preset_path).await.wrap_err_with(|| {
-                    format!("Failed to read shader preset '{}'", preset_path.display())
-                })?;
-                let preset = Preset::from_text(&preset_text).wrap_err_with(|| {
-                    format!("Failed to parse shader preset '{}'", preset_path.display())
-                })?;
+                let engine_data_path =
+                    resolve_engine_data_path(&path, root.as_ref(), &engine_data_name);
+                let engine_data_text =
+                    fs::read_to_string(&engine_data_path).await.wrap_err_with(|| {
+                        format!(
+                            "Failed to read engine data '{}'",
+                            engine_data_path.display()
+                        )
+                    })?;
+                let engine_data =
+                    EngineData::from_text(&engine_data_text).wrap_err_with(|| {
+                        format!("Failed to parse engine data '{}'", engine_data_path.display())
+                    })?;
 
                 let overrides = compile_shader_overrides(&path, cfg).await?.ok_or_else(|| {
                     eyre::eyre!(
-                        "'{}' declares shader preset '{}' but has no sibling shader sources",
+                        "'{}' declares engine data '{}' but has no sibling shader sources",
                         path.display(),
-                        preset_name
+                        engine_data_name
                     )
                 })?;
 
@@ -509,24 +515,14 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     containers.insert(Stage::Pixel, pixel);
                 }
 
-                let (section, rewritten, cloned) =
-                    preset.generate_with_report(&containers).wrap_err_with(|| {
-                        format!("Failed to generate a shader section for '{}'", path.display())
-                    })?;
-
-                let mut report = String::new();
-                if rewritten > 0 {
-                    report.push_str(&format!(", rewriting {rewritten} shader record(s)"));
-                }
-                if cloned > 0 {
-                    report.push_str(&format!(", adding {cloned} shader record(s)"));
-                }
+                let section = engine_data.generate(&containers).wrap_err_with(|| {
+                    format!("Failed to generate a shader section for '{}'", path.display())
+                })?;
 
                 tracing::info!(
-                    "Generated a {} byte shader section from '{}'{}",
+                    "Generated a {} byte shader section from '{}'",
                     section.len(),
-                    preset_path.display(),
-                    report
+                    engine_data_path.display(),
                 );
                 sjson = set_shader_data(&sjson, &section);
                 generated = true;

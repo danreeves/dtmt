@@ -32,7 +32,7 @@ use sdk::filetype::shader;
 use sdk::filetype::shader_block::{self, BlockTemplate};
 use sdk::filetype::shader_decl::ChannelDef;
 use sdk::filetype::shader_node::ShaderNode;
-use sdk::filetype::shader_preset::channel_record_len;
+use sdk::filetype::shader_engine_data::channel_record_len;
 use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur;
 use sdk::murmur::Dictionary;

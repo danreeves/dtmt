@@ -1,14 +1,14 @@
-//! Extracts a shader family's engine-side wrapper and generates `shader43`
-//! sections from our own compiled programs.
+//! Extracts a shader's engine-side data and generates `shader43` sections from
+//! our own compiled programs.
 //!
-//! This is the harness for the template route described in
+//! This is the harness for the engine-data route described in
 //! `docs/Shader Section Generation Notes.md`; the target is for DTMT to
 //! generate everything from the mod's own shader definitions, and this tool is
 //! how the pieces are tested until then.
 //!
 //! ```text
-//! generate_shader --preset <out.txt> <material data file>
-//! generate_shader --generate <preset.txt> <base.material> <out.material> \
+//! generate_shader --engine-data <out.txt> <material data file>
+//! generate_shader --generate <engine_data.txt> <base.material> <out.material> \
 //!     [--vs <container.dxbc>] [--ps <container.dxbc>]
 //! ```
 //!
@@ -21,7 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use sdk::filetype::shader::Stage;
-use sdk::filetype::shader_preset::Preset;
+use sdk::filetype::shader_engine_data::EngineData;
 
 fn replace_hex_field(
     text: &str,
@@ -69,19 +69,22 @@ fn to_hex(bytes: &[u8]) -> String {
     text
 }
 
-fn extract_preset(data_path: &Path, out_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let preset = Preset::from_path(data_path)?;
-    fs::write(out_path, preset.to_text())?;
+fn extract_engine_data(
+    data_path: &Path,
+    out_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let engine_data = EngineData::from_path(data_path)?;
+    fs::write(out_path, engine_data.to_text())?;
 
     println!(
-        "=== {} ===\n  wrote the preset of {} program(s) ({} contexts, {} condition bytes, \
+        "=== {} ===\n  wrote the engine data of {} program(s) ({} contexts, {} condition bytes, \
          {} group data bytes, {} preamble bytes) to {}",
         data_path.display(),
-        preset.programs.len(),
-        preset.context_count,
-        preset.conditions.len(),
-        preset.group_data.len(),
-        preset.device_preamble.len(),
+        engine_data.programs.len(),
+        engine_data.context_count,
+        engine_data.conditions.len(),
+        engine_data.group_data.len(),
+        engine_data.device_preamble.len(),
         out_path.display()
     );
 
@@ -89,13 +92,13 @@ fn extract_preset(data_path: &Path, out_path: &Path) -> Result<(), Box<dyn std::
 }
 
 fn generate(
-    preset_path: &Path,
+    engine_data_path: &Path,
     base_path: &Path,
     out_path: &Path,
     vs: Option<&Path>,
     ps: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let preset = Preset::from_text(&fs::read_to_string(preset_path)?)?;
+    let engine_data = EngineData::from_text(&fs::read_to_string(engine_data_path)?)?;
 
     let mut containers: HashMap<Stage, Vec<u8>> = HashMap::new();
     if let Some(vs) = vs {
@@ -105,7 +108,7 @@ fn generate(
         containers.insert(Stage::Pixel, fs::read(ps)?);
     }
 
-    let section = preset.generate(&containers)?;
+    let section = engine_data.generate(&containers)?;
 
     let base = fs::read_to_string(base_path)?;
     let base = replace_hex_field(&base, "shader_data", &to_hex(&section))?;
@@ -116,7 +119,7 @@ fn generate(
         "=== {} ===\n  generated a {} byte shader section from {} program(s) into {}",
         base_path.display(),
         section.len(),
-        preset.programs.len(),
+        engine_data.programs.len(),
         out_path.display()
     );
 
@@ -126,7 +129,7 @@ fn generate(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
 
-    let mut preset_out: Option<PathBuf> = None;
+    let mut engine_data_out: Option<PathBuf> = None;
     let mut generate_from: Option<PathBuf> = None;
     let mut vs: Option<PathBuf> = None;
     let mut ps: Option<PathBuf> = None;
@@ -135,16 +138,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--preset" => {
+            "--engine-data" => {
                 i += 1;
-                preset_out = Some(PathBuf::from(
-                    args.get(i).expect("--preset needs an output file"),
+                engine_data_out = Some(PathBuf::from(
+                    args.get(i).expect("--engine-data needs an output file"),
                 ));
             }
             "--generate" => {
                 i += 1;
                 generate_from = Some(PathBuf::from(
-                    args.get(i).expect("--generate needs a preset file"),
+                    args.get(i).expect("--generate needs an engine data file"),
                 ));
             }
             "--vs" => {
@@ -160,23 +163,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         i += 1;
     }
 
-    if let Some(out) = &preset_out {
+    if let Some(out) = &engine_data_out {
         let data = files
             .first()
-            .ok_or("usage: generate_shader --preset <out.txt> <material data file>")?;
-        return extract_preset(data, out);
+            .ok_or("usage: generate_shader --engine-data <out.txt> <material data file>")?;
+        return extract_engine_data(data, out);
     }
 
-    if let Some(preset_path) = &generate_from {
+    if let Some(engine_data_path) = &generate_from {
         let [base_path, out_path] = files.as_slice() else {
             return Err(
-                "usage: generate_shader --generate <preset.txt> <base.material> \
+                "usage: generate_shader --generate <engine_data.txt> <base.material> \
                         <out.material> [--vs <container.dxbc>] [--ps <container.dxbc>]"
                     .into(),
             );
         };
         return generate(
-            preset_path,
+            engine_data_path,
             base_path,
             out_path,
             vs.as_deref(),
@@ -185,8 +188,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Err(
-        "usage: generate_shader --preset <out.txt> <material data file>\n       \
-         generate_shader --generate <preset.txt> <base.material> <out.material> \
+        "usage: generate_shader --engine-data <out.txt> <material data file>\n       \
+         generate_shader --generate <engine_data.txt> <base.material> <out.material> \
          [--vs <container.dxbc>] [--ps <container.dxbc>]"
             .into(),
     )

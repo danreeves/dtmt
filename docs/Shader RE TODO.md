@@ -51,7 +51,7 @@ conditions tree, and the in-game test that no round trip can replace.
 
 Everything a shader needs is defined in the mod (`<material>.hlsl` sources plus a
 shader declaration); `dtmt build` compiles the sources and **generates the whole
-`shader43` section**. No shipped shader blob, and ideally no preset either - the
+`shader43` section**. No shipped shader blob, and ideally no engine data either - the
 only game-derived data allowed is genuinely engine-side constants, kept as small
 as the decode allows.
 
@@ -82,12 +82,12 @@ What does not work yet:
 
 - `shader43` section codec: parse/rebuild, Oodle frames, stage from `PSV0`,
   interface check (`lib/sdk/src/filetype/shader.rs`).
-- Material-side flows: sibling `.hlsl` compile + splice; `shader_preset`
+- Material-side flows: sibling `.hlsl` compile + splice; `shader_engine_data`
   declaration in a material SJSON makes `dtmt build` generate the entire section
-  from a preset + compiled sources (`crates/dtmt/src/cmd/build.rs`,
-  `lib/sdk/src/filetype/shader_preset.rs`, example
+  from the engine data + compiled sources (`crates/dtmt/src/cmd/build.rs`,
+  `lib/sdk/src/filetype/shader_engine_data.rs`, example
   `lib/sdk/examples/generate_shader.rs`). snoopymod runs this way; its base
-  material is ~427 bytes and the preset is the only game-derived file.
+  material is ~427 bytes and the engine data is the only game-derived file.
 - Verified in game: a generated section renders (title screen tint driven by Lua
   material values); a generated section *without* the device preamble makes the
   engine run out of memory at the title.
@@ -96,10 +96,9 @@ What does not work yet:
   preamble and all 36 tails; the material declares `mod_tint`, Lua drives it,
   and the title background cycles hue under Lua control (its UV ripple and
   brightness pulse are the demo shader's own effects). The engine resolves
-  material variables by the library's compiled names, and the name set is
-  patchable. Deployed next: a `clone dev_wireframe_color mod_extra 240 16`
-  build (tails grown to 256 bytes, the shader reads `_25_m0[15]`) to test
-  **adding** a variable; observation pending.
+  material variables by the library's compiled names, and the name set was
+  patchable. The `variable`/`clone` rewrite lines were removed on 2026-09-27;
+  the mod now drives the record under its own name.
 - `mine_materials` example: dumps `materials/variables/groups/defaults/contexts/
   conditions/tails.csv` for the whole game (2037 shader materials) and writes
   `known.txt`/`unknown.txt` hash bounty lists.
@@ -114,7 +113,7 @@ What does not work yet:
   `content/weapons/materials/weapon_power_sword/weapon_power_effect_cryptic`
   (62), `content/fx/materials/master/wind_render` (61). Many had no
   dictionary entry, so a mod that needs many existing parameter slots should
-  prefer the named ones or use the `clone` preset lines.
+  prefer the named ones.
 - Contexts: read and written as `{name, word2, count, count x {query_id,
   conditions_offset}}`; the queries are the groups (measured on seven
   sections). Conditions tree (records `{tag, b, c, count}` +
@@ -147,11 +146,11 @@ record stream is now framed: record lengths follow the record's `kind` (4 -> 60
 bytes, 5 -> 73 bytes), the engine prologue (`linear_depth`, `global_diffuse_map`,
 `sun_shadow_map`, `fog_volume`) is at fixed offsets and the stream ends exactly
 at the preamble's end. `shader43 --records` parses it end to end on three shipped
-shaders, and a `clone_channel` preset line clones a record into the preamble,
-every tail's block and the group data's variable records (unit-tested). In game
-the cloned name **binds**: with the clone and a material naming it, the title
-screen renders the mod texture with the cycling tint (a block-only clone left
-the title black).
+shaders, and the (since removed) `clone_channel` line cloned a record into the
+preamble, every tail's block and the group data's variable records
+(unit-tested). In game the cloned name **binds**: with the clone and a material
+naming it, the title screen renders the mod texture with the cycling tint (a
+block-only clone left the title black).
 
 Block notes from a byte-precise dump of the chain base (863 byte preamble):
 
@@ -165,11 +164,10 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
 - Channel records appear in the preamble *and* after every pixel program (the
   same block), so a channel rename has to patch every copy. The group data
   carries the same names in its canonical records and in the cbuffer-keyed
-  packed form, so a rename must patch all three places. This is implemented as
-  the `channel <shipped> <new>` preset line (`replace_hash`): it replaces the
-  4 byte name hash in the group data, the preamble and every tail. Verified
-  offline against the UI base (264 occurrences: 216 group, 48 device). In-game
-  verification of a renamed channel is still pending.
+  packed form, so a rename must patch all three places. This was implemented as
+  the (since removed) `channel <shipped> <new>` line (`replace_hash`): it
+  replaced the 4 byte name hash in the group data, the preamble and every tail.
+  Verified offline against the UI base (264 occurrences: 216 group, 48 device).
 - Section-level evidence from an external binary-patch mod (RainbowFlame),
   diffing a patched shipped material against the original: the programs are
   replaced, the **tails** change only in their per-program cbuffer lists
@@ -304,14 +302,14 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    its length matching the container's `ISG1`), ending with the shared block
    (the preamble's tail, 549 bytes on the UI base). `shader::Tail` parses and
    serialises the cbuffer list and round-trips every sampled tail byte for byte,
-   `patch_tails` rewrites sizes in a preset (hygiene: a 256 byte shader cbuffer
+   `patch_tails` (since removed) rewrote sizes in the engine data (hygiene: a 256 byte shader cbuffer
    with 240 byte tails still renders, so the size is not load-bearing). The
    shared block is *byte packed*, not word aligned - `texture_map` sits at an odd
    offset (501) inside it with `{u32 size = 4, u32 count = 1}` after it, so
    modelling it needs the packed record stream, not u32 lists. Next step: model
    the resource/signature lists (their counts, kinds and how many words each
    kind uses) and the block, so a tail can be generated from the compiled
-   container's reflection instead of the preset's bytes. Concrete shapes seen in
+   container's reflection instead of the engine data's bytes. Concrete shapes seen in
    the UI base's pixel tail: after the cbuffer entries, counted lists of 7-word
    resource records (empty list = one `0` word) - a texture `{3AFC636C, 2, 0,
    FFFFFFFF, 2, FFFFFFFF, 0}`, a UAV `{41B1CFF8, 3, 0, FFFFFFFF, 1F, FFFFFFFF,
@@ -456,8 +454,8 @@ the game bundle) before trusting it.
 - `decompile_unit` example: `<payload> <out dir>` writes the `.unit`/`.bsi`
   pair back out; static units only (skins, animations and actors are rejected
   with a clear error).
-- `generate_shader` example: `--preset <out.txt> <material data file>`,
-  `--generate <preset> <base.material> <out.material> --vs/--ps`.
+- `generate_shader` example: `--engine-data <out.txt> <material data file>`,
+  `--generate <engine_data> <base.material> <out.material> --vs/--ps`.
 - `mine_materials` example: `--dict <csv> --out <dir> <game data dir>`.
 - Helper scripts (cargo/rustfmt wrappers, capture and analysis scripts for the
   desktop, e.g. title-screen captures and condition/descriptor dumps).

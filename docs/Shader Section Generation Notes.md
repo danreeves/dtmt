@@ -29,27 +29,30 @@ are:
 
 Engine constants are only acceptable where the engine genuinely requires data
 that cannot currently be derived from the shader - and even then the goal is to decode and
-shrink them to the smallest possible form, not to grow them into a preset.
+shrink them to the smallest possible form, not to grow them into an engine data file.
 
 ## Status of the intermediate route
 
 The mod-defined build flow is in place: a material can declare
-`shader_preset = "<name>.preset"` and ship no `shader_data` at all; `dtmt build`
-compiles the sibling shader sources and generates the section from them and the
-preset (byte-identical to the splice route), and snoopymod runs that way - its
-base material is a few hundred bytes, the preset is the only game-derived file.
-The preset holds the declaration's engine-side wrapper for now; shrinking it to only
-genuine engine constants (and generating the rest from the shader itself) is the
-remaining RE work listed above.
+`shader_engine_data = "<name>.engine_data"` and ship no `shader_data` at all;
+`dtmt build` compiles the sibling `.shader_node` + `.shader_source` and
+generates the section from them and the engine data, and snoopymod runs that
+way - its base material is a few hundred bytes, the engine data is the only
+game-derived file. The engine data holds the declaration's engine-side wrapper
+for now (contexts, conditions, group data, the device preamble and the program
+tails); shrinking it to only genuine engine constants (and generating the rest
+from the shader itself) is the remaining RE work listed above. The old
+variable/clone/channel rewriting is gone: the shader's own variable names are
+what the material and Lua address.
 
-The SDK also has the template route
-(`lib/sdk/examples/generate_shader.rs`, `shader_preset` module) used to extract
-the preset and as the harness for testing each decoded piece. It proved the
-pipeline end to end - a generated section (96 programs, ~431 KB, no shipped blob
-in the mod) builds, deploys and renders in game (the title screen tint follows
-Lua) - and the first attempt without the device-data preamble reached the title
-and then hit the engine's out-of-memory error, which is how the preamble's
-importance was found.
+The SDK also has the harness
+(`lib/sdk/examples/generate_shader.rs`, `shader_engine_data` module) used to
+extract the engine data and as the harness for testing each decoded piece. It
+proved the pipeline end to end - a generated section (96 programs, ~431 KB, no
+shipped blob in the mod) builds, deploys and renders in game (the title screen
+tint follows Lua) - and the first attempt without the device-data preamble
+reached the title and then hit the engine's out-of-memory error, which is how
+the preamble's importance was found.
 
 ## What a material needs
 
@@ -79,7 +82,7 @@ recomputable (that is how the splice flow already relocates them).
 | Conditions | Copy from a template: records are `{u16 tag=1, u16 payload_words, u16 payload_offset, u16 count}` + `count` hashes + `payload_words` payload words, and the framing is self-delimiting (`filetype::condition_tree`). The payload is a bytecode whose opcodes are mapped but not decoded | Framing decoded and writable; payload semantics open |
 | Dependencies | Copy from the same template (8 bytes = one u64 id on the UI base) | Copyable only |
 | Group data | Generate per group. Each group needs a header (`{u32, query_id_of_the_group, descriptor words, …}`), the variable tables for that group's cbuffers, and the compact copy of those tables that follows. The variable records are `{type, flags, name_hash, cbuffer_offset, size}` runs with a count word; copies must all be consistent | Structure mapped (see `Shader RE TODO.md`): a 32-byte global header then 36 groups; the channel table, variable table and packed run are byte-identical across all 36 groups, only the descriptors' `Y` and the byte-packed group header vary. The tables are identified: 69 records = the `global_viewport` engine cbuffer's variables, 7 records = the group's `c_per_object` variables (incl. `texture_map`). Generation = emit the tables once, replicate them across the template's group count, keep the template's descriptors/headers |
-| Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the preset's preamble before the records | The preamble's 120-byte header is decoded: only `+0x04` (group count), `+0x08` (cbuffer count) and `+0x0C` (record count + 8) vary across seven shipped declarations, the rest is constant; the byte-packed `{index, value}` records after it are engine-variable binding entries shared across declarations (22-record common prefix). Generation = copy the template's block and rewrite the three header words |
+| Device data | Generate: a packed preamble followed by framed DXBC programs. Each program record is `envelope=1`, `frame_length`, Oodle frame, `metadata_kind=5`, decoded length, frame key, then the metadata tail. **The preamble matters**: a generated section without it makes the engine run out of memory as soon as a material using it is drawn (verified in game - the packed table is read as a lookup and garbage sizes follow), so `--generate` writes the engine data's preamble before the records | The preamble's 120-byte header is decoded: only `+0x04` (group count), `+0x08` (cbuffer count) and `+0x0C` (record count + 8) vary across seven shipped declarations, the rest is constant; the byte-packed `{index, value}` records after it are engine-variable binding entries shared across declarations (22-record common prefix). Generation = copy the template's block and rewrite the three header words |
 | Program tails | Still partly open. Cbuffer entries are 24-byte records whose `{name_hash, size}` sit at `+4`/`+12`, in register order; signature elements are listed by name hash with index/ordinal. What the engine does with the rest of the tail is unknown | Open |
 | Default data | Generate: `{u32 zero}{u32 count}` then `count × {name_hash, element_count, blob_offset}` then the value blob, with `element_count` = 1/2/3/4 for scalar/vec2/vec3/vec4 and `blob_offset` = byte offset of the value in the blob | Known |
 

@@ -15,6 +15,7 @@ constants are carried.
 `main` is the trusted baseline plus reviewed commits:
 
 ```
+1fb1c1b docs: the built material carries the compiled containers
 ccdbe8c build: source material programs from a sibling .shader_node
 899b6fe shader: read the real code shapes, compile with DXC
 1657273 shader_node: map a job's stages to DXC profiles
@@ -133,7 +134,7 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   `GRAPH_MATERIAL_EXPORTS`, `GraphVertexParams`, `GraphVertexResults`).
 - **`dtmt build` sources from the declaration**: a material with a sibling
   `<name>.shader_node` compiles its single job per stage against the
-  `.shader_source` files under the mod root and feeds the preset flow; the
+  `.shader_source` files under the mod root and feeds the engine data flow; the
   sibling HLSL layouts remain the fallback, and a declaration with more than one
   job is refused (one container per stage cannot stand in for several
   permutations yet). [verified on snoopy-mod: the `ui_default_base` title
@@ -203,9 +204,12 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
 5. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
    any deploy. The compile side is in place (`shader_compile::compile`), the
-   declaration path feeds the preset flow, and snoopy-mod is migrated to it;
-   what remains is programs -> device data without the preset, and the mapping
-   of several jobs to a section's programs (needs the conditions decode).
+   declaration path feeds the engine data flow, and snoopy-mod is migrated to it;
+   what remains is programs -> device data without the engine data, and the mapping
+   of several jobs to a section's programs (needs the conditions decode). Related
+   proposal: carry the generated section in a sibling `<name>.shader_data` file
+   instead of stringifying it into the material SJSON's `shader_data` field; the
+   material source would keep only `shader_engine_data`.
 6. **In-game test**: **passed** for the declaration path (see the verified list).
    The harness's `title-tint-demo.ps1` captures with `CopyFromScreen`, which
    grabbed the desktop rather than the game window on the run that verified the
@@ -237,7 +241,7 @@ Mods author shaders in the Stingray dialect only: a `.shader_node` declaration
 and `.shader_source` libraries (`hlsl_shaders = { <name> = { code } }`),
 **HLSL only** - the `glsl` parts are portability scaffolding for the renderer's
 other backends and are ignored. The sibling `.vs.hlsl` / `.ps.hlsl` convention
-is dropped once this path builds; it exists only in the preset flow and
+is dropped once this path builds; it exists only in the engine data flow and
 snoopymod today.
 
 The path is now complete up to the compiler:
@@ -255,8 +259,14 @@ The path is now complete up to the compiler:
 - `shader43 --compile <dir> <declaration> <libraries|dir>` runs the lot and
   writes a container per job and stage; a mod-authored block compiles today.
 - `dtmt build` prefers a sibling `<name>.shader_node` and compiles its single
-  job per stage into the preset flow's overrides; the sibling HLSL layout is the
+  job per stage into the engine data's overrides; the sibling HLSL layout is the
   fallback. Snoopy-mod's `ui_default_base` is migrated to it.
+- The captured engine-side data is called **engine data** now
+  (`filetype::shader_engine_data`, `EngineData`, `<name>.engine_data`,
+  `shader_engine_data = "..."`), not "preset"; `version 43` is the SDK's
+  `shader::VERSION`, not a field. The old `variable`/`clone`/`channel`/
+  `clone_channel` rewrite lines are gone: the shader's own variable names are
+  what a material addresses (snoopy-mod drives `dev_wireframe_color`).
 
 Next: graph code generation for the real output-node declarations (see open
 item 4), the in-game title test of the migrated mod, and then the multi-job

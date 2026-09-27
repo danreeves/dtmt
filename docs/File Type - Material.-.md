@@ -189,23 +189,23 @@ build checks the stage and both signature layouts and fails otherwise. See
 programs, per-program reflection, contexts, conditions, group data and default
 data. The `.hlsl` files are build-time inputs and are not shipped in the bundle.
 
-A material can also declare a **shader preset** and carry no `shader_data` at
-all:
+A material can also declare **engine data** and carry no `shader_data` at all:
 
 ```sjson
 // ui_default_base.material
-shader_preset = "ui_default_base.preset"
+shader_engine_data = "ui_default_base.engine_data"
 ```
 
-`ui_default_base.preset` is a text file next to the material (or relative to the
-mod root) that holds the family's engine-side wrapper: contexts, conditions,
-dependencies, group data, the packed device preamble and one metadata tail per
-program. When the declaration is present, `dtmt build` compiles the sibling
-shader sources and generates the whole section from them and the preset, so the
-material source stays a few hundred bytes and no shipped shader blob is needed.
-The section is byte-identical to what the splice route produces for the same
-sources. `generate_shader --preset <out.txt> <material data file>` extracts a
-preset from a shipped base material once; shrinking the preset to only genuine
+`ui_default_base.engine_data` is a text file next to the material (or relative to
+the mod root) that holds the engine-side wrapper the generator cannot currently
+derive: contexts, conditions, dependencies, group data, the packed device
+preamble and one metadata tail per program. When the declaration is present,
+`dtmt build` compiles the sibling `.shader_node` + `.shader_source` and
+generates the whole section from them and the engine data, so the material
+source stays a few hundred bytes and no shipped shader blob is needed. The
+section is byte-identical to what the splice route produces for the same
+sources. `generate_shader --engine-data <out.txt> <material data file>` extracts
+the engine data from a shipped base material once; shrinking it to only genuine
 engine constants is an open item (see
 [Shader Section Generation Notes](Shader%20Section%20Generation%20Notes.md)).
 
@@ -245,63 +245,32 @@ program can be translated back to editable HLSL; see
 ### Custom material parameters
 
 A base material's shader library decides which material variables exist and
-where they live in the material constant buffer. Two preset lines adapt that
-interface when a section is generated:
+where they live in the material constant buffer; the shader's own variable names
+are what the material and Lua address. DTMT used to carry `variable`, `clone`,
+`channel` and `clone_channel` lines in the engine data that renamed or cloned
+records of the compiled interface. They were removed (2026-09-27): the compiled
+interface is engine data, and editing it by name was the wrong layer. A custom
+slot now needs the declaration-driven group data generation (see
+[Shader Section Generation Notes](Shader%20Section%20Generation%20Notes.md)),
+not a rewrite of the shipped records.
 
-- `variable <shipped> <name> <offset> <size>` re-purposes a shipped slot: the
-  shipped variable's 20 byte record is rewritten to the new name, offset and
-  size everywhere it occurs (canonical records and the verbatim copies the
-  packed serialization embeds), and the slot is no longer addressable under its
-  old name.
-- `clone <template> <name> <offset> <size>` adds a slot: a copy of the
-  template's record is appended to every run of records that contains it, with
-  the run's count word bumped. The template stays intact.
-- `channel <shipped> <new-name>` renames a texture channel: the shipped channel's
-  32 bit name hash is replaced wherever it occurs - the group data (canonical
-  records and the cbuffer-keyed packed copies), the device preamble and every
-  program tail's block - so the library, the material and the shader agree on
-  the new name. Offsets, registers and texture formats are untouched, so the
-  material declares the texture under the new name and the shader keeps sampling
-  the same register. Verified against the UI base: `channel texture_map mod_map`
-  replaced all 264 occurrences (216 in the group data, 48 in the device data).
-- `clone_channel <template> <new-name>` adds a channel: the template's block
-  record is copied with its name hash replaced and inserted after the template
-  record in the device preamble, and the record stream's count word (right
-  before the first record) is bumped. Block channel records have a fixed length
-  per kind (kind 4 -> 60 bytes, kind 5 -> 73), which is what lets the exact
-  record bytes be found without parsing the rest of the block. The group data
-  describes the channel in two framings - the canonical 20-byte variable records
-  and the cbuffer-keyed packed 28-byte copies - and both are cloned with their
-  run counts. The template stays intact. **Verified in game**: with the full
-  clone and the material naming the new channel, the title screen renders the
-  mod texture with the cycling tint (the block-only clone left the title black,
-  and the group data records are what the engine resolves). The per-pixel tail
-  blocks carry kind 2 records whose length is still unknown, so they are not
-  cloned; the UI base binds from the preamble's stream without it.
+What the removed lines established, kept for the record:
 
-These lines are applied in `Preset::generate_with_report`, before the section is
-assembled. The variable lines (`variable`, `clone`) grow the constant buffer in
-the program tails when the new offset reaches past the shipped buffer end; the
-channel lines only change the interface's names.
-
-Three declarations have to agree for a slot to be readable:
-
-1. the **shader** must declare the constant buffer large enough. On the UI base
-   the material buffer is `b1` and the decompiled HLSL declares
-   `float4 _25_m0[15]` (240 bytes); a slot at offset 240 needs
-   `float4 _25_m0[16]` (256 bytes). Members are read as `_25_m0[offset / 16]`.
-2. the **program tails** must mention the larger size. DTMT rewrites every tail
-   entry whose size covered the old range and is smaller than the new one
-   (`grow_tails`), so this is automatic.
-3. the **group data** records must place the new member inside that buffer (the
-   `variable`/`clone` lines do that).
-
-For the mod's title screen the shipped `dev_wireframe_color` lives at offset
-224 of the UI base's material buffer, so cloning it at offset 240 and reading
-`_25_m0[15]` gives the mod a slot of its own: the material SJSON declares
-`mod_extra = { type = "vector4" value = [1, 1, 1, 1] }` and Lua drives it
-through `material_values`. Verified offline (36 records added to 36 runs, tails
-grown to 256 in all 96 programs); in-game verification pending.
+- a variable record is `{type, flags, name_hash, cbuffer_offset, size}`, 20
+  bytes, stored in many copies per group (the UI base has 36); the engine binds
+  a material value to the record whose name hash matches. The title tint is the
+  proof: the shipped `dev_wireframe_color` record at offset 224 was renamed to
+  `mod_tint` in all 36 copies and Lua drove it, and the title background cycled
+  hue (**verified in game**). With the rename gone the mod drives
+  `dev_wireframe_color` directly, the same record under its own name.
+- channel records have a fixed length per kind (kind 4 -> 60 bytes, kind 5 -> 73),
+  and a texture channel's name hash appears in the group data, the device
+  preamble and the program tail blocks; a rename touched 264 occurrences on the
+  UI base (216 in the group data, 48 in the device data).
+- growing a genuinely new slot needs three declarations to agree: the shader's
+  cbuffer must be large enough (members are read as `_25_m0[offset / 16]`), the
+  program tails must mention the size, and the group data must place the member
+  inside the buffer. That is the shape of the declaration-driven generation.
 
 ## Status and open questions
 
@@ -365,10 +334,12 @@ grown to 256 in all 96 programs); in-game verification pending.
    the channels *and* the variables. Channels (`texture_map`, `bca`, `nm`,
    `orm`) also appear in the device block; scalar/vector variables
    (`dev_wireframe_color`, `outline_color`, `view_proj`) appear **only** in the
-   group data, so the group data is the name-to-slot map. The preset rewrite
-   (`variable <slot> <new-name> <offset> <size>`, implemented as
-   `patch_variable`: it replaces the exact 20 byte record wherever it occurs)
-   was exercised in game as a title-screen test: the shipped
-   `dev_wireframe_color` record was renamed to `mod_tint` in all 36 copies while
-   keeping offset 224/size 16, the instance material declared `mod_tint`, and
-   Lua drove it. **Verified in game**: the title background cycles hue under Lua control, so a material variable binds by its renamed name. DTMT now also supports `clone <template> <name> <offset> <size>` preset lines (`clone_variable`): a copy of the template record is appended to every run of records that contains it, with the run's count word bumped when one is found in the 16 bytes before the run. Unit-tested, and verified against the shipped UI base: all 36 runs grew from 7 to 8 records with the clone at offset 240 and their count words bumped, while the tails were grown to 256 by the same path as a rewrite. Canonical runs only; packed copies of channel records are not cloned yet. The clone is deployed and awaiting its in-game observation.
+   group data, so the group data is the name-to-slot map. The rewrite lines that
+   renamed or cloned those records (`variable`/`clone`, `patch_variable` and
+   `clone_variable`) were removed on 2026-09-27 - the compiled interface is
+   engine data, not something to edit by name. The finding they established
+   stands: the shipped `dev_wireframe_color` record was renamed to `mod_tint` in
+   all 36 copies while keeping offset 224/size 16, the instance material declared
+   `mod_tint`, and Lua drove it - **verified in game**, the title background
+   cycles hue. A material variable therefore binds by name hash to its record;
+   the mod now drives the record under its own name.
