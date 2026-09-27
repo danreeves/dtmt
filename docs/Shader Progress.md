@@ -15,13 +15,12 @@ constants are carried.
 `main` is the trusted baseline plus reviewed commits:
 
 ```
+ccdbe8c build: source material programs from a sibling .shader_node
 899b6fe shader: read the real code shapes, compile with DXC
 1657273 shader_node: map a job's stages to DXC profiles
 cd18f54 shader_node: a compile job carries its stages
 e0446a2 shader_node: assemble a code block's HLSL
 96b9d2a shader_node: enumerate the compile jobs
-332f388 shader_source: resolve path#chunk includes across libraries
-668a473 shader_node: read code_blocks and link passes to them
 2e93df5 docs: the authoring format is the Stingray dialect, HLSL only
 2c79541 docs: tail signature runs and trailing run are family-independent   <- trusted baseline
 ```
@@ -132,6 +131,16 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   `DXIL` chunk. The real `decal_base` declaration now fails only on the
   toolchain-generated graph macros (`GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`,
   `GRAPH_MATERIAL_EXPORTS`, `GraphVertexParams`, `GraphVertexResults`).
+- **`dtmt build` sources from the declaration**: a material with a sibling
+  `<name>.shader_node` compiles its single job per stage against the
+  `.shader_source` files under the mod root and feeds the preset flow; the
+  sibling HLSL layouts remain the fallback, and a declaration with more than one
+  job is refused (one container per stage cannot stand in for several
+  permutations yet). [verified on snoopy-mod: the `ui_default_base` title
+  shader built from its declaration, vs 4533 / ps 6079 bytes, and generated the
+  431056-byte section; the sibling `.vs.hlsl`/`.ps.hlsl` were renamed away for
+  the test] `shader43 --compile --against <material>` reports whether a compiled
+  container's interface matches the material's program of its stage.
 
 ## Open, in the order to attack
 
@@ -181,12 +190,16 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    today.
 5. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
-   any deploy. The compile side is in place (`shader_compile::compile`); what is
-   missing is programs -> device data and the section around it.
+   any deploy. The compile side is in place (`shader_compile::compile`), the
+   declaration path feeds the preset flow, and snoopy-mod is migrated to it;
+   what remains is programs -> device data without the preset, and the mapping
+   of several jobs to a section's programs (needs the conditions decode).
 6. **In-game test** via snoopy-mod: title screen only, no space at boot,
    screenshot the Darktide window (borderless fullscreen -> PrintWindow). The
-   blit block in the scratch `compile-test/` directory is a working container
-   source for this.
+   migrated `ui_default_base.shader_node` build is the thing to deploy
+   (`C:\dev\snoopy-mod\out`), and `docs/scripts/title-tint-demo.ps1` is the
+   harness. The blit block in the scratch `compile-test/` directory is a
+   working container source for a smaller test.
 
 ## In-game harness
 
@@ -197,7 +210,7 @@ the title material line (`material set: background_image`), screenshot and
 average a region's colour a few times, and grep the log for the mod. `shot-window.ps1` uses `PrintWindow` so a borderless-fullscreen window is
 captured rather than the desktop; `set-shader.ps1` and `slice-sections.ps1` move
 a section in and out of a material. The deployable test mod is the snoopy-mod
-checkout. The payload experiment that needs this: a generated family whose
+checkout. The payload experiment that needs this: a generated shader whose
 groups render distinguishable colours and whose crafted conditions tree maps
 channel sets to them, then drive the material from Lua and read which colour
 appears.
@@ -225,10 +238,13 @@ The path is now complete up to the compiler:
 - `filetype::shader_compile` finds DXC and invokes it; `dtmt build` shares it.
 - `shader43 --compile <dir> <declaration> <libraries|dir>` runs the lot and
   writes a container per job and stage; a mod-authored block compiles today.
+- `dtmt build` prefers a sibling `<name>.shader_node` and compiles its single
+  job per stage into the preset flow's overrides; the sibling HLSL layout is the
+  fallback. Snoopy-mod's `ui_default_base` is migrated to it.
 
 Next: graph code generation for the real output-node declarations (see open
-item 4), then `dtmt build` sources programs from the declaration instead of
-sibling files, with snoopymod as the migration test.
+item 4), the in-game title test of the migrated mod, and then the multi-job
+mapping once the conditions decode lands.
 
 ## Open decode details worth keeping
 
