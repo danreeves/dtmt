@@ -11,6 +11,8 @@
 //!   shader43 --tail <program index> <material data file>
 //!   shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>]
 //!       <material data file>
+//!   shader43 --compile <dir> <declaration.shader_node>
+//!       <library.shader_source | directory>...
 //!
 //! `dtmt build` performs the same replacement automatically for shader sources
 //! that sit next to a material (`<name>.hlsl`, `<name>.ps.hlsl`,
@@ -31,6 +33,7 @@ use sdk::filetype::shader_block::{self, BlockTemplate};
 use sdk::filetype::shader_decl::ChannelDef;
 use sdk::filetype::shader_node::ShaderNode;
 use sdk::filetype::shader_preset::channel_record_len;
+use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur;
 use sdk::murmur::Dictionary;
 
@@ -60,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut registry_mode = false;
     let mut channel_filter: Option<String> = None;
     let mut block_declaration: Option<PathBuf> = None;
+    let mut compile_dir: Option<PathBuf> = None;
     let mut group_data_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
@@ -147,6 +151,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--group-data" => {
                 group_data_mode = true;
             }
+            "--compile" => {
+                i += 1;
+                compile_dir = Some(PathBuf::from(
+                    args.get(i).expect("--compile needs a directory"),
+                ));
+            }
             "--records" => records_mode = true,
             "--channel" => {
                 i += 1;
@@ -204,10 +214,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              [--spirv-cross <exe>] <material data file>...\n       \
              shader43 --tail <program index> <material data file>\n       \
              shader43 --tails [--variables <dictionary.csv>] <material data file>\n       \
+             shader43 --compile <dir> <declaration.shader_node> \
+             <library.shader_source | directory>...\n       \
              shader43 --slots <dictionary.csv> [--program <index>] [--hlsl <dir>] \
              <material data file>..."
         );
         std::process::exit(1);
+    }
+
+    if let Some(dir) = &compile_dir {
+        let (declaration, libraries) = files
+            .split_first()
+            .ok_or("--compile needs a declaration and its libraries")?;
+        return compile(declaration, libraries, dir);
     }
 
     if let Some(index) = tail_index {
@@ -1214,6 +1233,109 @@ fn plan(
         }
     }
     Ok(())
+}
+
+/// Compiles the declaration's programs with DXC: every job's source is the
+/// macros, its block's includes and its body; the containers land in `out_dir`.
+fn compile(
+    declaration: &Path,
+    libraries: &[PathBuf],
+    out_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader_compile::{compile as dxc_compile, find_dxc};
+    use sdk::filetype::shader_node::{STAGES, entry_for, profile_for};
+
+    let text = fs::read_to_string(declaration)?;
+    let node = ShaderNode::from_sjson(&text)?;
+
+    let mut sources = Vec::new();
+    for path in libraries {
+        if path.is_dir() {
+            for entry in walk_shader_sources(path)? {
+                sources.push(ShaderSource::from_sjson(&fs::read_to_string(&entry)?)?);
+            }
+        } else {
+            sources.push(ShaderSource::from_sjson(&fs::read_to_string(path)?)?);
+        }
+    }
+
+    let dxc = find_dxc().ok_or("no dxc.exe found: set DTMT_DXC or install the Windows SDK")?;
+    let jobs = node.compile_jobs()?;
+    fs::create_dir_all(out_dir)?;
+
+    println!("=== {} (with {}) ===", declaration.display(), dxc.display());
+    let mut written = 0usize;
+    for job in &jobs {
+        for stage in STAGES {
+            let Some(profile) = profile_for(stage) else {
+                continue;
+            };
+            let Some(entry) = entry_for(profile) else {
+                continue;
+            };
+            let source = node.job_source(job, stage, &sources);
+            match dxc_compile(&dxc, &source, profile, entry) {
+                Ok(container) => {
+                    let name = format!(
+                        "{}_p{}_{}.dxbc",
+                        sanitize(&job.context),
+                        job.permutation,
+                        profile
+                    );
+                    fs::write(out_dir.join(&name), &container)?;
+                    println!(
+                        "  {} p{} {} {profile}/{entry}: {} bytes -> {name}",
+                        job.context,
+                        job.permutation,
+                        job.code_block,
+                        container.len()
+                    );
+                    written += 1;
+                }
+                Err(err) => println!(
+                    "  {} p{} {} {profile}/{entry}: failed: {err}",
+                    job.context, job.permutation, job.code_block
+                ),
+            }
+        }
+    }
+    println!(
+        "  {written} container(s) from {} job(s) into {}",
+        jobs.len(),
+        out_dir.display()
+    );
+    Ok(())
+}
+
+/// The `.shader_source` files under a directory, in path order.
+fn walk_shader_sources(dir: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut found = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "shader_source") {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+/// A context name that can be a file name.
+fn sanitize(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 fn layout(

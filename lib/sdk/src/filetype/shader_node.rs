@@ -28,7 +28,7 @@ use color_eyre::eyre::{Context as _, Result, bail};
 use serde::Deserialize;
 
 use super::condition::{Condition, Defines};
-use super::shader_source::{ShaderSource, resolve_include};
+use super::shader_source::{CodeParts, ShaderSource, find_chunk, include_chunk};
 use super::shader_decl::{
     ChannelDef, Choice, CompileWith, Define, DefineTable, Domain, Interface, Pass, PassEntry,
     Permutation, PermutationSet, ProgramDef, ShaderContext, ValueType, VariableDef,
@@ -230,40 +230,22 @@ pub struct NodeContext {
     pub passes: Vec<PassEntryValue>,
 }
 
-/// One `code_blocks` entry: the HLSL a pass compiles and the library chunks it
-/// includes. The file's other keys (samplers, stage conditions, instance data)
-/// are not read yet.
+/// One `code_blocks` entry: the code it includes and the HLSL it compiles. The
+/// file's other keys (samplers, stage conditions, instance data) are not read
+/// yet.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct CodeBlock {
-    /// The library chunks to include, as `path#chunk` (or `path#chunk#chunk`).
+    /// The chunks to include, as `path#chunk`, or the bare name of another code
+    /// block of the same declaration.
     #[serde(default)]
     pub include: Vec<String>,
-    /// The block's own HLSL, when it has any.
+    /// The body: `code = { shared = ..., hlsl = ... }` or a bare string.
     #[serde(default)]
-    pub hlsl: Option<String>,
-}
-
-impl CodeBlock {
-    /// The HLSL to compile: the included chunks in order, then the block's own
-    /// code. An include no library resolves is skipped, because the caller's
-    /// compiler will say what is missing when the source fails to build.
-    pub fn hlsl_with(&self, libraries: &[ShaderSource]) -> String {
-        let mut out = String::new();
-        for include in &self.include {
-            if let Some(chunk) = resolve_include(libraries, include) {
-                out.push_str(chunk);
-                out.push('\n');
-            }
-        }
-        if let Some(hlsl) = &self.hlsl {
-            out.push_str(hlsl);
-        }
-        out
-    }
+    pub code: Option<CodeParts>,
 }
 
 /// The preprocessor lines a job's macros compile under.
-pub fn defines_for(macros: &[String]) -> String {
+pub fn defines_for(macros: &[&str]) -> String {
     let mut out = String::new();
     for name in macros {
         out.push_str(&format!("#define {name}\n"));
@@ -271,34 +253,71 @@ pub fn defines_for(macros: &[String]) -> String {
     out
 }
 
-/// The DXC target profile for a stage name, when it is one DXC has. Darktide
-/// ships DXBC, so the SM 5.0 profiles are what the engine consumes.
+/// The DXC target profile for a stage name, when it is one DXC has.
+///
+/// Darktide ships SM 6.x DXIL, not SM 5.x bytecode: every shipped program
+/// carries a `DXIL` chunk in its container (checked on the UI base's first
+/// programs), the decompiler runs `dxil-spirv` over them, and `dtmt build`
+/// compiles its overrides at 6.0. The container's `DXBC` magic is the container
+/// format, which DXIL shares; it is not the payload.
 pub fn profile_for(stage: &str) -> Option<&'static str> {
     Some(match stage {
-        "vertex" => "vs_5_0",
-        "pixel" => "ps_5_0",
+        "vertex" => "vs_6_0",
+        "pixel" => "ps_6_0",
         _ => return None,
     })
 }
 
-/// The profiles a job compiles for: the named stages' profiles, in order and
-/// without repeats. Empty when the job names no stage, which the caller has to
-/// resolve rather than guess.
-pub fn profiles_for(stages: &[String]) -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = Vec::new();
-    for stage in stages {
-        if let Some(profile) = profile_for(stage)
-            && !out.contains(&profile)
-        {
-            out.push(profile);
-        }
+/// The entry point name for a profile: the dialect's code blocks define
+/// `vs_main` and `ps_main`.
+pub fn entry_for(profile: &str) -> Option<&'static str> {
+    Some(match profile {
+        "vs_6_0" => "vs_main",
+        "ps_6_0" => "ps_main",
+        _ => return None,
+    })
+}
+
+/// The stages a pass compiles for: the dialect's code blocks carry a vertex and
+/// a pixel entry point, and a pass draws with the pair. A macro's `stages` is a
+/// limit on where it applies, not a list of stages to compile.
+pub const STAGES: [&str; 2] = ["vertex", "pixel"];
+
+/// The macros the engine's own compiler defines: the platform, and the stage
+/// the program is compiled for. The library sources branch on them
+/// (`#if defined(RENDERER_D3D12)`, `#if defined(STAGE_VERTEX)`,
+/// `#elif defined(STAGE_FRAGMENT)`), so a compile without them takes the GLSL
+/// or stub branches.
+pub fn engine_defines(stage: &str) -> Vec<&'static str> {
+    let mut out = vec!["RENDERER_D3D12"];
+    match stage {
+        "vertex" => out.push("STAGE_VERTEX"),
+        "pixel" => out.push("STAGE_FRAGMENT"),
+        _ => {}
     }
     out
 }
 
+/// One macro a job defines, with the stages it is limited to (empty: all).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JobMacro {
+    /// The macro name.
+    pub name: String,
+    /// The stages the macro applies to. Empty means every stage.
+    pub stages: Vec<String>,
+}
+
+impl JobMacro {
+    /// Whether the macro applies when compiling `stage`.
+    pub fn applies_to(&self, stage: &str) -> bool {
+        self.stages.is_empty() || self.stages.iter().any(|named| named == stage)
+    }
+}
+
 /// One program the declaration asks to compile: a context, a permutation, and
-/// the pass's code block with the macros it compiles under. The stage and the
-/// assembled HLSL are the compiler's next step.
+/// the pass's code block with the macros it compiles under. The HLSL is
+/// assembled per stage, because a macro limited to one stage must not be
+/// defined in the other.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompileJob {
     /// The context the pass belongs to.
@@ -307,12 +326,19 @@ pub struct CompileJob {
     pub permutation: usize,
     /// The code block the pass names.
     pub code_block: String,
-    /// The permutation's macros plus the pass's own.
-    pub macros: Vec<String>,
-    /// The stages the job compiles for, from the macros' stage limits and the
-    /// pass's define table. Empty means the caller has to decide (the compiler
-    /// profile is the next step).
-    pub stages: Vec<String>,
+    /// The permutation's macros plus the pass's own, each with its stage limit.
+    pub macros: Vec<JobMacro>,
+}
+
+impl CompileJob {
+    /// The macros to define when compiling `stage`, in order.
+    pub fn macros_for(&self, stage: &str) -> Vec<&str> {
+        self.macros
+            .iter()
+            .filter(|macro_def| macro_def.applies_to(stage))
+            .map(|macro_def| macro_def.name.as_str())
+            .collect()
+    }
 }
 
 /// One `compile_with` entry.
@@ -449,6 +475,64 @@ impl ShaderNode {
         self.code_blocks.get(name)
     }
 
+    /// The HLSL a job compiles for one stage: the macros that apply to the
+    /// stage, then the block's includes in order, then the block's body.
+    ///
+    /// An include is another code block of this declaration (a bare name) or a
+    /// library chunk (`path#chunk`); a chunk's own `includes` are pulled in
+    /// first, and a name is only taken once, so a diamond does not duplicate
+    /// code. The metadata entry may be keyed by the bare name where the pass
+    /// wrote a `path#chunk`, so both are tried.
+    pub fn job_source(&self, job: &CompileJob, stage: &str, libraries: &[ShaderSource]) -> String {
+        let mut macros = engine_defines(stage);
+        macros.extend(job.macros_for(stage));
+        let mut out = defines_for(&macros);
+        let mut seen = Vec::new();
+        self.write_block(&job.code_block, libraries, &mut seen, &mut out);
+        out
+    }
+
+    /// Appends one block's code: its includes, then its own body. A block whose
+    /// declaration entry carries no `code` takes its body from the library chunk
+    /// of the same name (the sibling `.shader_source`).
+    fn write_block(
+        &self,
+        reference: &str,
+        libraries: &[ShaderSource],
+        seen: &mut Vec<String>,
+        out: &mut String,
+    ) {
+        let name = include_chunk(reference);
+        if seen.iter().any(|taken| taken == name) {
+            return;
+        }
+        seen.push(name.to_string());
+
+        let mut has_body = false;
+        if let Some(block) = self.code_block(reference).or_else(|| self.code_block(name)) {
+            for include in &block.include {
+                self.write_block(include, libraries, seen, out);
+            }
+            if let Some(code) = &block.code {
+                out.push_str(&code.hlsl());
+                out.push('\n');
+                has_body = true;
+            }
+        }
+
+        if !has_body
+            && let Some((_, chunk)) = find_chunk(libraries, name)
+        {
+            for include in &chunk.includes {
+                self.write_block(include, libraries, seen, out);
+            }
+            if let Some(hlsl) = chunk.hlsl() {
+                out.push_str(&hlsl);
+                out.push('\n');
+            }
+        }
+    }
+
     /// The programs the declaration asks to compile, context by context: each
     /// permutation of the context's sets, and each pass that permutation
     /// selects. The branch a define cannot decide contributes both sides, which
@@ -459,27 +543,45 @@ impl ShaderNode {
             for (index, permutation) in self.permutations_for(context).iter().enumerate() {
                 let defines = Defines::new(permutation.macros.iter().cloned());
                 for pass in context.passes_of(&defines)? {
-                    let mut macros = permutation.macros.clone();
-                    macros.extend(pass.macros().iter().cloned());
-                    // The stages come from the macros' own limits and the
-                    // pass's define table; an empty set means the job does not
-                    // say, and the compiler profile has to.
-                    let mut stages: Vec<String> = permutation
+                    let mut macros: Vec<JobMacro> = permutation
                         .macros
                         .iter()
-                        .filter_map(|name| permutation.macro_stages.get(name))
-                        .flatten()
-                        .cloned()
+                        .map(|name| JobMacro {
+                            name: name.clone(),
+                            stages: permutation
+                                .macro_stages
+                                .get(name)
+                                .cloned()
+                                .unwrap_or_default(),
+                        })
                         .collect();
-                    stages.extend(pass.defines.stages().iter().cloned());
-                    stages.sort();
-                    stages.dedup();
+                    for name in pass.macros() {
+                        let stages = pass.defines.stages().to_vec();
+                        match macros.iter_mut().find(|macro_def| &macro_def.name == name) {
+                            // The same macro from both sides applies where
+                            // either says; an empty list is every stage.
+                            Some(existing) => {
+                                if existing.stages.is_empty() || stages.is_empty() {
+                                    existing.stages.clear();
+                                } else {
+                                    for stage in stages {
+                                        if !existing.stages.contains(&stage) {
+                                            existing.stages.push(stage);
+                                        }
+                                    }
+                                }
+                            }
+                            None => macros.push(JobMacro {
+                                name: name.clone(),
+                                stages,
+                            }),
+                        }
+                    }
                     jobs.push(CompileJob {
                         context: context.name.clone(),
                         permutation: index,
                         code_block: pass.code_block.clone(),
                         macros,
-                        stages,
                     });
                 }
             }
@@ -1500,7 +1602,7 @@ mod tests {
     fn a_pass_links_to_its_code_block() {
         let text = r#"
             code_blocks = {
-                base = { include = ["lib#common"] hlsl = """ void main() {} """ }
+                base = { include = ["lib#common"] code = { hlsl = """ void main() {} """ } }
             }
             shader_contexts = {
                 default = { passes = [ { code_block="base" } ] }
@@ -1509,7 +1611,7 @@ mod tests {
         let node = ShaderNode::from_sjson(text).expect("parse");
         let block = node.code_block("base").expect("block");
         assert_eq!(block.include, vec!["lib#common"]);
-        assert!(block.hlsl.as_deref().expect("hlsl").contains("main"));
+        assert!(block.code.as_ref().expect("code").hlsl().contains("main"));
         match &node.contexts[0].passes[0] {
             PassEntry::Pass(pass) => assert_eq!(pass.code_block, "base"),
             other => panic!("expected a pass, got {other:?}"),
@@ -1520,7 +1622,7 @@ mod tests {
     #[test]
     fn a_context_lists_its_compile_jobs() {
         let text = r#"
-            code_blocks = { base = { hlsl = """ void main() {} """ } }
+            code_blocks = { base = { code = { hlsl = """ void main() {} """ } } }
             shader_contexts = {
                 default = {
                     passes = [
@@ -1534,7 +1636,8 @@ mod tests {
         assert_eq!(jobs.len(), 1, "no sets, and nothing defines A");
         assert_eq!(jobs[0].context, "default");
         assert_eq!(jobs[0].code_block, "base");
-        assert_eq!(jobs[0].stages, vec!["pixel".to_string()]);
+        assert_eq!(jobs[0].macros_for("pixel"), vec!["X"]);
+        assert!(jobs[0].macros_for("vertex").is_empty());
     }
 
     #[test]
@@ -1544,26 +1647,75 @@ mod tests {
         )
         .expect("library")];
         let text = r#"
-            code_blocks = { base = { include = ["lib#common"] hlsl = """ void main() {} """ } }
+            code_blocks = { base = { include = ["lib#common"] code = { shared = """ void shared() {} """ hlsl = """ void main() {} """ } } }
         "#;
         let node = ShaderNode::from_sjson(text).expect("parse");
-        let block = node.code_block("base").expect("block");
-        let source = block.hlsl_with(&libraries);
-        assert!(
-            source.find("common").expect("include") < source.find("main").expect("body"),
-            "the includes come first: {source}"
-        );
-        let defines = defines_for(&["A".to_string(), "B".to_string()]);
-        assert!(defines.contains("#define A"));
-        assert!(defines.contains("#define B"));
+        let mut out = String::new();
+        node.write_block("base", &libraries, &mut Vec::new(), &mut out);
+        let common = out.find("common").expect("include");
+        let shared = out.find("shared").expect("shared");
+        let main = out.find("main").expect("body");
+        assert!(common < shared && shared < main, "{out}");
     }
 
     #[test]
-    fn a_job_maps_its_stages_to_profiles() {
-        let profiles = profiles_for(&["pixel".to_string(), "vertex".to_string(), "pixel".to_string()]);
-        assert_eq!(profiles, vec!["ps_5_0", "vs_5_0"]);
+    fn a_stage_maps_to_its_profile_and_entry_point() {
+        assert_eq!(profile_for("vertex"), Some("vs_6_0"));
+        assert_eq!(profile_for("pixel"), Some("ps_6_0"));
+        assert_eq!(entry_for("vs_6_0"), Some("vs_main"));
+        assert_eq!(entry_for("ps_6_0"), Some("ps_main"));
         assert_eq!(profile_for("geometry"), None);
-        assert!(profiles_for(&[]).is_empty(), "an undecided job guesses nothing");
+        assert_eq!(STAGES, ["vertex", "pixel"]);
+        assert_eq!(
+            engine_defines("vertex"),
+            vec!["RENDERER_D3D12", "STAGE_VERTEX"]
+        );
+        assert_eq!(
+            engine_defines("pixel"),
+            vec!["RENDERER_D3D12", "STAGE_FRAGMENT"]
+        );
+    }
+
+    #[test]
+    fn a_job_source_is_defines_then_includes_then_body() {
+        let libraries = [ShaderSource::from_sjson(
+            r#"
+                hlsl_shaders = {
+                    common = { code = """ void common() {} """ }
+                    gbuffer_base = { code = { hlsl = """ PS_INPUT vs_main(VS_INPUT input) {} """ } }
+                }
+            "#,
+        )
+        .expect("library")];
+        let text = r#"
+            code_blocks = {
+                gbuffer_base = { include = ["lib#common"] }
+            }
+            shader_contexts = {
+                default = {
+                    passes = [ { code_block="gbuffer_base" defines={ macros: ["A"] stages: ["vertex"] } } ]
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let jobs = node.compile_jobs().expect("jobs");
+        assert_eq!(jobs.len(), 1);
+        let source = node.job_source(&jobs[0], "vertex", &libraries);
+        let engine = source.find("#define RENDERER_D3D12").expect("renderer");
+        let stage = source.find("#define STAGE_VERTEX").expect("stage");
+        let defines = source.find("#define A").expect("defines");
+        let common = source.find("void common()").expect("include");
+        let body = source.find("vs_main").expect("body");
+        assert!(
+            engine < stage && stage < defines && defines < common && common < body,
+            "{source}"
+        );
+
+        // The macro is limited to the vertex stage, so the pixel source must
+        // not define it, and it must take the fragment stage.
+        let pixel = node.job_source(&jobs[0], "pixel", &libraries);
+        assert!(!pixel.contains("#define A"), "{pixel}");
+        assert!(pixel.contains("#define STAGE_FRAGMENT"), "{pixel}");
     }
 
     #[test]

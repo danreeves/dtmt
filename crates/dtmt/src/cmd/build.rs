@@ -13,6 +13,7 @@ use path_slash::PathExt;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
+use sdk::filetype::shader_compile;
 use sdk::filetype::shader_preset::Preset;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};
@@ -162,64 +163,30 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     Ok(cfg)
 }
 
-/// Finds `dxc.exe`: the config option, then `DTMT_DXC`, then the newest Windows
-/// SDK installation.
+/// Finds `dxc.exe`: the config option, then the SDK's discovery (`DTMT_DXC`,
+/// then the newest Windows SDK installation).
 fn find_dxc(cfg: &ModConfig) -> Option<PathBuf> {
     if let Some(path) = &cfg.dxc {
         return Some(path.clone());
     }
-    if let Ok(path) = std::env::var("DTMT_DXC") {
-        return Some(PathBuf::from(path));
-    }
-    if !cfg!(windows) {
-        return None;
-    }
-
-    let kits = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
-    let mut candidates: Vec<PathBuf> = std::fs::read_dir(kits)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path().join("x64").join("dxc.exe"))
-        .filter(|path| path.exists())
-        .collect();
-    candidates.sort();
-    candidates.pop()
+    shader_compile::find_dxc()
 }
 
-/// Compiles one HLSL entry point to a DXBC/DXIL container.
+/// Compiles one HLSL entry point to a container.
 #[tracing::instrument(skip_all, fields(source = %source.display(), entry, target))]
 async fn compile_hlsl(dxc: &Path, source: &Path, entry: &str, target: &str) -> Result<Vec<u8>> {
-    let file_stem = source.file_stem().unwrap_or_default().to_string_lossy();
-    let out_path = std::env::temp_dir().join(format!(
-        "dtmt-shader-{}-{file_stem}-{target}.dxbc",
-        std::process::id()
-    ));
-
-    let output = tokio::process::Command::new(dxc)
-        .arg("-T")
-        .arg(target)
-        .arg("-E")
-        .arg(entry)
-        .arg("-Fo")
-        .arg(&out_path)
-        .arg(source)
-        .output()
+    let text = fs::read_to_string(source)
         .await
-        .wrap_err_with(|| format!("Failed to run '{}'", dxc.display()))?;
+        .wrap_err_with(|| format!("Failed to read '{}'", source.display()))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eyre::bail!(
-            "Failed to compile '{}' as {target}/{entry}:\n{}",
-            source.display(),
-            stderr.trim()
-        );
-    }
-
-    let data = fs::read(&out_path)
-        .await
-        .wrap_err("Failed to read the compiled shader")?;
-    let _ = fs::remove_file(&out_path).await;
+    let dxc = dxc.to_path_buf();
+    let target_arg = target.to_string();
+    let entry_arg = entry.to_string();
+    let data = tokio::task::spawn_blocking(move || {
+        shader_compile::compile(&dxc, &text, &target_arg, &entry_arg)
+    })
+    .await
+    .wrap_err("The shader compiler task panicked")??;
 
     tracing::info!(
         "Compiled '{}' ({target}/{entry}, {} bytes)",

@@ -1,20 +1,27 @@
 //! A reader for the Stingray `.shader_source` library: the authoring-side HLSL
 //! chunks a `.shader_node`'s code blocks include.
 //!
-//! The file is a named set of shader chunks:
+//! The file is a named set of shader chunks, plus a file-level include list:
 //!
 //! ```text
+//! includes = [ "core/stingray_renderer/shader_libraries/common.shader_source" ]
+//!
 //! hlsl_shaders = {
 //!     common = {
-//!         code = """ ... """
-//!         hlsl = """ ... """   // the HLSL variant, when it differs from code
-//!         glsl = """ ... """   // portability scaffolding for other renderers
+//!         code = """ ... """          // the body, shared by the backends
+//!     }
+//!     skinning = {
+//!         includes = [ "common" ]     // chunks this one needs, by name
+//!         code = {
+//!             glsl = """ ... """      // portability scaffolding
+//!             hlsl = """ ... """      // the HLSL body
+//!         }
 //!     }
 //! }
 //! ```
 //!
-//! Darktide is D3D12 only, so [`ShaderSource::hlsl`] prefers `hlsl` and falls
-//! back to `code`; `glsl` is kept but never selected. The file's other tables
+//! Darktide is D3D12 only, so [`ShaderChunk::hlsl`] takes the `shared` part and
+//! the `hlsl` part (in that order) and ignores `glsl`. The file's other tables
 //! (`render_states`, `sampler_states`, ...) are not read yet: they are drawing
 //! state, not code, and a pass's `render_state` reference is a separate decode.
 
@@ -26,6 +33,9 @@ use serde::Deserialize;
 /// A parsed `.shader_source` file.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ShaderSource {
+    /// The files this library includes, as full paths, when it names them.
+    #[serde(default)]
+    pub includes: Vec<String>,
     /// The named HLSL chunks, keyed by the name a code block includes.
     #[serde(default)]
     pub hlsl_shaders: BTreeMap<String, ShaderChunk>,
@@ -34,10 +44,32 @@ pub struct ShaderSource {
 /// One named chunk of a shader library.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ShaderChunk {
-    /// The shared body, when the variants do not differ.
+    /// The chunks this chunk includes, by name, resolved across the pool.
     #[serde(default)]
-    pub code: Option<String>,
-    /// The HLSL body, when it differs from `code`.
+    pub includes: Vec<String>,
+    /// The body: a bare string, or the `shared`/`hlsl`/`glsl` table.
+    #[serde(default)]
+    pub code: Option<CodeParts>,
+}
+
+/// A `code` value: a bare string, or the table of per-backend parts.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum CodeParts {
+    /// `code = """ ... """`: one body for every backend.
+    Text(String),
+    /// `code = { shared = ... hlsl = ... glsl = ... }`.
+    Parts(CodeTable),
+}
+
+/// The parts of a `code` table. Every part is optional; the file writes the
+/// ones its backends need.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CodeTable {
+    /// The body shared by every backend.
+    #[serde(default)]
+    pub shared: Option<String>,
+    /// The HLSL body.
     #[serde(default)]
     pub hlsl: Option<String>,
     /// The GLSL body. Kept so the file round-trips, never selected on D3D12.
@@ -45,10 +77,31 @@ pub struct ShaderChunk {
     pub glsl: Option<String>,
 }
 
+impl CodeParts {
+    /// The body to compile for Darktide: `shared` then `hlsl`; `glsl` is
+    /// ignored.
+    pub fn hlsl(&self) -> String {
+        match self {
+            Self::Text(text) => text.clone(),
+            Self::Parts(table) => {
+                let mut out = String::new();
+                if let Some(shared) = &table.shared {
+                    out.push_str(shared);
+                    out.push('\n');
+                }
+                if let Some(hlsl) = &table.hlsl {
+                    out.push_str(hlsl);
+                }
+                out
+            }
+        }
+    }
+}
+
 impl ShaderChunk {
-    /// The body to compile for Darktide: `hlsl` when present, else `code`.
-    pub fn hlsl(&self) -> Option<&str> {
-        self.hlsl.as_deref().or(self.code.as_deref())
+    /// The body to compile for Darktide, when the chunk has one.
+    pub fn hlsl(&self) -> Option<String> {
+        self.code.as_ref().map(CodeParts::hlsl)
     }
 }
 
@@ -60,7 +113,7 @@ impl ShaderSource {
     }
 
     /// The HLSL for the chunk `name`, or `None` when the library lacks it.
-    pub fn hlsl(&self, name: &str) -> Option<&str> {
+    pub fn hlsl(&self, name: &str) -> Option<String> {
         self.hlsl_shaders.get(name)?.hlsl()
     }
 
@@ -75,7 +128,7 @@ impl ShaderSource {
         self.hlsl_shaders
             .values()
             .filter_map(ShaderChunk::hlsl)
-            .map(str::len)
+            .map(|text| text.len())
             .sum()
     }
 }
@@ -86,12 +139,23 @@ pub fn include_chunk(include: &str) -> &str {
     include.rsplit('#').next().unwrap_or(include)
 }
 
-/// The HLSL an `include` names, searched across the given libraries in order.
+/// The library and chunk an include names, searched across the given libraries
+/// in order.
+pub fn find_chunk<'a>(
+    libraries: &'a [ShaderSource],
+    include: &str,
+) -> Option<(&'a ShaderSource, &'a ShaderChunk)> {
+    let name = include_chunk(include);
+    libraries
+        .iter()
+        .find_map(|library| library.hlsl_shaders.get(name).map(|chunk| (library, chunk)))
+}
+
+/// The HLSL an include names, searched across the given libraries in order.
 /// `None` when no library defines the chunk; the caller decides whether that is
 /// an error or a chunk from another source.
-pub fn resolve_include<'a>(libraries: &'a [ShaderSource], include: &str) -> Option<&'a str> {
-    let name = include_chunk(include);
-    libraries.iter().find_map(|library| library.hlsl(name))
+pub fn resolve_include(libraries: &[ShaderSource], include: &str) -> Option<String> {
+    find_chunk(libraries, include).and_then(|(_, chunk)| chunk.hlsl())
 }
 
 #[cfg(test)]
@@ -99,14 +163,18 @@ mod tests {
     use super::*;
 
     const LIBRARY: &str = r#"
+        includes = [ "core/stingray_renderer/shader_libraries/other.shader_source" ]
         hlsl_shaders = {
             common = {
                 code = """ void common() {} """
             }
             gbuffer = {
-                code = """ void shared() {} """
-                hlsl = """ void hlsl_only() {} """
-                glsl = """ void glsl_only() {} """
+                includes = [ "common" ]
+                code = {
+                    shared = """ void shared() {} """
+                    glsl = """ void glsl_only() {} """
+                    hlsl = """ void hlsl_only() {} """
+                }
             }
         }
     "#;
@@ -117,15 +185,21 @@ mod tests {
         let names: Vec<&str> = source.names().collect();
         assert_eq!(names, vec!["common", "gbuffer"]);
         assert!(source.hlsl("common").expect("common").contains("common"));
+        assert_eq!(
+            source.includes,
+            vec!["core/stingray_renderer/shader_libraries/other.shader_source"]
+        );
     }
 
     #[test]
-    fn hlsl_wins_over_code_and_glsl_is_never_selected() {
+    fn shared_and_hlsl_are_taken_and_glsl_is_never_selected() {
         let source = ShaderSource::from_sjson(LIBRARY).expect("parse");
         let gbuffer = source.hlsl("gbuffer").expect("gbuffer");
+        assert!(gbuffer.contains("shared"), "{gbuffer}");
         assert!(gbuffer.contains("hlsl_only"), "{gbuffer}");
-        assert!(!gbuffer.contains("glsl_only"));
-        assert!(!gbuffer.contains("shared"));
+        assert!(!gbuffer.contains("glsl_only"), "{gbuffer}");
+        let chunk = source.hlsl_shaders.get("gbuffer").expect("chunk");
+        assert_eq!(chunk.includes, vec!["common"]);
     }
 
     #[test]

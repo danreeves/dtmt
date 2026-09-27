@@ -718,9 +718,11 @@ Two things to get right, both from how the `oodle` crate links `oo2core`:
 
 This matters for the from-scratch path because the group data's `cbuffer_offset`
 values come from the compiled container: the SDK's DXBC reflection already reports
-the slot of every variable (`shader43 --slots`), and Darktide needs DXBC, so the
-`dxc -T vs_5_0`-style profile the current shell-out already passes is what the
-DLL call has to reproduce exactly.
+the slot of every variable (`shader43 --slots`), and Darktide's programs are
+DXIL - SM 6.x payloads inside `DXBC` containers (every shipped program carries a
+`DXIL` chunk; the decompiler runs `dxil-spirv`) - so the `dxc -T vs_6_0` /
+`ps_6_0` profiles `dtmt build` already passes are what the DLL call has to
+reproduce exactly.
 
 ## No ground truth to pair against
 
