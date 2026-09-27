@@ -173,10 +173,12 @@ and snoopymod today.
 That needs, in order: a `shader_source` reader (prefer `hlsl`, fall back to
 `code`) - **done**: `filetype::shader_source` reads `hlsl_shaders` and its
 three variants, tested against triple-quoted bodies; `glsl` is kept but never
-selected. Next: `code_blocks` parsing in the node reader and pass linking
-(`code_block = "name"`), the program list from contexts and passes compiled per
-stage with DXC, and `dtmt build` sourcing programs from the declaration instead
-of sibling files. Snoopymod is the migration test.
+selected. Step 2 is done for parsing: `code_blocks` reads `include` and `hlsl`,
+and a pass links to its block by name (`CodeBlock`, tested; the 15 real
+declarations still parse). Next: resolve the includes across `.shader_source`
+files, build the program list from contexts and passes, and compile per stage
+with DXC; then `dtmt build` sources programs from the declaration instead of
+sibling files. Snoopymod is the migration test.
 
 ## Open decode details worth keeping
 

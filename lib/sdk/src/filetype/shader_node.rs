@@ -1,11 +1,11 @@
 //! A reader for the Stingray `.shader_node` declaration: the source-side
 //! description of a shader declaration that mods already ship.
 //!
-//! The reader takes `inputs`, `channels`, `permutation_sets` and
-//! `shader_contexts`, and ignores the rest (`render_state`, `sampler_state`,
-//! `options`, `code_blocks`, ...), producing the normalized view the emitters
-//! consume (`variables`, `channels`, `permutation_sets`, `contexts`, `programs`
-//! on the node itself). What each key means here:
+//! The reader takes `inputs`, `channels`, `permutation_sets`, `shader_contexts`
+//! and `code_blocks`, and ignores the rest (`render_state`, `sampler_state`,
+//! `options`, ...), producing the normalized view the emitters consume
+//! (`variables`, `channels`, `permutation_sets`, `contexts`, `programs` on the
+//! node itself). What each key means here:
 //!
 //! - `inputs` are the material variables, keyed by a uuid and named by `name`.
 //!   `is_required` says whether the material must always supply one; an optional
@@ -53,6 +53,9 @@ pub struct ShaderNode {
     /// The shader contexts, keyed by name, as the file writes them.
     #[serde(rename = "shader_contexts", default)]
     pub raw_contexts: BTreeMap<String, NodeContext>,
+    /// The code blocks, keyed by the name a pass's `code_block` uses.
+    #[serde(default)]
+    pub code_blocks: BTreeMap<String, CodeBlock>,
 
     /// The normalized material variables, keyed by name.
     #[serde(skip)]
@@ -226,6 +229,19 @@ pub struct NodeContext {
     pub passes: Vec<PassEntryValue>,
 }
 
+/// One `code_blocks` entry: the HLSL a pass compiles and the library chunks it
+/// includes. The file's other keys (samplers, stage conditions, instance data)
+/// are not read yet.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct CodeBlock {
+    /// The library chunks to include, as `path#chunk` (or `path#chunk#chunk`).
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// The block's own HLSL, when it has any.
+    #[serde(default)]
+    pub hlsl: Option<String>,
+}
+
 /// One `compile_with` entry.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct CompileWithEntry {
@@ -353,6 +369,11 @@ impl ShaderNode {
             .map_err(|err| eyre::eyre!("failed to parse the shader node: {err}"))?;
         node.normalize()?;
         Ok(node)
+    }
+
+    /// The code block a pass names, when the declaration defines it.
+    pub fn code_block(&self, name: &str) -> Option<&CodeBlock> {
+        self.code_blocks.get(name)
     }
 
     /// Fills the normalized view the emitters consume: the variables, the
@@ -1362,6 +1383,27 @@ mod tests {
         let passes = default.passes_of(&Defines::default()).expect("passes");
         assert_eq!(passes.len(), 1);
         assert_eq!(passes[0].macros(), ["DRAW_OUTLINE".to_string()]);
+    }
+
+    #[test]
+    fn a_pass_links_to_its_code_block() {
+        let text = r#"
+            code_blocks = {
+                base = { include = ["lib#common"] hlsl = """ void main() {} """ }
+            }
+            shader_contexts = {
+                default = { passes = [ { code_block="base" } ] }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let block = node.code_block("base").expect("block");
+        assert_eq!(block.include, vec!["lib#common"]);
+        assert!(block.hlsl.as_deref().expect("hlsl").contains("main"));
+        match &node.contexts[0].passes[0] {
+            PassEntry::Pass(pass) => assert_eq!(pass.code_block, "base"),
+            other => panic!("expected a pass, got {other:?}"),
+        }
+        assert!(node.code_block("nope").is_none());
     }
 
     #[test]
