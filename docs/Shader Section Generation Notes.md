@@ -699,19 +699,20 @@ is derived from the declaration or read off the group data being built.
 in process** - `lib/dxc` loads `dxcompiler.dll` at runtime (`libloading`, no
 import library, no `dxc.exe`) and calls `DxcCreateInstance` -> `IDxcCompiler3`
 through a hand-written `extern "system"` vtable transcribed from the SDK's
-`dxcapi.h`. The same code runs on Linux and macOS
-(`libdxcompiler.so` / `libdxcompiler.dylib`); a developer drops the library
-next to the tool, or points `dxc` in `dtmt.cfg` / `DTMT_DXC_DLL` at it.
+`dxcapi.h`. The same code runs on Linux (`libdxcompiler.so`); a developer drops
+the library next to the tool, or points `dxc` in `dtmt.cfg` / `DTMT_DXC_DLL`
+at it. Under Proton the Windows build runs, so the two DLLs go next to
+`dtmt.exe` - the Windows SDK fallback does not exist inside a Wine prefix.
 
 **The validator library is not optional.** `IDxcValidator` lives in `dxil.dll`
-(`libdxil.so` / `libdxil.dylib`), beside the compiler in every DXC release:
-it validates the DXIL and **signs** it, filling the container header's 16-byte
-hash. D3D12 refuses to create a pipeline state from unsigned DXIL with
-`E_INVALIDARG`, and the compiler's own API leaves the container unsigned (that
-is exactly what `dxc.exe` runs its validator for). `lib/dxc` loads the
-validator from beside whichever compiler library it found, and a compile
-without it fails with a message naming the file - an in-game crash
-(`shader '#ID[6e8c619d]'`, a zeroed hash) is what pinned this down.
+(`libdxil.so`), beside the compiler in every DXC release: it validates the DXIL
+and **signs** it, filling the container header's 16-byte hash. D3D12 refuses to
+create a pipeline state from unsigned DXIL with `E_INVALIDARG`, and the
+compiler's own API leaves the container unsigned (that is exactly what `dxc.exe`
+runs its validator for). `lib/dxc` loads the validator from beside whichever
+compiler library it found, and a compile without it fails with a message naming
+the file - an in-game crash (`shader '#ID[6e8c619d]'`, a zeroed hash) is what
+pinned this down.
 
 The interfaces are ABI-stable, so the hand-written vtable for the handful of
 types needed (`IDxcBlob`, `IDxcUtils`, `IDxcCompiler3`, `IDxcValidator`,

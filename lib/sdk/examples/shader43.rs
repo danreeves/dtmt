@@ -1927,15 +1927,15 @@ fn dependencies(
         group_data.hash()
     );
     for (index, entry) in entries.iter().enumerate() {
-        println!(
-            "    {index}: dependency {:016X} ({})",
-            entry.id,
-            if entry.id == Dependency::RENDERER {
+        let name = names
+            .and_then(|names| names.get(&((entry.id >> 32) as u32)))
+            .map(String::as_str)
+            .unwrap_or(if entry.id == Dependency::RENDERER {
                 "core/stingray_renderer/renderer"
             } else {
                 "unnamed"
-            }
-        );
+            });
+        println!("    {index}: dependency {:016X} ({name})", entry.id);
     }
     Ok(())
 }

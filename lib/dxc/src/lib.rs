@@ -8,17 +8,17 @@
 //!
 //! The library is the same compiler `dxc.exe` wraps, so calling it directly
 //! keeps the source and the container in memory - no temporary files, no
-//! process per compile - and it works wherever DXC is available: Windows,
-//! Linux and macOS (the `dxcompiler.dll` / `libdxcompiler.so` /
-//! `libdxcompiler.dylib` builds Microsoft publishes, or a distro package).
+//! process per compile - and it works wherever DXC is available: Windows, and
+//! Linux (the `dxcompiler.dll` and `libdxcompiler.so` builds Microsoft
+//! publishes, or a distro package).
 //!
 //! The **validator library is required too**: `IDxcValidator` lives in
-//! `dxil.dll` (`libdxil.so` / `libdxil.dylib`), which validates and signs the
-//! DXIL. D3D12 refuses to create a pipeline state from unsigned DXIL with
-//! `E_INVALIDARG`, and the compiler's API leaves the container unsigned (the
-//! `dxc.exe` path signs through the `dxil.dll` beside it for the same reason).
-//! [`Compiler::load`] therefore loads the validator from beside the compiler
-//! library, and a compile without it fails with a message naming the file.
+//! `dxil.dll` (`libdxil.so`), which validates and signs the DXIL. D3D12 refuses
+//! to create a pipeline state from unsigned DXIL with `E_INVALIDARG`, and the
+//! compiler's API leaves the container unsigned (the `dxc.exe` path signs
+//! through the `dxil.dll` beside it for the same reason). [`Compiler::load`]
+//! therefore loads the validator from beside the compiler library, and a
+//! compile without it fails with a message naming the file.
 //!
 //! # Where the libraries go
 //!
@@ -30,11 +30,26 @@
 //! 3. next to the `dtmt` executable;
 //! 4. Windows: the newest Windows SDK installation
 //!    (`C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64\dxcompiler.dll`);
-//!    Linux and macOS: the system loader's own paths, by name.
+//!    Linux: `/opt/dxc/lib` and `/usr/lib/dxc`, then the system loader's own
+//!    paths, by name.
 //!
-//! The validator is looked up beside whichever compiler library was found. A
-//! machine without the compiler library cannot compile shaders; the error names
-//! the library and every place that was searched.
+//! The validator is looked up beside whichever compiler library was found, so
+//! both files travel together.
+//!
+//! # Linux, and Linux with Proton
+//!
+//! The game runs under Proton, and DTMT is the Windows build in that setup, so
+//! the Windows branch above applies: drop `dxcompiler.dll` and `dxil.dll` next
+//! to `dtmt.exe` (Wine searches the program's directory first), or set `dxc` in
+//! `dtmt.cfg` to the directory holding them. The Windows SDK fallback does not
+//! exist inside a Wine prefix, so the two DLLs are the reliable arrangement.
+//!
+//! A native Linux build loads `libdxcompiler.so` and `libdxil.so` instead -
+//! unpack the DXC release beside the tool, or install the distro package. Both
+//! names are the DXC release's own.
+//!
+//! A machine without the compiler library cannot compile shaders; the error
+//! names the library and every place that was searched.
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -229,11 +244,10 @@ struct IDxcUtils {
 type CreateInstance =
     unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> Hresult;
 
-/// The library's name on this platform.
+/// The library's name on this platform. Windows covers Proton and Wine too:
+/// they run the Windows build and its DLLs.
 pub const LIBRARY_NAME: &str = if cfg!(windows) {
     "dxcompiler.dll"
-} else if cfg!(target_os = "macos") {
-    "libdxcompiler.dylib"
 } else {
     "libdxcompiler.so"
 };
@@ -243,8 +257,6 @@ pub const LIBRARY_NAME: &str = if cfg!(windows) {
 /// and D3D12 rejects unsigned DXIL with `E_INVALIDARG`.
 pub const VALIDATOR_NAME: &str = if cfg!(windows) {
     "dxil.dll"
-} else if cfg!(target_os = "macos") {
-    "libdxil.dylib"
 } else {
     "libdxil.so"
 };
@@ -297,6 +309,13 @@ pub fn find_library(explicit: Option<&Path>) -> Result<PathBuf> {
                 .collect();
             versions.sort();
             candidates.extend(versions.into_iter().rev());
+        }
+    }
+    if !cfg!(windows) {
+        // The DXC release unpacks flat, and `/usr/lib/dxc` is the usual place a
+        // hand install lands; the loader covers the distro packages.
+        for dir in ["/opt/dxc/lib", "/usr/lib/dxc", "/usr/local/lib/dxc"] {
+            candidates.push(Path::new(dir).join(LIBRARY_NAME));
         }
     }
 

@@ -74,8 +74,10 @@ pub struct ModConfig {
     /// used to compile custom shader sources, or the directory holding it. The
     /// validator (`dxil.dll` / `libdxil.so`) must sit beside it; without it the
     /// compiled DXIL is unsigned and D3D12 refuses it. Defaults to
-    /// `DTMT_DXC_DLL`, then the tool's directory, then the newest Windows SDK
-    /// installation.
+    /// `DTMT_DXC_DLL`, then the tool's directory, then the platform's usual
+    /// install (the newest Windows SDK, or `/opt/dxc/lib` and friends on
+    /// Linux). Under Proton the Windows build runs: put both DLLs beside
+    /// `dtmt.exe`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dxc: Option<PathBuf>,
 }
