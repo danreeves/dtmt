@@ -171,7 +171,9 @@ convention is dropped once this path builds; it exists only in the preset flow
 and snoopymod today.
 
 That needs, in order: a `shader_source` reader (prefer `hlsl`, fall back to
-`code`), `code_blocks` parsing in the node reader and pass linking
+`code`) - **done**: `filetype::shader_source` reads `hlsl_shaders` and its
+three variants, tested against triple-quoted bodies; `glsl` is kept but never
+selected. Next: `code_blocks` parsing in the node reader and pass linking
 (`code_block = "name"`), the program list from contexts and passes compiled per
 stage with DXC, and `dtmt build` sourcing programs from the declaration instead
 of sibling files. Snoopymod is the migration test.
