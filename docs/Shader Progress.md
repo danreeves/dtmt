@@ -49,6 +49,7 @@ Useful commands:
 shader43 --layout <six .raw>                 # section round trip, expect 6/6
 shader43 --substitute --variables <dict> <six .raw>
 shader43 --conditions --variables <dict> <section>
+shader43 --conditions-map --variables <dict> <section>
 shader43 --group-data <section>
 shader43 --dependencies <section>
 shader43 --plan <declaration.shader_node> <section>
@@ -180,11 +181,17 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    all 35 UI-base records: every branch's result is `tests.len() - 1`, and
    `5007` is the fallback where a record has one. It is **not a group
    selector**: every query id appears exactly once in the group data, one group
-   per query, on all seven sections [7/7]. So the result refines the interface
-   within the group (the per-group variable table). Next experiment: compare
-   each record's result set with its group's descriptor `Y` fields and the
-   length of the group's material table (groups 0-11 have `Y` 5/10, groups 12+
-   have 1/2); then confirm in game with a crafted tree.
+   per query, on all seven sections [7/7]. The offline comparison the notes
+   called for is done (`shader43 --conditions-map`): every UI-base group's
+   material table is the same 7 records (`texture_map` x3, `view_proj`,
+   `world_view_proj`, `world`, `dev_wireframe_color`), the descriptors read
+   `Y` 0/5/10 in every group, the results are only 1..3 (fallback 7), and the
+   section has 96 programs (48 pairs) - so the result is not a table length, a
+   `Y` field or a program index, and since it equals `tests.len() - 1` it
+   carries no information beyond the branch's shape. The next step is the
+   in-game crafted tree: a record whose branch tests two distinguishable
+   conditions, to see which one drives the outcome and what the caller does
+   with the value.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`

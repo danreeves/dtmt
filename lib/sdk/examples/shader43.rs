@@ -54,6 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut preamble_mode = false;
     let mut dependencies_mode = false;
     let mut conditions_mode = false;
+    let mut conditions_map_mode = false;
     let mut channels_mode = false;
     let mut layout_mode = false;
     let mut plan_declaration: Option<PathBuf> = None;
@@ -128,6 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--preamble" => preamble_mode = true,
             "--dependencies" => dependencies_mode = true,
             "--conditions" => conditions_mode = true,
+            "--conditions-map" => conditions_map_mode = true,
             "--channels" => channels_mode = true,
             "--layout" => layout_mode = true,
             "--plan" => {
@@ -347,6 +349,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         for path in &files {
             if let Err(err) = dependencies(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if conditions_map_mode {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        for path in &files {
+            if let Err(err) = conditions_map(path, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -1729,6 +1744,112 @@ fn conditions(
             None => println!("         branches: not the mapped opcodes"),
         }
         at += node.len();
+    }
+    Ok(())
+}
+
+/// The comparison the notes call for: each context query's conditions record
+/// (its branch results) beside the group's material table length and its three
+/// descriptors' `Y` fields. The result values are small, so the question is
+/// what they index: the table, the descriptors' usage counts, or something
+/// else.
+fn conditions_map(
+    path: &Path,
+    names: Option<&HashMap<u32, String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
+    use sdk::filetype::shader::{NO_CONDITIONS, Section};
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let section = Section::parse(bytes)?;
+    let tree = ConditionTree::parse(section.conditions())?;
+    let group = GroupData::new(section.group_data().to_vec());
+    let query_ids: Vec<u32> = section
+        .contexts()
+        .iter()
+        .flat_map(|context| context.queries.iter().map(|query| query.id))
+        .collect();
+    let tables = group.object_tables(&query_ids).ok_or("the group walk failed")?;
+    let starts = group.group_starts(&query_ids).ok_or("the group walk failed")?;
+    let name_of = |hash: u32| names.and_then(|names| names.get(&hash)).cloned();
+
+    // The conditions records' offsets, by cumulative record length.
+    let mut offsets = Vec::with_capacity(tree.nodes().len());
+    let mut at = 0;
+    for node in tree.nodes() {
+        offsets.push(at);
+        at += node.len();
+    }
+
+    println!("=== {} ===", path.display());
+    let mut index = 0usize;
+    for context in section.contexts() {
+        println!(
+            "context {:08X}{}",
+            context.name,
+            name_of(context.name)
+                .map(|name| format!(" {name}"))
+                .unwrap_or_default()
+        );
+        for query in &context.queries {
+            let (table_at, records) = &tables[index];
+            let start = starts[index];
+            index += 1;
+
+            let record = if query.conditions == NO_CONDITIONS {
+                None
+            } else {
+                offsets
+                    .iter()
+                    .position(|offset| *offset == query.conditions as usize)
+                    .map(|node| &tree.nodes()[node])
+            };
+            let results: Vec<String> = match record.and_then(|node| node.branches()) {
+                Some((branches, fallback)) => {
+                    let mut values: Vec<String> = branches
+                        .iter()
+                        .map(|branch| branch.result.to_string())
+                        .collect();
+                    if let Some(fallback) = fallback {
+                        values.push(format!("fallback {fallback}"));
+                    }
+                    values
+                }
+                None => vec!["none".to_string()],
+            };
+            let y: Vec<u32> = (0..3)
+                .map(|descriptor| {
+                    // The descriptors sit at the group's +28; the first group's
+                    // query id is at +4, so group 0 reads at +32.
+                    let offset = start + 28 + descriptor * 16 + 12;
+                    if offset + 4 <= group.bytes().len() {
+                        u32_at(group.bytes(), offset)
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            let table: Vec<String> = records
+                .iter()
+                .map(|record| match name_of(record.hash) {
+                    Some(name) => format!("{name}@{}+{}", record.offset, record.size),
+                    None => format!("{:08X}@{}+{}", record.hash, record.offset, record.size),
+                })
+                .collect();
+            println!(
+                "  group {index:2} query {:08X} record@{:#06x} table@{:#06x} {} records Y {}/{}/{} results {}",
+                query.id,
+                query.conditions,
+                table_at,
+                records.len(),
+                y[0],
+                y[1],
+                y[2],
+                results.join(",")
+            );
+            println!("      table: {}", table.join(" "));
+        }
     }
     Ok(())
 }
