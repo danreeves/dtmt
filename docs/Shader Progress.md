@@ -144,6 +144,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   section round trip is identical. The in-game title test has not been run on
   this build yet.] `shader43 --compile --against <material>` reports whether a
   compiled container's interface matches the material's program of its stage.
+- **In game**: the declaration-built `ui_default_base` renders. The mod log
+  shows the package loading, the material being set
+  (`material set: background_image -> materials/mods/snoopymod/title_screen_background`)
+  and the Lua-driven `mod_tint`; the title screen shows the tint cycling and the
+  pixel-stage wave (observed 2026-09-27). The deployed data file is
+  byte-identical to the build output (SHA256 `265C2062…`). Deployment is
+  DTMM's, not the legacy `mods/` folder: sync `out/` into
+  `%APPDATA%\dtmm\mods\snoopymod`, then `dtmm --reset` and `dtmm --deploy`.
+  [one run]
 
 ## Open, in the order to attack
 
@@ -197,12 +206,12 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    declaration path feeds the preset flow, and snoopy-mod is migrated to it;
    what remains is programs -> device data without the preset, and the mapping
    of several jobs to a section's programs (needs the conditions decode).
-6. **In-game test** via snoopy-mod: title screen only, no space at boot,
-   screenshot the Darktide window (borderless fullscreen -> PrintWindow). The
-   migrated `ui_default_base.shader_node` build is the thing to deploy
-   (`C:\dev\snoopy-mod\out`), and `docs/scripts/title-tint-demo.ps1` is the
-   harness. The blit block in the scratch `compile-test/` directory is a
-   working container source for a smaller test.
+6. **In-game test**: **passed** for the declaration path (see the verified list).
+   The harness's `title-tint-demo.ps1` captures with `CopyFromScreen`, which
+   grabbed the desktop rather than the game window on the run that verified the
+   tint; `shot-window.ps1`'s `PrintWindow` on the Darktide window is the fix for
+   an automated sample. The next in-game experiments are the conditions payload
+   (crafted tree) and the fully generated section.
 
 ## In-game harness
 
@@ -213,10 +222,14 @@ the title material line (`material set: background_image`), screenshot and
 average a region's colour a few times, and grep the log for the mod. `shot-window.ps1` uses `PrintWindow` so a borderless-fullscreen window is
 captured rather than the desktop; `set-shader.ps1` and `slice-sections.ps1` move
 a section in and out of a material. The deployable test mod is the snoopy-mod
-checkout. The payload experiment that needs this: a generated shader whose
-groups render distinguishable colours and whose crafted conditions tree maps
-channel sets to them, then drive the material from Lua and read which colour
-appears.
+checkout, deployed through DTMM, not the legacy `mods/` folder: build it
+(`dtmt build`), sync `out/` into `%APPDATA%\dtmm\mods\snoopymod`, then
+`dtmm --reset` and `dtmm --deploy`. `title-tint-demo.ps1` samples with
+`CopyFromScreen`, which can grab the desktop instead of the game window; use
+`shot-window.ps1`'s `PrintWindow` when the sample must be the game. The payload
+experiment that needs this: a generated shader whose groups render
+distinguishable colours and whose crafted conditions tree maps channel sets to
+them, then drive the material from Lua and read which colour appears.
 
 ## Authoring format decision
 
