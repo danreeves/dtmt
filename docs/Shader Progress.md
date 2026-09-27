@@ -192,6 +192,19 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   with the original's 2 contexts, 1436 condition bytes, 1 dependency and 62884
   group-data bytes, 368556 bytes of programs, and an identical round trip. So
   the loop shipped section -> source -> section closes end to end.
+- **The engine data carries the compiled programs**: `container <n> <hex>`
+  lines (deduplicated; the UI base's 96 programs are two containers) and
+  `program <stage> #<tail> #<container>` references, written by `--reconstruct`
+  and read back by `dtmt build`. A material with engine data but **no sibling
+  shader sources** now *carries* the section: the engine data's own programs
+  are framed verbatim, the conditions and group data are the file's. [verified:
+  a carried `004F18EA` build reproduces all 14 shipped containers byte for
+  byte (the Oodle frames and offsets are re-derived, so the section bytes are
+  not identical); in game, a carried shader replaces the title background - the
+  carried `38ECBAD1` and `2A04418E` both render the widget black, i.e. the
+  material and its foreign programs are in effect. `lib/dxc`'s validator runs
+  as usual for compiled sources; carried containers are the shipped, signed
+  ones.]
 
 ## Open, in the order to attack
 
@@ -224,6 +237,18 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    base does not. Next: craft the tree on a family whose variants differ (or
    author a declaration with two real code variants) and watch the log and the
    render.
+
+   **The carry needed for that probe is in place** (see the verified list): the
+   engine data carries the shipped programs, so a variant-rich family can be a
+   mod material without recompiling it. The first attempt carried `38ECBAD1`
+   (bounding-volume debug: 4 distinct programs) and `2A04418E` (noise/skydome:
+   17 distinct across 26) onto the title widget: both replace the widget and
+   render it black, so the material path works, but neither shader's *default*
+   context draws anything a screenshot can distinguish (their bindings want
+   per-instance or global values a UI widget does not set). The probe still
+   needs a variant-rich family whose *default* context renders visibly, or
+   authored variants, and then a build pair that differs only in the tree's
+   results.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`

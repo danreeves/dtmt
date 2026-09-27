@@ -442,9 +442,12 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
 
             // A material can declare the engine data to generate from; the
             // section is built in memory and handed to the material compile, so
-            // neither the material source nor a side file carries it. A material
-            // with no engine data compiles as it is (its own `shader_data` field
-            // or the splice route).
+            // neither the material source nor a side file carries it. Sibling
+            // shader sources replace the programs; without them the section is
+            // carried as it is (the engine data's own programs, verbatim),
+            // which is what a mod that only tweaks the conditions or group data
+            // wants. A material with no engine data compiles as it is (its own
+            // `shader_data` field or the splice route).
             let mut section: Option<Vec<u8>> = None;
             let mut generated_from_engine_data = false;
             if file_type == BundleFileType::Material
@@ -467,14 +470,9 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                         )
                     })?;
 
-                let overrides = compile_shader_overrides(&path, cfg).await?.ok_or_else(|| {
-                    eyre::eyre!(
-                        "'{}' declares engine data '{}' but has no sibling shader sources",
-                        path.display(),
-                        engine_data_name
-                    )
-                })?;
+                let overrides = compile_shader_overrides(&path, cfg).await?.unwrap_or_default();
 
+                let carried = overrides.is_empty();
                 let mut containers = HashMap::new();
                 if let Some(vertex) = overrides.vertex {
                     containers.insert(Stage::Vertex, vertex);
@@ -488,7 +486,8 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 })?;
 
                 tracing::info!(
-                    "Generated a {} byte shader section from '{}'",
+                    "{} a {} byte shader section from '{}'",
+                    if carried { "Carried" } else { "Generated" },
                     generated.len(),
                     engine_data_path.display(),
                 );

@@ -80,6 +80,16 @@ pub struct EngineData {
     pub programs: Vec<(Stage, Vec<u8>)>,
     /// Distinct program tails in the order `program` lines reference them.
     pub tails: Vec<Vec<u8>>,
+    /// Distinct compiled containers, in first-use order. A build with sibling
+    /// shader sources replaces these with freshly compiled ones; a build
+    /// without sources carries them, so a reconstructed section keeps the
+    /// shipped programs (which is what a mod that only edits the conditions or
+    /// group data wants, and what keeps a variant-rich section's variants).
+    pub containers: Vec<Vec<u8>>,
+    /// The container index for each program, parallel to `programs`; `None`
+    /// when the program carries no container (an engine data file from before
+    /// the containers were captured).
+    pub program_containers: Vec<Option<usize>>,
 }
 
 impl EngineData {
@@ -125,6 +135,22 @@ impl EngineData {
             .ok_or_else(|| color_eyre::eyre::eyre!("device preamble is out of range"))?
             .to_vec();
 
+        // The compiled containers, deduplicated: the UI base's 96 programs
+        // carry two distinct payloads, so this is what keeps the engine data
+        // small enough to stay text.
+        let mut containers: Vec<Vec<u8>> = Vec::new();
+        let mut program_containers = Vec::with_capacity(programs.len());
+        for program in &programs {
+            let index = match containers.iter().position(|other| *other == program.container) {
+                Some(index) => index,
+                None => {
+                    containers.push(program.container.clone());
+                    containers.len() - 1
+                }
+            };
+            program_containers.push(Some(index));
+        }
+
         let programs = programs
             .iter()
             .map(|program| {
@@ -153,6 +179,8 @@ impl EngineData {
             device_preamble,
             programs,
             tails: Vec::new(),
+            containers,
+            program_containers,
         })
     }
 
@@ -169,6 +197,8 @@ impl EngineData {
             device_preamble: Vec::new(),
             programs: Vec::new(),
             tails: Vec::new(),
+            containers: Vec::new(),
+            program_containers: Vec::new(),
         };
 
         for line in text.lines() {
@@ -177,12 +207,17 @@ impl EngineData {
                 continue;
             }
 
-            // Program lines carry two fields (stage plus tail hex, or `#n` to
-            // refer to a deduplicated tail declared below).
+            // Program lines carry the stage, a tail (hex or `#n`) and, when the
+            // containers were captured, a container (hex or `#n`).
             if let Some(rest) = line.strip_prefix("program ") {
-                let (stage, tail) = rest
-                    .split_once(' ')
+                let mut fields = rest.split_whitespace();
+                let stage = fields
+                    .next()
                     .ok_or_else(|| color_eyre::eyre::eyre!("malformed program line"))?;
+                let tail = fields
+                    .next()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed program line"))?;
+                let container = fields.next();
                 let stage = match stage {
                     "Vertex" => Stage::Vertex,
                     "Pixel" => Stage::Pixel,
@@ -196,7 +231,36 @@ impl EngineData {
                         .ok_or_else(|| color_eyre::eyre::eyre!("unknown tail #{index}"))?,
                     None => from_hex(tail)?,
                 };
+                let container = match container {
+                    Some(field) => Some(match field.strip_prefix('#') {
+                        Some(index) => engine_data
+                            .containers
+                            .get(index.parse::<usize>()?)
+                            .cloned()
+                            .ok_or_else(|| color_eyre::eyre::eyre!("unknown container #{index}"))?,
+                        None => from_hex(field)?,
+                    }),
+                    None => None,
+                };
+                let container = match container {
+                    Some(container) => {
+                        let index = match engine_data
+                            .containers
+                            .iter()
+                            .position(|other| *other == container)
+                        {
+                            Some(index) => index,
+                            None => {
+                                engine_data.containers.push(container);
+                                engine_data.containers.len() - 1
+                            }
+                        };
+                        Some(index)
+                    }
+                    None => None,
+                };
                 engine_data.programs.push((stage, tail));
+                engine_data.program_containers.push(container);
                 continue;
             }
 
@@ -210,6 +274,19 @@ impl EngineData {
                     engine_data.tails.resize(index + 1, Vec::new());
                 }
                 engine_data.tails[index] = from_hex(hex)?;
+                continue;
+            }
+
+            // Deduplicated containers, referenced by `program <stage> #n #m`.
+            if let Some(rest) = line.strip_prefix("container ") {
+                let (index, hex) = rest
+                    .split_once(' ')
+                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed container line"))?;
+                let index = index.parse::<usize>()?;
+                if engine_data.containers.len() <= index {
+                    engine_data.containers.resize(index + 1, Vec::new());
+                }
+                engine_data.containers[index] = from_hex(hex)?;
                 continue;
             }
 
@@ -262,22 +339,72 @@ impl EngineData {
         for (index, tail) in distinct.iter().enumerate() {
             text.push_str(&format!("tail {index} {}\n", to_hex(tail)));
         }
-        for ((stage, _), index) in self.programs.iter().zip(&indexes) {
-            text.push_str(&format!("program {stage:?} #{index}\n"));
+
+        // The same for the containers: the UI base's 96 programs carry two
+        // distinct payloads, so the dedup keeps the file small.
+        let mut distinct_containers: Vec<&Vec<u8>> = Vec::new();
+        let mut container_indexes = Vec::with_capacity(self.programs.len());
+        for index in 0..self.programs.len() {
+            let container = self
+                .program_containers
+                .get(index)
+                .copied()
+                .flatten()
+                .and_then(|container| self.containers.get(container));
+            match container {
+                Some(container) => {
+                    match distinct_containers
+                        .iter()
+                        .position(|other| **other == *container)
+                    {
+                        Some(index) => container_indexes.push(Some(index)),
+                        None => {
+                            distinct_containers.push(container);
+                            container_indexes.push(Some(distinct_containers.len() - 1));
+                        }
+                    }
+                }
+                None => container_indexes.push(None),
+            }
+        }
+        for (index, container) in distinct_containers.iter().enumerate() {
+            text.push_str(&format!("container {index} {}\n", to_hex(container)));
+        }
+
+        for ((stage, _), (tail, container)) in self
+            .programs
+            .iter()
+            .zip(indexes.iter().zip(&container_indexes))
+        {
+            match container {
+                Some(container) => {
+                    text.push_str(&format!("program {stage:?} #{tail} #{container}\n"))
+                }
+                None => text.push_str(&format!("program {stage:?} #{tail}\n")),
+            }
         }
 
         text
     }
 
     /// Builds the device data: the engine data's preamble, then one framed program
-    /// record per engine data program, using `containers[stage]` and that program's
-    /// tail.
+    /// record per engine data program, using `containers[stage]` when the caller
+    /// compiled one and the carried container otherwise, plus that program's tail.
     pub fn build_device(&self, containers: &HashMap<Stage, Vec<u8>>) -> Result<Vec<u8>> {
         let mut device = self.device_preamble.clone();
 
         for (index, (stage, tail)) in self.programs.iter().enumerate() {
-            let container = containers.get(stage).ok_or_else(|| {
-                color_eyre::eyre::eyre!("no container given for program {index} ({stage:?})")
+            let carried = self
+                .program_containers
+                .get(index)
+                .copied()
+                .flatten()
+                .and_then(|container| self.containers.get(container));
+            let container = containers.get(stage).or(carried).ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "no container given for program {index} ({stage:?}) and none carried in \
+                     the engine data"
+                )
             })?;
 
             let frame = shader::encode_frame(container)?;
@@ -351,7 +478,6 @@ mod tests {
 
     fn empty_engine_data() -> EngineData {
         EngineData {
-
             opaque: 0,
             context_count: 0,
             dependency_count: 0,
@@ -362,6 +488,8 @@ mod tests {
             device_preamble: Vec::new(),
             programs: Vec::new(),
             tails: Vec::new(),
+            containers: Vec::new(),
+            program_containers: Vec::new(),
         }
     }
 
@@ -388,6 +516,71 @@ mod tests {
         assert_eq!(parsed.programs[0].1, tail_a);
         assert_eq!(parsed.programs[1].1, tail_b);
         assert_eq!(parsed.programs[2].1, tail_a);
+    }
+
+    #[test]
+    fn containers_round_trip_and_carry_into_the_device() {
+        let mut engine_data = empty_engine_data();
+        let tail = vec![1u8, 2, 3, 4];
+        let mut container_a = b"DXBC".to_vec();
+        container_a.extend([0xAA; 60]);
+        let mut container_b = b"DXBC".to_vec();
+        container_b.extend([0xBB; 60]);
+        engine_data.programs = vec![
+            (Stage::Vertex, tail.clone()),
+            (Stage::Pixel, tail.clone()),
+            (Stage::Vertex, tail.clone()),
+        ];
+        engine_data.containers = vec![container_a.clone(), container_b.clone()];
+        engine_data.program_containers = vec![Some(0), Some(1), Some(0)];
+
+        let text = engine_data.to_text();
+        assert!(text.contains("container 0 "), "{text}");
+        assert!(text.contains("container 1 "), "{text}");
+        assert!(text.contains("program Vertex #0 #0"), "{text}");
+        assert!(text.contains("program Pixel #0 #1"), "{text}");
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        assert_eq!(parsed.containers, vec![container_a.clone(), container_b.clone()]);
+        assert_eq!(parsed.program_containers, vec![Some(0), Some(1), Some(0)]);
+
+        // With no compiled overrides the programs carry their own containers.
+        let decode_all = |device: &[u8]| -> Vec<Vec<u8>> {
+            let mut at = 0usize;
+            let mut decoded = Vec::new();
+            for _ in 0..3 {
+                assert_eq!(
+                    u32::from_le_bytes(device[at..at + 4].try_into().unwrap()),
+                    1
+                );
+                let frame_length =
+                    u32::from_le_bytes(device[at + 4..at + 8].try_into().unwrap()) as usize;
+                let frame = &device[at + 8..at + 8 + frame_length];
+                let decoded_length = u32::from_le_bytes(
+                    device[at + 8 + frame_length + 4..at + 8 + frame_length + 8]
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                decoded.push(shader::decode_frame(frame, decoded_length).unwrap());
+                at += 8 + frame_length + 16 + 4; // the test's tails are four bytes
+            }
+            decoded
+        };
+
+        let device = parsed.build_device(&HashMap::new()).unwrap();
+        assert_eq!(
+            decode_all(&device),
+            vec![container_a.clone(), container_b.clone(), container_a.clone()]
+        );
+
+        // A compiled override wins over the carried container.
+        let mut overrides = HashMap::new();
+        overrides.insert(Stage::Vertex, container_b.clone());
+        let device = parsed.build_device(&overrides).unwrap();
+        assert_eq!(
+            decode_all(&device),
+            vec![container_b.clone(), container_b.clone(), container_b.clone()]
+        );
     }
 
     #[test]

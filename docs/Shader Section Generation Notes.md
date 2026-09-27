@@ -39,9 +39,13 @@ The mod-defined build flow is in place: a material can declare
 generates the section from them and the engine data, and snoopymod runs that
 way - its base material is a few hundred bytes, the engine data is the only
 game-derived file. The engine data holds the declaration's engine-side wrapper
-for now (contexts, conditions, group data, the device preamble and the program
-tails); shrinking it to only genuine engine constants (and generating the rest
-from the shader itself) is the remaining RE work listed above. The old
+for now (contexts, conditions, group data, the device preamble, the program
+tails and - since the carry mode - the compiled containers); shrinking it to
+only genuine engine constants (and generating the rest from the shader itself)
+is the remaining RE work listed above. A material with engine data and **no**
+sibling sources carries the programs it declares instead of compiling any:
+that is how a shipped section's variants (the small families have 9-17 distinct
+payloads) can be rebuilt as a mod material without collapsing them. The old
 variable/clone/channel rewriting is gone: the shader's own variable names are
 what the material and Lua address.
 
