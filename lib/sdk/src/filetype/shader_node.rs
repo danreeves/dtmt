@@ -28,6 +28,7 @@ use color_eyre::eyre::{Context as _, Result, bail};
 use serde::Deserialize;
 
 use super::condition::{Condition, Defines};
+use super::shader_source::{ShaderSource, resolve_include};
 use super::shader_decl::{
     ChannelDef, Choice, CompileWith, Define, DefineTable, Domain, Interface, Pass, PassEntry,
     Permutation, PermutationSet, ProgramDef, ShaderContext, ValueType, VariableDef,
@@ -240,6 +241,34 @@ pub struct CodeBlock {
     /// The block's own HLSL, when it has any.
     #[serde(default)]
     pub hlsl: Option<String>,
+}
+
+impl CodeBlock {
+    /// The HLSL to compile: the included chunks in order, then the block's own
+    /// code. An include no library resolves is skipped, because the caller's
+    /// compiler will say what is missing when the source fails to build.
+    pub fn hlsl_with(&self, libraries: &[ShaderSource]) -> String {
+        let mut out = String::new();
+        for include in &self.include {
+            if let Some(chunk) = resolve_include(libraries, include) {
+                out.push_str(chunk);
+                out.push('\n');
+            }
+        }
+        if let Some(hlsl) = &self.hlsl {
+            out.push_str(hlsl);
+        }
+        out
+    }
+}
+
+/// The preprocessor lines a job's macros compile under.
+pub fn defines_for(macros: &[String]) -> String {
+    let mut out = String::new();
+    for name in macros {
+        out.push_str(&format!("#define {name}\n"));
+    }
+    out
 }
 
 /// One program the declaration asks to compile: a context, a permutation, and
@@ -1462,6 +1491,27 @@ mod tests {
         assert_eq!(jobs.len(), 1, "no sets, and nothing defines A");
         assert_eq!(jobs[0].context, "default");
         assert_eq!(jobs[0].code_block, "base");
+    }
+
+    #[test]
+    fn a_code_block_assembles_its_includes_and_hlsl() {
+        let libraries = [ShaderSource::from_sjson(
+            r#"hlsl_shaders = { common = { code = """ void common() {} """ } }"#,
+        )
+        .expect("library")];
+        let text = r#"
+            code_blocks = { base = { include = ["lib#common"] hlsl = """ void main() {} """ } }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let block = node.code_block("base").expect("block");
+        let source = block.hlsl_with(&libraries);
+        assert!(
+            source.find("common").expect("include") < source.find("main").expect("body"),
+            "the includes come first: {source}"
+        );
+        let defines = defines_for(&["A".to_string(), "B".to_string()]);
+        assert!(defines.contains("#define A"));
+        assert!(defines.contains("#define B"));
     }
 
     #[test]

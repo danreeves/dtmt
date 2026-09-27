@@ -179,9 +179,11 @@ declarations still parse). Include resolution is done too: `include_chunk` and
 `resolve_include` find the `path#chunk` body across libraries, tested. The
 program list is done too: `ShaderNode::compile_jobs` enumerates context x
 permutation x selected pass, with the macros each compiles under (tested; a
-branch no define decides contributes both sides). Next: assemble the HLSL and
-compile per stage with DXC; then `dtmt build` sources programs from the
-declaration instead of sibling files. Snoopymod is the migration test.
+branch no define decides contributes both sides). HLSL assembly is done too:
+`CodeBlock::hlsl_with` concatenates the resolved includes and the block body,
+and `defines_for` emits the macros. Next: stage selection and the DXC call;
+then `dtmt build` sources programs from the declaration instead of sibling
+files. Snoopymod is the migration test.
 
 ## Open decode details worth keeping
 
