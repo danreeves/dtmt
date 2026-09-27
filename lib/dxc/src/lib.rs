@@ -1,11 +1,4 @@
-//! In-process DXC: compiling through `dxcompiler.dll` instead of `dxc.exe`.
-//!
-//! The shell-out writes a temporary HLSL file and a temporary container per
-//! compile and spawns a process; `dxc.exe` has no stdin mode (checked: it
-//! answers `Required input file argument is missing` and does not accept `-`),
-//! so there is no way around the files with the executable. The DLL is the same
-//! compiler the executable wraps, and calling it directly keeps the source and
-//! the container in memory.
+//! In-process DXC: compiling through the DXC library instead of a subprocess.
 //!
 //! The binding is a hand-written `extern "system"` vtable for the four
 //! interfaces the call needs - `IDxcCompiler3`, `IDxcResult`,
@@ -13,17 +6,40 @@
 //! `dxcapi.h` (10.0.22621.0): the CLSIDs and IIDs are the header's, and the
 //! method order is the header's. `DxcCreateInstance` is the only export used.
 //!
-//! The DLL is loaded at runtime (no import library, no build dependency) and
-//! searched for in `DTMT_DXC_DLL`, next to the tool, next to the configured
-//! `dxc.exe`, and in the newest Windows SDK installation. A caller that cannot
-//! find it falls back to the executable.
-
-#![cfg(windows)]
+//! The library is the same compiler `dxc.exe` wraps, so calling it directly
+//! keeps the source and the container in memory - no temporary files, no
+//! process per compile - and it works wherever DXC is available: Windows,
+//! Linux and macOS (the `dxcompiler.dll` / `libdxcompiler.so` /
+//! `libdxcompiler.dylib` builds Microsoft publishes, or a distro package).
+//!
+//! The **validator library is required too**: `IDxcValidator` lives in
+//! `dxil.dll` (`libdxil.so` / `libdxil.dylib`), which validates and signs the
+//! DXIL. D3D12 refuses to create a pipeline state from unsigned DXIL with
+//! `E_INVALIDARG`, and the compiler's API leaves the container unsigned (the
+//! `dxc.exe` path signs through the `dxil.dll` beside it for the same reason).
+//! [`Compiler::load`] therefore loads the validator from beside the compiler
+//! library, and a compile without it fails with a message naming the file.
+//!
+//! # Where the libraries go
+//!
+//! [`find_library`] searches, in order:
+//!
+//! 1. the `dxc` path in `dtmt.cfg`, when set (a file, or the directory holding
+//!    it) - [`set_library`] pins it for the process;
+//! 2. the `DTMT_DXC_DLL` environment variable (the same: a file or a directory);
+//! 3. next to the `dtmt` executable;
+//! 4. Windows: the newest Windows SDK installation
+//!    (`C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64\dxcompiler.dll`);
+//!    Linux and macOS: the system loader's own paths, by name.
+//!
+//! The validator is looked up beside whichever compiler library was found. A
+//! machine without the compiler library cannot compile shaders; the error names
+//! the library and every place that was searched.
 
 use std::ffi::c_void;
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+use std::sync::OnceLock;
 
 use color_eyre::eyre::{Context as _, Result, bail};
 
@@ -67,10 +83,40 @@ const IID_IDXC_BLOB: Guid = Guid {
     data4: [0xac, 0x58, 0x0d, 0x98, 0x9c, 0x3a, 0x01, 0x02],
 };
 
+const CLSID_DXC_VALIDATOR: Guid = Guid {
+    data1: 0x8ca3e215,
+    data2: 0xf728,
+    data3: 0x4cf3,
+    data4: [0x8c, 0xdd, 0x88, 0xaf, 0x91, 0x75, 0x87, 0xa1],
+};
+
+const IID_IDXC_VALIDATOR: Guid = Guid {
+    data1: 0xa6e82bd2,
+    data2: 0x1fd7,
+    data3: 0x4826,
+    data4: [0x98, 0x11, 0x28, 0x57, 0xe7, 0x97, 0xf4, 0x9a],
+};
+
+const CLSID_DXC_UTILS: Guid = Guid {
+    data1: 0x6245d6af,
+    data2: 0x66e0,
+    data3: 0x48fd,
+    data4: [0x80, 0xb4, 0x4d, 0x27, 0x17, 0x96, 0x74, 0x8c],
+};
+
+const IID_IDXC_UTILS: Guid = Guid {
+    data1: 0x4605c4cb,
+    data2: 0x2019,
+    data3: 0x492a,
+    data4: [0xad, 0xa4, 0x65, 0xf2, 0x0b, 0xb7, 0xd6, 0x7f],
+};
+
 /// `DXC_OUT_OBJECT`: the compiled shader or library object.
 const DXC_OUT_OBJECT: u32 = 1;
 /// `DXC_CP_UTF8`: the source is UTF-8.
 const DXC_CP_UTF8: u32 = 65001;
+/// `DxcValidatorFlags_InPlaceEdit`: the validator edits the input blob in place.
+const DXC_VALIDATOR_FLAGS_IN_PLACE_EDIT: u32 = 1;
 
 /// `DxcBuffer`: the source text, its size and its encoding.
 #[repr(C)]
@@ -146,48 +192,196 @@ struct IDxcCompiler3 {
     vtable: *const IDxcCompiler3Vtbl,
 }
 
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn LoadLibraryW(name: *const u16) -> *mut c_void;
-    fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
-    fn FreeLibrary(module: *mut c_void) -> i32;
+#[repr(C)]
+struct IDxcValidatorVtbl {
+    base: IUnknownVtbl,
+    validate: unsafe extern "system" fn(*mut c_void, *mut c_void, u32, *mut *mut c_void) -> Hresult,
 }
 
-/// A loaded `dxcompiler.dll`.
+#[repr(C)]
+struct IDxcValidator {
+    vtable: *const IDxcValidatorVtbl,
+}
+
+/// The `IDxcUtils` vtable, up to `CreateBlob` (the methods before it are never
+/// called and stand in as opaque slots so the offsets line up).
+#[repr(C)]
+struct IDxcUtilsVtbl {
+    base: IUnknownVtbl,
+    create_blob_from_blob: *const c_void,
+    create_blob_from_pinned: *const c_void,
+    move_to_blob: *const c_void,
+    create_blob: unsafe extern "system" fn(
+        *mut c_void,
+        *const c_void,
+        u32,
+        u32,
+        *mut *mut c_void,
+    ) -> Hresult,
+}
+
+#[repr(C)]
+struct IDxcUtils {
+    vtable: *const IDxcUtilsVtbl,
+}
+
+/// The `DxcCreateInstance` export's signature.
+type CreateInstance =
+    unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> Hresult;
+
+/// The library's name on this platform.
+pub const LIBRARY_NAME: &str = if cfg!(windows) {
+    "dxcompiler.dll"
+} else if cfg!(target_os = "macos") {
+    "libdxcompiler.dylib"
+} else {
+    "libdxcompiler.so"
+};
+
+/// The validator's library name on this platform. `IDxcValidator` lives in
+/// `dxil.dll`, not in the compiler library: it validates and signs the DXIL,
+/// and D3D12 rejects unsigned DXIL with `E_INVALIDARG`.
+pub const VALIDATOR_NAME: &str = if cfg!(windows) {
+    "dxil.dll"
+} else if cfg!(target_os = "macos") {
+    "libdxil.dylib"
+} else {
+    "libdxil.so"
+};
+
+/// The path [`set_library`] pinned, if any.
+static LIBRARY_PATH: OnceLock<PathBuf> = OnceLock::new();
+/// The shared compiler, loaded on first use. The error is cached with it so a
+/// missing library reports once and consistently.
+static COMPILER: OnceLock<Result<Compiler, String>> = OnceLock::new();
+
+/// Pins the library path to use; the first call wins. `dtmt` passes its
+/// `dtmt.cfg` path here before compiling, so the config takes precedence over
+/// the other search places.
+pub fn set_library(path: impl Into<PathBuf>) {
+    let _ = LIBRARY_PATH.set(path.into());
+}
+
+/// The DXC library to load: the explicit path or [`set_library`]'s, then
+/// `DTMT_DXC_DLL`, then the tool's directory, then the platform's usual places.
+pub fn find_library(explicit: Option<&Path>) -> Result<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    let mut push = |path: PathBuf| {
+        if path.is_dir() {
+            candidates.push(path.join(LIBRARY_NAME));
+        } else {
+            candidates.push(path);
+        }
+    };
+
+    if let Some(path) = explicit {
+        push(path.to_path_buf());
+    }
+    if let Ok(path) = std::env::var("DTMT_DXC_DLL") {
+        push(PathBuf::from(path));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        candidates.push(dir.join(LIBRARY_NAME));
+    }
+    #[cfg(windows)]
+    {
+        let kits = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
+        if let Ok(entries) = std::fs::read_dir(kits) {
+            let mut versions: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path().join("x64").join(LIBRARY_NAME))
+                .filter(|path| path.is_file())
+                .collect();
+            versions.sort();
+            candidates.extend(versions.into_iter().rev());
+        }
+    }
+
+    for candidate in &candidates {
+        if candidate.is_file() {
+            return Ok(candidate.clone());
+        }
+    }
+
+    // Let the system loader search its own paths for the bare name: the distro
+    // packages and the DXC release archives install it where it is found.
+    if unsafe { libloading::Library::new(LIBRARY_NAME) }.is_ok() {
+        return Ok(PathBuf::from(LIBRARY_NAME));
+    }
+
+    let searched: Vec<String> = candidates
+        .iter()
+        .map(|path| path.display().to_string())
+        .chain([LIBRARY_NAME.to_string()])
+        .collect();
+    bail!(
+        "Could not find the DXC library '{LIBRARY_NAME}'. Put it next to the tool, set \
+         `dxc` in dtmt.cfg, or set DTMT_DXC_DLL. Searched: {}",
+        searched.join(", ")
+    )
+}
+
+/// Compiles one source for a profile and entry point with the shared compiler,
+/// loading the library on first use.
+pub fn compile(source: &str, profile: &str, entry: &str) -> Result<Vec<u8>> {
+    let compiler = COMPILER.get_or_init(|| {
+        find_library(LIBRARY_PATH.get().map(PathBuf::as_path))
+            .and_then(|path| Compiler::load(&path))
+            .map_err(|err| err.to_string())
+    });
+    match compiler {
+        Ok(compiler) => compiler.compile(source, profile, entry),
+        Err(err) => bail!("{err}"),
+    }
+}
+
+/// A loaded DXC library.
 pub struct Compiler {
-    module: *mut c_void,
-    create_instance:
-        unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> Hresult,
+    /// Held so the library stays loaded for the compiler's lifetime.
+    _library: libloading::Library,
+    create_instance: CreateInstance,
+    /// The validator library (`dxil.dll`), when it sits next to the compiler.
+    _validator_library: Option<libloading::Library>,
+    /// `DxcCreateInstance` of the validator library.
+    validate_instance: Option<CreateInstance>,
 }
 
 impl Compiler {
-    /// Loads the DLL and resolves `DxcCreateInstance`.
+    /// Loads the library and resolves `DxcCreateInstance`, and the validator
+    /// library beside it when present.
     pub fn load(path: &Path) -> Result<Self> {
-        let wide: Vec<u16> = path
-            .as_os_str()
-            .encode_wide()
-            .chain(std::iter::once(0))
-            .collect();
-        let module = unsafe { LoadLibraryW(wide.as_ptr()) };
-        if module.is_null() {
-            bail!("Failed to load '{}'", path.display());
-        }
-
-        let address = unsafe { GetProcAddress(module, c"DxcCreateInstance".as_ptr() as *const u8) };
-        if address.is_null() {
-            unsafe { FreeLibrary(module) };
-            bail!("'{}' has no DxcCreateInstance", path.display());
-        }
-        let create_instance = unsafe {
-            std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "system" fn(*const Guid, *const Guid, *mut *mut c_void) -> Hresult,
-            >(address)
+        let library = unsafe { libloading::Library::new(path) }
+            .wrap_err_with(|| format!("Failed to load '{}'", path.display()))?;
+        let create_instance: CreateInstance = unsafe {
+            *library
+                .get(b"DxcCreateInstance\0")
+                .wrap_err_with(|| format!("'{}' has no DxcCreateInstance", path.display()))?
         };
 
+        // The validator is `dxil.dll`; without it the DXIL stays unsigned and
+        // D3D12 refuses to create a pipeline state from it.
+        let validator = validator_path(path);
+        let (validator_library, validate_instance) =
+            match unsafe { libloading::Library::new(&validator) } {
+                Ok(library) => {
+                    let create: CreateInstance = unsafe {
+                        *library.get(b"DxcCreateInstance\0").wrap_err_with(|| {
+                            format!("'{}' has no DxcCreateInstance", validator.display())
+                        })?
+                    };
+                    (Some(library), Some(create))
+                }
+                Err(_) => (None, None),
+            };
+
         Ok(Self {
-            module,
+            _library: library,
             create_instance,
+            _validator_library: validator_library,
+            validate_instance,
         })
     }
 
@@ -276,25 +470,115 @@ impl Compiler {
         }
 
         let blob = blob as *mut IDxcBlob;
-        let bytes = unsafe {
-            let blob_vtable = (*blob).vtable;
-            let pointer = ((*blob_vtable).get_buffer_pointer)(blob as *mut c_void) as *const u8;
-            let size = ((*blob_vtable).get_buffer_size)(blob as *mut c_void);
-            std::slice::from_raw_parts(pointer, size).to_vec()
-        };
+        let validated = unsafe { self.validate(blob) };
 
         unsafe {
             (((*(*blob).vtable).base).release)(blob as *mut c_void);
             ((*vtable).base.release)(result as *mut c_void);
         }
-        Ok(bytes)
+        validated
+    }
+
+    /// Runs the DXIL validator over a compiled container and returns the
+    /// validated container.
+    ///
+    /// The validator is `dxil.dll`, which signs the DXIL and fills the
+    /// container header's 16 byte hash; D3D12 refuses to create a pipeline
+    /// state from unsigned DXIL with `E_INVALIDARG`, and the compiler's API
+    /// leaves the container unsigned (the `dxc.exe` path signs for the same
+    /// reason). It also rejects malformed DXIL with the validator's message.
+    ///
+    /// The container is copied into a heap blob first: the validator edits the
+    /// blob in place, and the compiler's own output blob is not writable.
+    unsafe fn validate(&self, blob: *mut IDxcBlob) -> Result<Vec<u8>> {
+        let Some(create_instance) = self.validate_instance else {
+            bail!(
+                "The DXIL validator '{VALIDATOR_NAME}' was not found next to '{LIBRARY_NAME}'. \
+                 Without it the compiled DXIL is unsigned and D3D12 refuses it; copy the DXC \
+                 release's '{VALIDATOR_NAME}' beside '{LIBRARY_NAME}'."
+            );
+        };
+
+        let mut validator: *mut c_void = ptr::null_mut();
+        let hr = unsafe { create_instance(&CLSID_DXC_VALIDATOR, &IID_IDXC_VALIDATOR, &mut validator) };
+        if hr < 0 || validator.is_null() {
+            bail!("DxcCreateInstance(IDxcValidator) failed ({hr:#010x})");
+        }
+        let validator = validator as *mut IDxcValidator;
+
+        // A writable copy of the container for the in-place edit.
+        let bytes = unsafe { read_blob(blob) };
+        let mut utils: *mut c_void = ptr::null_mut();
+        let hr = unsafe { (self.create_instance)(&CLSID_DXC_UTILS, &IID_IDXC_UTILS, &mut utils) };
+        let mut copy: *mut c_void = ptr::null_mut();
+        if hr >= 0 && !utils.is_null() {
+            let utils = utils as *mut IDxcUtils;
+            unsafe {
+                ((*(*utils).vtable).create_blob)(
+                    utils as *mut c_void,
+                    bytes.as_ptr() as *const c_void,
+                    bytes.len() as u32,
+                    0,
+                    &mut copy,
+                )
+            };
+            unsafe { ((*(*utils).vtable).base.release)(utils as *mut c_void) };
+        }
+        let target = if copy.is_null() {
+            blob
+        } else {
+            copy as *mut IDxcBlob
+        };
+
+        let mut result: *mut c_void = ptr::null_mut();
+        let hr = unsafe {
+            ((*(*validator).vtable).validate)(
+                validator as *mut c_void,
+                target as *mut c_void,
+                DXC_VALIDATOR_FLAGS_IN_PLACE_EDIT,
+                &mut result,
+            )
+        };
+        if hr < 0 || result.is_null() {
+            unsafe {
+                if !copy.is_null() {
+                    (((*(*(copy as *mut IDxcBlob)).vtable).base).release)(copy);
+                }
+                ((*(*validator).vtable).base.release)(validator as *mut c_void);
+            }
+            bail!("IDxcValidator::Validate failed ({hr:#010x})");
+        }
+        let result = result as *mut IDxcResult;
+        let vtable = unsafe { (*result).vtable };
+
+        let mut status: Hresult = 0;
+        unsafe { ((*vtable).get_status)(result as *mut c_void, &mut status) };
+        let validated = if status < 0 {
+            let text = unsafe { error_text(result, vtable) };
+            Err(color_eyre::eyre::eyre!(
+                "dxcompiler validation failed:\n{text}"
+            ))
+        } else {
+            Ok(unsafe { read_blob(target) })
+        };
+
+        unsafe {
+            ((*vtable).base.release)(result as *mut c_void);
+            ((*(*validator).vtable).base.release)(validator as *mut c_void);
+            if !copy.is_null() {
+                (((*(*(copy as *mut IDxcBlob)).vtable).base).release)(copy);
+            }
+        }
+        validated
     }
 }
 
-impl Drop for Compiler {
-    fn drop(&mut self) {
-        unsafe { FreeLibrary(self.module) };
-    }
+/// The bytes of a blob.
+unsafe fn read_blob(blob: *mut IDxcBlob) -> Vec<u8> {
+    let vtable = unsafe { (*blob).vtable };
+    let pointer = unsafe { ((*vtable).get_buffer_pointer)(blob as *mut c_void) as *const u8 };
+    let size = unsafe { ((*vtable).get_buffer_size)(blob as *mut c_void) };
+    unsafe { std::slice::from_raw_parts(pointer, size).to_vec() }
 }
 
 /// The error text of a failed result, as UTF-8.
@@ -318,42 +602,19 @@ unsafe fn error_text(result: *mut IDxcResult, vtable: *const IDxcResultVtbl) -> 
     text
 }
 
+/// The validator library that sits next to a compiler library, or its platform
+/// name for the system loader.
+fn validator_path(compiler: &Path) -> PathBuf {
+    match compiler
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        Some(parent) => parent.join(VALIDATOR_NAME),
+        None => PathBuf::from(VALIDATOR_NAME),
+    }
+}
+
 /// A NUL-terminated UTF-16 copy of `text`.
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-/// The `dxcompiler.dll` to use with a configured `dxc.exe`: the environment
-/// variable, the tool's own directory, the executable's directory, then the
-/// newest Windows SDK installation.
-pub fn find_dll(dxc: &Path) -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("DTMT_DXC_DLL") {
-        let path = PathBuf::from(path);
-        if path.exists() {
-            return Some(path);
-        }
-    }
-
-    let mut candidates = Vec::new();
-    if let Some(dir) = dxc.parent() {
-        candidates.push(dir.join("dxcompiler.dll"));
-    }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        candidates.push(dir.join("dxcompiler.dll"));
-    }
-
-    let kits = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
-    if let Ok(entries) = std::fs::read_dir(kits) {
-        let mut versions: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path().join("x64").join("dxcompiler.dll"))
-            .filter(|path| path.exists())
-            .collect();
-        versions.sort();
-        candidates.extend(versions.into_iter().rev());
-    }
-
-    candidates.into_iter().find(|path| path.exists())
 }

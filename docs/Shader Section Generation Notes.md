@@ -695,29 +695,28 @@ is derived from the declaration or read off the group data being built.
 
 ## The compiler is DXC, reached through its DLL
 
-`dtmt build` compiles a material's shader sources today, but by **spawning
-`dxc.exe`** - found through the `dxc` config option, then `DTMT_DXC`, then the
-newest `Windows Kits\10\bin\*\x64\dxc.exe`. `dxc.exe` is a thin command-line
-wrapper: the compiler is `dxcompiler.dll`, reached through the COM interface in
-`dxcapi.h` (`DxcCreateInstance` -> `IDxcUtils` / `IDxcCompiler3`). Binding that
-directly is the better shape, and the SDK has everything it needs:
+`dtmt build` compiles a material's shader sources with **the compiler library
+in process** - `lib/dxc` loads `dxcompiler.dll` at runtime (`libloading`, no
+import library, no `dxc.exe`) and calls `DxcCreateInstance` -> `IDxcCompiler3`
+through a hand-written `extern "system"` vtable transcribed from the SDK's
+`dxcapi.h`. The same code runs on Linux and macOS
+(`libdxcompiler.so` / `libdxcompiler.dylib`); a developer drops the library
+next to the tool, or points `dxc` in `dtmt.cfg` / `DTMT_DXC_DLL` at it.
 
-- `Windows Kits\10\Lib\*\um\x64\dxcompiler.lib` - the import library, in every
-  installed SDK (17763, 19041, 22621).
-- `Windows Kits\10\bin\*\x64\dxcompiler.dll` and `dxil.dll` next to `dxc.exe`.
-- `Windows Kits\10\Include\*\um\dxcapi.h` for the interface declarations.
+**The validator library is not optional.** `IDxcValidator` lives in `dxil.dll`
+(`libdxil.so` / `libdxil.dylib`), beside the compiler in every DXC release:
+it validates the DXIL and **signs** it, filling the container header's 16-byte
+hash. D3D12 refuses to create a pipeline state from unsigned DXIL with
+`E_INVALIDARG`, and the compiler's own API leaves the container unsigned (that
+is exactly what `dxc.exe` runs its validator for). `lib/dxc` loads the
+validator from beside whichever compiler library it found, and a compile
+without it fails with a message naming the file - an in-game crash
+(`shader '#ID[6e8c619d]'`, a zeroed hash) is what pinned this down.
 
-Two things to get right, both from how the `oodle` crate links `oo2core`:
-
-- The DLL is not on `PATH` and not shipped with the game, so like `oo2core` a
-  developer copies it over: link the import library and ship `dxcompiler.dll`
-  beside the tool, the same arrangement the Oodle binding already needs. No
-  delay-loading and no runtime path hunting - one DLL to copy, like Oodle.
-- The interfaces are ABI-stable, so a hand-written `extern "system"` vtable for
-  the handful of types needed (`IDxcBlob`, `IDxcBlobEncoding`, `IDxcUtils`,
-  `IDxcCompiler3`, `DxcBuffer`) is enough. `dxcapi.h` is large and drags in the
-  Windows headers, so bindgen over it would make the build depend on an SDK
-  *include* tree where the import library alone would do.
+The interfaces are ABI-stable, so the hand-written vtable for the handful of
+types needed (`IDxcBlob`, `IDxcUtils`, `IDxcCompiler3`, `IDxcValidator`,
+`DxcBuffer`) is enough. `dxcapi.h` is large and drags in the Windows headers,
+so bindgen over it would make the build depend on an SDK *include* tree.
 
 This matters for the from-scratch path because the group data's `cbuffer_offset`
 values come from the compiled container: the SDK's DXBC reflection already reports

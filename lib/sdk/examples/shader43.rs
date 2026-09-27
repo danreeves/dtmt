@@ -1462,7 +1462,7 @@ fn compile(
     out_dir: &Path,
     against: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use sdk::filetype::shader_compile::{compile as dxc_compile, find_dxc};
+    use sdk::filetype::shader_compile::{compile as dxc_compile, find_library};
     use sdk::filetype::shader_node::{STAGES, entry_for, profile_for};
 
     let text = fs::read_to_string(declaration)?;
@@ -1494,11 +1494,13 @@ fn compile(
         None => None,
     };
 
-    let dxc = find_dxc().ok_or("no dxc.exe found: set DTMT_DXC or install the Windows SDK")?;
+    let library = find_library(None)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|err| format!("not found ({err})"));
     let jobs = node.compile_jobs()?;
     fs::create_dir_all(out_dir)?;
 
-    println!("=== {} (with {}) ===", declaration.display(), dxc.display());
+    println!("=== {} (with {}) ===", declaration.display(), library);
     let mut written = 0usize;
     for job in &jobs {
         for stage in STAGES {
@@ -1509,7 +1511,7 @@ fn compile(
                 continue;
             };
             let source = node.job_source(job, stage, &sources);
-            match dxc_compile(&dxc, &source, profile, entry) {
+            match dxc_compile(&source, profile, entry) {
                 Ok(container) => {
                     let name = format!(
                         "{}_p{}_{}.dxbc",

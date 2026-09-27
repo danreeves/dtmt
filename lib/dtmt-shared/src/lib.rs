@@ -70,9 +70,12 @@ pub struct ModConfig {
     pub bundled: bool,
     #[serde(default)]
     pub name_overrides: HashMap<String, String>,
-    /// Path to `dxc.exe`, used to compile custom shader sources that sit next
-    /// to a material (`<name>.hlsl`, `<name>.vs.hlsl`, `<name>.ps.hlsl`).
-    /// Defaults to the newest Windows SDK installation, then `DTMT_DXC`.
+    /// Path to the DXC compiler library (`dxcompiler.dll` / `libdxcompiler.so`)
+    /// used to compile custom shader sources, or the directory holding it. The
+    /// validator (`dxil.dll` / `libdxil.so`) must sit beside it; without it the
+    /// compiled DXIL is unsigned and D3D12 refuses it. Defaults to
+    /// `DTMT_DXC_DLL`, then the tool's directory, then the newest Windows SDK
+    /// installation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dxc: Option<PathBuf>,
 }

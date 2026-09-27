@@ -164,13 +164,16 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   `log_level` was `1` for these runs, which suppresses the `ModLoader` info
   lines; set it to `2` or higher to read them. [one run]
 - **In-process DXC**: `lib/dxc` is a workspace crate (like `oodle`) that loads
-  `dxcompiler.dll` at runtime and calls `DxcCreateInstance` through a
-  hand-written `extern "system"` vtable transcribed from the SDK's `dxcapi.h`;
-  `shader_compile::compile` prefers it and falls back to the `dxc.exe`
-  shell-out. [verified on the blit block: both paths produce containers whose
-  only difference is the container header's 16-byte hash (bytes 4..19); the
-  DXIL payloads are byte-identical (1232 and 1164 bytes), and the in-process
-  path leaves no temporary files]
+  `dxcompiler.dll` at runtime (`libloading`, no import library) and compiles
+  through a hand-written `extern "system"` vtable transcribed from the SDK's
+  `dxcapi.h`. It also loads the **validator** `dxil.dll` beside it:
+  `IDxcValidator` lives there, signs the DXIL and fills the container header's
+  16-byte hash, and D3D12 refuses unsigned DXIL with `E_INVALIDARG` - found by
+  an in-game crash (`shader '#ID[6e8c619d]'`) that an exe-validated rebuild of
+  the same material fixed. There is no `dxc.exe` path any more. [verified:
+  in-process containers are byte-identical to the exe-validated ones (header
+  hash `6BEF2E28…` on the blit block), and snoopy-mod's material is
+  byte-identical to the known-good build (`2639D7DA…`); no temporary files]
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
   writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of
@@ -234,14 +237,10 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    and channel tables, and keep the engine table. Generating the header itself
    needs the grammar in (2). `rebuild`/`rebuild_channels` already write the
    tables correctly.
-4. **In-process DXC (`dxcompiler.dll`)** - **done**: `lib/dxc` (a workspace
-   crate, like `oodle`) runtime-loads the DLL and calls `DxcCreateInstance`
-   through a hand-written vtable transcribed from the SDK's `dxcapi.h`;
-   `shader_compile::compile` prefers it and falls back to the `dxc.exe`
-   shell-out, so a machine without the DLL still builds. The shell-out's
-   temporary files are gone on the in-process path (dxc.exe cannot read stdin,
-   which is why they existed). Next, if wanted: ship `dxcompiler.dll` beside
-   the tool so no SDK install is needed.
+4. **In-process DXC (`dxcompiler.dll` + `dxil.dll`)** - **done** (see the
+   verified list). The validator library is not optional: it is what signs the
+   DXIL, and D3D12 refuses an unsigned container. Next, if wanted: ship both
+   libraries beside the tool so no SDK install is needed.
 5. **Graph code generation** for the real game declarations. The Stingray
    toolchain expands the declaration's channels and graph nodes into
    `GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`, `GRAPH_MATERIAL_EXPORTS`,

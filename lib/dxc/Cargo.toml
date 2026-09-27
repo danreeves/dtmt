@@ -7,3 +7,4 @@ edition = "2024"
 
 [dependencies]
 color-eyre = { workspace = true }
+libloading = { workspace = true }

@@ -165,30 +165,27 @@ async fn find_project_config(dir: Option<PathBuf>) -> Result<ModConfig> {
     Ok(cfg)
 }
 
-/// Finds `dxc.exe`: the config option, then the SDK's discovery (`DTMT_DXC`,
-/// then the newest Windows SDK installation).
-fn find_dxc(cfg: &ModConfig) -> Option<PathBuf> {
-    if let Some(path) = &cfg.dxc {
-        return Some(path.clone());
+/// Pins the DXC library the config names, if any. The library loads on the
+/// first compile; without a config path the discovery order in `dxc` applies.
+fn pin_dxc(cfg: &ModConfig) {
+    if let Some(library) = &cfg.dxc {
+        shader_compile::set_library(library);
     }
-    shader_compile::find_dxc()
 }
 
 /// Compiles one HLSL entry point to a container.
 #[tracing::instrument(skip_all, fields(source = %source.display(), entry, target))]
-async fn compile_hlsl(dxc: &Path, source: &Path, entry: &str, target: &str) -> Result<Vec<u8>> {
+async fn compile_hlsl(source: &Path, entry: &str, target: &str) -> Result<Vec<u8>> {
     let text = fs::read_to_string(source)
         .await
         .wrap_err_with(|| format!("Failed to read '{}'", source.display()))?;
 
-    let dxc = dxc.to_path_buf();
     let target_arg = target.to_string();
     let entry_arg = entry.to_string();
-    let data = tokio::task::spawn_blocking(move || {
-        shader_compile::compile(&dxc, &text, &target_arg, &entry_arg)
-    })
-    .await
-    .wrap_err("The shader compiler task panicked")??;
+    let data =
+        tokio::task::spawn_blocking(move || shader_compile::compile(&text, &target_arg, &entry_arg))
+            .await
+            .wrap_err("The shader compiler task panicked")??;
 
     tracing::info!(
         "Compiled '{}' ({target}/{entry}, {} bytes)",
@@ -207,6 +204,8 @@ async fn compile_hlsl(dxc: &Path, source: &Path, entry: &str, target: &str) -> R
 /// `vs_main` and/or `ps_main`, or separate `<name>.vs.hlsl` / `<name>.ps.hlsl`
 /// files.
 async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option<ShaderOverrides>> {
+    pin_dxc(cfg);
+
     let stem = path.with_extension("");
     let declaration = stem.with_extension("shader_node");
     if declaration.exists() {
@@ -221,14 +220,6 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
         return Ok(None);
     }
 
-    let dxc = find_dxc(cfg).ok_or_else(|| {
-        eyre::eyre!(
-            "'{}' has shader sources, but no dxc.exe was found. Set `dxc` in \
-             {PROJECT_CONFIG_NAME} or the DTMT_DXC environment variable.",
-            stem.display()
-        )
-    })?;
-
     let mut overrides = ShaderOverrides::default();
 
     if combined.exists() {
@@ -237,10 +228,10 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
             .wrap_err_with(|| format!("Failed to read '{}'", combined.display()))?;
 
         if source.contains("vs_main") {
-            overrides.vertex = Some(compile_hlsl(&dxc, &combined, "vs_main", "vs_6_0").await?);
+            overrides.vertex = Some(compile_hlsl(&combined, "vs_main", "vs_6_0").await?);
         }
         if source.contains("ps_main") {
-            overrides.pixel = Some(compile_hlsl(&dxc, &combined, "ps_main", "ps_6_0").await?);
+            overrides.pixel = Some(compile_hlsl(&combined, "ps_main", "ps_6_0").await?);
         }
 
         if overrides.is_empty() {
@@ -252,10 +243,10 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
     }
 
     if vs_path.exists() {
-        overrides.vertex = Some(compile_hlsl(&dxc, &vs_path, "vs_main", "vs_6_0").await?);
+        overrides.vertex = Some(compile_hlsl(&vs_path, "vs_main", "vs_6_0").await?);
     }
     if ps_path.exists() {
-        overrides.pixel = Some(compile_hlsl(&dxc, &ps_path, "ps_main", "ps_6_0").await?);
+        overrides.pixel = Some(compile_hlsl(&ps_path, "ps_main", "ps_6_0").await?);
     }
 
     Ok(Some(overrides))
@@ -288,13 +279,6 @@ async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<Shad
     let job = &jobs[0];
 
     let libraries = load_libraries(&cfg.dir)?;
-    let dxc = find_dxc(cfg).ok_or_else(|| {
-        eyre::eyre!(
-            "'{}' declares shaders, but no dxc.exe was found. Set `dxc` in \
-             {PROJECT_CONFIG_NAME} or the DTMT_DXC environment variable.",
-            declaration.display()
-        )
-    })?;
 
     let mut overrides = ShaderOverrides::default();
     for stage in STAGES {
@@ -305,14 +289,12 @@ async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<Shad
             continue;
         };
         let source = node.job_source(job, stage, &libraries);
-        let dxc = dxc.clone();
         let profile_arg = profile.to_string();
         let entry_arg = entry.to_string();
-        let container = tokio::task::spawn_blocking(move || {
-            shader_compile::compile(&dxc, &source, &profile_arg, &entry_arg)
-        })
-        .await
-        .wrap_err("The shader compiler task panicked")??;
+        let container =
+            tokio::task::spawn_blocking(move || shader_compile::compile(&source, &profile_arg, &entry_arg))
+                .await
+                .wrap_err("The shader compiler task panicked")??;
 
         tracing::info!(
             "Compiled '{}' ({} block '{}', {profile}/{entry}, {} bytes)",
