@@ -15,7 +15,7 @@ sources with `dxc` and generates the whole section: contexts, conditions, group
 data, program tails, device data and default data.
 
 Anything kept from a shipped shader must be reduced to genuinely engine-side
-constants that cannot be derived from the shader itself. The working candidates
+constants that cannot currently be derived from the shader itself. The working candidates
 are:
 
 | Piece | Where it should come from |
@@ -28,7 +28,7 @@ are:
 | Header, pads, offsets | Recomputed |
 
 Engine constants are only acceptable where the engine genuinely requires data
-that cannot be derived from the shader - and even then the goal is to decode and
+that cannot currently be derived from the shader - and even then the goal is to decode and
 shrink them to the smallest possible form, not to grow them into a preset.
 
 ## Status of the intermediate route

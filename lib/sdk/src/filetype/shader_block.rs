@@ -20,7 +20,7 @@ fn record_len(kind: u32) -> Option<usize> {
 
 /// The engine-side constant a generated block starts from: a shipped preamble
 /// carrying the header, the engine-variable records and one channel record per
-/// kind to clone from. It is the only piece of the block a mod cannot derive.
+/// kind to clone from. It is the only piece of the block a mod cannot currently derive.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlockTemplate {
     preamble: Vec<u8>,

@@ -1075,7 +1075,7 @@ fn reconstruct(
     fs::write(&out_path, &out)?;
 
     // The carried constants: the device preamble is the library's compiled
-    // block and cannot be derived, so it is written beside the declaration for
+    // block and cannot currently be derived, so it is written beside the declaration for
     // the build to reuse, with a summary of what is carried.
     let device_offset = u32_at(bytes, 40) as usize;
     let device_size = u32_at(bytes, 44) as usize;
