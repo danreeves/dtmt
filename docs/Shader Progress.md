@@ -266,12 +266,27 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    `1`, no crash; the shipped **one**-hash record crashes with result `1`. So
    the engine indexes with the result into the branch's tests - the compiler
    always emits `tests.len() - 1` (the last, most specific condition) - and
-   picks the condition hash at that index to select the variant. Both crafted
-   results render the same because both tests are the same hash. Next: a branch
-   with two *different* true conditions and result 0 vs 1, to watch the picked
-   condition change the variant. `3F08AC44`'s condition hash `7F9E89FD` is not
-   the material's context value or any obvious option name (checked: context
-   value, `bca`/`nm`/`orm`, `HAS_*`).
+   picks the condition hash at that index.
+
+   **The condition vocabulary is the engine's queries and context names**, mined
+   by hashing every printable string of `Darktide.exe` (`7F9E89FD` =
+   `num_skin_weights`, `9FCFE126` = `gui`, `E2C8865F` = `gui_render_pass`,
+   `3100C3D2` = `shadow_caster`, `F2760503` = `default`; a throwaway scanner,
+   ~511k strings, 5 hits). The remaining condition hashes (`BDF72706`,
+   `B5F45768`, `8FB860CF`, `625D415E`, `BC4EE226`, `red`, `green`, `blue`,
+   `alpha`) are not in the exe or the dictionary.
+
+   **The final probe: the picked condition does not change the render.** A
+   crafted default-context record with hashes [`num_skin_weights`, `default`]
+   and result `0` (picks `num_skin_weights`) vs result `1` (picks `default`)
+   renders the cube identically. The reason is in the data: `3F08AC44`'s
+   default context has **two groups with byte-identical tables**
+   (`78E25D0F@0+4 9A531871@4+4`), so every interface in that context binds the
+   same thing - the visible differences live across *contexts* (the
+   `5852A5B1` pass carries the `bca`/`nm`/`orm` interface), not within one.
+   So for the shipped materials the result's selection is not observable in the
+   render, and the tree's job is the interface bookkeeping the plan's notes
+   describe, not a visible variant switch.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`
