@@ -245,10 +245,22 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    17 distinct across 26) onto the title widget: both replace the widget and
    render it black, so the material path works, but neither shader's *default*
    context draws anything a screenshot can distinguish (their bindings want
-   per-instance or global values a UI widget does not set). The probe still
-   needs a variant-rich family whose *default* context renders visibly, or
-   authored variants, and then a build pair that differs only in the tree's
-   results.
+   per-instance or global values a UI widget does not set).
+
+   **The probe's first positive result is on the cube unit** (3D, so the
+   bindings are real): its material parents to `#3F08AC44`, one of the six
+   variant-rich families, so a carried `3F08AC44` base material with the cube's
+   `bca`/`nm`/`orm` channels puts the shipped variants on a visible object; with
+   the shipped tree the cube renders in the hub. Rewriting the tree's results
+   crashed the engine with an access violation in the pipeline path (error
+   context `shader #ID[7bc888ae]`, `resource_tag` the cube): with every result
+   +1 (1/6/8) the crash is a second after the spawn, with only the first result
+   set to 5 it is about a minute later. So the result is a **live selector used
+   when the material is drawn**, its valid value for that record is 0, and
+   nothing validates it - the shipped fallbacks 5/7 are simply never taken in
+   the shipped tree. Which index space the value selects (a variant, a program
+   pair, an interface) is the remaining question; the crash gives no bounds
+   message.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`
