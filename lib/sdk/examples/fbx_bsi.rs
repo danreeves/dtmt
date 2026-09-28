@@ -296,7 +296,70 @@ struct Mesh {
     local: [f32; 16],
 }
 
-fn matrix_from(model: &FbxNode) -> [f32; 16] {
+/// The conversion from the FBX's space to the engine's: the file's unit
+/// (centimeters times `UnitScaleFactor`) to meters, and the up axis. The FBX
+/// is Y-up; the engine's BSI space is Blender's - Z-up, meters, column-major
+/// matrices - which the Blender tools export unchanged.
+#[derive(Clone, Copy)]
+struct Space {
+    scale: f64,
+    /// For each engine axis, the FBX axis it comes from and its sign.
+    axis: [(usize, f64); 3],
+}
+
+impl Space {
+    /// Reads `GlobalSettings`: the unit scale factor and the up axis.
+    fn from_fbx(nodes: &[FbxNode]) -> Result<Self> {
+        let settings = nodes.iter().find(|node| node.name == "GlobalSettings");
+        let property = |name: &str| -> Option<f64> {
+            let properties = settings?.child("Properties70")?;
+            properties
+                .children
+                .iter()
+                .find(|property| {
+                    property.properties.first().and_then(Property::as_text) == Some(name)
+                })
+                .and_then(|property| {
+                    property.properties.iter().filter_map(Property::as_f64).next()
+                })
+        };
+
+        let up_axis = property("UpAxis").unwrap_or(1.0);
+        let up_sign = property("UpAxisSign").unwrap_or(1.0);
+        if up_axis != 1.0 {
+            bail!(
+                "the FBX's up axis is {up_axis}, only Y-up files (what Blender and \
+                 Maya export) are converted"
+            );
+        }
+        if up_sign < 0.0 {
+            bail!("the FBX's up axis sign is {up_sign}");
+        }
+
+        Ok(Self {
+            scale: property("UnitScaleFactor").unwrap_or(1.0) / 100.0,
+            // (x, y, z) -> (x, -z, y), the inverse of the Blender exporter's
+            // Z-up to Y-up rotation.
+            axis: [(0, 1.0), (2, -1.0), (1, 1.0)],
+        })
+    }
+
+    /// Converts a position: the axis change and the unit scale.
+    fn point(&self, v: [f64; 3]) -> [f64; 3] {
+        self.direction([v[0] * self.scale, v[1] * self.scale, v[2] * self.scale])
+    }
+
+    /// Converts a direction (a normal): the axis change only.
+    fn direction(&self, v: [f64; 3]) -> [f64; 3] {
+        let mut out = [0.0; 3];
+        for (engine, (fbx, sign)) in self.axis.iter().enumerate() {
+            out[engine] = sign * v[*fbx];
+        }
+        out
+    }
+}
+
+fn matrix_from(model: &FbxNode, space: &Space) -> [f32; 16] {
     let mut translation = [0.0f64; 3];
     let mut rotation = [0.0f64; 3];
     let mut scaling = [1.0f64; 3];
@@ -330,25 +393,34 @@ fn matrix_from(model: &FbxNode) -> [f32; 16] {
         [cy * sz, cx * cz + sx * sy * sz, -cz * sx + cx * sy * sz],
         [-sy, cy * sx, cx * cy],
     ];
-    let scale = [scaling[0], scaling[1], scaling[2]];
+
+    // The local matrix is `rotation * scaling` with the translation in the
+    // last column, and the BSI stores it column-major.
     let mut matrix = [0.0f32; 16];
-    for row in 0..3 {
-        for column in 0..3 {
-            matrix[row * 4 + column] = (rotation[row][column] * scale[column]) as f32;
+    for (column, (fbx_column, column_sign)) in space.axis.iter().enumerate() {
+        for (row, (fbx_row, row_sign)) in space.axis.iter().enumerate() {
+            matrix[column * 4 + row] = (rotation[*fbx_row][*fbx_column]
+                * scaling[*fbx_column]
+                * row_sign
+                * column_sign) as f32;
         }
-        matrix[row * 4 + 3] = translation[row] as f32;
+        matrix[column * 4 + 3] = (translation[*fbx_column] * column_sign * space.scale) as f32;
     }
     matrix[15] = 1.0;
     matrix
 }
 
 /// Reads the geometry layers a mesh node carries.
-fn read_mesh(geometry: &FbxNode, name: String, local: [f32; 16]) -> Result<Mesh> {
+fn read_mesh(geometry: &FbxNode, name: String, local: [f32; 16], space: &Space) -> Result<Mesh> {
     let positions = geometry
         .child("Vertices")
         .and_then(|node| node.properties.first())
         .and_then(Property::as_f64_array)
         .ok_or_else(|| color_eyre::eyre::eyre!("the geometry has no vertices"))?;
+    let positions: Vec<f64> = positions
+        .chunks_exact(3)
+        .flat_map(|vertex| space.point([vertex[0], vertex[1], vertex[2]]))
+        .collect();
     let triangles = geometry
         .child("PolygonVertexIndex")
         .and_then(|node| node.properties.first())
@@ -375,13 +447,32 @@ fn read_mesh(geometry: &FbxNode, name: String, local: [f32; 16]) -> Result<Mesh>
         Some((values, index))
     };
 
+    // A normal is a direction: the axis change applies, the unit scale does
+    // not.
+    let normals = layer("LayerElementNormal", "Normals", "NormalsIndex").map(|(values, index)| {
+        let converted: Vec<f64> = values
+            .chunks_exact(3)
+            .flat_map(|normal| space.direction([normal[0], normal[1], normal[2]]))
+            .collect();
+        (converted, index)
+    });
+    // The BSI's V origin is the engine's, which is the one the Blender tools
+    // flip Blender's UVs into.
+    let uvs = layer("LayerElementUV", "UV", "UVIndex").map(|(values, index)| {
+        let flipped: Vec<f64> = values
+            .chunks_exact(2)
+            .flat_map(|uv| [uv[0], 1.0 - uv[1]])
+            .collect();
+        (flipped, index)
+    });
+
     Ok(Mesh {
         name,
         material: String::new(),
         positions,
         triangles,
-        normals: layer("LayerElementNormal", "Normals", "NormalsIndex"),
-        uvs: layer("LayerElementUV", "UV", "UVIndex"),
+        normals,
+        uvs,
         local,
     })
 }
@@ -495,6 +586,8 @@ fn main() -> Result<()> {
         })
     };
 
+    let space = Space::from_fbx(&nodes)?;
+
     let mut meshes = Vec::new();
     for geometry in objects.children_named("Geometry") {
         let Some(Property::I64(geometry_id)) = geometry.properties.first() else {
@@ -535,7 +628,7 @@ fn main() -> Result<()> {
                 })
                 .unwrap_or_else(|| model_name.clone())
         });
-        let mut mesh = read_mesh(geometry, model_name, matrix_from(model))?;
+        let mut mesh = read_mesh(geometry, model_name, matrix_from(model, &space), &space)?;
         mesh.material = name;
         meshes.push(mesh);
     }
@@ -575,7 +668,6 @@ fn main() -> Result<()> {
                 &mesh.triangles,
             ));
         }
-        lists.push(mesh.triangles.clone()); // COLOR, per vertex
 
         out_text.push_str("\t\t\tstreams = [\n");
         for list in &lists {
@@ -634,8 +726,6 @@ fn main() -> Result<()> {
         if let Some((data, _)) = &mesh.uvs {
             write_stream("TEXCOORD", "CT_FLOAT2", 8, 2, data);
         }
-        let white: Vec<f64> = (0..vertices).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
-        write_stream("COLOR", "CT_FLOAT4", 16, 4, &white);
 
         out_text.push_str("\t\tstreams = [\n");
         // A separator between the streams, and none before the closing

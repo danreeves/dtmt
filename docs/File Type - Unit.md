@@ -46,6 +46,11 @@ way Darktide stores them:
 `TANGENT`/`BINORMAL` streams are skipped: the compiled Darktide vertex
 declaration has no such component and shipped units do not carry them either.
 
+The BSI's space is Blender's - Z-up, meters, `local` matrices in column order -
+because the Blender tools export Blender's objects unchanged; `unit.rs` reads
+and writes the columns the same way. UVs are stored with the V axis flipped
+against Blender's, which is what the Blender tools do.
+
 The BSI indexes each attribute independently - `indices.streams[i]` indexes
 `streams[i]`'s own vertex array - while the compiled geometry uses one vertex per
 unique attribute tuple and a single index list. When a BSI has several index
@@ -126,7 +131,8 @@ comes over to Darktide in four steps:
 1. Convert the mesh: the SDK example `fbx_bsi`
    (`cargo run -p sdk --example fbx_bsi -- <mesh>.fbx <name>.bsi`) writes the
    geometry the unit compiler reads. Blender's binary FBX exports (7400) are
-   read directly.
+   read directly; they are Y-up and in centimeters, which the converter turns
+   into the BSI's Z-up meters.
 2. Convert the textures to DDS and write a `.texture` SJSON next to each one.
    DTMT stores an uncompressed DDS as it is when the `.texture` does not ask for
    streamed mipmaps, and it also accepts block-compressed DDS, so any converter
@@ -154,10 +160,13 @@ the worked example.
 - `lib/sdk/examples/compile_unit.rs`: compile one `.unit`/`.bsi` pair into a
   payload file, for testing the compiler outside a mod build.
 - `lib/sdk/examples/fbx_bsi.rs`: convert a binary FBX (7400) into a `.bsi` the
-  compiler accepts - one geometry per mesh, `POSITION`/`NORMAL`/`TEXCOORD`/
-  `COLOR` streams (per-corner normals and UVs are expanded to one vertex per
-  corner), the FBX layer's material name and a node with the mesh's world
-  matrix. Usage: `fbx_bsi <file.fbx> [out.bsi] [--material <name>] [--dump]`.
+  compiler accepts - one geometry per mesh, `POSITION`/`NORMAL`/`TEXCOORD`
+  streams (normals and UVs stay per-corner; the compiler gathers them into one
+  vertex per corner), the FBX layer's material name and a node with the mesh's
+  world matrix. The FBX's Y-up centimeter space becomes the BSI's Z-up meters
+  and the local matrix is written column-major, so the file matches what the
+  Blender tools export. Usage: `fbx_bsi <file.fbx> [out.bsi] [--material
+  <name>] [--dump]`.
 - `lib/sdk/examples/decompile_unit.rs`: decompile a compiled payload into a
   `.unit`/`.bsi` pair (static units only; unsupported payloads fail with a
   reason).
