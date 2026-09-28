@@ -251,16 +251,17 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    bindings are real): its material parents to `#3F08AC44`, one of the six
    variant-rich families, so a carried `3F08AC44` base material with the cube's
    `bca`/`nm`/`orm` channels puts the shipped variants on a visible object; with
-   the shipped tree the cube renders in the hub. Rewriting the tree's results
-   crashed the engine with an access violation in the pipeline path (error
-   context `shader #ID[7bc888ae]`, `resource_tag` the cube): with every result
-   +1 (1/6/8) the crash is a second after the spawn, with only the first result
-   set to 5 it is about a minute later. So the result is a **live selector used
-   when the material is drawn**, its valid value for that record is 0, and
-   nothing validates it - the shipped fallbacks 5/7 are simply never taken in
-   the shipped tree. Which index space the value selects (a variant, a program
-   pair, an interface) is the remaining question; the crash gives no bounds
-   message.
+   the shipped tree the cube renders in the Mourningstar hub (spawned with the
+   mod's F6 handler in `StateGameplay`). Rewriting the tree's results crashes
+   the engine with an access violation in the pipeline path (error context
+   `shader #ID[7bc888ae]`, `resource_tag` the cube), in every variant of the
+   patch: every result +1 (1/6/8), only the default context's record set to 5,
+   only the shadow_caster record set to 5, or both set to 5. So the result is a
+   **live selector used when the material is drawn**, `0` is the only valid
+   value for this material in both contexts, and nothing validates it - the
+   shipped fallbacks 5/7 are simply never taken in the shipped tree. Which index
+   space the value selects (an interface id, a variant, a program pair) is the
+   remaining question; the crash gives no bounds message.
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`
