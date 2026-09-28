@@ -668,6 +668,11 @@ fn main() -> Result<()> {
                 &mesh.triangles,
             ));
         }
+        // COLOR is per vertex, so it reuses the position list. The stream is
+        // always written: the standard material's shader declares the channel,
+        // and a unit that does not provide it fails to build its pipeline
+        // state (the game crashes with E_INVALIDARG on the shader).
+        lists.push(mesh.triangles.clone());
 
         out_text.push_str("\t\t\tstreams = [\n");
         for list in &lists {
@@ -726,6 +731,8 @@ fn main() -> Result<()> {
         if let Some((data, _)) = &mesh.uvs {
             write_stream("TEXCOORD", "CT_FLOAT2", 8, 2, data);
         }
+        let white: Vec<f64> = (0..vertices).flat_map(|_| [1.0, 1.0, 1.0, 1.0]).collect();
+        write_stream("COLOR", "CT_FLOAT4", 16, 4, &white);
 
         out_text.push_str("\t\tstreams = [\n");
         // A separator between the streams, and none before the closing
