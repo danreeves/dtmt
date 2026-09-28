@@ -123,8 +123,10 @@ mods whose props are meshes plus `.unit`/`.material`/`.texture` sources
 (`example_mods/endurance_badges/units/props/endurance_badges`). A static mesh
 comes over to Darktide in four steps:
 
-1. Convert the mesh: `fbx_bsi <mesh>.fbx <name>.bsi` writes the geometry the
-   unit compiler reads. Blender's binary FBX exports (7400) are read directly.
+1. Convert the mesh: the SDK example `fbx_bsi`
+   (`cargo run -p sdk --example fbx_bsi -- <mesh>.fbx <name>.bsi`) writes the
+   geometry the unit compiler reads. Blender's binary FBX exports (7400) are
+   read directly.
 2. Convert the textures to DDS and write a `.texture` SJSON next to each one.
    DTMT stores an uncompressed DDS as it is when the `.texture` does not ask for
    streamed mipmaps, and it also accepts block-compressed DDS, so any converter
