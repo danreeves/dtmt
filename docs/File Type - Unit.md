@@ -116,15 +116,46 @@ other resource. Unit material slots are murmur32 of the slot name
 (`m_cube` -> `44F4A503`); the slot must appear both in the geometry's material
 list and in the unit's `materials` map.
 
+## Converting a mesh from the VT2 SDK
+
+The VT2 SDK (`<steam library>/steamapps/common/Vermintide 2 SDK`) ships example
+mods whose props are meshes plus `.unit`/`.material`/`.texture` sources
+(`example_mods/endurance_badges/units/props/endurance_badges`). A static mesh
+comes over to Darktide in four steps:
+
+1. Convert the mesh: `fbx_bsi <mesh>.fbx <name>.bsi` writes the geometry the
+   unit compiler reads. Blender's binary FBX exports (7400) are read directly.
+2. Convert the textures to DDS and write a `.texture` SJSON next to each one.
+   DTMT stores an uncompressed DDS as it is when the `.texture` does not ask for
+   streamed mipmaps, and it also accepts block-compressed DDS, so any converter
+   works (ImageMagick: `magick convert color.png color.dds`). Mark colour maps
+   `srgb = true`; see `File Type - Texture` for the flags and the category.
+3. Write `<name>.unit`: a `materials` map from the BSI's material names to
+   material paths, and a `renderables` entry per BSI node.
+4. Write `<name>.material`: the game material it inherits from
+   (`parent_material`, a `#HEX` hash) plus the texture slots that parent
+   samples (`bca`, `nm` and `orm` in the shipped materials); see
+   `File Type - Material`.
+
+List the unit, the material and every texture in the package, then build. The
+snoopymod's pumpkin (`units/mods/snoopymod/pumpkin`, from a V2 prop's FBX) is
+the worked example.
+
 ## Tooling
 
-- `lib/sdk/src/filetype/unit.rs`: SJSON/BSI parsing (with a normalizer that
-  accepts both the SDK's space-separated values and the parser's
-  comma/newline-separated form), per-stream index unification, packing and
-  payload writing. Unit tests cover the cube case, the normalizer and the
-  gathering of independently indexed streams.
+- `lib/sdk/src/filetype/unit.rs`: SJSON/BSI parsing, per-stream index
+  unification, packing and payload writing. The SJSON parser reads the dialect
+  as it stands - values may be packed onto one line without a separator, and a
+  list or table may end with a trailing separator - so no text is rewritten
+  before the parse. Unit tests cover the cube case and the gathering of
+  independently indexed streams.
 - `lib/sdk/examples/compile_unit.rs`: compile one `.unit`/`.bsi` pair into a
   payload file, for testing the compiler outside a mod build.
+- `lib/sdk/examples/fbx_bsi.rs`: convert a binary FBX (7400) into a `.bsi` the
+  compiler accepts - one geometry per mesh, `POSITION`/`NORMAL`/`TEXCOORD`/
+  `COLOR` streams (per-corner normals and UVs are expanded to one vertex per
+  corner), the FBX layer's material name and a node with the mesh's world
+  matrix. Usage: `fbx_bsi <file.fbx> [out.bsi] [--material <name>] [--dump]`.
 - `lib/sdk/examples/decompile_unit.rs`: decompile a compiled payload into a
   `.unit`/`.bsi` pair (static units only; unsupported payloads fail with a
   reason).
@@ -133,8 +164,10 @@ list and in the unit's `materials` map.
   tripping at identical size and 99 unsupported ones skipped with a reason.
 - `crates/dtmt/src/cmd/build.rs`: package entries of type `unit` are compiled
   from the `.unit` file and the sibling `.bsi`.
-- The snoopymod (`units/mods/snoopymod/cube.unit|bsi`) is the test case; in game
-  the Lua hotkey F6 spawns `units/mods/snoopymod/cube` near the player.
+- The snoopymod (`units/mods/snoopymod/cube.unit|bsi` and
+  `pumpkin.unit|bsi`) is the test case; in game the Lua hotkeys F6 and F8 spawn
+  `units/mods/snoopymod/cube` and `units/mods/snoopymod/pumpkin` near the
+  player.
 
 ## Open questions
 

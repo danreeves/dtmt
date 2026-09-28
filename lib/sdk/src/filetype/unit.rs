@@ -248,96 +248,6 @@ fn decode_bsi(bytes: &[u8]) -> Result<String> {
     }
 }
 
-/// The SJSON writer requires value separators (a comma or a line break) between
-/// elements, while the game's own export tools also put several space-separated
-/// values on one line. Insert line breaks where they are missing so both
-/// dialects parse.
-fn normalize_sjson(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / 8);
-    let mut prev_value_end = false;
-    let mut pending_space = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                if prev_value_end && pending_space {
-                    out.push('\n');
-                }
-                out.push(c);
-                let mut escaped = false;
-                for s in chars.by_ref() {
-                    out.push(s);
-                    if escaped {
-                        escaped = false;
-                    } else if s == '\\' {
-                        escaped = true;
-                    } else if s == '"' {
-                        break;
-                    }
-                }
-                prev_value_end = true;
-                pending_space = false;
-            }
-            '/' if chars.peek() == Some(&'/') => {
-                // Line comment: copy it and let the newline reset the state.
-                out.push(c);
-                for s in chars.by_ref() {
-                    out.push(s);
-                    if s == '\n' {
-                        break;
-                    }
-                }
-                prev_value_end = false;
-                pending_space = false;
-            }
-            '\n' => {
-                out.push('\n');
-                prev_value_end = false;
-                pending_space = false;
-            }
-            ' ' | '\t' | '\r' => {
-                // Drop the whitespace itself; a separator is inserted when the
-                // next token needs one. Leaving it in would put a space between
-                // two values on separate lines (`0  \n1`), which the parser's
-                // single-character horizontal whitespace rule rejects.
-                pending_space = true;
-            }
-            ',' => {
-                out.push(',');
-                prev_value_end = false;
-                pending_space = false;
-            }
-            '=' => {
-                out.push('=');
-                prev_value_end = false;
-                pending_space = false;
-            }
-            ']' | '}' => {
-                out.push(c);
-                prev_value_end = true;
-                pending_space = false;
-            }
-            '[' | '{' => {
-                if prev_value_end && pending_space {
-                    out.push('\n');
-                }
-                out.push(c);
-                prev_value_end = false;
-                pending_space = false;
-            }
-            _ => {
-                if prev_value_end && pending_space {
-                    out.push('\n');
-                }
-                out.push(c);
-                prev_value_end = true;
-                pending_space = false;
-            }
-        }
-    }
-    out
-}
-
 /// Convert an `f32` to an IEEE 754 half float.
 fn f16(value: f32) -> u16 {
     let bits = value.to_bits();
@@ -1804,10 +1714,9 @@ fn decode_blob(text: &Option<String>, default: &[u8]) -> Result<Vec<u8>> {
 
 /// Compile a `.unit`/`.bsi` pair into a bundle file.
 pub fn compile(name: IdString64, unit_sjson: &str, bsi: &[u8]) -> Result<BundleFile> {
-    let unit_text = normalize_sjson(unit_sjson);
     let def: UnitDef =
-        serde_sjson::from_str(&unit_text).wrap_err("Failed to deserialize the unit SJSON")?;
-    let bsi_text = normalize_sjson(&decode_bsi(bsi)?);
+        serde_sjson::from_str(unit_sjson).wrap_err("Failed to deserialize the unit SJSON")?;
+    let bsi_text = decode_bsi(bsi)?;
     let bsi: BsiDef = serde_sjson::from_str(&bsi_text).wrap_err("Failed to deserialize the BSI")?;
 
     let payload = compile_payload(&def, &bsi)?;
@@ -2662,19 +2571,17 @@ renderables = {
         ));
     }
 
+    // The dialect packs several values onto one line - `data = [ 0 0 0  1 0 0
+    // ... ]` - and may leave a trailing separator before a closing bracket.
+    // The compiler reads the text as it stands; nothing rewrites it first.
     #[test]
-    fn normalizer_accepts_space_separated_values() {
-        #[derive(Deserialize)]
-        struct Test {
-            a: Vec<u32>,
-            b: BTreeMap<String, u32>,
-        }
+    fn reads_packed_values_and_a_trailing_separator() {
+        let bsi = BSI.replace("            }\n        ]", "            },\n        ]");
+        assert!(bsi.contains("},\n        ]"), "the fixture still has a comma");
 
-        let text = "a = [ 1 2 3 ]\nb = { c = 4 d = 5 }\n";
-        let parsed: Test = serde_sjson::from_str(&normalize_sjson(text)).unwrap();
-        assert_eq!(parsed.a, vec![1, 2, 3]);
-        assert_eq!(parsed.b["c"], 4);
-        assert_eq!(parsed.b["d"], 5);
+        let name = resource_name("units/mods/test/packed");
+        let file = compile(name, UNIT, bsi.as_bytes()).unwrap();
+        assert_eq!(file.file_type(), BundleFileType::Unit);
     }
 
     #[test]
