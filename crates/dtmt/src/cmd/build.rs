@@ -288,7 +288,7 @@ async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<Shad
         let Some(entry) = entry_for(profile) else {
             continue;
         };
-        let source = node.job_source(job, stage, &libraries);
+        let source = node.job_source(job, stage, &libraries, None);
         let profile_arg = profile.to_string();
         let entry_arg = entry.to_string();
         let container =
