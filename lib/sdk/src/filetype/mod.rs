@@ -10,6 +10,7 @@ pub mod shader_compile;
 pub mod shader_decl;
 pub mod shader_node;
 pub mod shader_engine_data;
+pub mod shader_graph;
 pub mod shader_source;
 pub mod strings;
 pub mod texture;

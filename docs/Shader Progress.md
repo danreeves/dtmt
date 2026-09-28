@@ -369,7 +369,7 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    param/data/write macros. What is *not* generated is the graph's own
    evaluation (`GRAPH_EVALUATE_VERTEX`/`GRAPH_EVALUATE_PIXEL`): that code is the
    *material's* node graph, which a shader declaration does not carry, so the
-   macros are emitted empty. [verified by compiling the Badgers output nodes
+   macros are emitted empty. [verified by compiling the Vermintide 2 SDK's output
    with `shader43 --compile`: 1438 programs across seven declarations -
    `anisotropic_base` 696, `billboard_base` 516, `particle_gbuffer_base` 144,
    `unlit_base` 18, `terrain_base` 6, `skydome_base` 4, `decal_base` 2, plus 52
@@ -378,6 +378,31 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    (assigning to a `const` parameter), or on a declaration's own
    `#error "Probes are not supported"`. A failed compile leaves its assembled
    source as `<name>.failed.hlsl` beside the output.]
+
+   **The material graph is read and resolved** (`filetype::shader_graph`, plus
+   `shader43 --graph --core <folder>`): a material's `shader = { nodes,
+   connections }` block, the node definitions under `shader_nodes/` (inputs by
+   connector uuid with their names/types/domains, the output type, the option
+   uuids, the `code`, the `exports`), and the wiring between them. One of the
+   material's nodes *is* the output node - the shader declaration - so the
+   connections into its connectors are the graph's outputs, and its connector
+   uuids are the declaration's `inputs` uuids. The resolution reports, per node,
+   what feeds each input (another node, an instance value, a sampler, or
+   nothing), and the graph's outputs by shader-input name. [verified on the
+   Vermintide 2 SDK's `standard.material`: 28 nodes, 32 connections, the six
+   outputs resolving to `base_color`, `metallic`, `normal`, `emissive`,
+   `roughness` and `ambient_occlusion`, the switches' options reading back as
+   `OP_EQUAL`, and the connector/option uuids matching across the material's
+   lower-case and the definitions' upper-case spellings.] What remains is
+   generating the HLSL from the resolution: the node code with its inputs bound,
+   the option names as defines, `RESULT(x)` writing the node's local, and the
+   outputs into `results.<name>` - plus the type inference the definitions'
+   `typeof` fields describe.
+
+   Reading the graph also found a real bug in the vendored `serde_sjson`: its
+   integer alternative matched the leading digits of a float, so the SDK's
+   `value = [0.0 0.0 0.0]` parsed as six numbers. The integer parser now refuses
+   a `.`/`e` continuation.
 6. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
    any deploy. The compile side is in place (`shader_compile::compile`), the

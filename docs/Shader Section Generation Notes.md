@@ -112,11 +112,11 @@ recomputable (that is how the splice flow already relocates them).
   from resources the engine owns (textures/samplers through the bindless
   arrays).
 
-## Declarative target format (from the Stingray renderer mod)
+## Declarative target format (from the Vermintide 2 SDK)
 
-`C:\dev\vmb\mods\Badgers\core\stingray_renderer` implements the Stingray renderer
-and shows the shape a from-scratch declaration has to take. A `.shader_node`
-declares a whole shader:
+`C:\Program Files (x86)\Steam\steamapps\common\Vermintide 2 SDK\core\stingray_renderer`
+implements the Stingray renderer and shows the shape a from-scratch declaration
+has to take. A `.shader_node` declares a whole shader:
 
 - `inputs` - the material interface: `name`, `type` (`scalar`, `vector3`, ...),
   `domain` (`vertex`/`pixel`) and the **permutation flag that enables the input**
@@ -173,8 +173,8 @@ group headers, and the block header blob.
 `filetype::shader_node` reads a `.shader_node` into the normalized view the emitters
 consume. It takes `inputs`, `channels`, `permutation_sets` and `shader_contexts`,
 and ignores the rest, so a declaration out ahead of the reader still parses. All
-fifteen real declarations in the Badgers mod read, and every condition in them
-parses.
+fifteen real declarations in the Vermintide 2 SDK read, and every condition in
+them parses.
 
 Three things the first reading got wrong, each found by running it against those
 files:
@@ -188,12 +188,16 @@ files:
   `stages` - in both a permutation choice and a pass.
 
 The toolchain's dialect is not SJSON, so `serde_sjson` is vendored
-(`lib/serde_sjson`, a submodule of the fork) with four relaxations: `key: value`
+(`lib/serde_sjson`, a submodule of the fork) with five relaxations: `key: value`
 separates as well as `key = value`, entries need not be on their own lines, a
 key may be a quoted string, and a quoted string may run over several lines. The
 third was a genuine upstream bug - `deserialize_identifier` took bare words only,
-so any derived struct rejected `"macros":`. Every change only accepts more than
-before, so the strict material files parse as they did.
+so any derived struct rejected `"macros":`. The fifth is a number bug the
+material graph found: the integer alternative matched the leading digits of a
+float, so the SDK's whitespace-separated `value = [0.0 0.0 0.0]` parsed as six
+numbers; the integer parser now refuses a `.`/`e` continuation. Every change only
+accepts more than before (or fixes a mis-read), so the strict material files
+parse as they did.
 
 ### Groups are per context, not per declaration
 
@@ -744,8 +748,8 @@ The declarations available on this machine are therefore *not* Darktide's:
 
 - `C:\dev\core_diff\shader_nodes` is a **Stingray library source drop** (it is a
   git checkout, and its files are the classic Stingray node library).
-- `C:\dev\vmb\...\stingray_renderer\output_nodes` is a mod's own
-  Stingray-renderer declarations.
+- `C:\Program Files (x86)\Steam\steamapps\common\Vermintide 2 SDK\core\stingray_renderer\output_nodes`
+  is the Vermintide 2 SDK's own Stingray-renderer declarations.
 
 Both are the right dialect and the wrong declarations. Context names pair by identity
 (`default` = `F2760503`, `shadow_caster` = `3100C3D2`), but that is a shared

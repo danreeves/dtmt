@@ -8,4 +8,4 @@
 [submodule "lib/serde_sjson"]
 	path = lib/serde_sjson
 	url = https://github.com/danreeves/serde_sjson
-	branch = master
+	branch = dialect

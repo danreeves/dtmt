@@ -68,6 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut against: Option<PathBuf> = None;
     let mut group_data_mode = false;
     let mut group_conditions_mode = false;
+    let mut graph_mode = false;
+    let mut core_dir: Option<PathBuf> = None;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -157,6 +159,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--group-conditions" => {
                 group_conditions_mode = true;
+            }
+            "--graph" => {
+                graph_mode = true;
+            }
+            "--core" => {
+                i += 1;
+                core_dir = Some(PathBuf::from(
+                    args.get(i).expect("--core needs a directory"),
+                ));
             }
             "--compile" => {
                 i += 1;
@@ -401,6 +412,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if group_conditions_mode {
         for path in &files {
             if let Err(err) = group_conditions(path) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if graph_mode {
+        for path in &files {
+            if let Err(err) = graph(path, core_dir.as_deref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -2122,6 +2142,86 @@ fn group_conditions(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     );
     if !identical {
         return Err("the condition-header rebuild changed bytes".into());
+    }
+    Ok(())
+}
+
+/// Reads a graph material's `shader` block and resolves its wiring against the
+/// node definitions under the core folder: every node's inputs (fed by a node,
+/// an instance value, a sampler, or nothing) and the graph's outputs - the
+/// output node's connectors, named by the shader declaration's input table.
+fn graph(path: &Path, core: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::BTreeMap;
+
+    use sdk::filetype::shader_graph::{Graph, NodeDef, Source};
+
+    let text = fs::read_to_string(path)?;
+    let graph = Graph::from_material(&text)?.ok_or("the material has no shader graph")?;
+    let core = core.ok_or("--graph needs --core <the folder holding shader_nodes/>")?;
+
+    // Every node's definition, and the output node's declaration (which is the
+    // shader itself, so its inputs table names the graph's outputs).
+    let mut defs = BTreeMap::new();
+    for node in &graph.nodes {
+        let relative = node.kind.strip_prefix("core/").unwrap_or(&node.kind);
+        let def_path = core.join(format!("{relative}.shader_node"));
+        let def = NodeDef::from_text(&fs::read_to_string(&def_path)?)
+            .map_err(|err| format!("{}: {err}", def_path.display()))?;
+        defs.insert(node.kind.clone(), def);
+    }
+    let output = graph.output_node().ok_or("the graph has no output node")?;
+    let shader_inputs: BTreeMap<String, String> = defs
+        .get(&output.kind)
+        .map(|def| {
+            def.inputs
+                .iter()
+                .map(|(uuid, input)| (uuid.clone(), input.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let resolution = graph.resolve(&defs, &shader_inputs)?;
+
+    println!("=== {} ===", path.display());
+    println!(
+        "  {} nodes, {} connections, output node '{}'",
+        graph.nodes.len(),
+        graph.connections.len(),
+        output.title
+    );
+    for node in &resolution.nodes {
+        let options = if node.options.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", node.options.join(" "))
+        };
+        println!(
+            "    {}'{}' '{}'{}",
+            if node.output { "output " } else { "" },
+            node.kind,
+            node.title,
+            options
+        );
+        for (name, source) in &node.inputs {
+            let described = match source {
+                Source::Node(id) => format!("<- {id}"),
+                Source::Value(value) => format!(
+                    "= {}",
+                    value.hlsl(false).unwrap_or_else(|| "?".to_string())
+                ),
+                Source::Sampler(slot) => format!("~ {slot}"),
+                Source::Unbound => "-".to_string(),
+            };
+            println!("        {name} {described}");
+        }
+    }
+    println!("  outputs:");
+    for (name, source) in &resolution.outputs {
+        let described = match source {
+            Source::Node(id) => format!("<- {id}"),
+            other => format!("{other:?}"),
+        };
+        println!("    {name} {described}");
     }
     Ok(())
 }
