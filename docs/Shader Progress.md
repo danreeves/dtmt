@@ -260,8 +260,18 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    **live selector used when the material is drawn**, `0` is the only valid
    value for this material in both contexts, and nothing validates it - the
    shipped fallbacks 5/7 are simply never taken in the shipped tree. Which index
-   space the value selects (an interface id, a variant, a program pair) is the
-   remaining question; the crash gives no bounds message.
+   **The result's range is the branch's test count** (crafted-record probe, same
+   cube): a crafted record with **two** hashes (the known-true `7F9E89FD`
+   twice) and a branch testing both renders with result `0` *and* with result
+   `1`, no crash; the shipped **one**-hash record crashes with result `1`. So
+   the engine indexes with the result into the branch's tests - the compiler
+   always emits `tests.len() - 1` (the last, most specific condition) - and
+   picks the condition hash at that index to select the variant. Both crafted
+   results render the same because both tests are the same hash. Next: a branch
+   with two *different* true conditions and result 0 vs 1, to watch the picked
+   condition change the variant. `3F08AC44`'s condition hash `7F9E89FD` is not
+   the material's context value or any obvious option name (checked: context
+   value, `bca`/`nm`/`orm`, `HAS_*`).
 2. **The group walk and per-group tables are implemented; the byte-packed
    header's grammar is the remaining decode.** `GroupData::group_starts` walks
    the groups by the contexts' query ids, and `group_bounds` / `object_tables`
