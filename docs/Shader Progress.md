@@ -350,26 +350,29 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    verified list). The validator library is not optional: it is what signs the
    DXIL, and D3D12 refuses an unsigned container. Next, if wanted: ship both
    libraries beside the tool so no SDK install is needed.
-5. **Graph code generation** for the real game declarations. The Stingray
-   toolchain expands the declaration's channels and graph nodes into
-   `GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`, `GRAPH_MATERIAL_EXPORTS`,
-   `GraphVertexParams`, `GraphVertexResults`; without them every output-node
-   block fails to compile (only these names are left in `decal_base`). The
-   channel table is read, so this is code generation from data that is already
-   parsed, not a decode. Mod-authored blocks that avoid the graph macros compile
-   today.
+5. **Graph code generation** - **done** for the scaffolding and the evaluation
+   (see the verified list). The Stingray toolchain expands the declaration's
+   channels and graph nodes into `GRAPH_VERTEX_INPUT`, `GRAPH_PIXEL_INPUT`,
+   `GRAPH_MATERIAL_EXPORTS`, `GraphVertexParams`, `GraphVertexResults` and the
+   `GRAPH_EVALUATE_*` bodies; without them every output-node block fails to
+   compile. What is left:
+   - `dtmt build` wiring: a mod that authors a shader ships its declaration and
+     its node definitions - the authoring path the format decision describes -
+     while the build side only compiles a declaration today.
+   - Type coercion where a node's `auto` inputs disagree, an `if` mixing
+     `float3` and `float4`; what the toolchain does there is unmeasured.
+   - The spurious permutations of undecidable branches (`render_setting(...)`),
+     which make a declaration's own `#error` fire on jobs no section ships.
 
    **The scaffolding is generated** (`ShaderNode::graph_scaffold`, emitted by
    `job_source` when a block or a library chunk mentions a graph name): the
    `GraphVertexParams`/`GraphPixelParams` structs from the declaration's
    channels (a vertex-domain channel is a param and an interpolator, a
-   pixel-only one a pixel param), the `Graph*Results` structs and
-   `GRAPH_MATERIAL_EXPORTS` from its `inputs`, the `GRAPH_*_INPUT` field lists
-   (interpolator indices de-duplicated against the declared semantics) and the
-   param/data/write macros. What is *not* generated is the graph's own
-   evaluation (`GRAPH_EVALUATE_VERTEX`/`GRAPH_EVALUATE_PIXEL`): that code is the
-   *material's* node graph, which a shader declaration does not carry, so the
-   macros are emitted empty. [verified by compiling the Vermintide 2 SDK's output
+   pixel-only one a pixel param), the `Graph*Results` structs per domain, the
+   `GRAPH_*_INPUT` field lists (interpolator indices de-duplicated against the
+   declared semantics) and the param/data/write macros. The graph's own
+   evaluation comes from the material, below: `GRAPH_EVALUATE_*` calls a
+   generated function per stage. [verified by compiling the Vermintide 2 SDK's output
    with `shader43 --compile`: 1438 programs across seven declarations -
    `anisotropic_base` 696, `billboard_base` 516, `particle_gbuffer_base` 144,
    `unlit_base` 18, `terrain_base` 6, `skydome_base` 4, `decal_base` 2, plus 52
@@ -388,16 +391,37 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    connections into its connectors are the graph's outputs, and its connector
    uuids are the declaration's `inputs` uuids. The resolution reports, per node,
    what feeds each input (another node, an instance value, a sampler, or
-   nothing), and the graph's outputs by shader-input name. [verified on the
-   Vermintide 2 SDK's `standard.material`: 28 nodes, 32 connections, the six
-   outputs resolving to `base_color`, `metallic`, `normal`, `emissive`,
+   nothing), and the graph's outputs by shader-input name and stage. [verified
+   on the Vermintide 2 SDK's `standard.material`: 28 nodes, 32 connections, the
+   six outputs resolving to `base_color`, `metallic`, `normal`, `emissive`,
    `roughness` and `ambient_occlusion`, the switches' options reading back as
    `OP_EQUAL`, and the connector/option uuids matching across the material's
-   lower-case and the definitions' upper-case spellings.] What remains is
-   generating the HLSL from the resolution: the node code with its inputs bound,
-   the option names as defines, `RESULT(x)` writing the node's local, and the
-   outputs into `results.<name>` - plus the type inference the definitions'
-   `typeof` fields describe.
+   lower-case and the definitions' upper-case spellings.]
+
+   **The evaluation is generated** (`Resolution::evaluate`, verified): each
+   stage's code is the node code with its inputs bound, `RESULT(x)` writing the
+   node's variable, `<input>_type` replaced by the resolved type, the instance's
+   options as `#define`s around the node, the definition's export names replaced
+   by the instance's, and imports read from the channel they name
+   (`output_channel`, or a mesh input's semantic, which the scaffold adds as a
+   channel). Types are inferred from the definitions: a declared name, `typeof`
+   within the node, `largestof`/`smallestof` among inputs, `auto` from the
+   source, the widest input as the fallback. The scaffold splits the results
+   structs by domain, emits the graph's `defines`, puts the graph's *exports*
+   into `GRAPH_MATERIAL_EXPORTS` (a graph material's variables are its exports;
+   the declaration's own inputs are the results or the libraries' engine
+   globals, so they are not repeated), declares the samplers, and emits the
+   evaluation as a function per stage that `GRAPH_EVALUATE_*` calls - the node
+   code carries preprocessor branches (`#if defined(OP_EQUAL)`) a macro body
+   could not. `shader43 --compile <dir> --core <core> <material> <libraries>`
+   compiles a material's graph. [SDK materials: `chroma_cube` 18/18 programs
+   compiled; `no_uvs` and `transparent` 54 compiled and 12 failed, all on the
+   declaration's own `#error "LOW_RES_ENABLED and MOTION_BLUR should not be
+   active simultaneously"` - a spurious permutation of an undecidable
+   `render_setting(...)` branch, which no shipped section has - so the failures
+   are not the generated code. `standard.material` fails only on its own `if`
+   nodes mixing `float3` and `float4`, which the node's own comment leaves to
+   the user.]
 
    Reading the graph also found a real bug in the vendored `serde_sjson`: its
    integer alternative matched the leading digits of a float, so the SDK's
@@ -473,9 +497,9 @@ The path is now complete up to the compiler:
   the binary lives only in the built bundle. Verified: snoopy-mod's compiled
   material data is byte-identical, with no section file in the tree.
 
-Next: graph code generation for the real output-node declarations (see open
-item 4), the in-game title test of the migrated mod, and then the multi-job
-mapping once the conditions decode lands.
+Next: the `dtmt build` wiring for a mod-authored graph (declaration + node
+definitions + material), then an in-game test of a fully generated shader, and
+the multi-job mapping once the conditions decode lands.
 
 ## Open decode details worth keeping
 

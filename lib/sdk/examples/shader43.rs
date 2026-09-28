@@ -252,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (declaration, libraries) = files
             .split_first()
             .ok_or("--compile needs a declaration and its libraries")?;
-        return compile(declaration, libraries, dir, against.as_deref());
+        return compile(declaration, libraries, dir, against.as_deref(), core_dir.as_deref());
     }
 
     if let Some(index) = tail_index {
@@ -1494,12 +1494,66 @@ fn compile(
     libraries: &[PathBuf],
     out_dir: &Path,
     against: Option<&Path>,
+    core: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use std::collections::BTreeMap;
+
     use sdk::filetype::shader_compile::{compile as dxc_compile, find_library};
+    use sdk::filetype::shader_graph::{Graph, NodeDef};
     use sdk::filetype::shader_node::{STAGES, entry_for, profile_for};
 
     let text = fs::read_to_string(declaration)?;
-    let node = ShaderNode::from_sjson(&text)?;
+
+    // A material with a shader graph carries the graph that its output node's
+    // declaration is compiled with: the declaration comes from the node
+    // definitions under `core`, and the evaluation is generated from the graph.
+    // A plain `.shader_node` is a declaration without a graph.
+    let (node, evaluation) = match Graph::from_material(&text)? {
+        Some(graph) => {
+            let core = core
+                .ok_or("compiling a material needs --core <the folder holding shader_nodes/>")?;
+            let mut defs = BTreeMap::new();
+            for graph_node in &graph.nodes {
+                let relative = graph_node
+                    .kind
+                    .strip_prefix("core/")
+                    .unwrap_or(&graph_node.kind);
+                let path = core.join(format!("{relative}.shader_node"));
+                let def = NodeDef::from_text(&fs::read_to_string(&path)?)
+                    .map_err(|err| format!("{}: {err}", path.display()))?;
+                defs.insert(graph_node.kind.clone(), def);
+            }
+            let output = graph.output_node().ok_or("the graph has no output node")?;
+            let shader_inputs: BTreeMap<String, String> = defs
+                .get(&output.kind)
+                .map(|def| {
+                    def.inputs
+                        .iter()
+                        .map(|(uuid, input)| (uuid.clone(), input.name.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let resolution = graph.resolve(&defs, &shader_inputs)?;
+            let evaluation = resolution.evaluate(&defs)?;
+            let relative = output
+                .kind
+                .strip_prefix("core/")
+                .unwrap_or(&output.kind);
+            let path = core.join(format!("{relative}.shader_node"));
+            println!(
+                "  graph: {} nodes, {} channels, {} samplers, {} defines -> \
+                 {} bytes of vertex and {} of pixel evaluation",
+                graph.nodes.len(),
+                evaluation.channels.len(),
+                evaluation.samplers.len(),
+                evaluation.defines.len(),
+                evaluation.vertex.len(),
+                evaluation.pixel.len()
+            );
+            (ShaderNode::from_sjson(&fs::read_to_string(&path)?)?, Some(evaluation))
+        }
+        None => (ShaderNode::from_sjson(&text)?, None),
+    };
 
     let mut sources = Vec::new();
     for path in libraries {
@@ -1543,7 +1597,7 @@ fn compile(
             let Some(entry) = entry_for(profile) else {
                 continue;
             };
-            let source = node.job_source(job, stage, &sources);
+            let source = node.job_source(job, stage, &sources, evaluation.as_ref());
             match dxc_compile(&source, profile, entry) {
                 Ok(container) => {
                     let name = format!(
@@ -2216,12 +2270,12 @@ fn graph(path: &Path, core: Option<&Path>) -> Result<(), Box<dyn std::error::Err
         }
     }
     println!("  outputs:");
-    for (name, source) in &resolution.outputs {
-        let described = match source {
+    for output in &resolution.outputs {
+        let described = match &output.source {
             Source::Node(id) => format!("<- {id}"),
             other => format!("{other:?}"),
         };
-        println!("    {name} {described}");
+        println!("    {} [{:?}] {described}", output.name, output.domain);
     }
     Ok(())
 }

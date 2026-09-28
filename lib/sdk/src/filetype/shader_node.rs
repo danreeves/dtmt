@@ -28,6 +28,7 @@ use color_eyre::eyre::{Context as _, Result, bail};
 use serde::Deserialize;
 
 use super::condition::{Condition, Defines};
+use super::shader_graph::Evaluation;
 use super::shader_source::{CodeParts, ShaderSource, find_chunk, include_chunk};
 use super::shader_decl::{
     ChannelDef, Choice, CompileWith, Define, DefineTable, Domain, Interface, Pass, PassEntry,
@@ -483,7 +484,13 @@ impl ShaderNode {
     /// first, and a name is only taken once, so a diamond does not duplicate
     /// code. The metadata entry may be keyed by the bare name where the pass
     /// wrote a `path#chunk`, so both are tried.
-    pub fn job_source(&self, job: &CompileJob, stage: &str, libraries: &[ShaderSource]) -> String {
+    pub fn job_source(
+        &self,
+        job: &CompileJob,
+        stage: &str,
+        libraries: &[ShaderSource],
+        evaluation: Option<&Evaluation>,
+    ) -> String {
         let mut macros = engine_defines(stage);
         macros.extend(job.macros_for(stage));
         let mut out = defines_for(&macros);
@@ -491,13 +498,19 @@ impl ShaderNode {
         // An output-node block's HLSL uses the graph names the toolchain expands
         // (`GRAPH_VERTEX_INPUT` and friends). When the source mentions one, the
         // scaffolding goes in before the block's own code: the macros have to be
-        // defined before the structs that use them.
-        if self.uses_graph(&job.code_block, libraries) {
-            out.push_str(&self.graph_scaffold());
+        // defined before the structs that use them. The graph's own evaluation
+        // goes after the block, where the libraries' types and macros are.
+        let uses_graph = self.uses_graph(&job.code_block, libraries);
+        if uses_graph {
+            out.push_str(&self.graph_scaffold(evaluation));
         }
 
         let mut seen = Vec::new();
         self.write_block(&job.code_block, libraries, &mut seen, &mut out);
+
+        if uses_graph {
+            out.push_str(&self.graph_evaluation_tail(evaluation));
+        }
         out
     }
 
@@ -1209,20 +1222,7 @@ impl ShaderNode {
     /// declaration does not carry - so they are emitted empty, and a shader
     /// compiled from a declaration alone declares the graph but does not evaluate
     /// it.
-    pub fn graph_scaffold(&self) -> String {
-        // A channel can be declared under several conditions (the `channels`
-        // table nests), so the same name can appear more than once; the fields
-        // are keyed by name, first occurrence first.
-        let mut channels: Vec<&ChannelDef> = Vec::new();
-        for channel in self
-            .channels
-            .iter()
-            .filter(|channel| channel.kind != ValueType::Texture2D)
-        {
-            if !channels.iter().any(|seen| seen.name == channel.name) {
-                channels.push(channel);
-            }
-        }
+    pub fn graph_scaffold(&self, evaluation: Option<&Evaluation>) -> String {
         let hlsl = |kind: ValueType| match kind {
             ValueType::Float => "float",
             ValueType::Float2 => "float2",
@@ -1231,26 +1231,77 @@ impl ShaderNode {
             ValueType::Float4x4 => "float4x4",
             ValueType::Texture2D => "Texture2D",
         };
-        // The normalized domain folds a channel's `domains` list: a channel the
-        // vertex stage writes (and the pixel stage interpolates) is `Vertex`, a
-        // pixel-stage-only one is `Pixel`.
-        let written_by_vertex = |channel: &ChannelDef| channel.domain == Domain::Vertex;
+        // A channel can be declared under several conditions (the `channels`
+        // table nests), so the same name can appear more than once; the fields
+        // are keyed by name, first occurrence first. The graph's imports add
+        // their own: a mesh input with a semantic.
+        struct Field<'a> {
+            name: &'a str,
+            hlsl: &'static str,
+            semantic: Option<&'a str>,
+            /// The vertex stage writes it (and the pixel stage interpolates it).
+            vertex: bool,
+        }
+        let mut channels: Vec<Field> = Vec::new();
+        for channel in self
+            .channels
+            .iter()
+            .filter(|channel| channel.kind != ValueType::Texture2D)
+        {
+            if !channels.iter().any(|seen| seen.name == channel.name) {
+                channels.push(Field {
+                    name: &channel.name,
+                    hlsl: hlsl(channel.kind),
+                    semantic: channel.semantic.as_deref(),
+                    vertex: channel.domain == Domain::Vertex,
+                });
+            }
+        }
+        if let Some(evaluation) = evaluation {
+            for channel in &evaluation.channels {
+                if !channels.iter().any(|seen| seen.name == channel.name) {
+                    channels.push(Field {
+                        name: &channel.name,
+                        hlsl: channel.hlsl,
+                        semantic: Some(&channel.semantic),
+                        vertex: true,
+                    });
+                }
+            }
+        }
 
         let mut out = String::from("// Generated by DTMT from the declaration.\n");
 
+        // The macros the graph's nodes ask for, so the declaration's channels
+        // and the generated evaluation see them.
+        if let Some(evaluation) = evaluation {
+            for define in &evaluation.defines {
+                out.push_str(&format!("#define {define}\n"));
+            }
+        }
+
         out.push_str("struct GraphVertexParams {\n");
-        for channel in channels.iter().filter(|channel| written_by_vertex(channel)) {
-            out.push_str(&format!("    {} {};\n", hlsl(channel.kind), channel.name));
+        for channel in channels.iter().filter(|channel| channel.vertex) {
+            out.push_str(&format!("    {} {};\n", channel.hlsl, channel.name));
         }
         out.push_str("};\n");
         out.push_str("struct GraphPixelParams {\n");
         for channel in &channels {
-            out.push_str(&format!("    {} {};\n", hlsl(channel.kind), channel.name));
+            out.push_str(&format!("    {} {};\n", channel.hlsl, channel.name));
         }
         out.push_str("};\n");
-        for name in ["GraphVertexResults", "GraphPixelResults"] {
+        // A results struct holds the declaration's inputs of its stage: the
+        // values the graph computes and the shader then reads. A texture is a
+        // binding, not a value.
+        for (name, domain) in [
+            ("GraphVertexResults", Domain::Vertex),
+            ("GraphPixelResults", Domain::Pixel),
+        ] {
             out.push_str(&format!("struct {name} {{\n"));
             for (variable, definition) in &self.variables {
+                if definition.kind == ValueType::Texture2D || definition.domain != domain {
+                    continue;
+                }
                 out.push_str(&format!("    {} {variable};\n", hlsl(definition.kind)));
             }
             out.push_str("};\n");
@@ -1266,12 +1317,8 @@ impl ShaderNode {
         // stage, numbered as interpolators.
         out.push_str("#define GRAPH_VERTEX_INPUT");
         for channel in channels.iter().filter(|channel| channel.semantic.is_some()) {
-            let semantic = channel.semantic.as_deref().unwrap_or_default();
-            out.push_str(&format!(
-                " {} {} : {semantic};",
-                hlsl(channel.kind),
-                channel.name
-            ));
+            let semantic = channel.semantic.unwrap_or_default();
+            out.push_str(&format!(" {} {} : {semantic};", channel.hlsl, channel.name));
         }
         out.push('\n');
 
@@ -1281,14 +1328,14 @@ impl ShaderNode {
         // a generated one.
         let mut used: Vec<u32> = channels
             .iter()
-            .filter_map(|channel| channel.semantic.as_deref())
+            .filter_map(|channel| channel.semantic)
             .filter_map(|semantic| semantic.strip_prefix("TEXCOORD"))
             .filter_map(|index| index.parse::<u32>().ok())
             .collect();
         let mut next = 0u32;
-        for channel in channels.iter().filter(|channel| written_by_vertex(channel)) {
-            let semantic = match channel.semantic.clone() {
-                Some(semantic) => semantic,
+        for channel in channels.iter().filter(|channel| channel.vertex) {
+            let semantic = match channel.semantic {
+                Some(semantic) => semantic.to_string(),
                 None => {
                     while used.contains(&next) {
                         next += 1;
@@ -1298,42 +1345,90 @@ impl ShaderNode {
                     format!("TEXCOORD{}", next - 1)
                 }
             };
-            out.push_str(&format!(
-                " {} {} : {semantic};",
-                hlsl(channel.kind),
-                channel.name
-            ));
+            out.push_str(&format!(" {} {} : {semantic};", channel.hlsl, channel.name));
         }
         out.push('\n');
 
         out.push_str("#define GRAPH_MATERIAL_EXPORTS");
-        for (variable, definition) in &self.variables {
-            out.push_str(&format!(" {} {variable};", hlsl(definition.kind)));
+        if evaluation.is_some() {
+            // A graph material's variables are the graph's exports: what the
+            // material stores and the nodes read. The declaration's own inputs
+            // are either computed by the graph (the results structs) or engine
+            // globals the libraries declare, so they are not repeated here.
+            if let Some(evaluation) = evaluation {
+                for (export, hlsl, _) in &evaluation.exports {
+                    out.push_str(&format!(" {hlsl} {export};"));
+                }
+            }
+        } else {
+            for (variable, definition) in &self.variables {
+                if definition.kind == ValueType::Texture2D {
+                    continue;
+                }
+                out.push_str(&format!(" {} {variable};", hlsl(definition.kind)));
+            }
         }
         out.push('\n');
 
         out.push_str("#define GRAPH_VERTEX_WRITE_PARAMS(params, input)");
         for channel in channels
             .iter()
-            .filter(|channel| channel.semantic.is_some() && written_by_vertex(channel))
+            .filter(|channel| channel.semantic.is_some() && channel.vertex)
         {
             out.push_str(&format!(" params.{0} = input.{0};", channel.name));
         }
         out.push('\n');
         out.push_str("#define GRAPH_PIXEL_WRITE_PARAMS(params, input)");
-        for channel in channels.iter().filter(|channel| written_by_vertex(channel)) {
+        for channel in channels.iter().filter(|channel| channel.vertex) {
             out.push_str(&format!(" params.{0} = input.{0};", channel.name));
         }
         out.push('\n');
         out.push_str("#define GRAPH_VERTEX_WRITE(o, results, params)");
-        for channel in channels.iter().filter(|channel| written_by_vertex(channel)) {
+        for channel in channels.iter().filter(|channel| channel.vertex) {
             out.push_str(&format!(" o.{0} = params.{0};", channel.name));
         }
         out.push('\n');
 
-        out.push_str("#define GRAPH_EVALUATE_VERTEX(results, params)\n");
-        out.push_str("#define GRAPH_EVALUATE_PIXEL(results, params)\n");
+        // The evaluation itself is a function per stage, not a macro body: the
+        // node code carries preprocessor branches (`#if defined(OP_EQUAL)` and
+        // the material's flags) that a macro expansion could not carry.
+        out.push_str(
+            "void graph_evaluate_vertex(inout GraphVertexResults results, in GraphVertexParams params);\n",
+        );
+        out.push_str(
+            "void graph_evaluate_pixel(inout GraphPixelResults results, in GraphPixelParams params);\n",
+        );
+        out.push_str(
+            "#define GRAPH_EVALUATE_VERTEX(results, params) graph_evaluate_vertex(results, params)\n",
+        );
+        out.push_str(
+            "#define GRAPH_EVALUATE_PIXEL(results, params) graph_evaluate_pixel(results, params)\n",
+        );
 
+        out
+    }
+
+    /// The graph evaluation's file-scope part: the sampler declarations and the
+    /// functions the scaffold's macros call. It is appended after the block,
+    /// because it uses the libraries' types and macros.
+    pub fn graph_evaluation_tail(&self, evaluation: Option<&Evaluation>) -> String {
+        let Some(evaluation) = evaluation else {
+            return String::new();
+        };
+        let mut out = String::from("// Generated by DTMT from the material's graph.\n");
+        for sampler in &evaluation.samplers {
+            out.push_str(&format!("DECLARE_SAMPLER_2D({sampler});\n"));
+        }
+        out.push_str(
+            "void graph_evaluate_vertex(inout GraphVertexResults results, in GraphVertexParams params)\n{\n",
+        );
+        out.push_str(&evaluation.vertex);
+        out.push_str("}\n");
+        out.push_str(
+            "void graph_evaluate_pixel(inout GraphPixelResults results, in GraphPixelParams params)\n{\n",
+        );
+        out.push_str(&evaluation.pixel);
+        out.push_str("}\n");
         out
     }
 
@@ -1882,7 +1977,7 @@ mod tests {
         let node = ShaderNode::from_sjson(text).expect("parse");
         let jobs = node.compile_jobs().expect("jobs");
         assert_eq!(jobs.len(), 1);
-        let source = node.job_source(&jobs[0], "vertex", &libraries);
+        let source = node.job_source(&jobs[0], "vertex", &libraries, None);
         let engine = source.find("#define RENDERER_D3D12").expect("renderer");
         let stage = source.find("#define STAGE_VERTEX").expect("stage");
         let defines = source.find("#define A").expect("defines");
@@ -1895,7 +1990,7 @@ mod tests {
 
         // The macro is limited to the vertex stage, so the pixel source must
         // not define it, and it must take the fragment stage.
-        let pixel = node.job_source(&jobs[0], "pixel", &libraries);
+        let pixel = node.job_source(&jobs[0], "pixel", &libraries, None);
         assert!(!pixel.contains("#define A"), "{pixel}");
         assert!(pixel.contains("#define STAGE_FRAGMENT"), "{pixel}");
     }

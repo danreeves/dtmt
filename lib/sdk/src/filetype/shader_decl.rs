@@ -489,7 +489,7 @@ mod tests {
             ..ChannelDef::default()
         });
 
-        let scaffold = node.graph_scaffold();
+        let scaffold = node.graph_scaffold(None);
         // A vertex-written channel is a vertex param and an interpolator; a
         // pixel-only one is a pixel param and nothing else.
         assert!(scaffold.contains("float3 eye_vector;"), "{scaffold}");
@@ -508,9 +508,12 @@ mod tests {
             assert!(scaffold.contains(export), "{export} missing: {scaffold}");
         }
         assert!(!scaffold.contains("texture_map;"), "{scaffold}");
-        // The graph's own evaluation is the material's, so it is emitted empty.
+        // The graph's own evaluation is the material's; a declaration alone
+        // calls a function that is not there.
         assert!(
-            scaffold.contains("#define GRAPH_EVALUATE_VERTEX(results, params)\n"),
+            scaffold.contains(
+                "#define GRAPH_EVALUATE_VERTEX(results, params) graph_evaluate_vertex(results, params)\n"
+            ),
             "{scaffold}"
         );
     }

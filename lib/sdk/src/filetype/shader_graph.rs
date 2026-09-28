@@ -27,6 +27,8 @@ use std::collections::BTreeMap;
 use color_eyre::eyre::{Result, bail};
 use serde::Deserialize;
 
+use crate::filetype::shader_decl::Domain;
+
 /// The `shader` block of a graph material.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Graph {
@@ -57,10 +59,29 @@ pub struct GraphNode {
     /// The samplers the instance binds, keyed by the input name they feed.
     #[serde(default)]
     pub samplers: BTreeMap<String, SamplerBinding>,
+    /// The instance's export overrides, keyed by the definition's export name.
+    #[serde(default)]
+    pub export: BTreeMap<String, ExportOverride>,
     /// The instance's own values for inputs nothing feeds, keyed by input name.
     #[serde(default, flatten)]
     pub values: BTreeMap<String, NodeValue>,
 }
+
+/// An instance's override of one of its definition's exports: the material
+/// variable it publishes, under the name the material knows it by.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ExportOverride {
+    /// The variable's name in the material. Defaults to the definition's name.
+    #[serde(default)]
+    pub name: String,
+    /// The variable's type, when the instance overrides the definition's.
+    #[serde(rename = "type", default)]
+    pub kind: NodeType,
+    /// The value the material stores for it.
+    #[serde(default)]
+    pub value: Option<NodeValue>,
+}
+
 
 /// One sampler a node instance binds: the input name is the map key, and the
 /// `slot_name` is the material texture channel it reads.
@@ -205,6 +226,16 @@ pub struct NodeDef {
     /// The inputs, keyed by connector uuid.
     #[serde(default)]
     pub inputs: BTreeMap<String, NodeInput>,
+    /// The values the node reads from the engine or from a channel, keyed by
+    /// the name its code uses.
+    #[serde(default, deserialize_with = "flatten_imports")]
+    pub imports: BTreeMap<String, NodeImport>,
+    /// The macros the definition's code needs defined.
+    #[serde(default)]
+    pub defines: Vec<String>,
+    /// The stage the definition's code belongs to, when it names one.
+    #[serde(default)]
+    pub domain: Option<String>,
     /// The output's type, usually `{ typeof: "<input name>" }`.
     #[serde(default)]
     pub output: NodeOutput,
@@ -217,6 +248,102 @@ pub struct NodeDef {
     /// The values the node exports to the material, keyed by export name.
     #[serde(default)]
     pub exports: BTreeMap<String, NodeExport>,
+}
+
+/// A value a node definition reads from outside the graph: a channel the
+/// declaration carries, or an engine global.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct NodeImport {
+    #[serde(rename = "type", default)]
+    pub kind: NodeType,
+    /// The stage the value comes from.
+    #[serde(default)]
+    pub domain: Option<String>,
+    /// The declaration channel the value is, when it names one.
+    #[serde(default)]
+    pub output_channel: Option<String>,
+    /// The vertex semantic the value binds to, when it is a mesh input.
+    #[serde(default)]
+    pub semantic: Option<String>,
+    /// `engine` when the value is an engine global rather than a channel.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// Reads an `imports` table. An entry is an import definition, but the table
+/// may also nest entries under a condition - `"!defined(NO_VERTEX_NORMALS)": {
+/// tsm0 = { ... } }` - so a table whose keys are not the fields of an import is
+/// walked as one.
+fn flatten_imports<'de, D>(
+    deserializer: D,
+) -> std::result::Result<BTreeMap<String, NodeImport>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    fn is_import(table: &BTreeMap<String, NodeValue>) -> bool {
+        !table.is_empty()
+            && table.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "type" | "domain" | "output_channel" | "semantic" | "source" | "display_name"
+                )
+            })
+    }
+
+    fn text(table: &BTreeMap<String, NodeValue>, key: &str) -> Option<String> {
+        match table.get(key) {
+            Some(NodeValue::Text(value)) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn walk(table: &BTreeMap<String, NodeValue>, imports: &mut BTreeMap<String, NodeImport>) {
+        for (name, value) in table {
+            let NodeValue::Table(inner) = value else {
+                continue;
+            };
+            if !is_import(inner) {
+                walk(inner, imports);
+                continue;
+            }
+            let mut import = NodeImport::default();
+            import.kind = match inner.get("type") {
+                Some(NodeValue::Text(name)) => NodeType::Name(name.clone()),
+                Some(NodeValue::Table(kind)) => match text(kind, "typeof") {
+                    Some(follows) => NodeType::TypeOf(TypeOf { r#typeof: follows }),
+                    None => NodeType::Gated(
+                        kind.iter()
+                            .map(|(key, value)| {
+                                let flags = match value {
+                                    NodeValue::List(values) => values
+                                        .iter()
+                                        .filter_map(|value| match value {
+                                            NodeValue::Text(flag) => Some(flag.clone()),
+                                            _ => None,
+                                        })
+                                        .collect(),
+                                    NodeValue::Text(flag) => vec![flag.clone()],
+                                    _ => Vec::new(),
+                                };
+                                (key.clone(), flags)
+                            })
+                            .collect(),
+                    ),
+                },
+                _ => NodeType::None,
+            };
+            import.domain = text(inner, "domain");
+            import.output_channel = text(inner, "output_channel");
+            import.semantic = text(inner, "semantic");
+            import.source = text(inner, "source");
+            imports.insert(name.clone(), import);
+        }
+    }
+
+    let raw: BTreeMap<String, NodeValue> = BTreeMap::deserialize(deserializer)?;
+    let mut imports = BTreeMap::new();
+    walk(&raw, &mut imports);
+    Ok(imports)
 }
 
 /// One input of a node definition.
@@ -279,6 +406,15 @@ impl NodeType {
             NodeType::TypeOf(inner) => Some(&inner.r#typeof),
             _ => None,
         }
+    }
+
+    /// The inputs a `largestof`/`smallestof` type picks among.
+    pub fn among(&self) -> Option<(&str, &[String])> {
+        let NodeType::Gated(table) = self else {
+            return None;
+        };
+        let (key, names) = table.iter().next()?;
+        matches!(key.as_str(), "largestof" | "smallestof").then_some((key.as_str(), names.as_slice()))
     }
 }
 
@@ -423,10 +559,25 @@ pub struct ResolvedNode {
     pub options: Vec<String>,
     /// The inputs, in the definition's order: `(input name, source)`.
     pub inputs: Vec<(String, Source)>,
+    /// The samplers the instance binds: input name -> material channel.
+    pub samplers: BTreeMap<String, String>,
+    /// The instance's exports: `(definition name, instance name, type, value)`.
+    pub exports: Vec<(String, String, NodeType, Option<NodeValue>)>,
     /// The definition's code.
     pub code: String,
     /// Whether the node is the output node (the shader declaration).
     pub output: bool,
+}
+
+/// One of the graph's outputs: a declaration input, and the node that feeds it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GraphOutput {
+    /// The declaration input's name.
+    pub name: String,
+    /// The node feeding it.
+    pub source: Source,
+    /// The stage the declaration input lives in.
+    pub domain: Domain,
 }
 
 /// A resolved graph: every node's wiring and the graph's outputs.
@@ -434,8 +585,8 @@ pub struct ResolvedNode {
 pub struct Resolution {
     /// The nodes, the output node last.
     pub nodes: Vec<ResolvedNode>,
-    /// The output node's inputs: `(shader input name, source)`.
-    pub outputs: Vec<(String, Source)>,
+    /// The output node's inputs: which node feeds each shader input.
+    pub outputs: Vec<GraphOutput>,
 }
 
 impl Graph {
@@ -475,19 +626,46 @@ impl Graph {
                 inputs.push((input.name.clone(), source));
             }
             let options = def.option_names(&node.options)?;
+            let samplers = node
+                .samplers
+                .iter()
+                .map(|(name, binding)| (name.clone(), binding.slot_name.clone()))
+                .collect();
+            // The instance's export overrides: the definition's export name is
+            // what the definition's code reads, the instance's name is what the
+            // material knows the variable by.
+            let mut exports = Vec::new();
+            for (name, export) in &def.exports {
+                let instance = node.export.get(name);
+                let instance_name = instance
+                    .map(|export| export.name.clone())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| name.clone());
+                let kind = instance
+                    .map(|export| export.kind.clone())
+                    .filter(|kind| !matches!(kind, NodeType::None))
+                    .unwrap_or_else(|| export.kind.clone());
+                let value = instance
+                    .and_then(|export| export.value.clone())
+                    .or_else(|| export.value.clone());
+                exports.push((name.clone(), instance_name, kind, value));
+            }
             nodes.push(ResolvedNode {
                 id: node.id.clone(),
                 kind: node.kind.clone(),
                 title: node.title.clone(),
                 options,
                 inputs,
+                samplers,
+                exports,
                 code: def.code.clone(),
                 output: node.id == output_id,
             });
         }
 
         // The graph's outputs: the output node's connectors, named by the
-        // declaration's input table.
+        // declaration's input table and living in the input's stage.
+        let output_def = defs.get(&output.kind);
         let feeds = self.feeds(&output_id);
         let mut outputs = Vec::new();
         for (connector, instance) in &feeds {
@@ -495,11 +673,567 @@ impl Graph {
                 .get(connector)
                 .cloned()
                 .unwrap_or_else(|| connector.clone());
-            outputs.push((name, Source::Node(instance.clone())));
+            let domain = output_def
+                .and_then(|def| def.inputs.get(connector))
+                .and_then(|input| input.domain.as_deref())
+                .filter(|domain| *domain == "vertex")
+                .map(|_| Domain::Vertex)
+                .unwrap_or(Domain::Pixel);
+            outputs.push(GraphOutput {
+                name,
+                source: Source::Node(instance.clone()),
+                domain,
+            });
         }
 
         Ok(Resolution { nodes, outputs })
     }
+}
+
+/// The HLSL name of an engine value type, or `None` for `auto` and names the
+/// generator does not know.
+pub fn hlsl_type(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "scalar" | "float" => "float",
+        "vector2" | "float2" => "float2",
+        "vector3" | "float3" => "float3",
+        "vector4" | "float4" => "float4",
+        "matrix4x4" | "float4x4" => "float4x4",
+        "uint" => "uint",
+        "bool" => "bool",
+        "2d" | "texture2d" => "Texture2D",
+        "cube" => "TextureCube",
+        _ => return None,
+    })
+}
+
+/// How wide a value is, for `largestof`/`smallestof`.
+fn type_width(hlsl: &str) -> u8 {
+    match hlsl {
+        "float" => 1,
+        "float2" => 2,
+        "float3" => 3,
+        "float4" => 4,
+        "float4x4" => 16,
+        _ => 0,
+    }
+}
+
+/// A channel the graph's imports add to the declaration: a mesh input with a
+/// semantic, which the generated vertex input declares and the pixel stage reads
+/// interpolated.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GraphChannel {
+    /// The channel's name, which is the import's name.
+    pub name: String,
+    /// The channel's HLSL type.
+    pub hlsl: &'static str,
+    /// The vertex semantic it binds to.
+    pub semantic: String,
+}
+
+/// The generated graph evaluation: the HLSL of each stage, the defines the used
+/// nodes ask for, the samplers the graph binds, the channels its imports add and
+/// the material variables it exports.
+#[derive(Clone, Debug, Default)]
+pub struct Evaluation {
+    /// The vertex stage's evaluation, as the body of a function.
+    pub vertex: String,
+    /// The pixel stage's evaluation.
+    pub pixel: String,
+    /// The macros the used node definitions need defined, in first-use order.
+    pub defines: Vec<String>,
+    /// The material channels the graph samples, in first-use order. The sampler
+    /// variable carries the channel's name.
+    pub samplers: Vec<String>,
+    /// The channels the graph's imports add to the declaration.
+    pub channels: Vec<GraphChannel>,
+    /// The material variables the graph exports: `(name, HLSL type, value)`.
+    pub exports: Vec<(String, &'static str, Option<NodeValue>)>,
+}
+
+/// The resolved types of one node: its inputs and its output.
+#[derive(Clone, Debug, Default)]
+struct NodeTypes {
+    inputs: BTreeMap<String, String>,
+    output: String,
+}
+
+impl Resolution {
+    /// Generates the graph's evaluation: for each stage, the HLSL that computes
+    /// every node the stage's outputs need, writes them into the results struct
+    /// and binds the inputs, imports and samplers the node definitions read.
+    ///
+    /// The generated code is the body of a function taking the stage's params
+    /// and results, because the node code carries preprocessor branches
+    /// (`#if defined(OP_EQUAL)` and the material's flags) that a macro
+    /// definition could not.
+    pub fn evaluate(&self, defs: &BTreeMap<String, NodeDef>) -> Result<Evaluation> {
+        let def_of = |node: &ResolvedNode| -> Result<&NodeDef> {
+            defs.get(&node.kind)
+                .ok_or_else(|| color_eyre::eyre::eyre!("no definition for '{}'", node.kind))
+        };
+
+        // The graph's own nodes: the output node is the declaration itself.
+        let nodes: Vec<&ResolvedNode> = self.nodes.iter().filter(|node| !node.output).collect();
+        let position: BTreeMap<String, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (node.id.clone(), index))
+            .collect();
+
+        // What each node reads from other nodes.
+        let mut feeds: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for node in &nodes {
+            let sources = node
+                .inputs
+                .iter()
+                .filter_map(|(_, source)| match source {
+                    Source::Node(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect();
+            feeds.insert(node.id.clone(), sources);
+        }
+
+        // The graph's outputs, by stage, and the nodes each stage needs.
+        let roots = |domain: Domain| -> Vec<String> {
+            self.outputs
+                .iter()
+                .filter(|output| output.domain == domain)
+                .filter_map(|output| match &output.source {
+                    Source::Node(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let vertex_order = dependency_order(&roots(Domain::Vertex), &feeds);
+        let pixel_order = dependency_order(&roots(Domain::Pixel), &feeds);
+
+        // A node the definitions put in one stage cannot be evaluated in the
+        // other: its imports would not be there.
+        for (order, stage) in [(&vertex_order, "vertex"), (&pixel_order, "pixel")] {
+            for id in order {
+                let node = &nodes[position[id]];
+                let def = def_of(node)?;
+                if let Some(domain) = &def.domain
+                    && domain != stage
+                {
+                    bail!(
+                        "the '{}' node '{}' is a {domain} node, but the {stage} stage needs it",
+                        node.title,
+                        node.kind
+                    );
+                }
+            }
+        }
+
+        // The defines, samplers, channels and exports of the nodes in use.
+        let mut evaluation = Evaluation::default();
+        for node in &nodes {
+            let def = def_of(node)?;
+            for define in &def.defines {
+                if !evaluation.defines.contains(define) {
+                    evaluation.defines.push(define.clone());
+                }
+            }
+            for slot in node.samplers.values() {
+                if !slot.is_empty() && !evaluation.samplers.contains(slot) {
+                    evaluation.samplers.push(slot.clone());
+                }
+            }
+            for (name, instance, kind, value) in &node.exports {
+                let _ = name;
+                let hlsl = match kind {
+                    NodeType::Name(name) => hlsl_type(name),
+                    NodeType::Gated(_) => kind.name().and_then(hlsl_type),
+                    _ => None,
+                }
+                .unwrap_or("float4");
+                if !evaluation.exports.iter().any(|(seen, _, _)| seen == instance) {
+                    evaluation.exports.push((instance.clone(), hlsl, value.clone()));
+                }
+            }
+            for (name, import) in &def.imports {
+                if import.source.as_deref() == Some("engine") {
+                    continue;
+                }
+                let Some(semantic) = &import.semantic else {
+                    continue;
+                };
+                if evaluation.channels.iter().any(|channel| &channel.name == name) {
+                    continue;
+                }
+                let hlsl = import
+                    .kind
+                    .name()
+                    .and_then(hlsl_type)
+                    .unwrap_or("float4");
+                evaluation.channels.push(GraphChannel {
+                    name: name.clone(),
+                    hlsl,
+                    semantic: semantic.clone(),
+                });
+            }
+        }
+
+        // The types, in dependency order (the vertex and pixel closures together).
+        let mut order: Vec<usize> = Vec::new();
+        for id in vertex_order.iter().chain(pixel_order.iter()) {
+            if !order.contains(&position[id]) {
+                order.push(position[id]);
+            }
+        }
+        let mut types: BTreeMap<String, NodeTypes> = BTreeMap::new();
+        for index in &order {
+            let node = nodes[*index];
+            let def = def_of(node)?;
+            let resolved = resolve_types(node, def, &types)?;
+            types.insert(node.id.clone(), resolved);
+        }
+
+        evaluation.vertex =
+            self.evaluate_stage(&nodes, &position, &vertex_order, &types, defs, Domain::Vertex)?;
+        evaluation.pixel =
+            self.evaluate_stage(&nodes, &position, &pixel_order, &types, defs, Domain::Pixel)?;
+        Ok(evaluation)
+    }
+
+    /// Emits one stage's evaluation: the nodes in dependency order, each with
+    /// its inputs bound, and the stage's outputs written into `results`.
+    fn evaluate_stage(
+        &self,
+        nodes: &[&ResolvedNode],
+        position: &BTreeMap<String, usize>,
+        order: &[String],
+        types: &BTreeMap<String, NodeTypes>,
+        defs: &BTreeMap<String, NodeDef>,
+        domain: Domain,
+    ) -> Result<String> {
+        let mut out = String::new();
+        let mut variables: BTreeMap<&str, String> = BTreeMap::new();
+        for id in order {
+            let index = position[id];
+            let node = nodes[index];
+            let def = defs
+                .get(&node.kind)
+                .ok_or_else(|| color_eyre::eyre::eyre!("no definition for '{}'", node.kind))?;
+            let node_types = types
+                .get(id)
+                .ok_or_else(|| color_eyre::eyre::eyre!("no types for '{}'", node.id))?;
+            let variable = format!("node_{index}");
+            variables.insert(id.as_str(), variable.clone());
+
+            out.push_str(&format!("    // {}\n", node.title));
+            for option in &node.options {
+                out.push_str(&format!("    #define {option}\n"));
+            }
+            out.push_str(&format!("    {} {variable};\n", node_types.output));
+            out.push_str("    {\n");
+
+            // The inputs the connections and the instance's values feed.
+            for (name, source) in &node.inputs {
+                let hlsl = node_types
+                    .inputs
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| "float".to_string());
+                match source {
+                    Source::Node(upstream) => {
+                        let source = variables
+                            .get(upstream.as_str())
+                            .ok_or_else(|| color_eyre::eyre::eyre!("{upstream} is not evaluated yet"))?;
+                        out.push_str(&format!("        {hlsl} {name} = {source};\n"));
+                    }
+                    Source::Value(value) => {
+                        let literal = value
+                            .hlsl(false)
+                            .ok_or_else(|| color_eyre::eyre::eyre!("the value of '{name}' is not a literal"))?;
+                        out.push_str(&format!("        {hlsl} {name} = {literal};\n"));
+                    }
+                    // A sampler is a global variable, declared once per channel.
+                    Source::Sampler(_) => {}
+                    Source::Unbound => out.push_str(&format!("        {hlsl} {name} = 0;\n")),
+                }
+            }
+
+            // The imports: engine globals keep their name; a channel import is
+            // read from the channel it names, or from a channel of its own name
+            // when it is a mesh input the scaffold adds.
+            for (name, import) in &def.imports {
+                if import.source.as_deref() == Some("engine") {
+                    continue;
+                }
+                let hlsl = import.kind.name().and_then(hlsl_type).unwrap_or("float4");
+                let channel = import.output_channel.as_deref().unwrap_or(name);
+                out.push_str(&format!("        {hlsl} {name} = params.{channel};\n"));
+            }
+
+            // The code: RESULT writes the node's variable, `<input>_type` is the
+            // resolved type, and the instance's names replace the definition's.
+            let mut code = node.code.clone();
+            for (definition, instance, _, _) in &node.exports {
+                if definition != instance {
+                    code = replace_identifier(&code, definition, instance);
+                }
+            }
+            for (name, slot) in &node.samplers {
+                if !slot.is_empty() && name != slot {
+                    code = replace_identifier(&code, name, slot);
+                }
+            }
+            for (name, hlsl) in &node_types.inputs {
+                code = replace_identifier(&code, &format!("{name}_type"), hlsl);
+            }
+            code = replace_result(&code, &variable);
+            out.push_str(&code);
+            if !code.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str("    }\n");
+            for option in &node.options {
+                out.push_str(&format!("    #undef {option}\n"));
+            }
+        }
+
+        // The stage's outputs.
+        for output in &self.outputs {
+            if output.domain != domain {
+                continue;
+            }
+            let Source::Node(id) = &output.source else {
+                continue;
+            };
+            let Some(variable) = variables.get(id.as_str()) else {
+                continue;
+            };
+            out.push_str(&format!("    results.{} = {variable};\n", output.name));
+        }
+        Ok(out)
+    }
+}
+
+/// The nodes a set of roots depends on, in dependency order (a node after the
+/// nodes it reads).
+fn dependency_order(roots: &[String], feeds: &BTreeMap<String, Vec<String>>) -> Vec<String> {
+    let mut order: Vec<String> = Vec::new();
+    let mut visiting: Vec<String> = Vec::new();
+    fn visit(
+        id: &str,
+        feeds: &BTreeMap<String, Vec<String>>,
+        order: &mut Vec<String>,
+        visiting: &mut Vec<String>,
+    ) {
+        if order.iter().any(|seen| seen == id) || visiting.iter().any(|seen| seen == id) {
+            return;
+        }
+        visiting.push(id.to_string());
+        for source in feeds.get(id).into_iter().flatten() {
+            visit(source, feeds, order, visiting);
+        }
+        visiting.pop();
+        order.push(id.to_string());
+    }
+    for root in roots {
+        visit(root, feeds, &mut order, &mut visiting);
+    }
+    order
+}
+
+/// Resolves one node's input and output types.
+fn resolve_types(
+    node: &ResolvedNode,
+    def: &NodeDef,
+    known: &BTreeMap<String, NodeTypes>,
+) -> Result<NodeTypes> {
+    // The declared type of a name the node's code reads: an input, an import or
+    // an export, following `typeof` to the name it follows.
+    fn declared(
+        name: &str,
+        def: &NodeDef,
+        node: &ResolvedNode,
+        seen: &mut Vec<String>,
+    ) -> Option<NodeType> {
+        if seen.iter().any(|visited| visited == name) {
+            return None;
+        }
+        seen.push(name.to_string());
+        let kind = def
+            .inputs
+            .values()
+            .find(|input| input.name == name)
+            .map(|input| input.kind.clone())
+            .or_else(|| def.imports.get(name).map(|import| import.kind.clone()))
+            .or_else(|| {
+                node.exports
+                    .iter()
+                    .find(|(definition, instance, _, _)| definition == name || instance == name)
+                    .map(|(_, _, kind, _)| kind.clone())
+            })?;
+        match &kind {
+            NodeType::TypeOf(inner) => declared(&inner.r#typeof, def, node, seen),
+            _ => Some(kind),
+        }
+    }
+
+    let mut inputs = BTreeMap::new();
+    for (name, source) in &node.inputs {
+        let mut seen = Vec::new();
+        let hlsl = declared(name, def, node, &mut seen)
+            .and_then(|kind| kind.name().and_then(hlsl_type).map(str::to_string))
+            .or_else(|| match source {
+                Source::Node(id) => known.get(id).map(|types| types.output.clone()),
+                Source::Value(value) => value_type(value),
+                Source::Sampler(_) | Source::Unbound => None,
+            })
+            .unwrap_or_else(|| "float".to_string());
+        inputs.insert(name.clone(), hlsl);
+    }
+    for name in def.imports.keys() {
+        let mut seen = Vec::new();
+        let hlsl = declared(name, def, node, &mut seen)
+            .and_then(|kind| kind.name().and_then(hlsl_type).map(str::to_string))
+            .unwrap_or_else(|| "float".to_string());
+        inputs.insert(name.clone(), hlsl);
+    }
+    for (definition, instance, _kind, _) in &node.exports {
+        let mut seen = Vec::new();
+        let hlsl = declared(instance, def, node, &mut seen)
+            .or_else(|| declared(definition, def, node, &mut seen))
+            .and_then(|kind| kind.name().and_then(hlsl_type).map(str::to_string))
+            .unwrap_or_else(|| "float".to_string());
+        inputs.insert(instance.clone(), hlsl.clone());
+        inputs.insert(definition.clone(), hlsl);
+    }
+
+    let output = match &def.output.kind {
+        NodeType::TypeOf(inner) => inputs.get(&inner.r#typeof).cloned(),
+        NodeType::Gated(_) => match def.output.kind.among() {
+            Some((which, names)) => {
+                let mut best: Option<String> = None;
+                for name in names {
+                    let Some(ty) = inputs.get(name) else {
+                        continue;
+                    };
+                    let take = best
+                        .as_ref()
+                        .map(|current| match which {
+                            "largestof" => type_width(ty) > type_width(current),
+                            _ => type_width(ty) < type_width(current),
+                        })
+                        .unwrap_or(true);
+                    if take {
+                        best = Some(ty.clone());
+                    }
+                }
+                best
+            }
+            None => def.output.kind.name().and_then(hlsl_type).map(str::to_string),
+        },
+        NodeType::Name(name) => hlsl_type(name).map(str::to_string),
+        NodeType::None => None,
+    };
+    let output = output
+        .or_else(|| {
+            inputs
+                .values()
+                .max_by_key(|ty| type_width(ty))
+                .cloned()
+        })
+        .unwrap_or_else(|| "float4".to_string());
+
+    Ok(NodeTypes { inputs, output })
+}
+
+/// The HLSL type of an instance value: a number is a scalar, a list a vector.
+fn value_type(value: &NodeValue) -> Option<String> {
+    Some(match value {
+        NodeValue::Number(_) => "float".to_string(),
+        NodeValue::Bool(_) => "bool".to_string(),
+        NodeValue::List(values) => match values.len() {
+            1 => "float".to_string(),
+            2 => "float2".to_string(),
+            3 => "float3".to_string(),
+            4 => "float4".to_string(),
+            _ => return None,
+        },
+        NodeValue::Text(_) | NodeValue::Table(_) => return None,
+    })
+}
+
+/// Replaces whole identifiers in a code block.
+fn replace_identifier(code: &str, from: &str, to: &str) -> String {
+    if from.is_empty() {
+        return code.to_string();
+    }
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(at) = rest.find(from) {
+        let before = rest[..at].chars().last();
+        let after = rest[at + from.len()..].chars().next();
+        if before.map(is_word).unwrap_or(false) || after.map(is_word).unwrap_or(false) {
+            out.push_str(&rest[..at + from.len()]);
+            rest = &rest[at + from.len()..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        out.push_str(to);
+        rest = &rest[at + from.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Replaces `RESULT(<expr>)` with an assignment to `value`, keeping the
+/// expression. The expression may contain parentheses of its own.
+fn replace_result(code: &str, value: &str) -> String {
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(at) = rest.find("RESULT") {
+        let before = rest[..at].chars().last();
+        let after = &rest[at + "RESULT".len()..];
+        let skipped = after.len() - after.trim_start().len();
+        if before.map(is_word).unwrap_or(false) || !after[skipped..].starts_with('(') {
+            out.push_str(&rest[..at + "RESULT".len()]);
+            rest = &rest[at + "RESULT".len()..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        let open = at + "RESULT".len() + skipped;
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, c) in rest[open..].char_indices() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(end) = end else {
+            out.push_str(rest);
+            return out;
+        };
+        let expression = &rest[open + 1..end];
+        out.push_str(value);
+        out.push_str(" = ");
+        out.push_str(expression.trim());
+        out.push_str(";\n");
+        // The call's own semicolon is left behind by the replacement.
+        rest = &rest[end + 1..];
+        if let Some(after) = rest.strip_prefix(';') {
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -638,9 +1372,62 @@ mod tests {
         assert!(switch.code.contains("RESULT(input_a)"));
         assert_eq!(
             resolution.outputs,
-            vec![("base_color".to_string(), Source::Node("aaaa".to_string()))]
+            vec![GraphOutput {
+                name: "base_color".to_string(),
+                source: Source::Node("aaaa".to_string()),
+                domain: Domain::Pixel,
+            }]
         );
         assert!(resolution.nodes.iter().any(|node| node.output));
+    }
+
+    #[test]
+    fn a_graph_evaluates_its_nodes() {
+        let graph = Graph::from_material(MATERIAL).unwrap().unwrap();
+        let mut defs = BTreeMap::new();
+        for (path, text) in [
+            ("core/shader_nodes/if", SWITCH),
+            ("core/shader_nodes/constant_vector3", CONSTANT),
+            ("core/stingray_renderer/output_nodes/standard_base", OUTPUT),
+        ] {
+            defs.insert(path.to_string(), NodeDef::from_text(text).unwrap());
+        }
+        let mut shader_inputs = BTreeMap::new();
+        shader_inputs.insert(
+            "00000000-0000-0000-0000-000000000001".to_string(),
+            "base_color".to_string(),
+        );
+        let resolution = graph.resolve(&defs, &shader_inputs).unwrap();
+        let evaluation = resolution.evaluate(&defs).unwrap();
+
+        // Nothing feeds a vertex input, so the vertex stage evaluates nothing.
+        assert!(evaluation.vertex.is_empty(), "{}", evaluation.vertex);
+
+        // The constant node declares its value and its input's literal.
+        assert!(
+            evaluation.pixel.contains("float3 node_0;"),
+            "{}",
+            evaluation.pixel
+        );
+        assert!(
+            evaluation.pixel.contains("float3 a = { 1.0, 0.5, 0.0 };"),
+            "{}",
+            evaluation.pixel
+        );
+        // The switch takes its option as a define and writes its output.
+        assert!(evaluation.pixel.contains("#define OP_EQUAL"));
+        assert!(evaluation.pixel.contains("#undef OP_EQUAL"));
+        assert!(
+            evaluation.pixel.contains("node_1 = input_a;"),
+            "{}",
+            evaluation.pixel
+        );
+        // The graph's output lands in the results.
+        assert!(
+            evaluation.pixel.contains("results.base_color = node_1;"),
+            "{}",
+            evaluation.pixel
+        );
     }
 
     #[test]
