@@ -168,10 +168,12 @@ the worked example.
   compiler accepts - one geometry per mesh, `POSITION`/`NORMAL`/`TEXCOORD`/
   `COLOR` streams (normals and UVs stay per-corner; the compiler gathers them
   into one vertex per corner; COLOR is white), the FBX layer's material name
-  and a node with the mesh's world matrix. The FBX's Y-up centimeter space
-  becomes the BSI's Z-up meters and the local matrix is written column-major,
-  so the file matches what the Blender tools export. Usage: `fbx_bsi
-  <file.fbx> [out.bsi] [--material <name>] [--dump]`.
+  and a node with the mesh's world matrix. Polygons of any size are
+  fan-triangulated - Blender keeps quads unless "Triangulate Faces" is set -
+  and the per-corner layers are remapped through the original corners. The
+  FBX's Y-up centimeter space becomes the BSI's Z-up meters and the local
+  matrix is written column-major, so the file matches what the Blender tools
+  export. Usage: `fbx_bsi <file.fbx> [out.bsi] [--material <name>] [--dump]`.
 - `lib/sdk/examples/decompile_unit.rs`: decompile a compiled payload into a
   `.unit`/`.bsi` pair (static units only; unsupported payloads fail with a
   reason).

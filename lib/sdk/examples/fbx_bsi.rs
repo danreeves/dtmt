@@ -290,7 +290,11 @@ struct Mesh {
     name: String,
     material: String,
     positions: Vec<f64>,
+    /// The vertex index of each triangle corner.
     triangles: Vec<i32>,
+    /// The polygon corner each triangle corner came from, for the layers that
+    /// are stored per corner.
+    corners: Vec<i32>,
     normals: Option<(Vec<f64>, Vec<i32>)>,
     uvs: Option<(Vec<f64>, Vec<i32>)>,
     local: [f32; 16],
@@ -421,17 +425,40 @@ fn read_mesh(geometry: &FbxNode, name: String, local: [f32; 16], space: &Space) 
         .chunks_exact(3)
         .flat_map(|vertex| space.point([vertex[0], vertex[1], vertex[2]]))
         .collect();
-    let triangles = geometry
+    let polygon_index = geometry
         .child("PolygonVertexIndex")
         .and_then(|node| node.properties.first())
         .and_then(Property::as_i32_array)
         .ok_or_else(|| color_eyre::eyre::eyre!("the geometry has no polygon index"))?;
-    // The FBX marks the last index of each polygon by taking the bitwise
-    // complement of the vertex index, so the raw list is not the triangle list.
-    let triangles: Vec<i32> = triangles
-        .iter()
-        .map(|index| if *index < 0 { !*index } else { *index })
-        .collect();
+    // The FBX stores polygons of any size - Blender exports quads - while the
+    // engine's geometry is triangles: fan-triangulate each polygon and keep,
+    // for every triangle corner, the polygon corner it came from, so the
+    // per-corner attribute layers stay aligned. The last index of a polygon is
+    // the bitwise complement of its vertex index.
+    let mut triangles = Vec::new();
+    let mut corners = Vec::new();
+    let mut corner = 0i32;
+    let mut polygon: Vec<i32> = Vec::new();
+    for index in polygon_index.iter() {
+        if *index < 0 {
+            polygon.push(!*index);
+            for i in 1..polygon.len().saturating_sub(1) {
+                triangles.push(polygon[0]);
+                triangles.push(polygon[i]);
+                triangles.push(polygon[i + 1]);
+                corners.push(corner);
+                corners.push(corner + i as i32);
+                corners.push(corner + i as i32 + 1);
+            }
+            corner += polygon.len() as i32;
+            polygon.clear();
+        } else {
+            polygon.push(*index);
+        }
+    }
+    if !polygon.is_empty() {
+        bail!("the polygon index list does not end with a polygon");
+    }
 
     let layer = |element: &str, data: &str, indices: &str| -> Option<(Vec<f64>, Vec<i32>)> {
         let layer = geometry.child(element)?;
@@ -471,6 +498,7 @@ fn read_mesh(geometry: &FbxNode, name: String, local: [f32; 16], space: &Space) 
         material: String::new(),
         positions,
         triangles,
+        corners,
         normals,
         uvs,
         local,
@@ -640,11 +668,11 @@ fn main() -> Result<()> {
     let mut out_text = String::new();
     out_text.push_str("geometries = {\n");
     for mesh in &meshes {
-        let corners = mesh.triangles.len();
+        let corner_count = mesh.triangles.len();
         let vertices = mesh.positions.len() / 3;
         out_text.push_str(&format!("\t{} = {{\n", mesh.name));
         out_text.push_str("\t\tindices = {\n");
-        out_text.push_str(&format!("\t\t\tsize = {corners}\n"));
+        out_text.push_str(&format!("\t\t\tsize = {corner_count}\n"));
 
         // The compiler pairs each stream with the index list at the same
         // position, and gathers the streams: one index list per stream, each
@@ -654,8 +682,8 @@ fn main() -> Result<()> {
             lists.push(attribute_indices(
                 data.len() / 3,
                 vertices,
-                corners,
                 index,
+                &mesh.corners,
                 &mesh.triangles,
             ));
         }
@@ -663,8 +691,8 @@ fn main() -> Result<()> {
             lists.push(attribute_indices(
                 data.len() / 2,
                 vertices,
-                corners,
                 index,
+                &mesh.corners,
                 &mesh.triangles,
             ));
         }
@@ -689,7 +717,7 @@ fn main() -> Result<()> {
         out_text.push_str("\t\t\ttype = \"TRIANGLE_LIST\"\n");
         out_text.push_str("\t\t}\n");
 
-        let triangles = corners / 3;
+        let triangles = corner_count / 3;
         out_text.push_str("\t\tmaterials = [ {\n");
         out_text.push_str(&format!("\t\t\t\tname = \"{}\"\n", mesh.material));
         out_text.push_str("\t\t\t\tprimitives = [\n\t\t\t\t\t");
@@ -768,20 +796,26 @@ fn main() -> Result<()> {
 /// The index list a stream needs: the layer's own index when the FBX writes one,
 /// the triangle list when its data is per vertex, and a per-corner list when it
 /// is per corner.
+/// The per-corner index list of an attribute layer: the layer's own index
+/// array (stored per polygon corner), the vertex indices for a per-vertex
+/// attribute, or the polygon corner indices for a per-corner one.
 fn attribute_indices(
     count: usize,
     vertices: usize,
-    corners: usize,
     index: &[i32],
+    corners: &[i32],
     triangles: &[i32],
 ) -> Vec<i32> {
     if !index.is_empty() {
-        return index.to_vec();
+        return corners
+            .iter()
+            .map(|corner| index[*corner as usize])
+            .collect();
     }
     if count == vertices {
         triangles.to_vec()
     } else {
-        (0..corners as i32).collect()
+        corners.to_vec()
     }
 }
 
