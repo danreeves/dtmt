@@ -358,6 +358,26 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    channel table is read, so this is code generation from data that is already
    parsed, not a decode. Mod-authored blocks that avoid the graph macros compile
    today.
+
+   **The scaffolding is generated** (`ShaderNode::graph_scaffold`, emitted by
+   `job_source` when a block or a library chunk mentions a graph name): the
+   `GraphVertexParams`/`GraphPixelParams` structs from the declaration's
+   channels (a vertex-domain channel is a param and an interpolator, a
+   pixel-only one a pixel param), the `Graph*Results` structs and
+   `GRAPH_MATERIAL_EXPORTS` from its `inputs`, the `GRAPH_*_INPUT` field lists
+   (interpolator indices de-duplicated against the declared semantics) and the
+   param/data/write macros. What is *not* generated is the graph's own
+   evaluation (`GRAPH_EVALUATE_VERTEX`/`GRAPH_EVALUATE_PIXEL`): that code is the
+   *material's* node graph, which a shader declaration does not carry, so the
+   macros are emitted empty. [verified by compiling the Badgers output nodes
+   with `shader43 --compile`: 1438 programs across seven declarations -
+   `anisotropic_base` 696, `billboard_base` 516, `particle_gbuffer_base` 144,
+   `unlit_base` 18, `terrain_base` 6, `skydome_base` 4, `decal_base` 2, plus 52
+   programs of `standard_base_bitsquid`. The rest fail on the material graph's
+   locals (`shadow`, `wire_aa_fade`), on the older Stingray HLSL in that folder
+   (assigning to a `const` parameter), or on a declaration's own
+   `#error "Probes are not supported"`. A failed compile leaves its assembled
+   source as `<name>.failed.hlsl` beside the output.]
 6. **Wire `Section::build` into `dtmt build`** with generated group data and a
    real conditions tree; verify with the round trip and the substitutions before
    any deploy. The compile side is in place (`shader_compile::compile`), the

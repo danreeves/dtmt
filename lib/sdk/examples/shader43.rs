@@ -1565,10 +1565,21 @@ fn compile(
                         }
                     }
                 }
-                Err(err) => println!(
-                    "  {} p{} {} {profile}/{entry}: failed: {err}",
-                    job.context, job.permutation, job.code_block
-                ),
+                Err(err) => {
+                    // Keep the source that failed, so a compile error can be read
+                    // against the generated scaffolding and the block's own code.
+                    let name = format!(
+                        "{}_p{}_{}.failed.hlsl",
+                        sanitize(&job.context),
+                        job.permutation,
+                        profile
+                    );
+                    let _ = fs::write(out_dir.join(&name), &source);
+                    println!(
+                        "  {} p{} {} {profile}/{entry}: failed: {err}",
+                        job.context, job.permutation, job.code_block
+                    );
+                }
             }
         }
     }

@@ -474,9 +474,48 @@ mod tests {
         node
     }
 
-    /// The texture channel of the sample declaration.
-
     #[test]
+    fn the_graph_scaffold_carries_the_channels_and_the_exports() {
+        let mut node = sample();
+        node.channels.push(ChannelDef {
+            name: "eye_vector".to_string(),
+            kind: ValueType::Float3,
+            domain: Domain::Vertex,
+            ..ChannelDef::default()
+        });
+        node.channels.push(ChannelDef {
+            name: "decal_uv".to_string(),
+            kind: ValueType::Float2,
+            ..ChannelDef::default()
+        });
+
+        let scaffold = node.graph_scaffold();
+        // A vertex-written channel is a vertex param and an interpolator; a
+        // pixel-only one is a pixel param and nothing else.
+        assert!(scaffold.contains("float3 eye_vector;"), "{scaffold}");
+        assert!(scaffold.contains("float2 decal_uv;"), "{scaffold}");
+        assert!(
+            scaffold.contains("GRAPH_PIXEL_INPUT float3 eye_vector : TEXCOORD0;"),
+            "{scaffold}"
+        );
+        assert!(
+            !scaffold.contains("decal_uv : "),
+            "a pixel-only channel is not interpolated: {scaffold}"
+        );
+        // The exports are the material variables, and a texture channel is a
+        // material binding, not a field.
+        for export in ["float3 base_color;", "float4 mod_tint;", "float normal_strength;"] {
+            assert!(scaffold.contains(export), "{export} missing: {scaffold}");
+        }
+        assert!(!scaffold.contains("texture_map;"), "{scaffold}");
+        // The graph's own evaluation is the material's, so it is emitted empty.
+        assert!(
+            scaffold.contains("#define GRAPH_EVALUATE_VERTEX(results, params)\n"),
+            "{scaffold}"
+        );
+    }
+
+    /// The texture channel of the sample declaration.    #[test]
     fn parses_either_type_spelling() {
         assert_eq!(ValueType::parse("vector3"), Some(ValueType::Float3));
         assert_eq!(ValueType::parse("float3"), Some(ValueType::Float3));
