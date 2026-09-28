@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
+use sdk::filetype::shader_graph::{Evaluation, Graph, NodeDef};
 use sdk::filetype::shader_node::{ShaderNode, STAGES, entry_for, profile_for};
 use sdk::filetype::shader_engine_data::EngineData;
 use sdk::filetype::shader_source::ShaderSource;
@@ -206,10 +207,22 @@ async fn compile_hlsl(source: &Path, entry: &str, target: &str) -> Result<Vec<u8
 async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option<ShaderOverrides>> {
     pin_dxc(cfg);
 
+    // A material whose SJSON carries a shader graph: its declaration is the
+    // graph's output node - loaded from the mod root, like every definition the
+    // graph names - and the graph itself is generated into it.
+    if path.extension().is_some_and(|extension| extension == "material") {
+        let text = fs::read_to_string(path)
+            .await
+            .wrap_err_with(|| format!("Failed to read '{}'", path.display()))?;
+        if Graph::from_material(&text)?.is_some() {
+            return Ok(Some(compile_graph_material(path, &text, cfg).await?));
+        }
+    }
+
     let stem = path.with_extension("");
     let declaration = stem.with_extension("shader_node");
     if declaration.exists() {
-        return Ok(Some(compile_declaration(&declaration, cfg).await?));
+        return Ok(Some(compile_declaration(&declaration, cfg, None).await?));
     }
 
     let combined = stem.with_extension("hlsl");
@@ -252,6 +265,60 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
     Ok(Some(overrides))
 }
 
+/// Compiles a material whose SJSON carries a shader graph. The graph's output
+/// node is the declaration; every definition the graph names is read from the
+/// mod root at the path the graph writes, so a mod ships the node definitions
+/// its material uses (`core/shader_nodes/...` and the output node).
+async fn compile_graph_material(
+    material: &Path,
+    text: &str,
+    cfg: &ModConfig,
+) -> Result<ShaderOverrides> {
+    let graph = Graph::from_material(text)?
+        .ok_or_else(|| eyre::eyre!("'{}' has no shader graph", material.display()))?;
+
+    let mut defs = BTreeMap::new();
+    for node in &graph.nodes {
+        let path = cfg.dir.join(format!("{}.shader_node", node.kind));
+        let definition = fs::read_to_string(&path)
+            .await
+            .wrap_err_with(|| format!("Failed to read '{}'", path.display()))?;
+        let definition = NodeDef::from_text(&definition)
+            .wrap_err_with(|| format!("Failed to parse '{}'", path.display()))?;
+        defs.insert(node.kind.clone(), definition);
+    }
+
+    let output = graph
+        .output_node()
+        .ok_or_else(|| eyre::eyre!("'{}' has no output node", material.display()))?;
+    let declaration = cfg.dir.join(format!("{}.shader_node", output.kind));
+    let shader_inputs: BTreeMap<String, String> = defs
+        .get(&output.kind)
+        .map(|definition| {
+            definition
+                .inputs
+                .iter()
+                .map(|(uuid, input)| (uuid.clone(), input.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let resolution = graph.resolve(&defs, &shader_inputs)?;
+    let evaluation = resolution.evaluate(&defs)?;
+    tracing::info!(
+        "'{}' graph: {} nodes, {} channels, {} samplers, {} defines, \
+         {} vertex and {} pixel bytes of evaluation",
+        material.display(),
+        graph.nodes.len(),
+        evaluation.channels.len(),
+        evaluation.samplers.len(),
+        evaluation.defines.len(),
+        evaluation.vertex.len(),
+        evaluation.pixel.len()
+    );
+
+    compile_declaration(&declaration, cfg, Some(&evaluation)).await
+}
+
 /// Compiles a `.shader_node` declaration into the stage overrides a material
 /// needs.
 ///
@@ -260,7 +327,11 @@ async fn compile_shader_overrides(path: &Path, cfg: &ModConfig) -> Result<Option
 /// declaration with more than one job is refused: the override flow names one
 /// container per stage, and mapping several jobs to a section's programs needs
 /// the conditions decode.
-async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<ShaderOverrides> {
+async fn compile_declaration(
+    declaration: &Path,
+    cfg: &ModConfig,
+    evaluation: Option<&Evaluation>,
+) -> Result<ShaderOverrides> {
     let text = fs::read_to_string(declaration)
         .await
         .wrap_err_with(|| format!("Failed to read '{}'", declaration.display()))?;
@@ -288,7 +359,7 @@ async fn compile_declaration(declaration: &Path, cfg: &ModConfig) -> Result<Shad
         let Some(entry) = entry_for(profile) else {
             continue;
         };
-        let source = node.job_source(job, stage, &libraries, None);
+        let source = node.job_source(job, stage, &libraries, evaluation);
         let profile_arg = profile.to_string();
         let entry_arg = entry.to_string();
         let container =

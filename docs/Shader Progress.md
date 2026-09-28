@@ -356,9 +356,10 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    `GRAPH_MATERIAL_EXPORTS`, `GraphVertexParams`, `GraphVertexResults` and the
    `GRAPH_EVALUATE_*` bodies; without them every output-node block fails to
    compile. What is left:
-   - `dtmt build` wiring: a mod that authors a shader ships its declaration and
-     its node definitions - the authoring path the format decision describes -
-     while the build side only compiles a declaration today.
+   - A mod-authored graph in game: `dtmt build` compiles a material whose SJSON
+     carries a `shader` block - the declaration is the graph's output node and
+     the definitions are read from the mod root at the path the graph writes -
+     but no mod ships one yet, so the generated evaluation has not been drawn.
    - Type coercion where a node's `auto` inputs disagree, an `if` mixing
      `float3` and `float4`; what the toolchain does there is unmeasured.
    - The spurious permutations of undecidable branches (`render_setting(...)`),
