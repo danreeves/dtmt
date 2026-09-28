@@ -72,6 +72,11 @@ fn is_engine_run(run: &[Record]) -> bool {
 /// scanning.
 const MAX_OFFSET: u32 = 8192;
 
+/// The largest number of 17-byte condition entries a group header may carry.
+/// The shipped sections use 1, 2, 3 and 5; the cap only bounds the search for
+/// the header's start.
+const MAX_CONDITION_ENTRIES: usize = 16;
+
 /// The three descriptors of one group's header, at `+32`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptors {
@@ -241,6 +246,70 @@ impl Channel {
     /// The byte offset the texture binds at, which is the first record's.
     pub fn offset(&self) -> u32 {
         self.records.first().map_or(0, |record| record.offset)
+    }
+}
+
+/// One 17-byte condition entry of a group's byte-packed header.
+///
+/// The first word is a condition hash (an engine query or a context name, e.g.
+/// `num_skin_weights`, `default`, `shadow_caster`); the rest is carried, because
+/// the UI base writes thirteen zero bytes and the six small families write more.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConditionEntry {
+    /// The entry's first word, a condition hash.
+    pub hash: u32,
+    /// The thirteen bytes after the hash.
+    pub rest: [u8; 13],
+}
+
+impl ConditionEntry {
+    /// The entry's bytes.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.hash.to_le_bytes());
+        out.extend_from_slice(&self.rest);
+    }
+}
+
+/// A group's byte-packed condition header: the last `40 + 17 x n` bytes of the
+/// group.
+///
+/// The layout is a 28-byte packed record, the `n` word, `n` 17-byte entries and
+/// an 8-byte trailer. Measured on the UI base's 36 groups (`n` 2 for groups 0-11
+/// and 1 for the rest, the record a packed copy of the material's texture
+/// channel, the entries a hash plus thirteen zeros, the trailer `01 00 00 00 00
+/// 00 00 00`) and on the six small families (n 1, 2, 3 and 5, the record's fifth
+/// word a hash rather than the packed key, the entries carrying five more
+/// non-zero bytes, the trailer `01 00 00 00 00 00 00 00` where the group carries
+/// an entry and zeros otherwise).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConditionHeader {
+    /// The 28-byte packed record before the `n` word, carried.
+    pub record: Vec<u8>,
+    /// The entries, in order.
+    pub entries: Vec<ConditionEntry>,
+    /// The eight bytes after the last entry.
+    pub trailer: [u8; 8],
+}
+
+impl ConditionHeader {
+    /// The header's byte length: `40 + 17 x entries.len()`.
+    pub fn len(&self) -> usize {
+        40 + self.entries.len() * 17
+    }
+
+    /// Whether the header carries nothing.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The header's bytes.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.record);
+        out.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
+        for entry in &self.entries {
+            entry.write(out);
+        }
+        out.extend_from_slice(&self.trailer);
     }
 }
 
@@ -729,6 +798,112 @@ impl GroupData {
         Ok(data)
     }
 
+    /// The byte-packed condition header of every group, in group order.
+    ///
+    /// The header is a group's last `40 + 17 x n` bytes: a 28-byte packed
+    /// record, the `n` word, `n` 17-byte entries and an 8-byte trailer. `n` is
+    /// not stored anywhere else, so it is found by trying candidates and keeping
+    /// the largest that is self-consistent: the word at header + 28 reads back as
+    /// the candidate, and the header's 28-byte record - the last of the group's
+    /// packed copies - has a non-zero first word that matches the copy before it.
+    ///
+    /// Measured with that rule: the UI base's 36 groups all read (n 2 for groups
+    /// 0-11, 1 for the rest, the entries `gui`/`BC4EE226`/`625D415E`/zero, the
+    /// trailer `01 00 00 00 00 00 00 00` where the group carries an entry), and
+    /// five of the six small families read every group (`004F18EA` 3,3,1;
+    /// `17A3DC01` 5,1,1; `38ECBAD1` 2; `3F08AC44` 5,5,1,1,1; `427B5E6E` 5,1,1 -
+    /// the notes' values). `2A04418E`'s two shadow-context groups are the
+    /// exception: their tails do not satisfy the rule and are refused rather than
+    /// guessed, so a caller sees `None` for that section.
+    pub fn condition_headers(&self, query_ids: &[u32]) -> Option<Vec<ConditionHeader>> {
+        let bounds = self.group_bounds(query_ids)?;
+        let mut headers = Vec::with_capacity(bounds.len());
+        for (start, end) in bounds {
+            headers.push(self.condition_header(start, end)?);
+        }
+        Some(headers)
+    }
+
+    /// One group's condition header, found from the group's end.
+    fn condition_header(&self, start: usize, end: usize) -> Option<ConditionHeader> {
+        for n in (0..=MAX_CONDITION_ENTRIES).rev() {
+            let len = 40 + 17 * n;
+            if end < start + len {
+                continue;
+            }
+            let at = end - len;
+            // The `n` word reads back as the candidate itself, and the header's
+            // 28-byte record is the last of the packed copies, so its first word
+            // (the channel's hash) is non-zero and matches the copy before it.
+            if self.word(at + 28)? as usize != n || self.word(at)? == 0 {
+                continue;
+            }
+            if at < start + 28 || self.word(at)? != self.word(at - 28)? {
+                continue;
+            }
+            let record = self.data.get(at..at + 28)?.to_vec();
+            let mut entries = Vec::with_capacity(n);
+            for entry in 0..n {
+                let entry_at = at + 32 + entry * 17;
+                let hash = self.word(entry_at)?;
+                let rest: [u8; 13] = self
+                    .data
+                    .get(entry_at + 4..entry_at + 17)?
+                    .try_into()
+                    .ok()?;
+                entries.push(ConditionEntry { hash, rest });
+            }
+            let trailer: [u8; 8] = self.data.get(end - 8..end)?.try_into().ok()?;
+            return Some(ConditionHeader {
+                record,
+                entries,
+                trailer,
+            });
+        }
+        None
+    }
+
+    /// Rewrites every group's condition header from `headers` (one per group, in
+    /// group order) and leaves the rest of the group data as it is.
+    ///
+    /// A header's length may change with its entry count, so the groups that
+    /// follow shift. That is safe because a group is found by its id - the walk
+    /// scans for the query ids - and the section header recomputes the group
+    /// data's offset and size when it writes the section.
+    pub fn rebuild_conditions(
+        &self,
+        query_ids: &[u32],
+        headers: &[ConditionHeader],
+    ) -> Result<Vec<u8>> {
+        let bounds = self
+            .group_bounds(query_ids)
+            .ok_or_else(|| eyre::eyre!("the groups were not found"))?;
+        if bounds.len() != headers.len() {
+            bail!(
+                "{} groups but {} condition headers",
+                bounds.len(),
+                headers.len()
+            );
+        }
+
+        let mut out = Vec::with_capacity(self.data.len());
+        let mut cursor = 0;
+        for ((start, end), header) in bounds.iter().zip(headers) {
+            let current = self.condition_header(*start, *end).ok_or_else(|| {
+                eyre::eyre!("the group at {start:#x} has no condition header")
+            })?;
+            let keep = end - current.len();
+            if keep < *start || keep < cursor {
+                bail!("the condition header of the group at {start:#x} does not fit");
+            }
+            out.extend_from_slice(&self.data[cursor..keep]);
+            header.write(&mut out);
+            cursor = *end;
+        }
+        out.extend_from_slice(&self.data[cursor..]);
+        Ok(out)
+    }
+
     /// Rebuilds the run of canonical records at `table_at`, given the run's
     /// current length in records. This is the entry point for a caller that read
     /// the offset out of the per-group headers, and the one that does not depend
@@ -1074,6 +1249,79 @@ mod tests {
             data.bytes(),
             "a template whose table already matches must not change"
         );
+    }
+
+    /// The template plus a shipped-shaped condition header on its one group: the
+    /// packed copy before it (the same channel hash, as the shipped packed runs
+    /// write), then the 28-byte record, the `n` word, two 17-byte entries and
+    /// the trailer.
+    fn template_with_conditions() -> (GroupData, Vec<ConditionHeader>) {
+        let mut data = template().into_bytes();
+        let channel = var("texture_map", 0, 3).hash();
+        let mut copy = vec![0u8; 28];
+        copy[0..4].copy_from_slice(&channel.to_le_bytes());
+        copy[4..8].copy_from_slice(&8u32.to_le_bytes());
+        copy[12..16].copy_from_slice(&16u32.to_le_bytes());
+        copy[16..20].copy_from_slice(&1u32.to_le_bytes());
+        copy[20..24].copy_from_slice(&PACKED_KEY.to_le_bytes());
+        data.extend_from_slice(&copy);
+
+        let mut record = copy.clone();
+        record[8..12].copy_from_slice(&1u32.to_le_bytes());
+        let header = ConditionHeader {
+            record,
+            entries: vec![
+                ConditionEntry {
+                    hash: 0x9FCF_E126,
+                    rest: [0; 13],
+                },
+                ConditionEntry {
+                    hash: 0xB563_9618,
+                    rest: [0; 13],
+                },
+            ],
+            trailer: [1, 0, 0, 0, 0, 0, 0, 0],
+        };
+        header.write(&mut data);
+        (GroupData::new(data), vec![header])
+    }
+
+    #[test]
+    fn a_condition_header_round_trips() {
+        let (data, headers) = template_with_conditions();
+        let query = [0x8BE2_82AAu32];
+        let read = data
+            .condition_headers(&query)
+            .expect("the condition header reads");
+        assert_eq!(read, headers);
+        assert_eq!(read[0].entries.len(), 2);
+        assert_eq!(read[0].len(), 40 + 2 * 17);
+
+        let rebuilt = data.rebuild_conditions(&query, &read).expect("rebuild");
+        assert_eq!(
+            rebuilt,
+            data.bytes(),
+            "a header that matches must not change a byte"
+        );
+    }
+
+    #[test]
+    fn a_condition_header_can_grow() {
+        let (data, headers) = template_with_conditions();
+        let query = [0x8BE2_82AAu32];
+        let mut grown = headers.clone();
+        grown[0].entries.push(ConditionEntry {
+            hash: 0x4BA4_BD58,
+            rest: [0; 13],
+        });
+
+        let rebuilt = data.rebuild_conditions(&query, &grown).expect("rebuild");
+        assert_eq!(rebuilt.len(), data.bytes().len() + 17);
+        let read = GroupData::new(rebuilt)
+            .condition_headers(&query)
+            .expect("the grown header reads");
+        assert_eq!(read[0].entries.len(), 3);
+        assert_eq!(read[0].entries[2].hash, 0x4BA4_BD58);
     }
 
     #[test]

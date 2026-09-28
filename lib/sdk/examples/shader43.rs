@@ -67,6 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut compile_dir: Option<PathBuf> = None;
     let mut against: Option<PathBuf> = None;
     let mut group_data_mode = false;
+    let mut group_conditions_mode = false;
     let mut overrides = ShaderOverrides::default();
     let mut files = Vec::new();
 
@@ -153,6 +154,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--group-data" => {
                 group_data_mode = true;
+            }
+            "--group-conditions" => {
+                group_conditions_mode = true;
             }
             "--compile" => {
                 i += 1;
@@ -388,6 +392,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         for path in &files {
             if let Err(err) = group_data(path, names.as_ref()) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if group_conditions_mode {
+        for path in &files {
+            if let Err(err) = group_conditions(path) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -2039,6 +2052,65 @@ fn group_data(
                 Err(err) => println!("  round trip failed: {err}"),
             }
         }
+    }
+    Ok(())
+}
+
+/// Reads and rewrites every group's byte-packed condition header: a group's last
+/// `40 + 17 x n` bytes (a 28-byte packed record, the `n` word, `n` 17-byte
+/// entries and an 8-byte trailer). The rebuild is the check - the bytes must
+/// come back exactly - and it is run on both the UI base and the small families,
+/// whose headers differ in shape.
+fn group_conditions(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let shader = shader_section(&data)?;
+    let section = Section::parse(shader)?;
+    let query_ids: Vec<u32> = section
+        .contexts()
+        .iter()
+        .flat_map(|context| context.queries.iter().map(|query| query.id))
+        .collect();
+    let group = GroupData::new(section.group_data().to_vec());
+    let headers = group
+        .condition_headers(&query_ids)
+        .ok_or("a group's condition header was not found")?;
+
+    println!("=== {} ===", path.display());
+    println!("  {} groups", headers.len());
+    for (index, header) in headers.iter().enumerate() {
+        let hashes: Vec<String> = header
+            .entries
+            .iter()
+            .map(|entry| format!("{:08X}", entry.hash))
+            .collect();
+        let trailer: String = header
+            .trailer
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect();
+        println!(
+            "    group {index:2}: n {}, trailer {trailer}, entries {}",
+            header.entries.len(),
+            hashes.join(" ")
+        );
+    }
+
+    let rebuilt = group.rebuild_conditions(&query_ids, &headers)?;
+    let identical = rebuilt == group.bytes();
+    println!(
+        "  rebuild: {} bytes, {}",
+        rebuilt.len(),
+        if identical {
+            "byte-identical"
+        } else {
+            "DIFFERS"
+        }
+    );
+    if !identical {
+        return Err("the condition-header rebuild changed bytes".into());
     }
     Ok(())
 }

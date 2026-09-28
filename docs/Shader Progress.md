@@ -331,6 +331,21 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    and channel tables, and keep the engine table. Generating the header itself
    needs the grammar in (2). `rebuild`/`rebuild_channels` already write the
    tables correctly.
+
+   **The condition header is now read and written** (`GroupData::condition_headers`
+   and `rebuild_conditions`, plus `shader43 --group-conditions`): a group's last
+   `40 + 17 x n` bytes, found by self-consistency - the `n` word at header + 28
+   reads back as the candidate, and the header's 28-byte record is the last
+   packed copy, so its first word matches the copy before it. Verified: the UI
+   base's 36 groups all read with the notes' values (n 2 for groups 0-11 and 1
+   for the rest, the entries `gui`/`BC4EE226`/`625D415E`/zero, the trailer
+   `01 00 00 00 00 00 00 00` where the group carries an entry), and five of the
+   six small families read every group (`004F18EA` 3,3,1; `17A3DC01` 5,1,1;
+   `38ECBAD1` 2; `3F08AC44` 5,5,1,1,1; `427B5E6E` 5,1,1) - and every rebuild is
+   byte-identical on all seven. `2A04418E`'s two shadow-context groups do not
+   satisfy the rule and are refused rather than guessed. So the constructor can
+   now *write* the header (and grow or shrink a group's entries) instead of
+   carrying it, with the rest of the group data left alone.
 4. **In-process DXC (`dxcompiler.dll` + `dxil.dll`)** - **done** (see the
    verified list). The validator library is not optional: it is what signs the
    DXIL, and D3D12 refuses an unsigned container. Next, if wanted: ship both
