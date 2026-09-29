@@ -29,6 +29,17 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
+/// The engine's `global_viewport` record table, captured from the current game
+/// build. It is engine-side data - the cbuffer schema the config records index
+/// and the group data's engine table is written from - so the toolchain carries
+/// it once rather than every mod.
+const ENGINE_TABLE_HEX: &str = include_str!("../../data/global_viewport.hex");
+
+/// The toolchain's engine table, parsed.
+fn tool_engine_table() -> Result<Vec<Record>> {
+    records_from_hex(ENGINE_TABLE_HEX.trim())
+}
+
 /// The length of a block channel record, by its `kind`: texture channels are
 /// 60 bytes (kind 4) or 73 bytes (kind 5). Other kinds are only known to exist
 /// (kind 2 is `global_texture2D`), not how long they are.
@@ -569,10 +580,13 @@ impl EngineData {
             }
         }
 
-        // Assemble the template once every line is in.
+        // Assemble the template once every line is in. The engine's table is the
+        // toolchain's when the file does not carry one.
         if let Some(prefix) = group_prefix {
-            let engine = engine_table
-                .ok_or_else(|| color_eyre::eyre::eyre!("a group template needs its engine table"))?;
+            let engine = match engine_table {
+                Some(engine) => engine,
+                None => tool_engine_table()?,
+            };
             let mut parts = Vec::with_capacity(groups.len());
             let mut tables = Vec::with_capacity(groups.len());
             for (entry, index) in groups {
@@ -614,7 +628,15 @@ impl EngineData {
                 // material tables, the distinct group parts and one `group` line
                 // per group.
                 text.push_str(&format!("group_prefix {}\n", to_hex(&template.prefix)));
-                text.push_str(&format!("engine_table {}\n", records_hex(&template.engine)));
+                // The engine's table is a toolchain constant, so it is only
+                // written when the file carries a different one.
+                let tool_table = tool_engine_table().unwrap_or_default();
+                if template.engine != tool_table {
+                    text.push_str(&format!(
+                        "engine_table {}\n",
+                        records_hex(&template.engine)
+                    ));
+                }
                 let mut distinct_tables: Vec<&Vec<Record>> = Vec::new();
                 let mut table_indexes = Vec::with_capacity(self.material_tables.len());
                 for table in &self.material_tables {

@@ -572,15 +572,17 @@ The file also stopped carrying three derivable things:
   shader's are a 0- or 4-byte header and one patched byte - is written as that
   diff.
 
-Measured on snoopy-mod's `ui_default_base.engine_data`: **218950 -> 22178
+Measured on snoopy-mod's `ui_default_base.engine_data`: **218950 -> 19244
 bytes** (84758 after the template alone), with the build producing a
 byte-identical material data file (`49AA3702...`) and the text round trip
-intact. What is left, largest first: the tails' lists (8730, waiting on
-in-process container reflection), the engine table (2934) and the config base
-(tool constants), the conditions tree (2884, waiting on the tree writer), the
-program list (1710), the preamble (1139) and the group lines (1008).
-`engine_data_check <file> [<source material>]` runs the round trip and the
-group-data comparison.
+intact. The engine's `global_viewport` table now lives in the toolchain
+(`lib/sdk/data/global_viewport.hex`, a versioned constant), so a mod never
+carries it. What is left, largest first: the tails' lists (8730, waiting on
+in-process container reflection), the conditions tree (2884, waiting on the tree
+writer), the block diffs (1747), the program list (1710), the preamble (1139,
+whose config base belongs in the toolchain and whose stream is derivable), the
+contexts (634) and the group parts. `engine_data_check <file> [<source
+material>]` runs the round trip and the group-data comparison.
 
 ### The records' binding fields, and the first word as a group-data index
 

@@ -31,6 +31,51 @@ Engine constants are only acceptable where the engine genuinely requires data
 that cannot currently be derived from the shader - and even then the goal is to decode and
 shrink them to the smallest possible form, not to grow them into an engine data file.
 
+## Where each carried part belongs (the three destinations)
+
+The engine data is not a design: every line in it is a part whose source form
+cannot be written yet, or whose derivation is not implemented yet. There are
+only three legitimate destinations, and none of them is a side file:
+
+**(a) a source file the author writes** - the part is compiler input:
+
+- the contexts and their queries: the declaration's `shader_contexts`
+  (`compile_with`, the passes);
+- the conditions tree: the `permutation_sets`' `if:` expressions and the passes'
+  conditions - the compiler output of the declaration, so its source form is the
+  declaration;
+- the per-pass config records: the pass fields (`render_state`, `layer`,
+  `defines`) - `38` reads like the render state, `94` is the pass's channel mask;
+- the material's channel and variable names: the material SJSON plus the
+  declaration's `inputs` and `samplers`;
+- the group hashes: the permutation's identity (the hash rule is open);
+- the device stream: the material's channels plus the declaration's `samplers`
+  (already derivable, verified).
+
+**(b) nothing at all - derived at build** - the part is output of our own
+sources:
+
+- the program tails' cbuffer and resource lists: the compiled container's
+  reflection;
+- the blocks: the preamble's body plus the per-job masks;
+- the group data's tables, descriptors, packed runs and headers: the material,
+  the declaration and the programs' usage;
+- the program list: the declaration's jobs (the multi-job mapping).
+
+**(c) a tool constant** - genuinely engine-side, never the mod's:
+
+- the engine's `global_viewport` table: its cbuffer schema, versioned per game
+  build;
+- the config base table: the engine's standard binding set;
+- the dependency hash: the renderer path's murmur64 (done);
+- `opaque`, `w2` and the group headers' two words, once identified.
+
+The work order follows the destinations: (b) needs in-process container
+reflection, (a) needs writers in the reconstruct flow, and (c) needs one
+versioned data file in the toolchain. When all three are done the engine data is
+empty and a from-scratch mod ships only its material, its declaration and its
+sources.
+
 ## Status of the intermediate route
 
 The mod-defined build flow is in place: a material can declare
