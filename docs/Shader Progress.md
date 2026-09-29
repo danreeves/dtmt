@@ -10,11 +10,13 @@ the codec's correctness oracle, not the goal: a reconstruction is useful even
 where it cannot reproduce bytes, and a build is useful even where some engine
 constants are carried.
 
-## Repo state (2026-09-27)
+## Repo state (2026-09-30)
 
 `main` is the trusted baseline plus reviewed commits:
 
 ```
+b9a5bc6 shader: the resource record index rule is exact - 1004/1004
+3088c8e shader: the descriptor list starts at +16, word 1 is its entry index
 1fb1c1b docs: the built material carries the compiled containers
 ccdbe8c build: source material programs from a sibling .shader_node
 899b6fe shader: read the real code shapes, compile with DXC
@@ -33,7 +35,7 @@ reference; this file is the pick-up point.
 
 - `cargo test -p sdk` needs `E:\SteamLibrary\steamapps\common\Warhammer 40,000
   DARKTIDE\binaries` on `PATH` (links `oo2core_9_win64.dll`).
-- Expected: 119 pass, 3 pre-existing `filetype::package` failures (122 tests).
+- Expected: 130 pass, 3 pre-existing `filetype::package` failures (133 tests).
 - Fixtures: the six extracted sections and the UI base's parts live in a scratch
   directory outside the repository (each `.raw` is a 20-byte wrapper then the
   section, which the example handles). `docs/scripts/slice-sections.ps1`
@@ -70,9 +72,20 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
 - **Queries and groups are one to one**: every query id appears exactly once in
   the group data, in its group's header. [7/7]
 - **Group data header**: a 4-byte global count, then back-to-back groups each
-  `{query_id, 0x130, 4, c_per_object, 0, 0, 0, descriptor[3] {name_hash, flags,
-  X, Y}, ...}`. UI base: `4 + 12 x 1758 + 24 x 1741 = 62884`, the whole region.
-  `GroupData::descriptors` reads `+32`; the old `+8` reading is corrected.
+  `{query_id, word, count}` - the word is 0x130 and 0x390 in the samples, the
+  count is the number of 16-byte descriptors that follow at +12:
+  `{name_hash, flags, X, Y}`. The count varies with the shader (4 on the UI
+  base, 6 or 7 on `38ECBAD1`, 12 on `3F08AC44`, up to 36). `GroupData::descriptors`
+  reads entries 1..3 (the +32/+48/+64 words: `global_viewport`, the texture and
+  the UAV on the UI base); entry 0 at +16 is the material's `c_per_object` there.
+  The old "one set of three descriptors at +8" and "+32 list" readings are
+  corrected. [27 sections walked by `resource_table`]
+- **A resource record's second word is its descriptor index**: a 7-word resource
+  record's word 1 is the resource's index in the descriptor list of the group its
+  program belongs to. [27 sections: 355 programs with 7-word records, 355 fully
+  matched by one group, 1004/1004 records] The per-group program counts also
+  partition programs among groups with distinct lists (`eb09dd77` 26/26/2/2/16/16,
+  `3F08AC44` 7/7/1/2/2), a lead on the program-to-group mapping.
 - **There is no link table and no node pool.** Those were 20-byte records read
   at the wrong length; `004F18EA`'s "link" is default's second query,
   `2A04418E`'s `0x1C` is a conditions byte offset. [7/7]
@@ -163,6 +176,21 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   is not needed to bind the variable. Note: `user_settings.config`'s
   `log_level` was `1` for these runs, which suppresses the `ModLoader` info
   lines; set it to `2` or higher to read them. [one run]
+- **The mod carries no engine library sources** (2026-09-30): the whole
+  `core/stingray_renderer/**` tree the migration extracted (66 decompiled
+  library files, ~1.4 MB) is gone. `dtmt build` reads only the mod's own
+  `.shader_source` and the four node definitions its material names
+  (`core/shader_nodes/{texture_coordinate0,sample_texture,material_variable,mul}`);
+  every built asset is byte-identical without the tree, which is the target
+  shape in miniature: declaration + source + material + node definitions. In
+  game after the cleanup: `[ModLoader] Loading package "packages/mods/snoopymod"`,
+  `[snoopymod] init.lua loaded`, `[snoopymod] material set: background_image ->
+  materials/mods/snoopymod/title_screen_background`,
+  `[snoopymod] driving 'dev_wireframe_color' from Lua material_values`; the
+  three title samples all read `40,47,43`, and the template pumpkin unit still
+  renders (user-observed). The tree is backed up in the scratch directory
+  (`snoopy-core-backup`); the template cube/pumpkin assets stay in the mod.
+  [one run]
 - **In-process DXC**: `lib/dxc` is a workspace crate (like `oodle`) that loads
   `dxcompiler.dll` at runtime (`libloading`, no import library) and compiles
   through a hand-written `extern "system"` vtable transcribed from the SDK's

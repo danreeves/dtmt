@@ -588,10 +588,13 @@ table (`lib/sdk/data/global_viewport.hex`) and the 30-record standard config bas
 carries them; the conditions blob is dropped, verified in game; the dependency
 is written from the constant; and the containers are compiled from the module's
 own sources. `engine_data_check <file> [<source material>]` runs the round trip
-and the group-data comparison. What is left: the tails' lists (waiting on the
-resource-record index rule), the contexts and groups (the engine needs them
-consistent with the shader's compiled structure - see below), the per-program
-masks, `opaque` and `w2`.
+and the group-data comparison. What is left: the tails' lists (their cbuffer
+entries are verified derivable and the resource index rule is decoded - the
+wiring waits on the build having the containers' reflection and on a shader
+whose groups share one descriptor list, since the program-to-group mapping is
+not decoded), the contexts and groups (the engine needs them consistent with
+the shader's compiled structure - see below), the per-program masks, `opaque`
+and `w2`.
 
 ### The tails' cbuffer entries are derivable from the group data and the source
 
