@@ -1,7 +1,8 @@
 //! Checks the understood parts of a program tail against a material's own
 //! engine data: the cbuffer list (name hash + size) and the signature records
-//! (`{murmur32(name), semantic index, register}`, the non-system elements of
-//! the container's input signature).
+//! (`{murmur32(name), semantic index, register}` for every element of the
+//! container's input signature; the engine spells system values in upper case,
+//! `SV_POSITION`, while the container says `SV_Position`).
 //!
 //! ```text
 //! tail_check <material data file> [Vertex|Pixel]
@@ -52,11 +53,16 @@ fn main() -> color_eyre::Result<()> {
         .collect();
     for (label, elements) in [("input", &inputs), ("output", &outputs)] {
         for element in elements.iter() {
-            let hash = u32::from(Murmur32::hash(&element.name));
             let system = element.name.starts_with("SV_");
+            // The engine hashes its own semantic names, which spell system
+            // values in upper case (`SV_POSITION`), so try both forms.
+            let hashes = [
+                u32::from(Murmur32::hash(&element.name)),
+                u32::from(Murmur32::hash(element.name.to_uppercase().as_str())),
+            ];
             // The record is `{hash, semantic index, register}`.
             let found = words.windows(3).position(|window| {
-                window[0] == hash
+                hashes.contains(&window[0])
                     && window[1] == element.index as u32
                     && window[2] == element.register as u32
             });
