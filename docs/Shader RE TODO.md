@@ -476,6 +476,23 @@ stream count (35); the pass is the leading candidate, since a pass has a render
 state and a channel set. `config_probe` dumps each section's config list beside
 those features so the next hypothesis is a re-run.
 
+### The config index space is the engine's global_viewport variable order
+
+The engine table in the group data - the 69-record `global_viewport` run whose
+first record is `6BC91D73` - is the order the config records index into. On the
+UI base's own table: 16 `time`, 17 `delta_time`, 19 `sampler_lod_bias`, 20
+`frame_number`, 21 `back_buffer_size`, 22 `output_rt_size`, 24 `taa_enabled`,
+25 `jitter_enabled`, 26 `upscaling_enabled`, 28 `gamma`, and 1/3/5/8/12 are
+`camera_pos` / `camera_inv_view` / `camera_last_world` / `camera_projection` /
+`camera_last_view_projection`. So the base set is the engine's standard binding
+set - the camera matrices, the time/frame scalars and the render flags - indexed
+by position in the engine's table, and the index-to-name mapping is a table the
+tool can carry once per build. The indices above the table (94..101) are the
+shader's texture slots; their value (`F`, overridden to `7`) reads as a per-slot
+uv-set mask, which is what the per-program masks (`01`/`02`/`04`/`08`/`0F`/`07`)
+look like too. `engine_table <engine_data|material>` prints the table, so the
+mapping is checkable after a game update.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
