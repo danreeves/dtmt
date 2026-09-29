@@ -6,7 +6,7 @@
 //! itself:
 //!
 //! ```text
-//! u32 version                 // 60 or 61
+//! u32 version                 // 60, 61 or 62
 //! u32 material_offset         // always 28
 //! u32 material_size
 //! u32 shader_offset           // u32::MAX if no embedded shader
@@ -93,7 +93,7 @@ use crate::bundle::file::UserFile;
 use crate::murmur::{HashGroup, IdString32, IdString64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant, Properties};
 
-const EXPECTED_VERSIONS: [u32; 2] = [60, 61];
+const EXPECTED_VERSIONS: [u32; 3] = [60, 61, 62];
 const DEFAULT_VERSION: u32 = 61;
 const MATERIAL_OFFSET: usize = 28;
 const NO_OFFSET: u32 = u32::MAX;

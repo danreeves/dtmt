@@ -32,14 +32,14 @@ fn u32_at(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
-/// The material stream header (version 60/61) points at the shader section.
+/// The material stream header (version 60/61/62) points at the shader section.
 fn shader_section(data: &[u8]) -> Option<&[u8]> {
     if data.len() < 28 {
         return None;
     }
 
     let version = u32_at(data, 0);
-    if version != 60 && version != 61 {
+    if !(60..=62).contains(&version) {
         return None;
     }
     if u32_at(data, 4) != 28 {

@@ -649,6 +649,17 @@ distinct hashes) leaves 147 unresolved; that list is kept beside the miner's
 other bounty lists as the next mining round's targets, and the rest of the
 dump's "hashes" are packed payload words, not names.
 
+Whole-game mining of the new build (`mine_sections`: 2094 sections, 12,208
+condition records) closes the opcode set: only `20xx`, `10xx`, `30xx`, `50xx`,
+`70xx` and `90xx` occur (45,978 / 20,501 / 3,840 / 12,133 / 11,189 / 12,208
+words). Every one of the 20,501 results equals the number of tests in its
+conjunction minus one - zero exceptions - so branch results are a 0..3
+specificity rank, and fallbacks are only ever 5 (944) or 7 (11,189). The rank
+does not select a program: per section the distinct results are 1, 2 or 3
+whatever the program count (2 to 272 programs). The September 2026 build moved
+the material stream version from 60/61 to 62; the section layout is unchanged -
+our generated section still renders in it.
+
 ## The whole section round trips, and the dependencies entry is a u64
 
 `Section::parse` walks the layout above and `Section::into_bytes` recomputes it,
