@@ -40,6 +40,17 @@ fn tool_engine_table() -> Result<Vec<Record>> {
     records_from_hex(ENGINE_TABLE_HEX.trim())
 }
 
+/// The engine's standard config records: the 30 (index, value) records every
+/// rich preamble starts with, captured from the current game build. Like the
+/// engine table, this is engine-side data, so the toolchain carries it once and
+/// a file only stores what it has beyond it.
+const CONFIG_BASE_HEX: &str = include_str!("../../data/config_base.hex");
+
+/// The toolchain's config base, parsed.
+fn config_base() -> Result<Vec<u8>> {
+    from_hex(CONFIG_BASE_HEX.trim())
+}
+
 /// The length of a block channel record, by its `kind`: texture channels are
 /// 60 bytes (kind 4) or 73 bytes (kind 5). Other kinds are only known to exist
 /// (kind 2 is `global_texture2D`), not how long they are.
@@ -370,6 +381,7 @@ impl EngineData {
         let mut group_mids: Vec<Vec<u8>> = Vec::new();
         let mut group_tails: Vec<Vec<u8>> = Vec::new();
         let mut groups: Vec<(GroupParts, usize)> = Vec::new();
+        let mut preamble_head: Option<Vec<u8>> = None;
 
         for line in text.lines() {
             let line = line.trim();
@@ -471,6 +483,23 @@ impl EngineData {
                     engine_data.containers.resize(index + 1, Vec::new());
                 }
                 engine_data.containers[index] = from_hex(hex)?;
+                continue;
+            }
+
+            // The device preamble, split around the engine's standard config
+            // base, which the toolchain carries.
+            if let Some(rest) = line.strip_prefix("preamble_head ") {
+                preamble_head = Some(from_hex(rest)?);
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("preamble_rest ") {
+                let head = preamble_head
+                    .take()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a preamble rest needs its head"))?;
+                let mut preamble = head;
+                preamble.extend_from_slice(&config_base()?);
+                preamble.extend_from_slice(&from_hex(rest)?);
+                engine_data.device_preamble = preamble;
                 continue;
             }
 
@@ -664,7 +693,6 @@ impl EngineData {
                 for (index, table) in distinct_tables.iter().enumerate() {
                     text.push_str(&format!("material {index} {}\n", records_hex(table)));
                 }
-
                 // The group parts dedupe independently: the heads (once their
                 // query id is off), the bytes between the tables, the packed runs
                 // and the condition-header tails all repeat across a shader's
@@ -709,10 +737,29 @@ impl EngineData {
             }
             None => text.push_str(&format!("group_data {}\n", to_hex(&self.group_data))),
         }
-        text.push_str(&format!(
-            "device_preamble {}\n",
-            to_hex(&self.device_preamble)
-        ));
+        // The preamble's config records start with the engine's standard base, a
+        // toolchain constant, so only what lies beyond it is stored.
+        let base = config_base().unwrap_or_default();
+        let starts_with_base = !base.is_empty()
+            && self
+                .device_preamble
+                .get(16..16 + base.len())
+                .is_some_and(|configs| configs == base.as_slice());
+        if starts_with_base {
+            text.push_str(&format!(
+                "preamble_head {}\n",
+                to_hex(&self.device_preamble[..16])
+            ));
+            text.push_str(&format!(
+                "preamble_rest {}\n",
+                to_hex(&self.device_preamble[16 + base.len()..])
+            ));
+        } else {
+            text.push_str(&format!(
+                "device_preamble {}\n",
+                to_hex(&self.device_preamble)
+            ));
+        }
 
         // Deduplicate the tails: programs that share one reference the same
         // `tail` line, which shrinks engine data files a lot (the UI shader has 96
@@ -1090,6 +1137,23 @@ mod tests {
             let parsed = block_from_spec(&spec, &preamble).unwrap();
             assert_eq!(parsed, block, "spec '{spec}'");
         }
+    }
+
+    #[test]
+    fn a_preamble_that_starts_with_the_base_stores_only_its_remainder() {
+        let mut engine_data = empty_engine_data();
+        let mut preamble: Vec<u8> = (0..16u8).collect();
+        preamble.extend_from_slice(&config_base().unwrap());
+        preamble.extend_from_slice(&[0xAB; 40]);
+        engine_data.device_preamble = preamble.clone();
+
+        let text = engine_data.to_text();
+        assert!(text.contains("preamble_head "), "{text}");
+        assert!(text.contains("preamble_rest "), "{text}");
+        assert!(!text.contains("device_preamble "), "{text}");
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        assert_eq!(parsed.device_preamble, preamble);
     }
 
     #[test]

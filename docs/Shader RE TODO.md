@@ -580,17 +580,18 @@ The file also stopped carrying three derivable things:
   shader's are a 0- or 4-byte header and one patched byte - is written as that
   diff.
 
-Measured on snoopy-mod's `ui_default_base.engine_data`: **218950 -> 19244
-bytes** (84758 after the template alone), with the build producing a
-byte-identical material data file (`49AA3702...`) and the text round trip
-intact. The engine's `global_viewport` table now lives in the toolchain
-(`lib/sdk/data/global_viewport.hex`, a versioned constant), so a mod never
-carries it. What is left, largest first: the tails' lists (8730, waiting on
-in-process container reflection), the conditions tree (2884, waiting on the tree
-writer), the block diffs (1747), the program list (1710), the preamble (1139,
-whose config base belongs in the toolchain and whose stream is derivable), the
-contexts (634) and the group parts. `engine_data_check <file> [<source
-material>]` runs the round trip and the group-data comparison.
+Measured on snoopy-mod's `ui_default_base.engine_data`: **218950 -> 15605
+bytes**, with the build producing a byte-identical material data file
+(`FCD0965B...`) and the text round trip intact. The engine's `global_viewport`
+table (`lib/sdk/data/global_viewport.hex`) and the 30-record standard config base
+(`lib/sdk/data/config_base.hex`) are now toolchain constants, so a mod never
+carries them; the conditions blob is dropped, verified in game; the dependency
+is written from the constant; and the containers are compiled from the module's
+own sources. `engine_data_check <file> [<source material>]` runs the round trip
+and the group-data comparison. What is left: the tails' lists (waiting on the
+resource-record index rule), the contexts and groups (the engine needs them
+consistent with the shader's compiled structure - see below), the per-program
+masks, `opaque` and `w2`.
 
 ### The tails' cbuffer entries are derivable from the group data and the source
 
