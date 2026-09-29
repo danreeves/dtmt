@@ -626,16 +626,17 @@ gui_render_pass`, `8FB860CF = write_channels`, `7F9E89FD = num_skin_weights`,
 predicates (`num_skin_weights`) and channels (`gui`, `red`, `green`, `blue`,
 `alpha`).
 
-The payload's results are not interface indices: the UI base's 48 pixel
-programs all carry the same input list - one shipped interface - while its
-records yield 1, 2, 3 and the fallback 7. The one rule that holds on all 35 of
-its records is `result = tests.len() - 1`, the number of conditions in the
-conjunction minus one, which reads as a specificity rank (the fallback 7 being
-the sentinel for no match) - but nothing yet proves the engine ranks groups
-with it. The small families' payload adds a case-value opcode
-(`3001 7007 2000 1000 3004 5005 5007 9000` around `num_skin_weights`), so value
-predicates have their own opcode shape. The experiment that would settle both
-is a crafted tree with an in-game observation of which group is selected.
+The payload's results are not interface indices or ranks: they index the
+branch's test list, and the engine picks the condition hash at that index. That
+was settled in game (see `docs/Shader Progress.md`): a crafted record with two
+hashes renders with result 0 and with result 1, the shipped one-hash record
+crashes with result 1, and rewriting every result of the UI base's 35 records
+to 64 changes nothing because its 96 programs collapse to two payloads and its
+groups share one table. The compiler always emits `tests.len() - 1` (the last,
+most specific condition), which is why the rule holds on all 35 records. The
+small families' payload adds a case-value opcode (`3001 7007 2000 1000 3004 5005
+5007 9000` around `num_skin_weights`), so value predicates have their own
+opcode shape.
 
 More names, mined from the VT2 SDK's declarations: `BC4EE226 = gui_hdr` and
 `625D415E = transparent_mask`. The two most frequent condition hashes in the
@@ -653,10 +654,9 @@ Whole-game mining of the new build (`mine_sections`: 2094 sections, 12,208
 condition records) closes the opcode set: only `20xx`, `10xx`, `30xx`, `50xx`,
 `70xx` and `90xx` occur (45,978 / 20,501 / 3,840 / 12,133 / 11,189 / 12,208
 words). Every one of the 20,501 results equals the number of tests in its
-conjunction minus one - zero exceptions - so branch results are a 0..3
-specificity rank, and fallbacks are only ever 5 (944) or 7 (11,189). The rank
-does not select a program: per section the distinct results are 1, 2 or 3
-whatever the program count (2 to 272 programs). The September 2026 build moved
+conjunction minus one - zero exceptions - consistent with the compiler emitting
+the last test's index, and fallbacks are only ever 5 (944) or 7 (11,189).
+The September 2026 build moved
 the material stream version from 60/61 to 62; the section layout is unchanged -
 our generated section still renders in it.
 

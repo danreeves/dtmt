@@ -221,17 +221,19 @@ The engine-prologue claim does not survive: `linear_depth` is in 38ECBAD1's and
 The records are the shader's own resource usage.
 
 The channel record's body is byte-packed and mostly constant. Across 683 records
-from 200 blocks: `{name, kind, count = 1}`, then a format word at +12 that is
-`0x100` for material channels and `0x300` for the render-set ones
-(`linear_depth`, `global_diffuse_map`, `fog_volume`), constants `0`, `0x200`,
-`0`, `0x30000`, `0`, and two per-name fields - a word at +44 in {0, 5, 6} and
-one at +52 in {0, 2, 4, 8, 0x15}. Kind 4 is textures (render-set names plus
-material channels), kind 5 is material variables: `E503152C` is the sampler
-index that the group data's c_per_object table opens with. Every name carries a
-fixed field set in the sample, so the flags are per channel and should be
-derivable from the channel's texture format. No kind-2 record appears in any of
-the 200 blocks sampled, so the earlier "kind 2 is global_texture2D in the pixel
-blocks" note does not hold for this build.
+from 200 blocks: `{name, kind, count = 1}`, then a component-count word at +12
+that is `0x100` for one component count and `0x300` for the other (the material
+doc's reading: the flag words track the component count, 4 = RGBA and 3 = RGB,
+following `texture_format_spec.config`'s rules - not the texture format, which
+lives in the texture resource), constants `0`, `0x200`, `0`, `0x30000`, `0`,
+and two per-name fields - a word at +44 in {0, 5, 6} and one at +52 in
+{0, 2, 4, 8, 0x15}. Kind 4 is textures (render-set names plus material
+channels), kind 5 is material variables: `E503152C` is the sampler index that
+the group data's c_per_object table opens with. Kind 6 also occurs (w3 = 2 or
+0x100/0x300, w11 = 0 or 5, w13 = 8 or 0x1E); kind 3 does not occur in the
+sample. Every name carries a fixed field set, so the flags are per channel. No
+kind-2 record appears in any of the 200 blocks sampled, so the earlier "kind 2
+is global_texture2D in the pixel blocks" note does not hold for this build.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
