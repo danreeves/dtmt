@@ -197,6 +197,31 @@ other programs add per-program records between the header and the body. The
 block starts with `{2, 0, ...}` in every sample, where the preamble starts
 `{1, N, M}`. `preamble_block` prints both heads and the match.
 
+### The records' binding fields, and the first word as a group-data index
+
+Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
+settles the resource records' fields: the second word is the **binding** and the
+fourth the **set**. 38ECBAD1's pixel container reflects `separate_images` set 2
+binding 0 (global_texture2D), set 0 bindings 0-2 (linear_depth, 39A56531,
+D1D67F3B); `separate_samplers` set 0 bindings 0-2 and set 31 binding 0
+(static_minlod_sampler); and `ubos` bindings 0/1 with sizes 1776/384 - matching
+the tail's records field for field, with the sampler records reading
+`{name, binding, 1, set}`. The engine records (bones, idata) are buffer records
+of the same shape: 004F18EA's vertex container reflects `usamplerBuffer`s at set
+9 and 12, and the records say set 9/12 with the buffer size (16/64 bytes) in the
+fifth word where a texture has `FFFFFFFF`.
+
+The first word is an index into the group data's record table. 38ECBAD1's table
+reads global_viewport, c_per_object, global_texture2D, linear_depth, 39A56531,
+D1D67F3B, global_feedback_buffers - indices 0..6, exactly its tails' first
+words; the UI base's reads c_per_object, global_viewport, global_texture2D,
+global_feedback_buffers - 0..3, exactly its tails' (which is why its two
+cbuffers are numbered the other way round from 38ECBAD1's). 004F18EA's resources
+match too (6, 7, 8), but its `B3A2EB88` cbuffer entry says 7 where the table's
+index 7 is `linear_depth`, so either the cbuffers index a second table or that
+entry needs another look. So both the cbuffer entry's `+4` word and the resource
+records' first word are derived from the group data the build generates.
+
 ### The compiled shaders carry the engine's names
 
 The names behind the tail hashes are not only in the executable: the shipped
