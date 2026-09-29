@@ -1215,7 +1215,7 @@ fn reconstruct(
     fs::write(&engine_data_path, engine_data.to_text())?;
 
     // The decompiled programs, when the tools are there.
-    let source = reconstruct_source(bytes, dxil_spirv, spirv_cross)?;
+    let source = reconstruct_source(bytes, names, dxil_spirv, spirv_cross)?;
     let mut wrote_source = None;
     if let Some(body) = source {
         if body.contains("\"\"\"") {
@@ -1321,6 +1321,7 @@ fn without_shader_data(sjson: &str) -> String {
 /// tool cannot be found or the section has no vertex or pixel program.
 fn reconstruct_source(
     section: &[u8],
+    names: Option<&HashMap<u32, String>>,
     dxil_spirv: &Path,
     spirv_cross: &Path,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -1331,19 +1332,81 @@ fn reconstruct_source(
         .ok_or("device data is out of range")?;
     let programs = shader::parse_programs(device)?;
 
+    // The cbuffers the tails name, by register and per stage: a decompiled
+    // program writes its constant buffers anonymously
+    // (`cbuffer _10_12 : register(b0, space0)`), and naming them is what makes
+    // the source carry the interface - the engine's `global_viewport` and
+    // `c_per_object` included. The registers are per program: the vertex stage's
+    // `c_per_object` is b0 where the pixel stage's is b1.
+    let mut vertex_cbuffers: HashMap<u32, String> = HashMap::new();
+    let mut pixel_cbuffers: HashMap<u32, String> = HashMap::new();
+    let mut resources: HashMap<(char, u32, u32), String> = HashMap::new();
+    for program in &programs {
+        let next = programs
+            .iter()
+            .find(|next| next.pos > program.meta_pos + 16)
+            .map(|next| next.pos)
+            .unwrap_or(device.len());
+        let Some(tail) = device.get(program.meta_pos + 16..next) else {
+            continue;
+        };
+        let Some(parsed) = shader::Tail::parse(tail) else {
+            continue;
+        };
+        let map = match program.stage {
+            shader::Stage::Vertex => &mut vertex_cbuffers,
+            shader::Stage::Pixel => &mut pixel_cbuffers,
+            _ => continue,
+        };
+        for entry in &parsed.cbuffers {
+            if let Some(name) = names.and_then(|names| names.get(&entry.name_hash())) {
+                map.entry(entry.words[3]).or_insert_with(|| name.clone());
+            }
+        }
+
+        // The resource records, by the register letter the list implies: lists 3
+        // and 4 are textures (`t`), 5 the UAVs (`u`), 6 and 8 the samplers
+        // (`s`). The 7-word records are `{name, index, binding, flag, set, ...}`
+        // so the binding is word 2 and the set word 4; the 4-word sampler
+        // records carry (binding, set) at words 1 and 3, and the 3-word bindless
+        // sampler records are `{name, binding, 0}` at the engine's space 2.
+        if let Some(lists) = shader::TailLists::parse(&parsed.rest) {
+            for (list, records) in lists.lists.iter().enumerate() {
+                for record in records {
+                    let (letter, set, binding) = match list {
+                        3 | 4 => ('t', record[4], record[2]),
+                        5 => ('u', record[4], record[2]),
+                        6 => ('s', record[3], record[1]),
+                        8 => ('s', 2, record[1]),
+                        _ => continue,
+                    };
+                    if let Some(name) = names.and_then(|names| names.get(&record[0])) {
+                        resources
+                            .entry((letter, set, binding))
+                            .or_insert_with(|| name.clone());
+                    }
+                }
+            }
+        }
+    }
+
     let mut vertex = None;
     let mut pixel = None;
     for program in &programs {
         match program.stage {
             shader::Stage::Vertex if vertex.is_none() => {
                 match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
-                    Some(hlsl) => vertex = Some(hlsl),
+                    Some(hlsl) => {
+                        vertex = Some(name_declarations(&hlsl, &vertex_cbuffers, &resources))
+                    }
                     None => return Ok(None),
                 }
             }
             shader::Stage::Pixel if pixel.is_none() => {
                 match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
-                    Some(hlsl) => pixel = Some(hlsl),
+                    Some(hlsl) => {
+                        pixel = Some(name_declarations(&hlsl, &pixel_cbuffers, &resources))
+                    }
                     None => return Ok(None),
                 }
             }
@@ -1377,6 +1440,111 @@ fn reconstruct_source(
     }
 
     Ok(Some(body))
+}
+
+/// Renames the decompiled constant buffers and resources to the names the tails
+/// carry: `cbuffer _10_12 : register(b0, space0)` becomes
+/// `cbuffer global_viewport : register(b0, space0)`, and
+/// `Texture2D<float4> _12 : register(t0, space2)` becomes
+/// `Texture2D<float4> global_texture2D : register(t0, space2)`. Unnamed
+/// declarations keep their compiler name.
+fn name_declarations(
+    hlsl: &str,
+    cbuffers: &HashMap<u32, String>,
+    resources: &HashMap<(char, u32, u32), String>,
+) -> String {
+    let register = |line: &str, prefix: &str| -> Option<(char, u32, u32)> {
+        let rest = line.split(prefix).nth(1)?;
+        let letter = rest.chars().next()?;
+        let number: String = rest[1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        let space: String = line
+            .split("space")
+            .nth(1)?
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        Some((letter, space.parse().ok()?, number.parse().ok()?))
+    };
+
+    // Pass one: read the declarations and collect the renames.
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for line in hlsl.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("cbuffer ") {
+            let ident = rest.split_whitespace().next().unwrap_or("");
+            let number = line
+                .split("register(b")
+                .nth(1)
+                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|number| number.parse::<u32>().ok());
+            if let Some(name) = number.and_then(|number| cbuffers.get(&number)) {
+                renames.push((ident.to_string(), name.clone()));
+            }
+        } else if trimmed.contains("register(") && trimmed.ends_with(';') {
+            let key = register(line, "register(");
+            // The identifier, without the array brackets spirv-cross writes on
+            // bindless declarations (`_9[]`).
+            let ident = trimmed
+                .split(|c: char| c.is_whitespace() || c == ';')
+                .filter(|word| !word.is_empty())
+                .nth(1)
+                .map(|word| {
+                    word.chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect::<String>()
+                });
+            if let (Some(key), Some(ident)) = (key, ident.as_deref()) {
+                if !ident.starts_with("register") {
+                    if let Some(name) = resources.get(&key) {
+                        renames.push((ident.to_string(), name.clone()));
+                    }
+                }
+            }
+        }
+    }
+    if renames.is_empty() {
+        return hlsl.to_string();
+    }
+
+    // Pass two: apply them everywhere, as whole words - the body refers to the
+    // same identifiers the declarations use.
+    let mut out = String::with_capacity(hlsl.len());
+    for line in hlsl.lines() {
+        let mut renamed = line.to_string();
+        for (old, new) in &renames {
+            renamed = replace_word(&renamed, old, new);
+        }
+        out.push_str(&renamed);
+        out.push('\n');
+    }
+    out
+}
+
+/// Replaces every whole-word occurrence of `old` with `new`.
+fn replace_word(line: &str, old: &str, new: &str) -> String {
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut out = String::with_capacity(line.len());
+    let bytes = line.as_bytes();
+    let mut at = 0usize;
+    while at < line.len() {
+        if line[at..].starts_with(old) {
+            let before = at == 0 || !is_ident(bytes[at - 1]);
+            let after_at = at + old.len();
+            let after = after_at >= line.len() || !is_ident(bytes[after_at]);
+            if before && after {
+                out.push_str(new);
+                at = after_at;
+                continue;
+            }
+        }
+        let ch = line[at..].chars().next().unwrap();
+        out.push(ch);
+        at += ch.len_utf8();
+    }
+    out
 }
 
 /// Decompiles one container to HLSL with `dxil-spirv` and `spirv-cross`, with

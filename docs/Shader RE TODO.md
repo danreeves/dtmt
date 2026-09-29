@@ -629,6 +629,29 @@ and 3 in another), and the sets range over 0, 2, 9, 10, 12, 31. So a tail's
 resource lists need either the container's reflection or a declaration paired
 with its own section - the corpus has neither, so this stays carried.
 
+### The decompiler names the interface, so the source carries it
+
+`shader43 --reconstruct` now names the decompiled declarations from the tails:
+the constant buffers by register (per stage - the vertex stage's `c_per_object`
+is b0 where the pixel's is b1) and the resources by the register letter, space
+and binding the tail records imply (lists 3/4 textures, 5 UAVs, 6/8 samplers).
+The renames apply as whole words, since the body refers to the same identifiers.
+On the UI base's source the result declares
+
+```hlsl
+cbuffer c_per_object : register(b0, space0)          // vertex
+cbuffer global_viewport : register(b0, space0)       // pixel
+cbuffer c_per_object : register(b1, space0)          // pixel
+Texture2D<float4> global_texture2D : register(t0, space2);
+RWBuffer<uint> global_feedback_buffers : register(u0, space31);
+SamplerState global_samplers : register(s0, space2);
+SamplerState static_minlod_sampler : register(s0, space31);
+```
+
+and `--compile --against` matches both interfaces. So the source now carries the
+interface by name, which is what lets the build derive the tails' cbuffer and
+resource lists from it instead of the engine data.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
