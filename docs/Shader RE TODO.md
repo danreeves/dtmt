@@ -245,6 +245,19 @@ components = 4 (RGBA) gives `0x300`, `0x30000`, `0x03000000`, `0x15` and
 components = 3 (RGB) gives `0x100`, `0x10000`, `0x01000000`, `0`. So a channel
 record is derivable from its component count alone. The other 413 preambles are
 the richer form (their third word is 1, 2, 4 or 5 and their fourth is nonzero).
+
+The richer form is now framed too. Its head is
+`{1, query_count, w2, config_count, 30}`: the first word is the query count on
+every sample (queries 36 -> 36, 8 -> 8, 5 -> 5, 3 -> 3, 2 -> 2, 1 -> 1), the
+third word is 1/2/4/5, the fourth is the number of 13-byte config records
+(32..50 in the sample, the UI base's 37) and the fifth is 30 where the minimal
+form puts the channel count - so the two are different layouts, not build
+generations (both forms' files date from the same update window). After the
+120-byte header come the config records, a u32 stream count and the channel
+records; the 13-byte grid is confirmed on every sampled rich preamble - the
+first channel record sits at `offset - 120 == 4 (mod 13)`, i.e. the config
+records end on a 13-byte boundary and the count word follows. The channel counts
+run 1..18.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
