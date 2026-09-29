@@ -397,6 +397,20 @@ aggregate
 (`00000000`, `00000001`, `00000200`, ...) are the type-record edge cases of the
 walk, not names.
 
+The slots come from the declaration's `samplers` table, not from `channels`:
+the SDK's declarations declare the stage-exchange channels in `channels`
+(`tsm0 = { type = "float3" domain = "pixel" }`) and the texture slots in a code
+block's `samplers` (`{ sampler_state, source = "material" | "resource_set",
+slot_name, type }`, nested under conditions). `source = "resource_set"` is what
+the recurring names in the stream are - `global_diffuse_map`, `sun_shadow_map`,
+`linear_depth`, `fog_volume`, `brdf_lut` are engine render-set textures the
+shader reads - while a material's own slots are the `source = "material"` ones
+it binds with `textures = { <slot_name> = ... }`. So the base list's derivation
+is the material's textures keys, plus the active `source = "resource_set"`
+slots, plus the active `source = "material"` slots the material does not bind:
+the first term is exact today, the other two need the conditions resolved
+against the material's variables.
+
 The record shape differs by source, not only by name: the UI base's material
 binds the plain slot name `texture_map` and its record is the kind-4 class-0x300
 shape (X = 0, Y = 0x15), while a shipped material binding the instance name

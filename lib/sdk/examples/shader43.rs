@@ -1135,12 +1135,32 @@ fn reconstruct(
          // under the engine's stage guards)\n\n"
     ));
 
+    // The material's texture slots: the device preamble's stream names are the
+    // material's channel list intersected with the shader's channels plus the
+    // shader's engine resources, and the group data's channel table has the
+    // same names where it decodes. Both are written as the code block's
+    // `samplers` - the table the toolchain declares texture slots in - not as
+    // the declaration's `channels`, which declares the stage-exchange channels
+    // (`tsm0`, `texcoord`) that a compiled section does not carry. A slot's
+    // texture type and its `source` (`material` or `resource_set`) are not in
+    // the section, so they are left out for the mod to fill in.
+    let mut slot_hashes = device_stream_names(&device[..preamble_len]).unwrap_or_default();
+    for channel in group.channels() {
+        if !slot_hashes.contains(&channel.hash) {
+            slot_hashes.push(channel.hash);
+        }
+    }
+
     out.push_str("inputs = {\n");
     if let Some((_, records)) = group
         .object_tables(&query_ids)
         .and_then(|tables| tables.into_iter().next())
     {
         for record in records {
+            // A texture slot's records belong to the channel, not to a variable.
+            if slot_hashes.contains(&record.hash) {
+                continue;
+            }
             if let Some(name) = name_of(record.hash) {
                 out.push_str(&format!(
                     "    {name} = {{ name = \"{name}\" type = \"{}\" }}\n",
@@ -1149,18 +1169,29 @@ fn reconstruct(
             }
         }
     }
-    out.push_str("}\n\nchannels = {\n");
-    for channel in group.channels() {
-        if let Some(name) = name_of(channel.hash) {
-            let kind = channel.records.first().map_or(0, |record| record.kind);
-            out.push_str(&format!(
-                "    {name} = {{ type = \"{}\" }}\n",
-                type_of(kind)
+    out.push_str("}\n\ncode_blocks = {\n");
+    // A bare SJSON key cannot start with a digit, and a reconstructed file is
+    // named after the material's hash, so the block's key is quoted when the
+    // tag needs it.
+    let block_key = match tag.chars().next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => tag.clone(),
+        _ => format!("\"{tag}\""),
+    };
+    out.push_str(&format!("    {block_key} = {{\n"));
+    let mut samplers = String::new();
+    for hash in &slot_hashes {
+        if let Some(name) = name_of(*hash) {
+            samplers.push_str(&format!(
+                "            {name} = {{ slot_name = \"{name}\" }}\n"
             ));
         }
     }
-    out.push_str("}\n\ncode_blocks = {\n");
-    out.push_str(&format!("    {tag} = {{\n    }}\n}}\n\nshader_contexts = {{\n"));
+    if !samplers.is_empty() {
+        out.push_str("        samplers = {\n");
+        out.push_str(&samplers);
+        out.push_str("        }\n");
+    }
+    out.push_str("    }\n}\n\nshader_contexts = {\n");
     for context in section.contexts() {
         if let Some(name) = name_of(context.name) {
             out.push_str(&format!("    {name} = {{}}\n"));
@@ -1242,6 +1273,31 @@ fn reconstruct(
             .unwrap_or_else(|| " + no shader source (decompiler tools not found)".to_string()),
     );
     Ok(())
+}
+
+/// The record names of the device preamble's stream: the material's channel
+/// list, one record each, in the material's order. `None` when the preamble
+/// does not walk.
+fn device_stream_names(preamble: &[u8]) -> Option<Vec<u32>> {
+    if preamble.len() < 16 || u32_at(preamble, 0) != 1 {
+        return None;
+    }
+    let configs = u32_at(preamble, 12) as usize;
+    let mut at = 16 + configs * 13;
+    let stream = u32_at(preamble, at) as usize;
+    at += 4;
+    let mut names = Vec::with_capacity(stream);
+    for _ in 0..stream {
+        let name = u32_at(preamble, at);
+        let kind = u32_at(preamble, at + 4);
+        let len = if kind == 5 && name >= 0x1000 { 73 } else { 60 };
+        if at + len > preamble.len() {
+            return None;
+        }
+        names.push(name);
+        at += len;
+    }
+    Some(names)
 }
 
 /// Drops a decompiled material's `shader_size`/`shader_data` fields: the

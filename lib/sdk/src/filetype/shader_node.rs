@@ -164,6 +164,97 @@ pub struct Channel {
     pub domains: Vec<String>,
 }
 
+/// A code block's `samplers` table, kept in declaration order like
+/// [`ChannelTable`].
+///
+/// This is where a shader's *texture slots* are declared - the table a
+/// material's `textures` keys bind - as opposed to the `channels` table, which
+/// declares the stage-exchange channels (`tsm0`, `texcoord`: `{ type = "float3"
+/// domain = "pixel" }`). The engine's own declarations nest it by condition and
+/// give each slot a `source`: `material` when a material supplies the texture,
+/// `resource_set` when the engine's render set does (`global_diffuse_map`,
+/// `sun_shadow_map`, ...), which is why those names turn up in a material's
+/// channel list and its device stream.
+#[derive(Clone, Debug, Default)]
+pub struct SamplerTable(pub Vec<(String, Samplers)>);
+
+impl<'de> Deserialize<'de> for SamplerTable {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TableVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for TableVisitor {
+            type Value = SamplerTable;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a samplers table")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut entries = Vec::new();
+                while let Some((key, value)) = map.next_entry()? {
+                    entries.push((key, value));
+                }
+                Ok(SamplerTable(entries))
+            }
+        }
+
+        deserializer.deserialize_map(TableVisitor)
+    }
+}
+
+/// The value of one entry of the `samplers` table. The table nests like the
+/// channels table: a condition gates a set of slots.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Samplers {
+    /// A set, keyed by another condition or by a slot name.
+    Set(BTreeMap<String, Samplers>),
+    /// One slot, named by its own key in the table.
+    One(SamplerSlot),
+}
+
+/// One `samplers` entry: a texture slot a code block reads.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SamplerSlot {
+    /// Where the texture comes from: `material` when a material binds it,
+    /// `resource_set` when the engine's render set supplies it.
+    #[serde(default)]
+    pub source: String,
+    /// The name a material binds the slot by: `textures = { <slot_name> = ... }`.
+    #[serde(default)]
+    pub slot_name: String,
+    /// The texture type: `2d`, `cube`, ...
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    /// The named sampler state, as `path#name`.
+    #[serde(default)]
+    pub sampler_state: String,
+}
+
+/// One declared texture slot, with the conditions it sits under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SamplerDef {
+    /// The slot's key in the table.
+    pub name: String,
+    /// The name a material binds: the entry's `slot_name` when it states one,
+    /// the key otherwise.
+    pub slot_name: String,
+    /// `material` or `resource_set`; empty when the declaration leaves it out.
+    pub source: String,
+    /// The texture type.
+    pub kind: String,
+    /// The named sampler state.
+    pub sampler_state: String,
+    /// The path of conditions the slot sits under.
+    pub conditions: Vec<String>,
+}
+
 /// One `permutation_sets` choice.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ChoiceEntry {
@@ -231,9 +322,9 @@ pub struct NodeContext {
     pub passes: Vec<PassEntryValue>,
 }
 
-/// One `code_blocks` entry: the code it includes and the HLSL it compiles. The
-/// file's other keys (samplers, stage conditions, instance data) are not read
-/// yet.
+/// One `code_blocks` entry: the code it includes and the HLSL it compiles, plus
+/// the texture slots the block reads. The file's other keys (stage conditions,
+/// instance data) are not read yet.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct CodeBlock {
     /// The chunks to include, as `path#chunk`, or the bare name of another code
@@ -243,6 +334,49 @@ pub struct CodeBlock {
     /// The body: `code = { shared = ..., hlsl = ... }` or a bare string.
     #[serde(default)]
     pub code: Option<CodeParts>,
+    /// The texture slots the block reads, as the file writes them.
+    #[serde(default)]
+    pub samplers: SamplerTable,
+}
+
+impl CodeBlock {
+    /// The block's texture slots, in declaration order, with the conditions
+    /// each sits under.
+    pub fn sampler_defs(&self) -> Vec<SamplerDef> {
+        let mut out = Vec::new();
+        for (key, entry) in &self.samplers.0 {
+            walk_samplers(key, entry, &[], &mut out);
+        }
+        out
+    }
+}
+
+/// Walks a `samplers` table, collecting each slot with the conditions it sits
+/// under. A key of a set that is empty gates nothing.
+fn walk_samplers(key: &str, entry: &Samplers, conditions: &[String], out: &mut Vec<SamplerDef>) {
+    match entry {
+        Samplers::One(slot) => out.push(SamplerDef {
+            name: key.to_string(),
+            slot_name: if slot.slot_name.is_empty() {
+                key.to_string()
+            } else {
+                slot.slot_name.clone()
+            },
+            source: slot.source.clone(),
+            kind: slot.kind.clone(),
+            sampler_state: slot.sampler_state.clone(),
+            conditions: conditions.to_vec(),
+        }),
+        Samplers::Set(set) => {
+            let mut conditions = conditions.to_vec();
+            if !key.is_empty() {
+                conditions.push(key.to_string());
+            }
+            for (key, entry) in set {
+                walk_samplers(key, entry, &conditions, out);
+            }
+        }
+    }
 }
 
 /// The preprocessor lines a job's macros compile under.
@@ -1572,6 +1706,82 @@ mod tests {
         let without = node.interface(&[]);
         assert!(!without.variables.contains(&"texture_map".to_string()));
         assert!(!without.channels.contains(&"texture_map".to_string()));
+    }
+
+    #[test]
+    fn reads_a_code_blocks_samplers_table() {
+        // A shader's texture slots live in the code block's `samplers` table,
+        // not in `channels` (which declares the stage-exchange channels). Each
+        // slot says where its texture comes from: a material, or the engine's
+        // render set - which is why render-set names such as
+        // `global_diffuse_map` turn up in a material's channel list.
+        let text = r#"
+            channels = {
+                tsm0 = { type = "float3" domain = "pixel" }
+            }
+            code_blocks = {
+                billboard = {
+                    samplers = {
+                        "defined(HAS_REFRACTION) || defined(DISTORTION)" = {
+                            hdr0_rgb = {
+                                sampler_state = "core/stingray_renderer/shader_libraries/common/common#clamp_linear"
+                                source = "resource_set"
+                                slot_name = "hdr0_rgb"
+                                type = "2d"
+                            }
+                        }
+                        "defined(PARTICLE_LIGHTING)" = {
+                            global_diffuse_map = {
+                                sampler_state = "core/stingray_renderer/shader_libraries/common/common#clamp_linear"
+                                source = "resource_set"
+                                slot_name = "global_diffuse_map"
+                                type = "cube"
+                            }
+                            curve_map = {
+                                source = "material"
+                                slot_name = "curve_map"
+                                type = "2d"
+                            }
+                        }
+                    }
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        assert!(node.channel("tsm0").is_some());
+        assert!(node.channel("curve_map").is_none());
+
+        let block = node.code_blocks.get("billboard").expect("billboard");
+        let samplers = block.sampler_defs();
+        assert_eq!(samplers.len(), 3);
+        let slot = |name: &str| {
+            samplers
+                .iter()
+                .find(|slot| slot.name == name)
+                .unwrap_or_else(|| panic!("{name}"))
+        };
+
+        let hdr = slot("hdr0_rgb");
+        assert_eq!(hdr.source, "resource_set");
+        assert_eq!(hdr.slot_name, "hdr0_rgb");
+        assert_eq!(hdr.kind, "2d");
+        assert_eq!(
+            hdr.conditions,
+            vec!["defined(HAS_REFRACTION) || defined(DISTORTION)"]
+        );
+
+        // One condition deep, and the cube type is kept.
+        let diffuse = slot("global_diffuse_map");
+        assert_eq!(diffuse.source, "resource_set");
+        assert_eq!(diffuse.kind, "cube");
+        assert_eq!(diffuse.conditions, vec!["defined(PARTICLE_LIGHTING)"]);
+
+        // A slot with no `sampler_state` still reads, and the material source
+        // is what a material's `textures` key binds.
+        let curve = slot("curve_map");
+        assert_eq!(curve.source, "material");
+        assert_eq!(curve.sampler_state, "");
+        assert_eq!(curve.slot_name, "curve_map");
     }
 
     #[test]

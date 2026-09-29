@@ -174,6 +174,20 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   in-process containers are byte-identical to the exe-validated ones (header
   hash `6BEF2E28…` on the blit block), and snoopy-mod's material is
   byte-identical to the known-good build (`2639D7DA…`); no temporary files]
+- **The declaration's `samplers` table is read** (`filetype::shader_node`): a
+  code block's texture slots, nested by condition, with `source`
+  (`material`/`resource_set`), `slot_name`, `type` and `sampler_state`. This is
+  the table a material's `textures` keys bind; the declaration's `channels`
+  table is the stage-exchange channels (`tsm0`, `texcoord`) instead, and
+  `source = "resource_set"` is where the stream's recurring engine names come
+  from. `shader43 --reconstruct` writes the section's texture slots there (the
+  device stream's record names plus the group data's channel table), keeps them
+  out of `inputs`, and quotes a hash-named code block key so the reconstructed
+  declaration parses as SJSON. [verified: reconstructing `007bf44baec8ee9a`
+  (the UI base family, whose channel table does not decode) and compiling it
+  with `--compile --against` matches both interfaces exactly, where the old
+  tree mismatched; the reader's `reads_a_code_blocks_samplers_table` test
+  covers the nested table.]
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
   writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of
