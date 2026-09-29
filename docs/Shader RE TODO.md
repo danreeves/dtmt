@@ -660,6 +660,30 @@ and `--compile --against` matches both interfaces. So the source now carries the
 interface by name, which is what lets the build derive the tails' cbuffer and
 resource lists from it instead of the engine data.
 
+### The load needs the structure; the conditions tree it does not
+
+`synth_engine_data` builds reduced wrappers from a carried engine data; the
+in-game results (title-screen test) are:
+
+- **the conditions can be dropped.** Keeping the carried contexts, groups,
+  preamble and all 96 programs but rewriting every query's conditions offset to
+  `FFFFFFFF` and emptying the blob loads and renders (one run, the title
+  material applied, no `dispatch_loadtime` error). So a shader that does not
+  permute anything needs no conditions tree, and the tree writer leaves the
+  from-scratch critical path;
+- **the program set is load-bearing.** Keeping everything else but reducing the
+  96 programs to the first pair crashes at `dispatch_loadtime` on the group's
+  query id. Reducing the contexts and groups to one context, one query and one
+  group crashes the same way whether the preamble and blocks are the carried
+  ones (561 bytes) or a minimal synthesized pair (100 bytes). So the engine
+  expects the section's contexts, groups and programs to be consistent with the
+  shader's own compiled structure, and a reduced wrapper is not accepted even
+  when it is internally consistent.
+
+The corpus agrees that no-permutation shaders carry no conditions: 70 of the
+sampled sections are single context, single query, `w2 = 2`, zero config records
+and a zero tail.
+
 ### The records' binding fields, corrected against the naming pass
 
 The resource record's word order, as the tail dumps and the working naming pass

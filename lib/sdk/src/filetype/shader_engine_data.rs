@@ -142,20 +142,33 @@ fn block_spec(block: &[u8], preamble: &[u8]) -> String {
     if 5 * patches.len() + header >= block.len() {
         return to_hex(block);
     }
-    let mut out = format!("@body {} ", to_hex(&block[..header]));
+    // `-` stands in for an empty header, so the patch list is never mistaken for
+    // one.
+    let header = if header == 0 {
+        "-".to_string()
+    } else {
+        to_hex(&block[..header])
+    };
+    let mut out = format!("@body {header}");
     for (offset, value) in patches {
-        out.push_str(&format!("{offset:X}:{value:02X} "));
+        out.push_str(&format!(" {offset:X}:{value:02X}"));
     }
-    out.trim_end().to_string()
+    out
 }
 
 /// Reads a block written by [`block_spec`].
 fn block_from_spec(spec: &str, preamble: &[u8]) -> Result<Vec<u8>> {
-    let Some(rest) = spec.strip_prefix("@body ") else {
+    // `@body` alone is the block that *is* the body: no header, no patches.
+    let Some(rest) = spec.strip_prefix("@body") else {
         return from_hex(spec);
     };
-    let mut fields = rest.split_whitespace();
-    let header = from_hex(fields.next().unwrap_or(""))?;
+    let mut fields = rest.trim_start().split_whitespace();
+    let header_field = fields.next().unwrap_or("");
+    let header = if header_field.is_empty() || header_field == "-" {
+        Vec::new()
+    } else {
+        from_hex(header_field)?
+    };
     let body = preamble
         .get(12..)
         .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
@@ -1059,6 +1072,24 @@ mod tests {
         let offset = u32::from_le_bytes(section[32..36].try_into().unwrap()) as usize;
         let size = u32::from_le_bytes(section[36..40].try_into().unwrap()) as usize;
         assert_eq!(&section[offset..offset + size], &built[..]);
+    }
+
+    #[test]
+    fn a_block_that_is_the_body_round_trips() {
+        // The diff form degenerates to a bare `@body` when the block *is* the
+        // body, and the parser has to read that back - the synthesized minimal
+        // wrapper's blocks are exactly the body.
+        let preamble: Vec<u8> = (0..60u8).collect();
+        let body = preamble[12..].to_vec();
+        let mut patched = body.clone();
+        patched[5] = 0xFF;
+        let mut headed = vec![2u8, 0, 0, 0];
+        headed.extend_from_slice(&body);
+        for block in [body.clone(), patched, headed] {
+            let spec = block_spec(&block, &preamble);
+            let parsed = block_from_spec(&spec, &preamble).unwrap();
+            assert_eq!(parsed, block, "spec '{spec}'");
+        }
     }
 
     #[test]
