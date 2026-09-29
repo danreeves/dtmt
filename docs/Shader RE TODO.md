@@ -324,6 +324,15 @@ Y = 4 or 8. So a generated section's material channel records are:
 declared channel: {name, 5, 1, 0x100, 0, 0x200, 0x10000, 0, 0x30000, 0, 0, 0, 0x15, 0}
 instance channel: {name, 5, 1, 0x100, 0, 0x200, 0x10000, 0, 0x30000, 0, 0x05000000, 0, 4 or 8, 0}
 ```
+
+The UI base's own preamble walks the model exactly (561 bytes): head
+`{1, 36, 2, 37}`, configs ending at 497, stream count 1, one channel record at
+501 - `{E503152C, 4, 1, 0x300, 0, 0x200, 0x30000, 0, 0x30000, 0x03000000, 0, 0,
+0, 0x15, 0}`, the class-0x300 kind-4 shape - and no tail. Its 37 config records
+carry the mined common prefix's indices (12..26, 94..101) plus shader-specific
+ones (1, 3, 5, 8, 28-30, 38, 46, 54) and repeats with other values (12:0, 13:0,
+30:1, 94:7); only index 10 of the new build's prefix is absent, so the common
+prefix drifts between generations while the shape holds.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
