@@ -190,13 +190,17 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   covers the nested table.]
 - **The mod's engine data is the template form**: snoopy-mod's
   `ui_default_base.engine_data` was regenerated from a current UI base material
-  (`e3370cb2107d8aca`, whose stream carries `texture_map` like the old source) -
-  84758 bytes where the old file was 218950, with the group data regenerating
-  byte for byte, the build touching only the material's data file, and the
-  deployed title material rendering in game. The pre-update file is kept beside
-  the miner dumps as `ui_default_base.engine_data.old`; the September update
-  grew the engine table by four records, which is why no current section matches
-  the old 62884-byte group data.
+  (`e3370cb2107d8aca`, whose stream carries `texture_map` like the old source) and
+  then trimmed to what is genuinely carried: **218950 -> 22178 bytes**. The
+  template holds the group data's parts (the tables are written, the group
+  headers/descriptors/packed runs deduplicated), the dependency is written from
+  the engine constant, the captured containers are dropped (the mod compiles its
+  own), and a tail's block is written as a diff against the preamble's body.
+  `dtmt build` produces a byte-identical material data file and the deployed
+  title material renders in game. The pre-update file is kept beside the miner
+  dumps as `ui_default_base.engine_data.old`; the September update grew the
+  engine table by four records, which is why no current section matches the old
+  62884-byte group data.
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
   writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of

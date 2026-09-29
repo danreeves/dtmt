@@ -99,6 +99,17 @@ fn records_from_hex(text: &str) -> Result<Vec<Record>> {
         .collect())
 }
 
+/// The index of a value in a deduplicated list, adding it when it is new.
+fn dedup_index(list: &mut Vec<Vec<u8>>, value: Vec<u8>) -> usize {
+    match list.iter().position(|other| *other == value) {
+        Some(index) => index,
+        None => {
+            list.push(value);
+            list.len() - 1
+        }
+    }
+}
+
 /// Writes a block: its own bytes, or - when that is smaller - the preamble's
 /// body with the bytes that differ patched in.
 ///
@@ -330,6 +341,10 @@ impl EngineData {
         let mut group_prefix: Option<Vec<u8>> = None;
         let mut engine_table: Option<Vec<Record>> = None;
         let mut materials: Vec<Vec<Record>> = Vec::new();
+        let mut group_heads: Vec<Vec<u8>> = Vec::new();
+        let mut group_betweens: Vec<Vec<u8>> = Vec::new();
+        let mut group_mids: Vec<Vec<u8>> = Vec::new();
+        let mut group_tails: Vec<Vec<u8>> = Vec::new();
         let mut groups: Vec<(GroupParts, usize)> = Vec::new();
 
         for line in text.lines() {
@@ -457,25 +472,86 @@ impl EngineData {
                 materials[index] = records_from_hex(hex)?;
                 continue;
             }
+            if let Some(rest) = line.strip_prefix("ghead ") {
+                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                if group_heads.len() <= index {
+                    group_heads.resize(index + 1, Vec::new());
+                }
+                group_heads[index] = from_hex(hex)?;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("gbetween ") {
+                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                if group_betweens.len() <= index {
+                    group_betweens.resize(index + 1, Vec::new());
+                }
+                group_betweens[index] = from_hex(hex)?;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("gmid ") {
+                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                if group_mids.len() <= index {
+                    group_mids.resize(index + 1, Vec::new());
+                }
+                group_mids[index] = from_hex(hex)?;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("gtail ") {
+                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                if group_tails.len() <= index {
+                    group_tails.resize(index + 1, Vec::new());
+                }
+                group_tails[index] = from_hex(hex)?;
+                continue;
+            }
             if let Some(rest) = line.strip_prefix("group ") {
                 let fields: Vec<&str> = rest.split_whitespace().collect();
-                if fields.len() != 6 {
-                    bail!("malformed group line");
-                }
-                let index = fields[5]
+                // Six fields is the form that carries the four parts inline;
+                // seven is the deduplicated form: query id, four part indexes,
+                // the table order and the material reference.
+                let (parts, index) = match fields.len() {
+                    6 => (
+                        GroupParts {
+                            head: from_hex(fields[0])?,
+                            material_first: fields[4] == "1",
+                            between: from_hex(fields[1])?,
+                            mid: from_hex(fields[2])?,
+                            tail: from_hex(fields[3])?,
+                        },
+                        fields[5],
+                    ),
+                    7 => {
+                        let query = u32::from_str_radix(fields[0], 16)?.to_le_bytes();
+                        let part = |list: &Vec<Vec<u8>>, field: &str| -> Result<Vec<u8>> {
+                            let index = field.parse::<usize>()?;
+                            list.get(index)
+                                .cloned()
+                                .ok_or_else(|| color_eyre::eyre::eyre!("unknown group part #{index}"))
+                        };
+                        let mut head = query.to_vec();
+                        head.extend_from_slice(&part(&group_heads, fields[1])?);
+                        (
+                            GroupParts {
+                                head,
+                                material_first: fields[5] == "1",
+                                between: part(&group_betweens, fields[2])?,
+                                mid: part(&group_mids, fields[3])?,
+                                tail: part(&group_tails, fields[4])?,
+                            },
+                            fields[6],
+                        )
+                    }
+                    _ => bail!("malformed group line"),
+                };
+                let index = index
                     .strip_prefix('#')
                     .ok_or_else(|| color_eyre::eyre::eyre!("malformed group line"))?
                     .parse::<usize>()?;
-                groups.push((
-                    GroupParts {
-                        head: from_hex(fields[0])?,
-                        material_first: fields[4] == "1",
-                        between: from_hex(fields[1])?,
-                        mid: from_hex(fields[2])?,
-                        tail: from_hex(fields[3])?,
-                    },
-                    index,
-                ));
+                groups.push((parts, index));
                 continue;
             }
 
@@ -535,7 +611,8 @@ impl EngineData {
         match &self.group_template {
             Some(template) => {
                 // The template: the prefix, the engine's table once, the distinct
-                // material tables and one `group` line per group.
+                // material tables, the distinct group parts and one `group` line
+                // per group.
                 text.push_str(&format!("group_prefix {}\n", to_hex(&template.prefix)));
                 text.push_str(&format!("engine_table {}\n", records_hex(&template.engine)));
                 let mut distinct_tables: Vec<&Vec<Record>> = Vec::new();
@@ -552,14 +629,46 @@ impl EngineData {
                 for (index, table) in distinct_tables.iter().enumerate() {
                     text.push_str(&format!("material {index} {}\n", records_hex(table)));
                 }
-                for (parts, index) in template.groups.iter().zip(&table_indexes) {
+
+                // The group parts dedupe independently: the heads (once their
+                // query id is off), the bytes between the tables, the packed runs
+                // and the condition-header tails all repeat across a shader's
+                // groups.
+                let mut heads: Vec<Vec<u8>> = Vec::new();
+                let mut betweens: Vec<Vec<u8>> = Vec::new();
+                let mut mids: Vec<Vec<u8>> = Vec::new();
+                let mut tails: Vec<Vec<u8>> = Vec::new();
+                let mut lines = Vec::with_capacity(template.groups.len());
+                for parts in &template.groups {
+                    // A group starts with its query id, which the contexts also
+                    // carry, so it moves to the group line and the head keeps the
+                    // rest.
+                    let query = parts
+                        .head
+                        .get(..4)
+                        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+                        .unwrap_or(0);
+                    let head = parts.head.get(4..).unwrap_or_default().to_vec();
+                    let h = dedup_index(&mut heads, head);
+                    let b = dedup_index(&mut betweens, parts.between.clone());
+                    let m = dedup_index(&mut mids, parts.mid.clone());
+                    let t = dedup_index(&mut tails, parts.tail.clone());
+                    lines.push((query, h, b, m, t, parts.material_first));
+                }
+                for (name, list) in [
+                    ("ghead", &heads),
+                    ("gbetween", &betweens),
+                    ("gmid", &mids),
+                    ("gtail", &tails),
+                ] {
+                    for (index, bytes) in list.iter().enumerate() {
+                        text.push_str(&format!("{name} {index} {}\n", to_hex(bytes)));
+                    }
+                }
+                for ((query, h, b, m, t, first), material) in lines.iter().zip(&table_indexes) {
                     text.push_str(&format!(
-                        "group {} {} {} {} {} #{index}\n",
-                        to_hex(&parts.head),
-                        to_hex(&parts.between),
-                        to_hex(&parts.mid),
-                        to_hex(&parts.tail),
-                        if parts.material_first { 1 } else { 0 },
+                        "group {query:08X} {h} {b} {m} {t} {} #{material}\n",
+                        if *first { 1 } else { 0 },
                     ));
                 }
             }

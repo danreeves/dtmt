@@ -553,15 +553,34 @@ where the readers are and refuses where they are not instead of guessing.
 `group_build` runs the check and `group_parts` prints the part map.
 
 Wired into the engine data and `generate`: `EngineData` carries the template
-(`group_prefix`, `engine_table`, deduplicated `material` tables and one `group`
-line per group) instead of the whole `group_data`, and `generate` rebuilds the
-group data from it. A section whose groups do not walk keeps the old
-`group_data` line, so nothing regresses. Measured on `007bf44baec8ee9a` (the UI
-base family): its engine data is 129044 bytes of text where the same file in the
-old form is 251675 - a 49% cut, the template costing 36556 bytes against the
-group data's 159187 - and the generated group data is byte-identical to the
-shipped section's. `engine_data_check <file> [<source material>]` runs both
-checks.
+(`group_prefix`, `engine_table`, deduplicated `material` tables, the deduplicated
+group parts as `ghead`/`gbetween`/`gmid`/`gtail` lines - a group's query id moves
+to its `group` line because the contexts carry it - and one `group` line per
+group) instead of the whole `group_data`, and `generate` rebuilds the group data
+from it. A section whose groups do not walk keeps the old `group_data` line, so
+nothing regresses.
+
+The file also stopped carrying three derivable things:
+
+- **the containers**: a mod with sources compiles its own, and
+  `generate_shader --engine-data --no-containers` leaves them out; the build
+  fails loudly if the sources go missing;
+- **the dependency**: it is the engine's one library (the renderer path's hash),
+  so `generate` writes the constant unless the file carries something else;
+- **the blocks' repeated bytes**: a tail is written as its lists plus its block,
+  and a block that is the preamble's body with a few bytes patched - the UI
+  shader's are a 0- or 4-byte header and one patched byte - is written as that
+  diff.
+
+Measured on snoopy-mod's `ui_default_base.engine_data`: **218950 -> 22178
+bytes** (84758 after the template alone), with the build producing a
+byte-identical material data file (`49AA3702...`) and the text round trip
+intact. What is left, largest first: the tails' lists (8730, waiting on
+in-process container reflection), the engine table (2934) and the config base
+(tool constants), the conditions tree (2884, waiting on the tree writer), the
+program list (1710), the preamble (1139) and the group lines (1008).
+`engine_data_check <file> [<source material>]` runs the round trip and the
+group-data comparison.
 
 ### The records' binding fields, and the first word as a group-data index
 
