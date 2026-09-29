@@ -191,6 +191,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   renders (user-observed). The tree is backed up in the scratch directory
   (`snoopy-core-backup`); the template cube/pumpkin assets stay in the mod.
   [one run]
+- **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
+  are byte-identical for every file under `out/data` (MD5 per file). Only the
+  listing files (`files.sjson`, the bundle manifest) reorder between runs. An
+  earlier "changing word" in the built title instance was its reflection
+  record's variable name hash, and the compared builds had different sources
+  (`mod_tint` before the rename, `dev_wireframe_color` after); murmur32 of each
+  matches the two observed words. One gap: `engine_data_check` can no longer
+  rebuild the mod's engine data as-is, because the mod compiles its containers -
+  the check needs them passed, or a built material to compare against.
 - **In-process DXC**: `lib/dxc` is a workspace crate (like `oodle`) that loads
   `dxcompiler.dll` at runtime (`libloading`, no import library) and compiles
   through a hand-written `extern "system"` vtable transcribed from the SDK's
