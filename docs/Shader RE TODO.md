@@ -377,6 +377,30 @@ preamble), so their length is not 60 - they are the variable-length records the
 notes mention ("can carry 64 bit hashes"). Everything else reads at 60 or 73
 bytes.
 
+### The preamble's stream is the material's channel list
+
+The stream is the material's own channels, one record each, in the material's
+order: the UI base's material declares `channels = ["texture_map"]` and its
+561-byte preamble carries exactly one stream record, `E503152C` =
+murmur32(`texture_map`); another shipped material of the same shader carries
+five records, one of them `texture_map_b7091917` (a graph instance channel). So
+a generated preamble's stream is derived from the material, not carried.
+
+The config records are per shader, not per material: the mod's carried UI base
+preamble and a mined material of the same shader carry byte-identical 37-record
+config lists (same order, same values). A generated shader therefore needs the
+engine's index/value table once per shader.
+
+The head's `w2` is still not identified. Falsified against 400 sampled
+sections: the cbuffer count (97/400), the query count (69), the context count
+(69), the program/tail count (70), the stream count (35), the distinct block
+count (91), the distinct interface count (155). Its distribution is 1 x49,
+2 x190, 3 x4, 4 x38, 5 x101, 6 x14, 7 x4, and it is a per-shader property (the
+two materials of one shader share it). Partial correlations: w2 = 4 on all 38
+sections with two contexts and w2 = 5 on 100 of 101 with three contexts, so w2
+tracks the context count for the higher values but not for 1-3. `w2_probe`
+prints `w2` next to the counts so a new hypothesis can be tested the same way.
+
 Across 489 rich preambles there are only six distinct config index sets: a base
 of 1, 3, 5, 8, 12..26, 28, 29, 30 and 94..101 (389 of them), the same without
 38, 46 and 54 (86), and four variants adding rows strided by eight -
