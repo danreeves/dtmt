@@ -353,6 +353,14 @@ between the two forms. So the masks are the channel subsets a variant uses
 (0x0F all four, 01/02/04/08 one each, 07 three), the engine binds only those,
 and the multi-job mapping's per-job data is exactly this: the channel masks in
 the block.
+
+The block is the preamble's body with the per-program channel masks patched: the
+801-byte tails' blocks differ from the body at exactly one byte - offset 477,
+the value of the config record for index `0x5E`, the preamble's last config
+record at 484 - and two are identical to the body outright. The 805 form is a
+leading 4-byte `{2}` word plus the same, and a program with no channels gets a
+4-byte all-zero block. So a generated section's programs need only their channel
+masks; everything else in the block is the preamble's body byte for byte.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
