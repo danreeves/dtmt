@@ -70,3 +70,32 @@ return {
 ## packages/mods
 
 This bundle serves as the root package from which all mod packages can be reached. Collecting them here avoids bloating `packages/boot` too much.
+
+## settings_common.ini and the client version
+
+`bundle/application_settings/settings_common.ini` is the file the deployment
+patches for the boot script (`boot_script = "scripts/mod_main"`). It also
+carries the **client version** the game reports to Fatshark's backend:
+
+``
+script_data = {
+	content_revision = "138030"
+	crashify = { branch = "default"  project = "darktide" }
+	game_revision = "138030"
+	game_version = "1.13.0-b802981"
+	teamcity_build_id = "802981"
+}
+``
+
+The title screen logs `Checking game version for win32 - <game_version>(<game_revision>)`
+and the backend's `/game-version/status` answers "did not match" when that is
+not the build it expects; the client then raises `GameVersionError`
+(`VERSION_ERROR`) and sign-in fails.
+
+DTMM reads the live file (falling back to its backup only when the file cannot
+be read) and rewrites only the `boot_script` line, so it does not write a
+stale version itself. But because the file is locally modified, a game update
+can leave the previous build's `script_data` behind - the practical symptom
+being "your game is out of date" right after an update. Steam's **Verify
+integrity of game files** restores the current file (it reports exactly that
+file as the corrupt chunk), after which the mod can be deployed again.

@@ -47,3 +47,15 @@ Check if there is a newer version. If not, try to get in touch with the author a
 
 One of your mods specified another mod as dependency, optionally with a required order. Check the error message, and the mod's description and adjust the order accordingly, with the "Move Up" and "Move Down" buttons.
 
+
+## "Your game is out of date" / version does not match
+
+The game reports its build from `bundle/application_settings/settings_common.ini`
+(`script_data.game_version` and `game_revision`), the same file the deployment
+patches for the boot script. A game update can leave the previous build in that
+file, so the game claims it is out of date and sign-in fails with a version error.
+
+In Steam, open the game's properties, go to **Installed Files** and choose
+**Verify integrity of game files**. Steam reports
+`bundle\application_settings\settings_common.ini` as the file needing repair;
+once it finishes, the version is current and you can deploy your mods again.
