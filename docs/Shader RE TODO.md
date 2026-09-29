@@ -377,6 +377,30 @@ preamble), so their length is not 60 - they are the variable-length records the
 notes mention ("can carry 64 bit hashes"). Everything else reads at 60 or 73
 bytes.
 
+### The stream's composition: the material's channels plus the shader's resources
+
+Across 400 sampled sections (`stream_probe`), 144 have their whole stream
+explained by the group data's own record hashes - the material's channels - and
+the rest differ only by 48 recurring names. Those resolve to the engine's
+render-set textures and the shader's own channels: `fog_volume` (194 sections),
+`global_diffuse_map` (160), `linear_depth` (129), `sun_shadow_map` (101),
+`brdf_lut`, `global_specular_map`, `static_sun_shadow_map`,
+`local_lights_shadow_atlas`, `cached_local_lights_shadow_atlas`, the unresolved
+`B70645F7` (70) and a ten-name set at 45; plus rarer declaration channels
+(`gbuffer1`, `diffuse_map`, `skydome_map`, `source`, `normal_map`,
+`render_target`, `curve_map`, `material_map`). So a generated preamble's stream
+is the material's channel list - every name of which also appears in the group
+data's tables - plus the shader's own resource usage, which the compiled
+container reflects (the earlier notes have the engine records first:
+`linear_depth`, `global_diffuse_map`, `sun_shadow_map`, `fog_volume`).
+
+The record shape differs by source, not only by name: the UI base's material
+binds the plain slot name `texture_map` and its record is the kind-4 class-0x300
+shape (X = 0, Y = 0x15), while a shipped material binding the instance name
+`texture_map_b7091917` carries the kind-5 class-0x100 shape (X = 0x05000000,
+Y = 8). The same shader ships both, so the kind/class follows how the material
+binds the channel.
+
 ### The preamble's stream is the material's channel list
 
 The stream is the material's own channels, one record each, in the material's
