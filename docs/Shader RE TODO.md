@@ -267,6 +267,16 @@ common prefix matches the notes exactly (`12:1 16:1 15:8 19:8 10:FF 14:1 18:1
 after the channel records (tail 0 on 390 of them); only the minimal form carries
 the 7 or 20 byte tail. Channel record component values seen: 4 (1681), 5 (932),
 3 (15), 6 (17). The head's w2 is 1/2/4/5 and is still unexplained.
+
+The block is a per-program header plus a per-program copy of the preamble's body.
+Across 2000 blocks the head is `{2, 0, 0, 0, 0, 0, 0, 0}` in most, and the words
+right after it are the section preamble's own head fields - the config count
+(37/39/40/43) and then 30 - so the block is the preamble with a different first
+28, 32 or 36 bytes depending on the program (the 36-byte form carries an extra
+1 or 2 word). The UI base's first pixel program is the exact case: a 32-byte
+header then `preamble[12..]` byte for byte. The other programs' bodies are their
+own variants, which is why only 11% of the whole corpus ends with the section's
+body verbatim.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
