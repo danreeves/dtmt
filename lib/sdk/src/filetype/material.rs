@@ -25,7 +25,7 @@
 //! ```text
 //! u64 material1               // primary parent material
 //! u64 material2               // secondary parent material
-//! IdString32[] unk1           // shader texture channels (base materials only)
+//! IdString32[] channels       // the material's bound shader channels
 //! TextureChannel[] textures   // (IdString32 channel, u64 texture)
 //! MaterialContext[] contexts  // (IdString32 context, IdString32 material)
 //! ShaderVariableReflection[]  // (u32 class, u32 elements, IdString32 name,
@@ -500,7 +500,10 @@ struct MaterialDefinition {
     /// base material instead of depending on a game resource.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shader_data: Option<QuotedString>,
-    /// Shader texture channels (`unk1`).
+    /// The material's bound shader channels. The device preamble's stream is
+    /// this list intersected with the shader's own channels, plus the shader's
+    /// engine resources, so a channel the shader does not use stays here and
+    /// out of the stream.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     channels: Vec<Hash32>,
     #[serde(default, skip_serializing_if = "is_empty_map")]
@@ -559,7 +562,7 @@ struct MaterialTemplate {
     name: IdString32,
     material1: IdString64,
     material2: IdString64,
-    unk1: Vec<IdString32>,
+    channels: Vec<IdString32>,
     textures: Vec<(IdString32, IdString64)>,
     contexts: Vec<(IdString32, IdString32)>,
     reflection: Vec<Reflection>,
@@ -574,7 +577,7 @@ impl Default for MaterialTemplate {
             name: IdString32::Hash(0.into()),
             material1: IdString64::Hash(0.into()),
             material2: IdString64::Hash(0.into()),
-            unk1: Vec::new(),
+            channels: Vec::new(),
             textures: Vec::new(),
             contexts: Vec::new(),
             reflection: Vec::new(),
@@ -655,9 +658,9 @@ impl Material {
         let material1 = IdString64::from(r.read_u64()?);
         let material2 = IdString64::from(r.read_u64()?);
 
-        let mut unk1 = Vec::new();
+        let mut channels = Vec::new();
         for _ in 0..r.read_u32()? {
-            unk1.push(r.read_u32()?.into());
+            channels.push(r.read_u32()?.into());
         }
 
         let mut textures = Vec::new();
@@ -729,7 +732,7 @@ impl Material {
                 name,
                 material1,
                 material2,
-                unk1,
+                channels,
                 textures,
                 contexts,
                 reflection,
@@ -749,8 +752,8 @@ impl Material {
         w.write_u64(self.template.material1.to_murmur64().into())?;
         w.write_u64(self.template.material2.to_murmur64().into())?;
 
-        w.write_u32(self.template.unk1.len() as u32)?;
-        for v in &self.template.unk1 {
+        w.write_u32(self.template.channels.len() as u32)?;
+        for v in &self.template.channels {
             w.write_u32(v.to_murmur32().into())?;
         }
 
@@ -960,7 +963,7 @@ impl Material {
                 Some(QuotedString(to_hex(&self.shader)))
             },
             channels: t
-                .unk1
+                .channels
                 .iter()
                 .map(|c| Hash32(display_idstring32(ctx, c)))
                 .collect(),
@@ -1091,7 +1094,7 @@ impl Material {
                 .parent_material_2
                 .map(|m| m.to_idstring())
                 .unwrap_or(IdString64::Hash(0.into())),
-            unk1: def.channels.into_iter().map(|c| c.to_idstring()).collect(),
+            channels: def.channels.into_iter().map(|c| c.to_idstring()).collect(),
             textures: def
                 .textures
                 .0

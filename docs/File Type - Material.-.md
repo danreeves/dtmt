@@ -28,7 +28,7 @@ MaterialTemplate...
 |------|-------|---------|
 | `u64` | `material1` | primary parent material |
 | `u64` | `material2` | secondary parent material |
-| `IdString32[]` | `unk1` | shader texture channels (base materials) |
+| `IdString32[]` | `channels` | the material's bound shader channels |
 | `(IdString32, u64)[]` | `textures` | channel → texture resource |
 | `(IdString32, IdString32)[]` | `material_contexts` | context → context material |
 | `ShaderVariableReflection[]` | variables | `(u32 class, u32 elements, IdString32 name, u32 offset, u32 stride)` |
@@ -93,7 +93,7 @@ Fields:
 | `material_contexts` | map | no | context name → context material name |
 | `textures` | map | no | channel name → texture resource path |
 | `variables` | map | no | variable name → `{ type, value, offset?, elements?, stride? }` |
-| `channels` | string[] | no | `unk1`, only on base materials |
+| `channels` | string[] | no | the material's bound shader channels (`unk1` in the layout); the device stream is this list intersected with the shader's channels plus its engine resources |
 | `shader_size` | integer | no | set when decompiling a base material |
 | `extra_data` | string | no | hex of `variable_data` bytes not covered by variables |
 | `unk2` | map | no | unnamed `(name, bool)` pairs |
@@ -297,7 +297,7 @@ What the removed lines established, kept for the record:
 
 | Field | What is known | What is missing |
 | --- | --- | --- |
-| `unk1` | Shader texture channels, e.g. `texture_map` on the UI base | Whether values other than channel names appear |
+| `channels` (`unk1`) | The material's bound shader channels, e.g. `texture_map` on the UI base, whose device preamble carries exactly that one stream record. Across 400 sampled sections the list covers 164 device streams outright, the other 236 add only the engine's render-set vocabulary (`fog_volume` 194, `global_diffuse_map` 160, `linear_depth` 129, `sun_shadow_map` 101, ...), and streams drop channels the shader does not use (a material with 8 channels carries 5), so the stream is this list intersected with the shader's channels plus the shader's engine resources | Whether the list can carry anything other than channel names (none in 400 samples); what the engine does with a channel the shader does not use |
 | `unk2` | `(IdString32, bool)` pairs; empty in every material observed | Meaning; probably shader flags/defines |
 | `unk3` | `(u32, u32)` pairs, e.g. `(6,0) (5,0)` on the UI base | Meaning; possibly program/variant selection |
 | `material_contexts` | 32-bit context names such as `surface_material = "bone"` | The full value set and how consumers use it |

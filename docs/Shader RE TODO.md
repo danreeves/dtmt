@@ -379,8 +379,8 @@ bytes.
 
 ### The stream's composition: the material's channels plus the shader's resources
 
-A material data file's own template carries the channel list (`unk1`, at
-`material_offset + 24`). Across 400 sampled sections (`stream_probe`), 164 have
+A material data file's own template carries the channel list (`channels` in the
+SJSON, `unk1` in the layout, at `material_offset + 24`). Across 400 sampled sections (`stream_probe`), 164 have
 their whole device stream covered by that list, and the other 236 differ only by
 a small fixed vocabulary of engine names: `fog_volume` (194 sections),
 `global_diffuse_map` (160), `linear_depth` (129), `sun_shadow_map` (101),
