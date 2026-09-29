@@ -313,6 +313,17 @@ with a few engine resources (`sun_shadow_map`, `static_sun_shadow_map`,
 record: the earlier "kind 4 is textures, kind 5 is material variables" split
 needs that refinement. One sampled preamble derails the walk (a wwise path hash
 appears where a kind should be), which is one of the 21 edge cases.
+
+The kind-5 material channels' last fields, per name: library-declared channels
+(`orm`, `nm`, `bca`, `base_em`, `base_orm`, `em`, `mat_mask2`,
+`environment_noise_map`) carry X = 0 and Y = 0x15; per-material instance records
+(`texture_map_<hash>` and the sampler index `E503152C`) carry X = 0x05000000 and
+Y = 4 or 8. So a generated section's material channel records are:
+
+```text
+declared channel: {name, 5, 1, 0x100, 0, 0x200, 0x10000, 0, 0x30000, 0, 0, 0, 0x15, 0}
+instance channel: {name, 5, 1, 0x100, 0, 0x200, 0x10000, 0, 0x30000, 0, 0x05000000, 0, 4 or 8, 0}
+```
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
