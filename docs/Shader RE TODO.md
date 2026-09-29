@@ -361,6 +361,15 @@ record at 484 - and two are identical to the body outright. The 805 form is a
 leading 4-byte `{2}` word plus the same, and a program with no channels gets a
 4-byte all-zero block. So a generated section's programs need only their channel
 masks; everything else in the block is the preamble's body byte for byte.
+
+The walk's edge cases are type records, not channel records: a stream can mix
+`{name_hash, kind, count, ...}` channel records with records whose first word is
+a small type (0, 1, 2, 3, 21), and only the channel records' count is 1. Dropping
+the count check and treating every record as 60 bytes except the name-first
+kind 5 (73) raises the walk from 479 to 593 of 600 sampled preambles; the 7
+remaining failures carry other shapes still to decode. The sampled stream's
+records: kind 4 1958, kind 5 1084, type 0 38, type 3 24, type 1 23, kind 6 22,
+kind 3 16, type 2 10.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
