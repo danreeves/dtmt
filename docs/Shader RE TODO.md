@@ -510,6 +510,27 @@ beside the container's `CUSTOM` indices; its diff also picks up blocks with
 other patches, so the odd masks it reports (`00`, `05`, `10`, `28`, `5E`) are
 its own artifact, not data.
 
+### The group data constructor
+
+`GroupData::template` and `GroupData::build` cut a shipped group data into the
+bytes a generator carries and put them back around new tables. Per group the
+carried bytes are the head (query id, header words, descriptors, the first
+table's header), the bytes between the two tables (the second's header), the
+bytes after them (the packed run and the condition header up to the 28-byte
+record it shares with the packed run's last copy) and the tail (the rest of the
+header). The two tables come in either order - the UI base runs
+material-then-engine, the small families engine-then-material - so the parts
+record which is first and `build` rewrites both count words.
+
+Measured: the UI base's group data (62884 bytes, 36 groups) rebuilds byte for
+byte from 8160 carried bytes, the engine's 1380-byte table and the material's
+252 records; a rename of one record moves exactly 4 bytes and of a three-record
+channel 12. Across 40 random sections 16 verify that way; the rest have no
+template - their groups do not walk, their condition headers do not read (the
+`2A04418E` case), or a group holds no engine run - so the constructor is exact
+where the readers are and refuses where they are not instead of guessing.
+`group_build` runs the check and `group_parts` prints the part map.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)

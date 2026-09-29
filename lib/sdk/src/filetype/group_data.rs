@@ -922,6 +922,183 @@ impl GroupData {
 
         Ok(data)
     }
+    /// The parts a generator carries: everything in the group data except the
+    /// material's own record table (which a declaration writes) and the engine's
+    /// table (the same in every group and every shader).
+    ///
+    /// Each group is cut around its material table: the bytes before it, the
+    /// bytes between it and the engine's table, the packed run's header and
+    /// records, and the condition header's tail - the part after the 28-byte
+    /// record that header shares with the packed run's last copy.
+    /// [`GroupData::build`] puts them back together around a new table.
+    pub fn template(&self, query_ids: &[u32]) -> Option<GroupTemplate> {
+        let starts = self.group_starts(query_ids)?;
+        let headers = self.condition_headers(query_ids)?;
+        let engine = self.engine_records()?;
+        let prefix = self.data.get(..*starts.first()?)?.to_vec();
+        let mut groups = Vec::with_capacity(starts.len());
+        for (index, start) in starts.iter().enumerate() {
+            let start = *start;
+            let end = starts.get(index + 1).copied().unwrap_or(self.data.len());
+
+            // The two tables, in either order: the engine's is the run whose
+            // first record is the engine's own, the material's is the first run
+            // that is not. Shaders differ in which comes first.
+            let mut engine_at = None;
+            let mut mat_at = None;
+            let mut at = start;
+            while at + 2 * RECORD_LEN <= end {
+                let run = self.run_at(at);
+                if run.is_empty() {
+                    at += 1;
+                    continue;
+                }
+                if is_engine_run(&run) {
+                    if engine_at.is_none() {
+                        engine_at = Some((at, run.len()));
+                    }
+                } else if mat_at.is_none() {
+                    mat_at = Some((at, run.len()));
+                }
+                at += run.len() * RECORD_LEN;
+            }
+            let (mat_at, mat_len) = mat_at?;
+            let (engine_at, engine_len) = engine_at?;
+            let material_first = mat_at < engine_at;
+            let (first_at, first_len, second_at, second_len) = if material_first {
+                (mat_at, mat_len, engine_at, engine_len)
+            } else {
+                (engine_at, engine_len, mat_at, mat_len)
+            };
+
+            // Between the second table's records and the condition header: the
+            // packed run's header and copies. Its framing is the one part the
+            // notes record as unreliable (6 of 7 copies on a measured section),
+            // so it is carried whole rather than split.
+            let header = headers.get(index)?;
+            let tail_start = end.checked_sub(header.len())? + 28;
+
+            groups.push(GroupParts {
+                head: self.data.get(start..first_at)?.to_vec(),
+                material_first,
+                between: self
+                    .data
+                    .get(first_at + first_len * RECORD_LEN..second_at)?
+                    .to_vec(),
+                mid: self
+                    .data
+                    .get(second_at + second_len * RECORD_LEN..tail_start)?
+                    .to_vec(),
+                tail: self.data.get(tail_start..end)?.to_vec(),
+            });
+        }
+        Some(GroupTemplate {
+            prefix,
+            groups,
+            engine,
+        })
+    }
+
+    /// Assembles a group data from a template, one material table per group and
+    /// the engine's records.
+    ///
+    /// A group's head ends with its material table's count word, so that word is
+    /// written from `material`'s length: the template's count is a check, not a
+    /// constraint. The engine's records are the template's by default - they are
+    /// the engine's own table - but a caller may pass its own.
+    pub fn build(
+        template: &GroupTemplate,
+        material: &[Vec<Record>],
+        engine: &[Record],
+    ) -> Result<Vec<u8>> {
+        if material.len() != template.groups.len() {
+            bail!(
+                "the template has {} groups but {} material tables",
+                template.groups.len(),
+                material.len()
+            );
+        }
+        let mut out = template.prefix.clone();
+        for (parts, records) in template.groups.iter().zip(material) {
+            let mut head = parts.head.clone();
+            let mut between = parts.between.clone();
+            // Each table's count word is the last word of the bytes before its
+            // records, so the material's table writes its count wherever that
+            // lands - in the head when the material comes first, in `between`
+            // when the engine's does.
+            let (first_len, second_len) = if parts.material_first {
+                (records.len(), engine.len())
+            } else {
+                (engine.len(), records.len())
+            };
+            write_count(&mut head, first_len)?;
+            write_count(&mut between, second_len)?;
+
+            out.extend_from_slice(&head);
+            if parts.material_first {
+                for record in records {
+                    record.write(&mut out);
+                }
+                out.extend_from_slice(&between);
+                for record in engine {
+                    record.write(&mut out);
+                }
+            } else {
+                for record in engine {
+                    record.write(&mut out);
+                }
+                out.extend_from_slice(&between);
+                for record in records {
+                    record.write(&mut out);
+                }
+            }
+            out.extend_from_slice(&parts.mid);
+            out.extend_from_slice(&parts.tail);
+        }
+        Ok(out)
+    }
+}
+
+/// Writes a table's record count into the last word before its records.
+fn write_count(bytes: &mut [u8], count: usize) -> Result<()> {
+    let at = bytes
+        .len()
+        .checked_sub(4)
+        .ok_or_else(|| eyre::eyre!("a table header is too short for its count word"))?;
+    bytes[at..].copy_from_slice(&(count as u32).to_le_bytes());
+    Ok(())
+}
+
+/// The parts of a group data that are not a table's records: what a generator
+/// carries while the material's table is written. See [`GroupData::template`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupTemplate {
+    /// The bytes before the first group: the group count.
+    pub prefix: Vec<u8>,
+    /// One entry per group, in group order.
+    pub groups: Vec<GroupParts>,
+    /// The engine's `global_viewport` records, the same in every group.
+    pub engine: Vec<Record>,
+}
+
+/// One group's carried bytes, cut around its two tables.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupParts {
+    /// From the group's query id to the first table's records; ends with that
+    /// table's count word, which [`GroupData::build`] rewrites.
+    pub head: Vec<u8>,
+    /// Whether the material's table is the first one. Shaders differ: the UI
+    /// base runs material-then-engine, the small families engine-then-material.
+    pub material_first: bool,
+    /// Between the two tables' records: the second table's header, ending with
+    /// its count word, which [`GroupData::build`] rewrites.
+    pub between: Vec<u8>,
+    /// After the second table's records: the packed run and the condition
+    /// header's bytes up to the 28-byte record it shares with the packed run's
+    /// last copy.
+    pub mid: Vec<u8>,
+    /// The condition header's bytes after that shared 28-byte record.
+    pub tail: Vec<u8>,
 }
 
 /// Rewrites a run of canonical records in place, shrinking the run to fit and
