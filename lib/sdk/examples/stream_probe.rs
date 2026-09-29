@@ -1,7 +1,9 @@
-//! Tests whether the device preamble's stream is the material's texture
-//! channels: for every material section it collects the stream's record names
-//! and the group data's channel records (the `{kind 5, offset 0, size 4}` ones)
-//! and reports whether the two sets agree.
+//! Tests whether a material's device-preamble stream is its own channel list
+//! (plus the shader's engine resources). For every material data file it reads
+//! the template's channel hashes (`unk1`, at `material_offset + 24`) and the
+//! section's stream, and reports the stream names the channel list does not
+//! cover (expected: the engine's render-set textures) and the channels the
+//! stream does not carry (expected: slots the shader does not use).
 //!
 //! ```text
 //! stream_probe [--limit <n>] [--verbose] <file or directory>...
@@ -12,13 +14,13 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sdk::filetype::group_data::GroupData;
 use sdk::filetype::shader::{self, Section};
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
+/// The material stream header (version 60/61/62) points at the shader section.
 fn shader_section(data: &[u8]) -> Option<&[u8]> {
     if data.len() < 28 {
         return None;
@@ -36,6 +38,24 @@ fn shader_section(data: &[u8]) -> Option<&[u8]> {
         return None;
     }
     data.get(offset..offset + size)
+}
+
+/// The template's channel hashes (`unk1`), from the material template record.
+fn material_channels(data: &[u8]) -> Option<Vec<u32>> {
+    let offset = u32_at(data, 4) as usize;
+    if offset + 24 > data.len() {
+        return None;
+    }
+    // name (u32), parent material (u64 x2), then the counted channel list.
+    let count = u32_at(data, offset + 20) as usize;
+    if count > 256 {
+        return None;
+    }
+    let mut channels = Vec::with_capacity(count);
+    for index in 0..count {
+        channels.push(u32_at(data, offset + 24 + index * 4));
+    }
+    Some(channels)
 }
 
 fn walk(path: &Path, visit: &mut impl FnMut(&Path)) {
@@ -103,9 +123,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut sections = 0usize;
     let mut files = 0usize;
-    let mut agree = 0usize;
+    let mut covered = 0usize;
     let mut no_stream = 0usize;
-    let mut mismatches = 0usize;
+    let mut no_channels = 0usize;
+    let mut engine_freq: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
     for path in &paths {
         if sections >= limit {
             break;
@@ -119,6 +140,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return;
             };
             let Some(shader) = shader_section(&data) else {
+                return;
+            };
+            let Some(channels) = material_channels(&data) else {
+                no_channels += 1;
                 return;
             };
             let Ok(section) = Section::parse(shader) else {
@@ -136,33 +161,36 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return;
             };
 
-            let group = GroupData::new(section.group_data().to_vec());
-            let mut group_hashes: BTreeSet<u32> = BTreeSet::new();
-            for run in group.runs() {
-                for record in run {
-                    group_hashes.insert(record.hash);
-                }
-            }
-
             sections += 1;
+            let channel_set: BTreeSet<u32> = channels.iter().copied().collect();
             let stream_set: BTreeSet<u32> = stream.iter().copied().collect();
-            let missing: Vec<u32> = stream_set.difference(&group_hashes).copied().collect();
-            if missing.is_empty() {
-                agree += 1;
+            let engine: Vec<u32> = stream_set.difference(&channel_set).copied().collect();
+            let unused: Vec<u32> = channel_set.difference(&stream_set).copied().collect();
+            if engine.is_empty() {
+                covered += 1;
                 if verbose {
-                    println!("agree stream={} {}", stream.len(), file.display());
+                    println!(
+                        "covered stream={} channels={} unused={} {}",
+                        stream.len(),
+                        channels.len(),
+                        unused.len(),
+                        file.display()
+                    );
                 }
             } else {
-                mismatches += 1;
+                for name in &engine {
+                    *engine_freq.entry(*name).or_default() += 1;
+                }
                 println!(
-                    "UNEXPLAINED stream={} group={} names=[{}] {}",
+                    "engine stream={} channels={} names=[{}] unused={} {}",
                     stream.len(),
-                    group_hashes.len(),
-                    missing
+                    channels.len(),
+                    engine
                         .iter()
                         .map(|hash| format!("{hash:08X}"))
                         .collect::<Vec<_>>()
                         .join(" "),
+                    unused.len(),
                     file.display()
                 );
             }
@@ -170,8 +198,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     eprintln!(
-        "{sections} section(s) from {files} file(s): {agree} agree, {mismatches} mismatch, \
-         {no_stream} without a walkable stream"
+        "{sections} section(s) from {files} file(s): {covered} fully covered by the channel \
+         list, {} with engine names, {no_stream} without a walkable stream, {no_channels} \
+         without a channel list",
+        sections - covered
     );
+    let mut engine: Vec<(u32, usize)> = engine_freq.into_iter().collect();
+    engine.sort_by(|a, b| b.1.cmp(&a.1));
+    eprintln!("distinct engine names: {}", engine.len());
+    for (name, count) in engine.iter().take(24) {
+        eprintln!("  {name:08X} x{count}");
+    }
     Ok(())
 }
