@@ -637,6 +637,18 @@ with it. The small families' payload adds a case-value opcode
 predicates have their own opcode shape. The experiment that would settle both
 is a crafted tree with an in-game observation of which group is selected.
 
+More names, mined from the VT2 SDK's declarations: `BC4EE226 = gui_hdr` and
+`625D415E = transparent_mask`. The two most frequent condition hashes in the
+whole game (`BDF72706` and `B5F45768`, 482 sections each, always together) are
+not plain strings anywhere tried - not substrings of the executable's printable
+runs, not identifiers in the VT2 declarations, not one-to-three character
+strings, numbers 0..9999 or common words, and not in either dictionary - so
+they are composed at runtime the way `material_variable_<hash>` and
+`texture_map_<hash>` are. A pass over the whole-game conditions dump (264
+distinct hashes) leaves 147 unresolved; that list is kept beside the miner's
+other bounty lists as the next mining round's targets, and the rest of the
+dump's "hashes" are packed payload words, not names.
+
 ## The whole section round trips, and the dependencies entry is a u64
 
 `Section::parse` walks the layout above and `Section::into_bytes` recomputes it,
