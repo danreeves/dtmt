@@ -188,6 +188,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   with `--compile --against` matches both interfaces exactly, where the old
   tree mismatched; the reader's `reads_a_code_blocks_samplers_table` test
   covers the nested table.]
+- **The mod's engine data is the template form**: snoopy-mod's
+  `ui_default_base.engine_data` was regenerated from a current UI base material
+  (`e3370cb2107d8aca`, whose stream carries `texture_map` like the old source) -
+  84758 bytes where the old file was 218950, with the group data regenerating
+  byte for byte, the build touching only the material's data file, and the
+  deployed title material rendering in game. The pre-update file is kept beside
+  the miner dumps as `ui_default_base.engine_data.old`; the September update
+  grew the engine table by four records, which is why no current section matches
+  the old 62884-byte group data.
 - **Bundle -> source, one step**: `shader43 --reconstruct <dir> <material>` now
   writes the source tree `dtmt build` needs - `<name>.shader_node` (with a code
   block and a pass so it builds), `<name>.shader_source` (the first program of

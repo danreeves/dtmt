@@ -51,17 +51,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         (group, ids)
     } else {
-        let offset = u32_at(&bytes, 32) as usize;
-        let size = u32_at(&bytes, 36) as usize;
-        let section = sdk::filetype::shader::Section::parse(&bytes[..])?;
-        let group = section.group_data().to_vec();
+        // A material data file: the section is at the header's shader offset.
+        let offset = u32_at(&bytes, 12) as usize;
+        let size = u32_at(&bytes, 16) as usize;
+        let section_bytes = bytes
+            .get(offset..offset + size)
+            .ok_or("the shader section is out of range")?;
+        let section = sdk::filetype::shader::Section::parse(section_bytes)?;
         let ids = section
             .contexts()
             .iter()
             .flat_map(|context| context.queries.iter().map(|query| query.id))
             .collect();
-        let _ = (offset, size);
-        (group, ids)
+        (section.group_data().to_vec(), ids)
     };
 
     let group = GroupData::new(group_data);
