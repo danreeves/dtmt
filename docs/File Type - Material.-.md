@@ -28,7 +28,7 @@ MaterialTemplate...
 |------|-------|---------|
 | `u64` | `material1` | primary parent material |
 | `u64` | `material2` | secondary parent material |
-| `IdString32[]` | `channels` | the material's bound shader channels |
+| `IdString32[]` | `channels` | the base material's channel list: its textures' keys plus the shader's active unbound channels (empty on instance materials) |
 | `(IdString32, u64)[]` | `textures` | channel → texture resource |
 | `(IdString32, IdString32)[]` | `material_contexts` | context → context material |
 | `ShaderVariableReflection[]` | variables | `(u32 class, u32 elements, IdString32 name, u32 offset, u32 stride)` |
@@ -93,7 +93,7 @@ Fields:
 | `material_contexts` | map | no | context name → context material name |
 | `textures` | map | no | channel name → texture resource path |
 | `variables` | map | no | variable name → `{ type, value, offset?, elements?, stride? }` |
-| `channels` | string[] | no | the material's bound shader channels (`unk1` in the layout); the device stream is this list intersected with the shader's channels plus its engine resources. The name follows the SDK's own vocabulary (`channels` in the `.shader_node` declarations, `has_visualizer_channels` in the sources); an authoring material carries no channel field, so the toolchain derives the list |
+| `channels` | string[] | no | the base material's derived channel list; an instance material carries none and expresses its channels through `textures` keys. The device stream is this list intersected with the shader's channels plus the shader's engine resources. The name follows the SDK's own vocabulary (`channels` in the `.shader_node` declarations, `has_visualizer_channels` in the sources); an authoring material carries no channel field, so the toolchain derives the list |
 | `shader_size` | integer | no | set when decompiling a base material |
 | `extra_data` | string | no | hex of `variable_data` bytes not covered by variables |
 | `unk2` | map | no | unnamed `(name, bool)` pairs |
@@ -297,7 +297,7 @@ What the removed lines established, kept for the record:
 
 | Field | What is known | What is missing |
 | --- | --- | --- |
-| `channels` (`unk1`) | The material's bound shader channels, e.g. `texture_map` on the UI base, whose device preamble carries exactly that one stream record. Across 400 sampled sections the list covers 164 device streams outright, the other 236 add only the engine's render-set vocabulary (`fog_volume` 194, `global_diffuse_map` 160, `linear_depth` 129, `sun_shadow_map` 101, ...), and streams drop channels the shader does not use (a material with 8 channels carries 5), so the stream is this list intersected with the shader's channels plus the shader's engine resources | Whether the list can carry anything other than channel names (none in 400 samples); what the engine does with a channel the shader does not use |
+| `channels` (`unk1`) | The base material's channel list, compiler output: its `textures` keys plus the shader's active unbound channels. Measured on 400 shipped materials (26 base, 374 instance): no instance carries a list (0/374), every base one covers its textures (0/26 missing a key), and the extra channels come in small recurring sets (3 names on nine materials, 13-15 on seven). The device stream is this list intersected with the shader's channels plus the shader's engine resources (164 of 400 streams are covered by the list outright; the rest add `fog_volume` 194, `global_diffuse_map` 160, `linear_depth` 129, `sun_shadow_map` 101, ...) | How the compiler derives the extra channels - the shader's conditions resolved against the material's variables and contexts. Until that is decoded the list is carried for base materials; a material that states only `textures` gets the list derived from them |
 | `unk2` | `(IdString32, bool)` pairs; empty in every material observed | Meaning; probably shader flags/defines |
 | `unk3` | `(u32, u32)` pairs, e.g. `(6,0) (5,0)` on the UI base | Meaning; possibly program/variant selection |
 | `material_contexts` | 32-bit context names such as `surface_material = "bone"` | The full value set and how consumers use it |

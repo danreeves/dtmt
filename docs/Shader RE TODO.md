@@ -379,17 +379,21 @@ bytes.
 
 ### The stream's composition: the material's channels plus the shader's resources
 
-A material data file's own template carries the channel list (`channels` in the
-SJSON, `unk1` in the layout, at `material_offset + 24`). Across 400 sampled sections (`stream_probe`), 164 have
-their whole device stream covered by that list, and the other 236 differ only by
-a small fixed vocabulary of engine names: `fog_volume` (194 sections),
+A base material data file's own template carries the channel list (`channels` in
+the SJSON, `unk1` in the layout, at `material_offset + 24`); an instance
+material carries none (0 of 374 instances in a 400 sample) and states its
+channels as `textures` keys, as the SDK's authoring materials do. Across 400
+sampled base sections (`stream_probe`), 164 have their whole device stream
+covered by that list, and the other 236 differ only by a small fixed vocabulary
+of engine names: `fog_volume` (194 sections),
 `global_diffuse_map` (160), `linear_depth` (129), `sun_shadow_map` (101),
 `B70645F7` (70), `brdf_lut`, `global_specular_map`, `local_lights_shadow_atlas`,
 `static_sun_shadow_map`, `cached_local_lights_shadow_atlas`, `894E960C` and
 `9DC2E982` (45 each), `39A56531`/`D1D67F3B` (17), `70A51854` (12) and a few
 rarer ones. Streams also drop channels: a material with 8 channels carries 5 of
-them, so the stream is the material's channels intersected with the shader's
-own, plus the shader's engine resources. The remaining names in the aggregate
+them, so the stream is the base material's channels intersected with the
+shader's own, plus the shader's engine resources. The remaining names in the
+aggregate
 (`00000000`, `00000001`, `00000200`, ...) are the type-record edge cases of the
 walk, not names.
 

@@ -500,10 +500,11 @@ struct MaterialDefinition {
     /// base material instead of depending on a game resource.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shader_data: Option<QuotedString>,
-    /// The material's bound shader channels. The device preamble's stream is
-    /// this list intersected with the shader's own channels, plus the shader's
-    /// engine resources, so a channel the shader does not use stays here and
-    /// out of the stream.
+    /// The base material's channel list; empty on an instance material, whose
+    /// channels are its `textures` keys. The compiler derives it as the
+    /// textures' keys plus the shader's active unbound channels, and the device
+    /// preamble's stream is this list intersected with the shader's channels,
+    /// plus the shader's engine resources.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     channels: Vec<Hash32>,
     #[serde(default, skip_serializing_if = "is_empty_map")]
