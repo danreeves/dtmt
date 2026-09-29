@@ -618,6 +618,25 @@ established meaning. The group headers' 17-byte entries carry render-setting
 hashes (`6BBDF5FD = wireframe`, found in 38ECBAD1's container), so the
 conditions key on render settings as well as material channels.
 
+Resolved since, all from the executable's strings: `E2C8865F =
+gui_render_pass`, `8FB860CF = write_channels`, `7F9E89FD = num_skin_weights`,
+`C66F7805 = selection_outline`, `86C8C90F = decals`, and `F2760503 = default`
+(the context name). So the vocabulary mixes render settings (`gui_render_pass`,
+`write_channels`, `wireframe`, `decals`, `selection_outline`), material
+predicates (`num_skin_weights`) and channels (`gui`, `red`, `green`, `blue`,
+`alpha`).
+
+The payload's results are not interface indices: the UI base's 48 pixel
+programs all carry the same input list - one shipped interface - while its
+records yield 1, 2, 3 and the fallback 7. The one rule that holds on all 35 of
+its records is `result = tests.len() - 1`, the number of conditions in the
+conjunction minus one, which reads as a specificity rank (the fallback 7 being
+the sentinel for no match) - but nothing yet proves the engine ranks groups
+with it. The small families' payload adds a case-value opcode
+(`3001 7007 2000 1000 3004 5005 5007 9000` around `num_skin_weights`), so value
+predicates have their own opcode shape. The experiment that would settle both
+is a crafted tree with an in-game observation of which group is selected.
+
 ## The whole section round trips, and the dependencies entry is a u64
 
 `Section::parse` walks the layout above and `Section::into_bytes` recomputes it,
