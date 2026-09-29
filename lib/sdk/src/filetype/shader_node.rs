@@ -1419,16 +1419,22 @@ impl ShaderNode {
         for sampler in &evaluation.samplers {
             out.push_str(&format!("DECLARE_SAMPLER_2D({sampler});\n"));
         }
+        // Each stage's evaluation only exists in its own stage: the pixel one
+        // reads the material cbuffer, which a vertex source does not declare.
+        out.push_str("#if defined(STAGE_VERTEX)\n");
         out.push_str(
             "void graph_evaluate_vertex(out GraphVertexResults results, in GraphVertexParams params)\n{\n",
         );
         out.push_str(&evaluation.vertex);
         out.push_str("}\n");
+        out.push_str("#endif\n");
+        out.push_str("#if defined(STAGE_FRAGMENT)\n");
         out.push_str(
             "void graph_evaluate_pixel(out GraphPixelResults results, in GraphPixelParams params)\n{\n",
         );
         out.push_str(&evaluation.pixel);
         out.push_str("}\n");
+        out.push_str("#endif\n");
         out
     }
 
