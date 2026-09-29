@@ -140,6 +140,55 @@ shaders. Supporting decodes, as the experiment needs them: descriptor `Y`
 semantics, the packed copies' generation grammar, and the tail resource-list
 kinds.
 
+### The tail's rest is nine counted lists, then the device preamble
+
+Measured across every program of six engine-data files (the four carried
+families, the UI base and the built UI base material; `tail_dump <file> <stage>
+0 check` prints the list counts per program - no failures): after the cbuffer
+list a program tail carries **nine counted lists** - each a u32 count, then that
+many fixed-size records - followed by the byte-packed device preamble (the same
+bytes the engine-data text calls `device_preamble`; that is why only pixel tails
+carry the real stream and vertex tails end in a small zero placeholder).
+
+| list | record | content in the samples |
+|---|---|---|
+| 2 | 7 words | engine records: render-set textures (`linear_depth`, `temp_gbuffer1`) and engine cbuffer variables (`bones`, `idata`) |
+| 3 | 7 words | the bindless texture array (`global_texture2D`) |
+| 4 | 7 words | no record in any sample |
+| 5 | 7 words | the bindless buffer array (`global_feedback_buffers`) |
+| 6 | 4 words | static samplers (`static_minlod_sampler`, space 31) |
+| 7 | 3 words | the stage's inputs, system values included (`{murmur32(name), semantic index, register}`) |
+| 8 | 3 words | the bindless sampler array (`global_samplers`) |
+
+Lists 0 and 1 are empty in every sample, so their record size is unknown. The
+observed field layouts are `{name, register, array index, flag, space,
+FFFFFFFF, 0}` for resources (`flag` is `1` for a single texture, `FFFFFFFF` for
+an array), `{name, index, 0, FFFFFFFF, offset, size, 0}` for engine records,
+`{name, register, 1, space}` for samplers and `{name, semantic index, register}`
+for inputs. Which fields are which is not proven for the engine records.
+
+Cbuffer entries are `{murmur32(name), ?, size, register, 1, 0}`: the size at
+`+8` and the register at `+12` are confirmed across five families; the word at
+`+4` is small (0/1/2/7) and still unread.
+
+### The compiled shaders carry the engine's names
+
+The names behind the tail hashes are not only in the executable: the shipped
+DXIL containers' global symbol tables carry the shader-source names. Decoding
+the containers out of an engine-data file (`container_strings <file> 0 out.bin`)
+and mining them with `mine_strings` (now hashing every letter-starting substring
+of a printable run, since names sit next to printable bitstream bytes) resolved:
+`global_feedback_buffers` (the buffer array), `static_minlod_sampler` (the space
+31 sampler), `global_samplers`, `global_texture2D`, `temp_gbuffer1`, `idata`,
+`bones`, `noise`, `SV_POSITION` (uppercase - the engine's own semantic name,
+where the container's ISG1 says `SV_Position`), `TANGENT_BINORMAL`,
+`BLENDWEIGHTS`, and a channel instance name `texture_map_1453a433`. Channel
+names are instantiated per material (`<slot>_<hash>`), which is what the
+preamble's channel records key on. Cbuffer names themselves are not in the
+symbol table, so the samples' unnamed cbuffers (`B3A2EB88`, `E7DFA2E1`) stay
+unknown for now. `tail_hashes` collects the distinct hash-like words from a set
+of tails for such a mining round.
+
 Update: variables and cbuffers turned out not to be in the block (see the block
 notes below), so the block's remaining authority is resources/channels - and its
 record stream is now framed: record lengths follow the record's `kind` (4 -> 60

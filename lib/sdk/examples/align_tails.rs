@@ -43,12 +43,10 @@ fn main() -> color_eyre::Result<()> {
 
     println!("=== cbuffer lists");
     for (name, tail) in &families {
-        let list: Vec<String> = tail
-            .cbuffers
-            .iter()
-            .map(|entry| format!("{:08X}/{}", entry.name_hash(), entry.size()))
-            .collect();
-        println!("  {name:<18} {}", list.join("  "));
+        for (index, entry) in tail.cbuffers.iter().enumerate() {
+            let words: Vec<String> = entry.words.iter().map(|word| format!("{word:08X}")).collect();
+            println!("  {name:<18} [{index}] {}", words.join(" "));
+        }
     }
 
     let rests: Vec<Vec<u32>> = families
