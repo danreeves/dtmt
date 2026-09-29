@@ -167,6 +167,7 @@ resources (`flag` is `1` for a single texture, `FFFFFFFF` for an array),
 `idata`), `{name, binding, 1, set}` for samplers and
 `{name, semantic index, register}` for inputs. The binding and set fields are
 confirmed against the compiled containers' reflection (see below).
+
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
 `TailLists::set_inputs` hashes each element's name upper cased, groups the
@@ -259,7 +260,9 @@ names are instantiated per material (`<slot>_<hash>`), which is what the
 preamble's channel records key on. Cbuffer names themselves are not in the
 symbol table, so the samples' unnamed cbuffers (`B3A2EB88`, `E7DFA2E1`) stay
 unknown for now. `tail_hashes` collects the distinct hash-like words from a set
-of tails for such a mining round.
+of tails for such a mining round. Both the executable and the compiled shaders
+change with a game update, so a name mined from one build should be re-checked
+after an update before it is trusted.
 
 Update: variables and cbuffers turned out not to be in the block (see the block
 notes below), so the block's remaining authority is resources/channels - and its
