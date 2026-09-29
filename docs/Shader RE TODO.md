@@ -246,18 +246,27 @@ components = 3 (RGB) gives `0x100`, `0x10000`, `0x01000000`, `0`. So a channel
 record is derivable from its component count alone. The other 413 preambles are
 the richer form (their third word is 1, 2, 4 or 5 and their fourth is nonzero).
 
-The richer form is now framed too. Its head is
-`{1, query_count, w2, config_count, 30}`: the first word is the query count on
-every sample (queries 36 -> 36, 8 -> 8, 5 -> 5, 3 -> 3, 2 -> 2, 1 -> 1), the
-third word is 1/2/4/5, the fourth is the number of 13-byte config records
-(32..50 in the sample, the UI base's 37) and the fifth is 30 where the minimal
-form puts the channel count - so the two are different layouts, not build
-generations (both forms' files date from the same update window). After the
-120-byte header come the config records, a u32 stream count and the channel
-records; the 13-byte grid is confirmed on every sampled rich preamble - the
-first channel record sits at `offset - 120 == 4 (mod 13)`, i.e. the config
-records end on a 13-byte boundary and the count word follows. The channel counts
-run 1..18.
+The two forms are one structure. Reading the records from byte 16 rather than
+120 makes every rich preamble parse cleanly (16,440 records, 0 malformed) and
+the head's fourth word is exactly the record count - the "120-byte header" was
+the 16-byte head plus its first eight records. The preamble is:
+
+``text
+{1, query_count, w2, config_count}                  (16 bytes)
+config_count x {u32 index, u8 0, u32 value, u32 0}  (13 bytes each)
+u32 stream_count
+stream_count x channel records                      (60 bytes, or 73 for kind 5)
+[a 7 or 20 byte zero tail - only in the minimal form]
+``
+
+Walking that over 500 sampled preambles succeeds on 479 (21 edge cases left to
+chase). The config values are the documented small masks (1, 0xF, 0, 8, 0xFF, 6,
+3, 4, 2, 5, 7, 0x78, 0x60, 0x20, and 0xC0000000 a few times), and the 22-record
+common prefix matches the notes exactly (`12:1 16:1 15:8 19:8 10:FF 14:1 18:1
+1A:1 11:FF 13:1 17:1 5E:F .. 65:F 0C:1 0E:4 ..`). The rich form ends right
+after the channel records (tail 0 on 390 of them); only the minimal form carries
+the 7 or 20 byte tail. Channel record component values seen: 4 (1681), 5 (932),
+3 (15), 6 (17). The head's w2 is 1/2/4/5 and is still unexplained.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
