@@ -42,7 +42,10 @@ game-derived file. The engine data holds the declaration's engine-side wrapper
 for now (contexts, conditions, group data, the device preamble, the program
 tails and - since the carry mode - the compiled containers); shrinking it to
 only genuine engine constants (and generating the rest from the shader itself)
-is the remaining RE work listed above. A material with engine data and **no**
+is the remaining RE work listed above. The group data is now split: the engine
+data carries its template - the group headers, the descriptors, the packed runs
+and the engine's table once - and the build writes the material's own tables back
+into it, which halves the file. A material with engine data and **no**
 sibling sources carries the programs it declares instead of compiling any:
 that is how a shipped section's variants (the small families have 9-17 distinct
 payloads) can be rebuilt as a mod material without collapsing them. The old

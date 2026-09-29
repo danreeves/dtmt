@@ -198,8 +198,9 @@ shader_engine_data = "ui_default_base.engine_data"
 
 `ui_default_base.engine_data` is a text file next to the material (or relative to
 the mod root) that holds the engine-side wrapper the generator cannot currently
-derive: contexts, conditions, dependencies, group data, the packed device
-preamble and one metadata tail per program. When the declaration is present,
+derive: contexts, conditions, dependencies, the group data's template (its
+tables are generated from the material), the packed device preamble and one
+metadata tail per program. When the declaration is present,
 `dtmt build` compiles the sibling `.shader_node` + `.shader_source` and
 generates the whole section from them and the engine data, so the material
 source stays a few hundred bytes and no shipped shader blob is needed. The

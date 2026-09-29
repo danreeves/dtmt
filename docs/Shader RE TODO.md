@@ -552,6 +552,17 @@ template - their groups do not walk, their condition headers do not read (the
 where the readers are and refuses where they are not instead of guessing.
 `group_build` runs the check and `group_parts` prints the part map.
 
+Wired into the engine data and `generate`: `EngineData` carries the template
+(`group_prefix`, `engine_table`, deduplicated `material` tables and one `group`
+line per group) instead of the whole `group_data`, and `generate` rebuilds the
+group data from it. A section whose groups do not walk keeps the old
+`group_data` line, so nothing regresses. Measured on `007bf44baec8ee9a` (the UI
+base family): its engine data is 129044 bytes of text where the same file in the
+old form is 251675 - a 49% cut, the template costing 36556 bytes against the
+group data's 159187 - and the generated group data is byte-identical to the
+shipped section's. `engine_data_check <file> [<source material>]` runs both
+checks.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)

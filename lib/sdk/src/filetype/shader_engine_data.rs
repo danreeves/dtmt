@@ -22,6 +22,7 @@ use std::fs;
 use color_eyre::eyre::{Context, Result, bail};
 
 use super::shader::{self, Stage};
+use crate::filetype::group_data::{GroupData, GroupParts, GroupTemplate, Record};
 use crate::murmur;
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {
@@ -63,6 +64,41 @@ fn to_hex(bytes: &[u8]) -> String {
     text
 }
 
+/// A record table as hex: five little-endian words per record.
+fn records_hex(records: &[Record]) -> String {
+    let mut bytes = Vec::with_capacity(records.len() * 20);
+    for record in records {
+        for word in [
+            record.kind,
+            record.flags,
+            record.hash,
+            record.offset,
+            record.size,
+        ] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    to_hex(&bytes)
+}
+
+/// Reads a record table written by [`records_hex`].
+fn records_from_hex(text: &str) -> Result<Vec<Record>> {
+    let bytes = from_hex(text)?;
+    if bytes.len() % 20 != 0 {
+        bail!("a record table needs a multiple of 20 bytes");
+    }
+    Ok(bytes
+        .chunks(20)
+        .map(|chunk| Record {
+            kind: u32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+            flags: u32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+            hash: u32::from_le_bytes(chunk[8..12].try_into().unwrap()),
+            offset: u32::from_le_bytes(chunk[12..16].try_into().unwrap()),
+            size: u32::from_le_bytes(chunk[16..20].try_into().unwrap()),
+        })
+        .collect())
+}
+
 /// The engine-side data of a shipped section: the parts the generator cannot
 /// currently derive, captured once from a shipped material.
 #[derive(Debug)]
@@ -74,6 +110,14 @@ pub struct EngineData {
     pub conditions: Vec<u8>,
     pub dependencies: Vec<u8>,
     pub group_data: Vec<u8>,
+    /// The group data's carried template, when its groups walk: the bytes a
+    /// generator keeps while the material's tables are written. `None` when the
+    /// groups do not walk, in which case `group_data` is the fallback.
+    pub group_template: Option<GroupTemplate>,
+    /// The material's own record tables, one per group, as the section wrote
+    /// them. A build writes them back; a material that renames or re-sizes a
+    /// variable writes the new records in their place.
+    pub material_tables: Vec<Vec<Record>>,
     /// The packed table before the first program record.
     pub device_preamble: Vec<u8>,
     /// One entry per program of the template's device data, in order.
@@ -121,6 +165,28 @@ impl EngineData {
             u32_at(section, 32) as usize,
             u32_at(section, 32) as usize + u32_at(section, 36) as usize,
         )?;
+
+        // The group data's carried template and the material's own tables, when
+        // the groups walk. A build writes the material's records back into the
+        // template, so the engine's table and the group headers are carried once
+        // instead of the whole group data.
+        let parsed = shader::Section::parse(section)?;
+        let query_ids: Vec<u32> = parsed
+            .contexts()
+            .iter()
+            .flat_map(|context| context.queries.iter().map(|query| query.id))
+            .collect();
+        let group = GroupData::new(group_data.clone());
+        let (group_template, material_tables) = match group.template(&query_ids) {
+            Some(template) => {
+                let tables = group
+                    .object_tables(&query_ids)
+                    .map(|tables| tables.into_iter().map(|(_, records)| records).collect())
+                    .unwrap_or_default();
+                (Some(template), tables)
+            }
+            None => (None, Vec::new()),
+        };
 
         let device_offset = u32_at(section, 40) as usize;
         let device_size = u32_at(section, 44) as usize;
@@ -176,6 +242,8 @@ impl EngineData {
             conditions,
             dependencies,
             group_data,
+            group_template,
+            material_tables,
             device_preamble,
             programs,
             tails: Vec::new(),
@@ -194,12 +262,21 @@ impl EngineData {
             conditions: Vec::new(),
             dependencies: Vec::new(),
             group_data: Vec::new(),
+            group_template: None,
+            material_tables: Vec::new(),
             device_preamble: Vec::new(),
             programs: Vec::new(),
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
         };
+
+        // The group data's template, when the groups walk. The lines may come in
+        // any order, so they are collected first and assembled after the loop.
+        let mut group_prefix: Option<Vec<u8>> = None;
+        let mut engine_table: Option<Vec<Record>> = None;
+        let mut materials: Vec<Vec<Record>> = Vec::new();
+        let mut groups: Vec<(GroupParts, usize)> = Vec::new();
 
         for line in text.lines() {
             let line = line.trim();
@@ -290,6 +367,50 @@ impl EngineData {
                 continue;
             }
 
+            // The group data's template: the prefix, the engine's table, the
+            // distinct material tables and one `group` line per group, in group
+            // order.
+            if let Some(rest) = line.strip_prefix("group_prefix ") {
+                group_prefix = Some(from_hex(rest)?);
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("engine_table ") {
+                engine_table = Some(records_from_hex(rest)?);
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("material ") {
+                // An empty table writes no hex, and the line trim eats the
+                // trailing space with it.
+                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                if materials.len() <= index {
+                    materials.resize(index + 1, Vec::new());
+                }
+                materials[index] = records_from_hex(hex)?;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("group ") {
+                let fields: Vec<&str> = rest.split_whitespace().collect();
+                if fields.len() != 6 {
+                    bail!("malformed group line");
+                }
+                let index = fields[5]
+                    .strip_prefix('#')
+                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed group line"))?
+                    .parse::<usize>()?;
+                groups.push((
+                    GroupParts {
+                        head: from_hex(fields[0])?,
+                        material_first: fields[4] == "1",
+                        between: from_hex(fields[1])?,
+                        mid: from_hex(fields[2])?,
+                        tail: from_hex(fields[3])?,
+                    },
+                    index,
+                ));
+                continue;
+            }
+
             let (key, value) = line.split_once(' ').unwrap_or((line, ""));
             match key {
                 "opaque" => engine_data.opaque = value.parse()?,
@@ -304,6 +425,26 @@ impl EngineData {
             }
         }
 
+        // Assemble the template once every line is in.
+        if let Some(prefix) = group_prefix {
+            let engine = engine_table
+                .ok_or_else(|| color_eyre::eyre::eyre!("a group template needs its engine table"))?;
+            let mut parts = Vec::with_capacity(groups.len());
+            let mut tables = Vec::with_capacity(groups.len());
+            for (entry, index) in groups {
+                tables.push(materials.get(index).cloned().ok_or_else(|| {
+                    color_eyre::eyre::eyre!("group references material #{index}, which is missing")
+                })?);
+                parts.push(entry);
+            }
+            engine_data.group_template = Some(GroupTemplate {
+                prefix,
+                groups: parts,
+                engine,
+            });
+            engine_data.material_tables = tables;
+        }
+
         Ok(engine_data)
     }
 
@@ -316,7 +457,39 @@ impl EngineData {
         text.push_str(&format!("contexts {}\n", to_hex(&self.contexts)));
         text.push_str(&format!("conditions {}\n", to_hex(&self.conditions)));
         text.push_str(&format!("dependencies {}\n", to_hex(&self.dependencies)));
-        text.push_str(&format!("group_data {}\n", to_hex(&self.group_data)));
+        match &self.group_template {
+            Some(template) => {
+                // The template: the prefix, the engine's table once, the distinct
+                // material tables and one `group` line per group.
+                text.push_str(&format!("group_prefix {}\n", to_hex(&template.prefix)));
+                text.push_str(&format!("engine_table {}\n", records_hex(&template.engine)));
+                let mut distinct_tables: Vec<&Vec<Record>> = Vec::new();
+                let mut table_indexes = Vec::with_capacity(self.material_tables.len());
+                for table in &self.material_tables {
+                    match distinct_tables.iter().position(|other| **other == *table) {
+                        Some(index) => table_indexes.push(index),
+                        None => {
+                            distinct_tables.push(table);
+                            table_indexes.push(distinct_tables.len() - 1);
+                        }
+                    }
+                }
+                for (index, table) in distinct_tables.iter().enumerate() {
+                    text.push_str(&format!("material {index} {}\n", records_hex(table)));
+                }
+                for (parts, index) in template.groups.iter().zip(&table_indexes) {
+                    text.push_str(&format!(
+                        "group {} {} {} {} {} #{index}\n",
+                        to_hex(&parts.head),
+                        to_hex(&parts.between),
+                        to_hex(&parts.mid),
+                        to_hex(&parts.tail),
+                        if parts.material_first { 1 } else { 0 },
+                    ));
+                }
+            }
+            None => text.push_str(&format!("group_data {}\n", to_hex(&self.group_data))),
+        }
         text.push_str(&format!(
             "device_preamble {}\n",
             to_hex(&self.device_preamble)
@@ -434,11 +607,18 @@ impl EngineData {
     pub fn generate(&self, containers: &HashMap<Stage, Vec<u8>>) -> Result<Vec<u8>> {
         let device = self.build_device(containers)?;
 
+        // The group data: written from the template and the material's tables
+        // when the template is there, carried otherwise.
+        let group_data = match &self.group_template {
+            Some(template) => GroupData::build(template, &self.material_tables, &template.engine)?,
+            None => self.group_data.clone(),
+        };
+
         let contexts_offset = 48usize;
         let conditions_offset = contexts_offset + self.contexts.len();
         let dependencies_offset = conditions_offset + self.conditions.len();
         let group_offset = dependencies_offset + self.dependencies.len();
-        let device_offset = group_offset + self.group_data.len();
+        let device_offset = group_offset + group_data.len();
         let default_offset = device_offset + device.len();
 
         let header = [
@@ -451,7 +631,7 @@ impl EngineData {
             dependencies_offset as u32,
             self.dependency_count,
             group_offset as u32,
-            self.group_data.len() as u32,
+            group_data.len() as u32,
             device_offset as u32,
             device.len() as u32,
         ];
@@ -463,7 +643,7 @@ impl EngineData {
         section.extend_from_slice(&self.contexts);
         section.extend_from_slice(&self.conditions);
         section.extend_from_slice(&self.dependencies);
-        section.extend_from_slice(&self.group_data);
+        section.extend_from_slice(&group_data);
         section.extend_from_slice(&device);
         section.extend_from_slice(&[0u8; 16]);
         while section.len() % 16 != 0 {
@@ -493,6 +673,8 @@ mod tests {
             conditions: Vec::new(),
             dependencies: Vec::new(),
             group_data: Vec::new(),
+            group_template: None,
+            material_tables: Vec::new(),
             device_preamble: Vec::new(),
             programs: Vec::new(),
             tails: Vec::new(),
@@ -589,6 +771,60 @@ mod tests {
             decode_all(&device),
             vec![container_b.clone(), container_b.clone(), container_b.clone()]
         );
+    }
+
+    #[test]
+    fn a_group_template_round_trips_and_rebuilds() {
+        // A synthetic template: two groups, one material record each and one
+        // engine record. The text form must carry the template back and the
+        // generated section must hold exactly the bytes `build` produced.
+        use crate::filetype::group_data::{GroupData, GroupParts, GroupTemplate, Record};
+
+        let engine = vec![Record {
+            kind: 2,
+            flags: 0,
+            hash: 0x6BC9_1D73,
+            offset: 0,
+            size: 12,
+        }];
+        let group = |material_first: bool| GroupParts {
+            // The head ends with the first table's count word.
+            head: vec![0u8; 40],
+            material_first,
+            between: vec![0u8; 12],
+            mid: vec![0u8; 28],
+            tail: vec![0u8; 8],
+        };
+        let template = GroupTemplate {
+            prefix: 2u32.to_le_bytes().to_vec(),
+            groups: vec![group(true), group(false)],
+            engine: engine.clone(),
+        };
+        let material = vec![
+            vec![Record {
+                kind: 5,
+                flags: 0,
+                hash: 0xE503_152C,
+                offset: 0,
+                size: 4,
+            }],
+            Vec::new(),
+        ];
+        let built = GroupData::build(&template, &material, &engine).unwrap();
+
+        let mut engine_data = empty_engine_data();
+        engine_data.group_data = built.clone();
+        engine_data.group_template = Some(template);
+        engine_data.material_tables = material.clone();
+
+        let parsed = EngineData::from_text(&engine_data.to_text()).unwrap();
+        assert!(parsed.group_template.is_some());
+        assert_eq!(parsed.material_tables, material);
+
+        let section = parsed.generate(&HashMap::new()).unwrap();
+        let offset = u32::from_le_bytes(section[32..36].try_into().unwrap()) as usize;
+        let size = u32::from_le_bytes(section[36..40].try_into().unwrap()) as usize;
+        assert_eq!(&section[offset..offset + size], &built[..]);
     }
 
     #[test]
