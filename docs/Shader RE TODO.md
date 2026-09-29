@@ -496,11 +496,19 @@ mapping is checkable after a game update.
 Measured on all 400 sampled sections: 319 share the exact 29-record base, 11
 carry a variant (`camera_pos` 1 instead of 3), and the other 70 are minimal
 shaders with fewer records. The values read as masks rather than sizes or
-offsets: `camera_pos` 3, `back_buffer_size` 8, `frame_number` 1, `time` FF, and
-the texture slots' `F` is the four uv sets - which is what the per-program masks
-(`01`/`02`/`04`/`08`/`0F`/`07`) that patch the first texture slot look like, one
-bit per uv set. So the leading reading is that a record says which slots read
-the variable, and an override block says it for one pass.
+offsets: `camera_pos` 3, `back_buffer_size` 8, `frame_number` 1, `time` FF.
+
+The texture slots' `F` is a mask too, and the first reading of it - one bit per
+interpolated uv channel - is **refuted**: across 30 sampled materials, 75 of the
+300 programs with a patched mask carry a bit with no matching interpolator
+(`mask=08` beside `CUSTOM 0 1 2`; the UI base alone cannot see this because its
+interpolators are `CUSTOM 0..3`, so every four-bit mask is a subset there). The
+masks still cycle `01`/`02`/`04`/`08`/`0F`, which is what the notes' reading
+says: the bits are the shader's texture channels and a program uses one of them
+or all. Which four things the bits name is open. `mask_probe` prints the mask
+beside the container's `CUSTOM` indices; its diff also picks up blocks with
+other patches, so the odd masks it reports (`00`, `05`, `10`, `28`, `5E`) are
+its own artifact, not data.
 
 ### The records' binding fields, and the first word as a group-data index
 
