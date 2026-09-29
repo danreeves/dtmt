@@ -510,6 +510,27 @@ beside the container's `CUSTOM` indices; its diff also picks up blocks with
 other patches, so the odd masks it reports (`00`, `05`, `10`, `28`, `5E`) are
 its own artifact, not data.
 
+### VT2 ships no shader43 sections, so the pass count has no oracle
+
+The VT2 install (`E:\SteamLibrary\steamapps\common\Warhammer Vermintide 2`) was
+opened to pair the SDK's declarations - whose pass counts are known - against
+shipped sections and settle `w2`. It cannot: a VT2 material's stream is
+`{version 43, 1, 24, material_size, shader_size, shader_offset, ?}`, and the
+blob at `shader_offset` is a small resource-binding list, not a section (592
+bytes on a 1.2 MB material, 64 on a 61 KB one; the first words read
+`{5, 9CA38F7D, 3, 0, 1, 0, "LFSF", 4, 1, 1, 0, 9B8038E0, ...}` - `9B8038E0` is
+`linear_depth`). VT2's compiled shaders are the older Stingray `Shader` format,
+not `shader43`; a section carries its programs and would be hundreds of
+kilobytes. The bundles hold materials, textures, units and resource packages
+(a `common_shaders` package lists ~300 resources by hash) but no `.shader`
+resources and no sections.
+
+So `w2`'s pass-count hypothesis has no oracle in either game: Darktide ships no
+declarations, VT2 ships no sections. The remaining ways to settle it are an
+in-game probe that can observe a compiled shader (the engine does not rewrite
+our section, so it would need an engine-compiled one) or a declaration-identity
+pairing that does not exist yet.
+
 ### The group data constructor
 
 `GroupData::template` and `GroupData::build` cut a shipped group data into the
