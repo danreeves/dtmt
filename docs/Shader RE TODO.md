@@ -171,6 +171,19 @@ Cbuffer entries are `{murmur32(name), ?, size, register, 1, 0}`: the size at
 `+8` and the register at `+12` are confirmed across five families; the word at
 `+4` is small (0/1/2/7) and still unread.
 
+### The tail block and the device preamble
+
+The block at the end of a pixel tail is *not* simply the section's
+`device_preamble`. Some programs' blocks end with the preamble's body (the
+preamble minus its 3-word header `{1, N, M}`): 1 of 13 (2A04418E, after a
+144-byte prefix), 1 of 7 (004F18EA, 112), 1 of 13 (3F08AC44, 64), 0 of 2
+(38ECBAD1) and 7 of 48 (the UI base, 32 for two programs and 36 for five). The
+UI base's first pixel program is the cleanest case: its block is a 32-byte
+header `{2, 0 x 7}` followed by exactly `preamble[12..]` (549 bytes), and the
+other programs add per-program records between the header and the body. The
+block starts with `{2, 0, ...}` in every sample, where the preamble starts
+`{1, N, M}`. `preamble_block` prints both heads and the match.
+
 ### The compiled shaders carry the engine's names
 
 The names behind the tail hashes are not only in the executable: the shipped
