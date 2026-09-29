@@ -685,6 +685,27 @@ The corpus agrees that no-permutation shaders carry no conditions: 70 of the
 sampled sections are single context, single query, `w2 = 2`, zero config records
 and a zero tail.
 
+### The second word is `1 + the descriptor's index`
+
+The group's descriptor list runs from offset 32, one 16-byte entry each
+(`{name, flags, X, Y}`), and a 7-word resource record's word 1 is one more than
+its resource's entry there. On the UI base's source **all 96 records match**
+(`global_texture2D` is entry 1 -> 2, `global_feedback_buffers` entry 2 -> 3); on
+`38ECBAD1` the six descriptors are `c_per_object`(0), `global_texture2D`(1),
+`linear_depth`(2), `39A56531`(3), `D1D67F3B`(4), `global_feedback_buffers`(5)
+and its records read 2, 3, 4, 5, 6 - one more each. So the index is derivable
+from the descriptor list the build generates, and with the names and registers
+now in the source the resource lists stop being carried.
+
+`resource_table` checks the rule corpus-wide: of 19 sampled sections, 740
+7-word records and 202 match a straightforward extraction. The failures are the
+extraction's, not the rule's: entries are taken while the low flags byte is
+0/1/3/5 and `X` advances by 24 or 8, which stops early on some shaders (their
+records then find no entry) and over-reaches on others. Every record that does
+find its entry matches with the +1. Decoding the descriptor-list framing
+exactly - its start and length variants - is the next step, and list 2's buffer
+records (`bones`, `idata`) index something else again.
+
 ### The records' binding fields, corrected against the naming pass
 
 The resource record's word order, as the tail dumps and the working naming pass
