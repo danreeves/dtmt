@@ -333,6 +333,15 @@ carry the mined common prefix's indices (12..26, 94..101) plus shader-specific
 ones (1, 3, 5, 8, 28-30, 38, 46, 54) and repeats with other values (12:0, 13:0,
 30:1, 94:7); only index 10 of the new build's prefix is absent, so the common
 prefix drifts between generations while the shape holds.
+
+The UI base's 48 pixel tails differ only from byte 252 on: the 252-byte record
+(the cbuffer list and the nine lists) is byte-identical across all of them, and
+the block carries the per-program data. Three block shapes occur - 549 bytes
+starting exactly like the section preamble from byte 12 (the 801-byte tails, 12
+of them), the same plus a leading 4-byte `{2}` word (the 805-byte tails, 35),
+and a 4-byte all-zero block (one 256-byte tail, a program with no channels). The
+801s among themselves still differ, from byte 729 - a per-program record inside
+the body, which is where the job-specific data lives.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
