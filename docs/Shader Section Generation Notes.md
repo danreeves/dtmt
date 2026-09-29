@@ -660,6 +660,13 @@ whatever the program count (2 to 272 programs). The September 2026 build moved
 the material stream version from 60/61 to 62; the section layout is unchanged -
 our generated section still renders in it.
 
+`dtmt build` now writes material version 62 as well (the game ships only 62).
+The version word does not gate the layout - our v61 materials and the game's
+v62 ones have identical headers - and the built mod was verified in game with
+v62: title material, cube and pumpkin all render. A "shader cache wrong
+version: wanted 5 found 3" warning in the game log after the update cleared on
+a relaunch.
+
 ## The whole section round trips, and the dependencies entry is a u64
 
 `Section::parse` walks the layout above and `Section::into_bytes` recomputes it,

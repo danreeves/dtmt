@@ -94,7 +94,7 @@ use crate::murmur::{HashGroup, IdString32, IdString64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant, Properties};
 
 const EXPECTED_VERSIONS: [u32; 3] = [60, 61, 62];
-const DEFAULT_VERSION: u32 = 61;
+const DEFAULT_VERSION: u32 = 62;
 const MATERIAL_OFFSET: usize = 28;
 const NO_OFFSET: u32 = u32::MAX;
 
