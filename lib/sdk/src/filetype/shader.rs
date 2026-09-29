@@ -141,9 +141,9 @@ impl TailCbuffer {
 }
 
 /// A program's metadata tail: the counted constant buffer list followed by the
-/// engine's resource lists and the shared block. The lists after the constant
-/// buffers are not decoded yet, so they are kept verbatim; parsing and writing
-/// a tail round-trips its bytes exactly.
+/// engine's resource lists and the shared block. The rest is read verbatim
+/// here; [`TailLists`] gives it structure. Parsing and writing a tail
+/// round-trips its bytes exactly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tail {
     /// The constant buffered described by the tail, in register order.
@@ -203,6 +203,123 @@ impl Tail {
         }
         out.extend_from_slice(&self.rest);
         out
+    }
+}
+
+/// The nine counted lists that follow a tail's constant buffer list, plus the
+/// block that closes the tail. Each list is a `u32` count followed by that
+/// many records; the record size is fixed per list (see [`TailLists::SIZES`]).
+///
+/// The framing was read off every program of six engine-data files: list 2
+/// holds engine records (render-set textures and engine cbuffer variables), 3
+/// the bindless texture array, 4 nothing in any sample, 5 the bindless buffer
+/// array, 6 static samplers, 7 the stage's inputs and 8 the bindless sampler
+/// array. Lists 0 and 1 are empty in every sample, so their record size is
+/// unknown.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TailLists {
+    /// The records of each list, in order.
+    pub lists: Vec<Vec<Vec<u32>>>,
+    /// The bytes after the last list: the block, which ends the tail.
+    pub block: Vec<u8>,
+}
+
+impl TailLists {
+    /// Record sizes in words for the nine lists.
+    pub const SIZES: [usize; 9] = [0, 0, 7, 7, 7, 7, 4, 3, 3];
+
+    /// Reads the lists and the block from the bytes after the constant buffer
+    /// list. Returns `None` when the framing does not fit.
+    pub fn parse(rest: &[u8]) -> Option<TailLists> {
+        let word = |at: usize| -> Option<u32> {
+            rest.get(at..at + 4)
+                .map(|slice| u32::from_le_bytes(slice.try_into().unwrap()))
+        };
+        let mut at = 0usize;
+        let mut lists = Vec::with_capacity(Self::SIZES.len());
+        for size in Self::SIZES {
+            let count = word(at)? as usize;
+            at += 4;
+            let mut records = Vec::new();
+            if size == 0 {
+                // No sample has a record in these lists, so a count means the
+                // framing is not the one this reader knows.
+                if count != 0 {
+                    return None;
+                }
+            } else {
+                if count > 4096 {
+                    return None;
+                }
+                records.reserve(count);
+                for _ in 0..count {
+                    let mut record = Vec::with_capacity(size);
+                    for _ in 0..size {
+                        record.push(word(at)?);
+                        at += 4;
+                    }
+                    records.push(record);
+                }
+            }
+            lists.push(records);
+        }
+        Some(TailLists {
+            lists,
+            block: rest.get(at..)?.to_vec(),
+        })
+    }
+
+    /// Writes the lists and the block back out.
+    pub fn bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for list in &self.lists {
+            out.extend_from_slice(&(list.len() as u32).to_le_bytes());
+            for record in list {
+                for word in record {
+                    out.extend_from_slice(&word.to_le_bytes());
+                }
+            }
+        }
+        out.extend_from_slice(&self.block);
+        out
+    }
+
+    /// The records of one list, or an empty slice when the index is out of
+    /// range.
+    pub fn list(&self, index: usize) -> &[Vec<u32>] {
+        self.lists.get(index).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Replaces the input signature list (list 7) with the records a
+    /// container's input signature asks for: `{murmur32(name), semantic
+    /// index, register}`, one per element. The engine hashes its own spelling
+    /// of the names, which is upper case (`SV_POSITION`, where the container's
+    /// ISG1 says `SV_Position`), groups the records by semantic name in the
+    /// order the name first appears in the signature, and orders each group by
+    /// semantic index - the container itself orders by register packing.
+    pub fn set_inputs(&mut self, container: &[u8]) -> Option<()> {
+        let (inputs, _) = signatures(container)?;
+        let mut groups: Vec<(&str, Vec<&SignatureElement>)> = Vec::new();
+        for element in &inputs {
+            match groups.iter_mut().find(|(name, _)| *name == element.name) {
+                Some((_, group)) => group.push(element),
+                None => groups.push((element.name.as_str(), vec![element])),
+            }
+        }
+        let mut records: Vec<Vec<u32>> = Vec::with_capacity(inputs.len());
+        for (_, mut group) in groups {
+            group.sort_by_key(|element| element.index);
+            for element in group {
+                let name = element.name.to_uppercase();
+                records.push(vec![
+                    u32::from(murmur::Murmur32::hash(&name)),
+                    element.index,
+                    element.register,
+                ]);
+            }
+        }
+        *self.lists.get_mut(7)? = records;
+        Some(())
     }
 }
 

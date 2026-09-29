@@ -167,6 +167,15 @@ an array), `{name, index, 0, FFFFFFFF, offset, size, 0}` for engine records,
 `{name, register, 1, space}` for samplers and `{name, semantic index, register}`
 for inputs. Which fields are which is not proven for the engine records.
 
+The structured reader round-trips every tail's rest byte for byte, and the
+input list is now generated from the compiled container:
+`TailLists::set_inputs` hashes each element's name upper cased, groups the
+records by name in the order the name first appears in the signature and sorts
+each group by semantic index (the container itself orders by register packing).
+Across five files - the four carried families and the built UI base material,
+166 programs - the rebuilt list is byte-identical to the tail's
+(`tail_inputs`), and every tail's rest round trips.
+
 Cbuffer entries are `{murmur32(name), ?, size, register, 1, 0}`: the size at
 `+8` and the register at `+12` are confirmed across five families; the word at
 `+4` is small (0/1/2/7) and still unread.
