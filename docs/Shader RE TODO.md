@@ -301,6 +301,18 @@ textures such as linear_depth 0x300). Kind 3 is fully constant at the 0x100
 class, kind 6 fully constant with X = 0x05000000 and Y = 8, and kind 5 varies in
 the class plus X {0, 5, 6} and Y {0, 2, 4, 8, 0x10, 0x15}. So a texture record
 needs only its name, its component count and its class.
+
+The channel table, with names resolved through the dictionary: kind 4 is the
+engine's render-set textures (`fog_volume`, `global_diffuse_map`,
+`linear_depth`, `global_specular_map`, `brdf_lut`, `temp_gbuffer1` - all class
+`0x300`); kind 5 is the material's own channels and variables (`orm`, `nm`,
+`texture_map_<hash>`, the sampler index `E503152C` - class `0x100`) together
+with a few engine resources (`sun_shadow_map`, `static_sun_shadow_map`,
+`cached_local_lights_shadow_atlas`, `local_lights_shadow_atlas` - class
+`0x300`). So a material channel is kind 5 class `0x100`, not a kind-4 texture
+record: the earlier "kind 4 is textures, kind 5 is material variables" split
+needs that refinement. One sampled preamble derails the walk (a wwise path hash
+appears where a kind should be), which is one of the 21 edge cases.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
