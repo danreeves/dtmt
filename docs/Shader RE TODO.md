@@ -342,6 +342,17 @@ of them), the same plus a leading 4-byte `{2}` word (the 805-byte tails, 35),
 and a 4-byte all-zero block (one 256-byte tail, a program with no channels). The
 801s among themselves still differ, from byte 729 - a per-program record inside
 the body, which is where the job-specific data lives.
+
+That per-job data is a channel bitmask, and it is the only per-program field in
+the UI base's pixel tails. The 12 801-byte tails are identical except for one
+byte at 729 - the second byte of the word at 728, which is the value of the
+config record for index 0x5E (the first channel slot) - and the 805-byte form
+carries the same value four bytes later. The 48 programs cycle through six
+masks: 07, 01, 02, 04, 08, 0F, each twice per twelve programs and offset by one
+between the two forms. So the masks are the channel subsets a variant uses
+(0x0F all four, 01/02/04/08 one each, 07 three), the engine binds only those,
+and the multi-job mapping's per-job data is exactly this: the channel masks in
+the block.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
