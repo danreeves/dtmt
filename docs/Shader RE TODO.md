@@ -234,6 +234,17 @@ the group data's c_per_object table opens with. Kind 6 also occurs (w3 = 2 or
 sample. Every name carries a fixed field set, so the flags are per channel. No
 kind-2 record appears in any of the 200 blocks sampled, so the earlier "kind 2
 is global_texture2D in the pixel blocks" note does not hold for this build.
+
+The documented model is exact where it applies: of 500 sampled preambles, the 87
+whose head reads `{1, query_count, 2, 0, record_count}` all satisfy
+`length = 20 + record_count x 60 + 7 or 20`, with all-zero tails (62 have no
+records, the rest 1 to 4). Their records confirm the component-count reading
+field by field - a record is
+`{name, components, 1, C1, 0, 0x200, C2, 0, 0x30000, C3, 0, 0, 0, C4, 0}`, where
+components = 4 (RGBA) gives `0x300`, `0x30000`, `0x03000000`, `0x15` and
+components = 3 (RGB) gives `0x100`, `0x10000`, `0x01000000`, `0`. So a channel
+record is derivable from its component count alone. The other 413 preambles are
+the richer form (their third word is 1, 2, 4 or 5 and their fourth is nonzero).
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
