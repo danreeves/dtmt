@@ -222,8 +222,8 @@ The records are the shader's own resource usage.
 
 The channel record's body is byte-packed and mostly constant. Across 683 records
 from 200 blocks: `{name, kind, count = 1}`, then a component-count word at +12
-that is `0x100` for one component count and `0x300` for the other (the material
-doc's reading: the flag words track the component count, 4 = RGBA and 3 = RGB,
+that is 0x100 for one class and 0x300 for another (the material doc's reading of the
+second word is 4 = RGBA and 3 = RGB, but the flag words are a per-channel class,
 following `texture_format_spec.config`'s rules - not the texture format, which
 lives in the texture resource), constants `0`, `0x200`, `0`, `0x30000`, `0`,
 and two per-name fields - a word at +44 in {0, 5, 6} and one at +52 in
@@ -238,12 +238,12 @@ is global_texture2D in the pixel blocks" note does not hold for this build.
 The documented model is exact where it applies: of 500 sampled preambles, the 87
 whose head reads `{1, query_count, 2, 0, record_count}` all satisfy
 `length = 20 + record_count x 60 + 7 or 20`, with all-zero tails (62 have no
-records, the rest 1 to 4). Their records confirm the component-count reading
-field by field - a record is
+records, the rest 1 to 4). Their records follow the class rule below - in that
+sample the class happened to equal the component count - a record is
 `{name, components, 1, C1, 0, 0x200, C2, 0, 0x30000, C3, 0, 0, 0, C4, 0}`, where
 components = 4 (RGBA) gives `0x300`, `0x30000`, `0x03000000`, `0x15` and
 components = 3 (RGB) gives `0x100`, `0x10000`, `0x01000000`, `0`. So a channel
-record is derivable from its component count alone. The other 413 preambles are
+record needs only its name, its component count and its class (see below). The other 413 preambles are
 the richer form (their third word is 1, 2, 4 or 5 and their fourth is nonzero).
 
 The two forms are one structure. Reading the records from byte 16 rather than
@@ -290,6 +290,17 @@ The head's w2 is not the program, query, channel or context count: it runs 1..6
 and the same counts pair with different values (w2 = 2 with 2, 8, 16 or 48
 programs per stage; w2 = 5 with 4 to 56), so it likely counts something
 declaration-side that a section does not carry.
+The channel records' fields, measured cleanly by walking 573 preambles (2976
+records, kinds 3/4/5/6): the second word is the kind (3 and 4 are the component
+counts RGB and RGBA; 5 and 6 are other record types), the third is always 1, and
+the body is `{kind, 1, C1, 0, 0x200, C2, 0, 0x30000, C3, 0, [X], 0, [Y], 0}`
+where (C1, C2, C3) is one of three per-channel classes - (0x100, 0x10000,
+0x01000000), (0x200, 0x20000, 0x02000000) or (0x300, 0x30000, 0x03000000) - and
+the class is fixed per channel name (material channels take 0x100, render-set
+textures such as linear_depth 0x300). Kind 3 is fully constant at the 0x100
+class, kind 6 fully constant with X = 0x05000000 and Y = 8, and kind 5 varies in
+the class plus X {0, 5, 6} and Y {0, 2, 4, 8, 0x10, 0x15}. So a texture record
+needs only its name, its component count and its class.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
