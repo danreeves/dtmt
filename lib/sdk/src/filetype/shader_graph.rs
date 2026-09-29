@@ -28,6 +28,7 @@ use color_eyre::eyre::{Result, bail};
 use serde::Deserialize;
 
 use crate::filetype::shader_decl::Domain;
+use crate::filetype::shader_source::CodeParts;
 
 /// The `shader` block of a graph material.
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -242,12 +243,27 @@ pub struct NodeDef {
     /// The option uuids the definition's code switches on, keyed by uuid.
     #[serde(default)]
     pub options: BTreeMap<String, String>,
-    /// The HLSL body: reads the input names, calls `RESULT(<expr>)`.
+    /// The HLSL body: reads the input names, calls `RESULT(<expr>)`. Some
+    /// definitions write it here; others put it in `code_blocks`.
     #[serde(default)]
-    pub code: String,
+    pub code: Option<CodeParts>,
+    /// The definition's code blocks, when it writes them. The `default` block
+    /// is the node's body; the rest are helpers.
+    #[serde(default)]
+    pub code_blocks: BTreeMap<String, NodeCode>,
     /// The values the node exports to the material, keyed by export name.
     #[serde(default)]
     pub exports: BTreeMap<String, NodeExport>,
+}
+
+/// One code block of a node definition.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct NodeCode {
+    /// The body: a bare string, or the `shared`/`hlsl`/`glsl` table.
+    #[serde(default)]
+    pub code: Option<CodeParts>,
+    #[serde(default)]
+    pub language: String,
 }
 
 /// A value a node definition reads from outside the graph: a channel the
@@ -509,6 +525,21 @@ impl NodeDef {
         self.inputs.get(connector)
     }
 
+    /// The node's HLSL body: the top-level `code`, or the `default` block of a
+    /// `code_blocks` table. The definitions use both shapes.
+    pub fn code(&self) -> String {
+        self.code
+            .as_ref()
+            .map(CodeParts::hlsl)
+            .or_else(|| {
+                self.code_blocks
+                    .get("default")
+                    .and_then(|block| block.code.as_ref())
+                    .map(CodeParts::hlsl)
+            })
+            .unwrap_or_default()
+    }
+
     /// The option names the definition declares for the instance's selected
     /// option uuids, in the definition's order. A uuid the definition does not
     /// know is reported, because the code would not switch on it.
@@ -658,7 +689,7 @@ impl Graph {
                 inputs,
                 samplers,
                 exports,
-                code: def.code.clone(),
+                code: def.code(),
                 output: node.id == output_id,
             });
         }

@@ -1393,10 +1393,10 @@ impl ShaderNode {
         // node code carries preprocessor branches (`#if defined(OP_EQUAL)` and
         // the material's flags) that a macro expansion could not carry.
         out.push_str(
-            "void graph_evaluate_vertex(inout GraphVertexResults results, in GraphVertexParams params);\n",
+            "void graph_evaluate_vertex(out GraphVertexResults results, in GraphVertexParams params);\n",
         );
         out.push_str(
-            "void graph_evaluate_pixel(inout GraphPixelResults results, in GraphPixelParams params);\n",
+            "void graph_evaluate_pixel(out GraphPixelResults results, in GraphPixelParams params);\n",
         );
         out.push_str(
             "#define GRAPH_EVALUATE_VERTEX(results, params) graph_evaluate_vertex(results, params)\n",
@@ -1420,12 +1420,12 @@ impl ShaderNode {
             out.push_str(&format!("DECLARE_SAMPLER_2D({sampler});\n"));
         }
         out.push_str(
-            "void graph_evaluate_vertex(inout GraphVertexResults results, in GraphVertexParams params)\n{\n",
+            "void graph_evaluate_vertex(out GraphVertexResults results, in GraphVertexParams params)\n{\n",
         );
         out.push_str(&evaluation.vertex);
         out.push_str("}\n");
         out.push_str(
-            "void graph_evaluate_pixel(inout GraphPixelResults results, in GraphPixelParams params)\n{\n",
+            "void graph_evaluate_pixel(out GraphPixelResults results, in GraphPixelParams params)\n{\n",
         );
         out.push_str(&evaluation.pixel);
         out.push_str("}\n");

@@ -1512,13 +1512,22 @@ fn compile(
         Some(graph) => {
             let core = core
                 .ok_or("compiling a material needs --core <the folder holding shader_nodes/>")?;
+            // A node kind is a resource path: the engine's nodes are under
+            // `core/`, while a mod-authored declaration and node live at the
+            // path they name under the tree that holds `core/`.
+            let node_path = |kind: &str| -> PathBuf {
+                let relative = kind.strip_prefix("core/").unwrap_or(kind);
+                let under_core = core.join(format!("{relative}.shader_node"));
+                if under_core.exists() || kind.starts_with("core/") {
+                    return under_core;
+                }
+                core.parent()
+                    .unwrap_or(core)
+                    .join(format!("{kind}.shader_node"))
+            };
             let mut defs = BTreeMap::new();
             for graph_node in &graph.nodes {
-                let relative = graph_node
-                    .kind
-                    .strip_prefix("core/")
-                    .unwrap_or(&graph_node.kind);
-                let path = core.join(format!("{relative}.shader_node"));
+                let path = node_path(&graph_node.kind);
                 let def = NodeDef::from_text(&fs::read_to_string(&path)?)
                     .map_err(|err| format!("{}: {err}", path.display()))?;
                 defs.insert(graph_node.kind.clone(), def);
@@ -1535,11 +1544,7 @@ fn compile(
                 .unwrap_or_default();
             let resolution = graph.resolve(&defs, &shader_inputs)?;
             let evaluation = resolution.evaluate(&defs)?;
-            let relative = output
-                .kind
-                .strip_prefix("core/")
-                .unwrap_or(&output.kind);
-            let path = core.join(format!("{relative}.shader_node"));
+            let path = node_path(&output.kind);
             println!(
                 "  graph: {} nodes, {} channels, {} samplers, {} defines -> \
                  {} bytes of vertex and {} of pixel evaluation",
