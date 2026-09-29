@@ -68,70 +68,109 @@ where
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| String::from("file"));
 
-    let bin = match fs::read(&backup_path).await {
-        Ok(bin) => bin,
+    match fs::read(path).await {
+        Ok(bin) => {
+            // Back the current content up on first touch, but never read it
+            // back here. The game can rewrite this file between deployments (a
+            // game update does exactly that); patching the backup's content
+            // instead would silently revert whatever was written since.
+            backup_file(path, false).await?;
+            Ok(bin)
+        }
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            // TODO: This doesn't need to be awaited here, yet.
-            // I only need to make sure it has finished before writing the changed bundle.
-            tracing::debug!(
-                "Backup does not exist. Backing up original {} to '{}'",
+            // Steam removes a file it considers corrupt and re-downloads it
+            // later; until then the backup is all there is to patch.
+            tracing::warn!(
+                "{} is missing; falling back to backup '{}'",
                 file_name,
                 backup_path.display()
             );
-            fs::copy(path, &backup_path).await.wrap_err_with(|| {
-                format!(
-                    "Failed to back up {} '{}' to '{}'",
-                    file_name,
-                    path.display(),
-                    backup_path.display()
-                )
-            })?;
-
-            tracing::debug!("Reading {} from original '{}'", file_name, path.display());
-            fs::read(path).await.wrap_err_with(|| {
-                format!("Failed to read {} file: {}", file_name, path.display())
-            })?
-        }
-        Err(err) => {
-            return Err(err).wrap_err_with(|| {
+            fs::read(&backup_path).await.wrap_err_with(|| {
                 format!(
                     "Failed to read {} from backup '{}'",
                     file_name,
                     backup_path.display()
                 )
-            });
+            })
         }
+        Err(err) => Err(err).wrap_err_with(|| {
+            format!("Failed to read {} file: {}", file_name, path.display())
+        }),
+    }
+}
+
+/// The value of a settings file's `boot_script` field.
+pub(crate) fn boot_script(settings: &str) -> Option<&str> {
+    let start = settings.find("boot_script =")? + "boot_script =".len();
+    let rest = &settings[start..];
+    let end = rest.find('\n')?;
+    Some(rest[..end].trim().trim_matches('"'))
+}
+
+/// A settings file with its `boot_script` field set to `script`; everything
+/// else, including the `script_data` block that carries the client version the
+/// backend checks, is left exactly as it was.
+pub(crate) fn with_boot_script(settings: &str, script: &str) -> Result<String> {
+    let Some(i) = settings.find("boot_script =") else {
+        eyre::bail!("couldn't find 'boot_script' field");
     };
-    Ok(bin)
+    let Some(j) = settings[i..].find('\n') else {
+        eyre::bail!("couldn't find end of 'boot_script' field");
+    };
+    let mut out = String::with_capacity(settings.len());
+    out.push_str(&settings[..i]);
+    out.push_str(&format!("boot_script = \"{script}\""));
+    out.push_str(&settings[i + j..]);
+    Ok(out)
+}
+
+/// Sets a settings file's `boot_script` field from the file's *current*
+/// content, so a game update's version fields are never overwritten with an
+/// older file from a backup - only this one line changes, in both directions.
+pub(crate) async fn set_boot_script(settings_path: &Path, script: &str) -> Result<()> {
+    let settings = read_file_with_backup(settings_path).await?;
+    let settings = String::from_utf8(settings).wrap_err("Settings.ini is not valid UTF-8")?;
+    let patched = with_boot_script(&settings, script)?;
+    fs::write(settings_path, patched)
+        .await
+        .wrap_err_with(|| format!("Failed to write {}", settings_path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SETTINGS: &str = concat!(
+        "boot_script = \"scripts/main\"\n",
+        "console_port = 14711\n",
+        "script_data = {\n",
+        "\tgame_revision = \"138030\"\n",
+        "\tgame_version = \"1.13.0-b802981\"\n",
+        "}\n",
+    );
+
+    #[test]
+    fn only_the_boot_script_line_changes() {
+        let patched = with_boot_script(SETTINGS, MOD_BOOT_SCRIPT).expect("patch");
+        assert!(patched.contains("boot_script = \"scripts/mod_main\""));
+        assert!(patched.contains("game_version = \"1.13.0-b802981\""));
+        assert!(patched.contains("game_revision = \"138030\""));
+        assert_eq!(boot_script(&patched), Some(MOD_BOOT_SCRIPT));
+        assert_eq!(with_boot_script(&patched, "scripts/main").unwrap(), SETTINGS);
+    }
+
+    #[test]
+    fn a_file_without_the_field_is_refused() {
+        assert!(with_boot_script("console_port = 1\n", MOD_BOOT_SCRIPT).is_err());
+    }
 }
 
 #[tracing::instrument(skip_all)]
 async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
     let settings_path = state.game_dir.join("bundle").join(SETTINGS_FILE_PATH);
-
-    let settings = read_file_with_backup(&settings_path)
+    set_boot_script(&settings_path, MOD_BOOT_SCRIPT)
         .await
-        .wrap_err("Failed to read settings.ini")?;
-    let settings = String::from_utf8(settings).wrap_err("Settings.ini is not valid UTF-8")?;
-
-    let mut f = fs::File::create(&settings_path)
-        .await
-        .wrap_err_with(|| format!("Failed to open {}", settings_path.display()))?;
-
-    let Some(i) = settings.find("boot_script =") else {
-        eyre::bail!("couldn't find 'boot_script' field");
-    };
-
-    f.write_all(&settings.as_bytes()[0..i]).await?;
-    f.write_all(b"boot_script = \"scripts/mod_main\"").await?;
-
-    let Some(j) = settings[i..].find('\n') else {
-        eyre::bail!("couldn't find end of 'boot_script' field");
-    };
-
-    f.write_all(&settings.as_bytes()[(i + j)..]).await?;
-
-    Ok(())
+        .wrap_err("Failed to patch settings.ini")
 }
 
 #[tracing::instrument(skip_all, fields(package = info.name))]

@@ -1,106 +1,29 @@
 use std::io::{self, ErrorKind};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use color_eyre::eyre::Context;
-use color_eyre::{Result, eyre};
+use color_eyre::Result;
 use sdk::murmur::Murmur64;
+use time::OffsetDateTime;
 use tokio::fs::{self};
-use tokio::io::AsyncWriteExt;
 
 use crate::controller::deploy::{
     BOOT_BUNDLE_NAME, BUNDLE_DATABASE_NAME, DEPLOYMENT_DATA_PATH, DeploymentData,
 };
 use crate::state::ActionState;
 
-use super::deploy::{SETTINGS_FILE_PATH, backup_path_for};
+use super::deploy::{SETTINGS_FILE_PATH, backup_path_for, set_boot_script};
 
-#[tracing::instrument]
-async fn read_file_with_backup<P>(path: P) -> Result<Vec<u8>>
-where
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let path = path.as_ref();
-    let backup_path = {
-        let mut p = PathBuf::from(path);
-        let ext = if let Some(ext) = p.extension() {
-            ext.to_string_lossy().to_string() + ".bak"
-        } else {
-            String::from("bak")
-        };
-        p.set_extension(ext);
-        p
-    };
-
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| String::from("file"));
-
-    let bin = match fs::read(&backup_path).await {
-        Ok(bin) => bin,
-        Err(err) if err.kind() == ErrorKind::NotFound => {
-            // TODO: This doesn't need to be awaited here, yet.
-            // I only need to make sure it has finished before writing the changed bundle.
-            tracing::debug!(
-                "Backup does not exist. Backing up original {} to '{}'",
-                file_name,
-                backup_path.display()
-            );
-            fs::copy(path, &backup_path).await.wrap_err_with(|| {
-                format!(
-                    "Failed to back up {} '{}' to '{}'",
-                    file_name,
-                    path.display(),
-                    backup_path.display()
-                )
-            })?;
-
-            tracing::debug!("Reading {} from original '{}'", file_name, path.display());
-            fs::read(path).await.wrap_err_with(|| {
-                format!("Failed to read {} file: {}", file_name, path.display())
-            })?
-        }
-        Err(err) => {
-            return Err(err).wrap_err_with(|| {
-                format!(
-                    "Failed to read {} from backup '{}'",
-                    file_name,
-                    backup_path.display()
-                )
-            });
-        }
-    };
-    Ok(bin)
-}
-
-#[tracing::instrument(skip_all)]
-async fn patch_game_settings(state: Arc<ActionState>) -> Result<()> {
-    let settings_path = state.game_dir.join("bundle").join(SETTINGS_FILE_PATH);
-
-    let settings = read_file_with_backup(&settings_path)
-        .await
-        .wrap_err("Failed to read settings.ini")?;
-    let settings = String::from_utf8(settings).wrap_err("Settings.ini is not valid UTF-8")?;
-
-    let mut f = fs::File::create(&settings_path)
-        .await
-        .wrap_err_with(|| format!("Failed to open {}", settings_path.display()))?;
-
-    let Some(i) = settings.find("boot_script =") else {
-        eyre::bail!("couldn't find 'boot_script' field");
-    };
-
-    f.write_all(&settings.as_bytes()[0..i]).await?;
-    f.write_all(b"boot_script = \"scripts/mod_main\"").await?;
-
-    let Some(j) = settings[i..].find('\n') else {
-        eyre::bail!("couldn't find end of 'boot_script' field");
-    };
-
-    f.write_all(&settings.as_bytes()[(i + j)..]).await?;
-
-    Ok(())
+/// The file's modification time when it is newer than `timestamp`, i.e. when
+/// something wrote it after the deployment. Such a file is not the copy this
+/// deployment patched, so a reset must not put an older backup over it.
+async fn modified_after(
+    path: &std::path::Path,
+    timestamp: OffsetDateTime,
+) -> Option<OffsetDateTime> {
+    let metadata = fs::metadata(path).await.ok()?;
+    let modified: OffsetDateTime = metadata.modified().ok()?.into();
+    (modified > timestamp).then_some(modified)
 }
 
 #[tracing::instrument(skip_all)]
@@ -206,9 +129,29 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
         };
     }
 
-    for p in paths {
+    // The settings file is handled separately below: restoring it from its
+    // backup would also put back the version the game had when the backup was
+    // taken, which is older than the game after an update.
+    for p in paths.iter().filter(|p| **p != SETTINGS_FILE_PATH) {
+        let p = *p;
         let path = bundle_dir.join(p);
         let backup = bundle_dir.join(format!("{p}.bak"));
+
+        // If the game (or Steam) wrote this file after the deployment, it is
+        // not our patched copy any more; restoring the backup would replace a
+        // newer file with an older one. Leave it alone instead.
+        if let Some(modified) = modified_after(&path, info.timestamp).await {
+            tracing::warn!(
+                "'{}' was written after the deployment ({}); leaving it as it is and removing \
+                 the stale backup '{}'. Verify the game files in Steam if the game does not \
+                 start.",
+                path.display(),
+                modified,
+                backup.display()
+            );
+            let _ = fs::remove_file(&backup).await;
+            continue;
+        }
 
         let res = async {
             tracing::debug!(
@@ -242,12 +185,51 @@ pub(crate) async fn reset_mod_deployment(state: ActionState) -> Result<()> {
         }
     }
 
+    // Undo the boot script in the current settings file rather than restoring
+    // the backup: the file also carries the client version the backend checks,
+    // and the game may have updated it since the backup was taken.
+    {
+        let settings_path = bundle_dir.join(SETTINGS_FILE_PATH);
+        if fs::metadata(&settings_path).await.is_ok() {
+            tracing::debug!("Undoing the boot script in '{}'", settings_path.display());
+            if let Err(err) = set_boot_script(&settings_path, "scripts/main").await {
+                tracing::error!(
+                    "Failed to undo the boot script in '{}'. You may need to verify game files. \
+                     Error: {:?}",
+                    settings_path.display(),
+                    err
+                );
+            }
+        }
+        let backup = backup_path_for(&settings_path);
+        match fs::remove_file(&backup).await {
+            Ok(_) => tracing::debug!("Removed stale backup '{}'", backup.display()),
+            Err(err) if err.kind() == ErrorKind::NotFound => {}
+            Err(err) => tracing::error!("Failed to remove '{}': {:?}", backup.display(), err),
+        }
+    }
+
     // Restore the game files under `bundle/` that this deployment overwrote,
     // such as streamed texture mipmaps. Each file that already existed was
     // backed up next to itself as `<name>.bak` before it was first written.
     for relative in &info.data_files {
         let path = bundle_dir.join(relative);
         let backup = backup_path_for(&path);
+
+        // As above: never put an older backup over a file the game rewrote
+        // after the deployment.
+        if let Some(modified) = modified_after(&path, info.timestamp).await {
+            tracing::warn!(
+                "'{}' was written after the deployment ({}); leaving it as it is and removing \
+                 the stale backup '{}'. Verify the game files in Steam if the game does not \
+                 start.",
+                path.display(),
+                modified,
+                backup.display()
+            );
+            let _ = fs::remove_file(&backup).await;
+            continue;
+        }
 
         let res = async {
             if fs::metadata(&backup).await.is_ok() {
