@@ -584,6 +584,25 @@ whose config base belongs in the toolchain and whose stream is derivable), the
 contexts (634) and the group parts. `engine_data_check <file> [<source
 material>]` runs the round trip and the group-data comparison.
 
+### The tails' cbuffer entries are derivable from the group data and the source
+
+`tail_sources` checks every program tail's cbuffer entries against the section's
+own group data: the name from the group header (`c_per_object`) or the cbuffer
+descriptor (`global_viewport`), the size from the table's records - the largest
+`offset + size`, rounded up to the 16-byte granularity the tails record. On the
+UI base's source (`e3370cb2107d8aca`) all 144 entries match, including
+`global_viewport`'s 1788 rounded to 1792.
+
+The other cbuffers a shader's tails name are its own, and they resolve as
+shader-source names: `c_billboard`, `c_material_exports`, `lighting_data`,
+`c_depth_only` - the VT2 reference's "cbuffers are declared in HLSL inside the
+output nodes". So a tail's cbuffer list is the group data (the two it holds)
+plus the shader's own declarations, with the register order from the source, and
+it needs no container reflection. The resource lists are the next measurement:
+their names are the declaration's `samplers` (`resource_set` and material) plus
+the engine's bindless arrays, and their bindings/spaces look like an engine
+convention rather than per-shader data.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
