@@ -685,32 +685,33 @@ The corpus agrees that no-permutation shaders carry no conditions: 70 of the
 sampled sections are single context, single query, `w2 = 2`, zero config records
 and a zero tail.
 
-### The second word is `1 + the descriptor's index`
+### A resource record's second word is its descriptor's index
 
-The group's descriptor list runs from offset 32, one 16-byte entry each
-(`{name, flags, X, Y}`), and a 7-word resource record's word 1 is one more than
-its resource's entry there. On the UI base's source **all 96 records match**
-(`global_texture2D` is entry 1 -> 2, `global_feedback_buffers` entry 2 -> 3); on
-`38ECBAD1` the six descriptors are `c_per_object`(0), `global_texture2D`(1),
-`linear_depth`(2), `39A56531`(3), `D1D67F3B`(4), `global_feedback_buffers`(5)
-and its records read 2, 3, 4, 5, 6 - one more each. So the index is derivable
-from the descriptor list the build generates, and with the names and registers
-now in the source the resource lists stop being carried.
+The group's descriptor list starts at offset 16, right after the group's 12-byte
+prefix (`{query, w, w}`), one 16-byte entry each (`{name_hash, flags, X, Y}`, `X`
+the entry's byte offset in the per-draw binding table, advancing by 24 for a
+constant buffer and 8 otherwise). A 7-word resource record's word 1 is that
+entry's index.
 
-`resource_table` checks the rule corpus-wide by list. Where the descriptor list
-extracts cleanly it holds completely: the UI base (L3 48/48, L5 48/48),
-`38ECBAD1` (L2 3/3, L3 1/1, L5 1/1), `2c835432` (L2 3/3, L4 8/8), `9a4b0de0`
-(L2 2/2, L3 1/1, L4 10/10), `e1ba243c`, `8d142d8c`, `390fa53d`, `95d0251a`, and
-partials on `17A3DC01`, `427B5E6E` and `081fc1d4` (L2 216/227). Across 19
-sampled sections 942 7-word records give 638 matches; the mismatches are
-extraction, not the rule - the descriptor region's exact start varies between
-shaders (some sections read with offsets of 0 or -1, as if one entry too few or
-too many is being taken) and the boundary rule, a name above `0x10000`, is a
-heuristic. Decoding the descriptor region's framing exactly - its start and
-length - is the next step; list 2's buffer records (`bones`, `idata`) mostly
-follow the same rule with occasional outliers.
+Sections that extract cleanly all match completely: the UI base's source 96/96
+(L3 48/48, L5 48/48 - `global_texture2D` is entry 2 -> 2,
+`global_feedback_buffers` entry 3 -> 3), `e1e0f38f` 144/144 (L2, L3 and L5 48
+each), `0300888c` 48/48 (16 in each list), `38ECBAD1` 5/5, and `ad839ae4`,
+`b5735a93`, `e92aedcc`, `b4199c91`, `50825bbf`, `b204cc90`, `09e0204b`,
+`ee46faff`, `7e484d03`, `658b614c`, `24a80e62`, `496640f1`, `0eeaab0b` and
+`e1ba243c` all at offset 0. An earlier reading had the list starting at 32 and
+the word as `1 + index`; the UI base's `c_per_object` at 16 is the entry both
+readings skipped and the +1 fitted.
 
-### The records' binding fields, corrected against the naming pass
+`resource_table` checks the rule corpus-wide. Of 27 sampled sections 1045
+7-word records give 859 at offset 0, and the sections that extract cleanly
+match completely. The rest show offsets of -1 to -5 as if the extraction took a
+few extra entries at the start, with a handful of single-record outliers (+7 to
++10); whether that is the extraction's boundary or a per-group list inside one
+section is open. Decoding the descriptor list's framing exactly is the next
+step; then the index is derivable from the list the build generates, and with
+the names and registers now in the source the resource lists stop being
+carried.
 
 ### The records' binding fields, corrected against the naming pass
 
@@ -719,10 +720,9 @@ read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
 
 - word 0 is the **name hash** - the naming pass resolves `3AFC636C` =
   `global_texture2D` and `41B1CFF8` = `global_feedback_buffers` through it;
-- word 1 is the **index into the shader's own resource table** - it varies per
-  shader (`linear_depth` is 11 in one section and 3 in another), matching the
-  group data's table order on the UI base (`c_per_object`, `global_viewport`,
-  `global_texture2D`, `global_feedback_buffers` = 0..3);
+- word 1 is the **index into the shader's own resource table** - the resource's
+  position in its group's descriptor list (measured: the UI base, `e1e0f38f` and
+  others match completely; see the section above);
 - word 2 is the **binding**, word 4 the **set**.
 
 The binding and set words are confirmed against the containers' reflection

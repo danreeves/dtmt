@@ -77,7 +77,9 @@ const MAX_OFFSET: u32 = 8192;
 /// the header's start.
 const MAX_CONDITION_ENTRIES: usize = 16;
 
-/// The three descriptors of one group's header, at `+32`.
+/// The three descriptors a group's entries 1..3: on the UI base the engine's
+/// `global_viewport` cbuffer at `+32`, the section's texture at `+48` and its
+/// UAV at `+64`. Entry 0, at `+16`, is the material's `c_per_object` there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Descriptors {
     /// The engine's `global_viewport` cbuffer.
@@ -443,12 +445,15 @@ impl GroupData {
         }
     }
 
-    /// How far the descriptor table reaches: the 8-byte global header plus one
-    /// set of three 16-byte descriptors.
+    /// A lower bound for where a table may start: 56 bytes, so the header words
+    /// cannot read as records.
     ///
-    /// There is one set, not one per group, even when the header's group count is
-    /// higher: a shipped three-group section has its three descriptors at +8, +24
-    /// and +40 and its first table at +136.
+    /// The descriptor list itself starts at `+16`, right after the group's
+    /// 12-byte prefix, and runs while the entries look like descriptors; its
+    /// length varies with the shader (three on the UI base, where the first is
+    /// `c_per_object`, six on `38ECBAD1`, five or more elsewhere). An earlier
+    /// reading had it as one set of three descriptors at `+8`, `+24` and `+40`,
+    /// which a corpus dump has since falsified.
     pub fn descriptor_bytes(&self) -> usize {
         8 + 48
     }
@@ -512,13 +517,15 @@ impl GroupData {
         Some(tables)
     }
 
-    /// The three descriptors of a group's header, at `+32`: the engine's
+    /// The entries at `+32`, `+48` and `+64`: on the UI base the engine's
     /// `global_viewport` cbuffer, the section's texture and its UAV.
     ///
-    /// The earlier reading took the words at `+8` - `{0x130, 4, c_per_object,
-    /// 0, 0, 0}` - for descriptors; those are the header's own words and are the
-    /// same in every group. The real descriptors are `{name_hash, flags, X, Y}`,
-    /// measured against the documented rule on the UI base: `global_viewport
+    /// The group's descriptor list actually starts at `+16` (entry 0, the
+    /// material's `c_per_object` on the UI base, `{B5639618, 0, 0, 0}`); these
+    /// three are entries 1..3 of it. The earlier reading took the words at `+8`
+    /// - `{0x130, 4, c_per_object, 0, 0, 0}` - for descriptors; those are the
+    /// header's own words. The entries are `{name_hash, flags, X, Y}`, measured
+    /// against the documented rule on the UI base: `global_viewport
     /// {516D5CCD, 0x101, 24, 0}`, texture `{3AFC636C, 0x103, 48, 5}` and UAV
     /// `{41B1CFF8, 0x105, 56, 10}`.
     pub fn descriptors(&self) -> Option<Descriptors> {

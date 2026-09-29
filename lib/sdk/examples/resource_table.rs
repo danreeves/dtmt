@@ -1,7 +1,7 @@
 //! Checks the resource-record index rule: a 7-word resource record's second
-//! word is `1 + the resource's index` in the group's 16-byte descriptor list
-//! (the entries between the group's 28-byte prefix and the first table's
-//! 12-byte header). Prints one line per section and a summary.
+//! word is the resource's index in the group's 16-byte descriptor list (the
+//! entries after the group's 12-byte prefix, before the first table). Prints
+//! one line per section and a summary.
 //!
 //! ```text
 //! resource_table <material data file | .raw section>...
@@ -42,16 +42,29 @@ fn main() -> Result<(), Box<dyn Error>> {
         let group = sdk::filetype::group_data::GroupData::new(section.group_data().to_vec());
         sections += 1;
 
-        // The descriptor entries start at 32, one 16-byte entry each, while the
-        // first word is a real name hash - the table headers that follow are
-        // small words, so the size tells the boundary.
+        // The descriptor entries start at 16, right after the group's 12-byte
+        // prefix, one 16-byte entry each, while the first word is a real name
+        // hash - the table headers that follow are small words, so the size
+        // tells the boundary. The X word advances by 24 for a constant buffer
+        // and 8 otherwise, starting at 0.
         let mut entries: BTreeMap<u32, usize> = BTreeMap::new();
         let mut index = 0usize;
-        while 32 + index * 16 + 16 <= group.bytes().len() {
-            let at = 32 + index * 16;
+        while 16 + index * 16 + 16 <= group.bytes().len() {
+            let at = 16 + index * 16;
             let name = u32_at(group.bytes(), at);
+            let x = u32_at(group.bytes(), at + 8);
             if name <= 0x1_0000 {
                 break;
+            }
+            if index == 0 {
+                if x != 0 {
+                    break;
+                }
+            } else {
+                let previous = u32_at(group.bytes(), 16 + (index - 1) * 16 + 8);
+                if x != previous + 8 && x != previous + 24 {
+                    break;
+                }
             }
             entries.insert(name, index);
             index += 1;
@@ -89,7 +102,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         Some(entry) => {
                             let offset = record[1] as i64 - *entry as i64;
                             *offsets.entry((list, offset)).or_default() += 1;
-                            if offset == 1 {
+                            if offset == 0 {
                                 counts.1 += 1;
                                 matched += 1;
                             }
