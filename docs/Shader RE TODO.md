@@ -493,6 +493,15 @@ uv-set mask, which is what the per-program masks (`01`/`02`/`04`/`08`/`0F`/`07`)
 look like too. `engine_table <engine_data|material>` prints the table, so the
 mapping is checkable after a game update.
 
+Measured on all 400 sampled sections: 319 share the exact 29-record base, 11
+carry a variant (`camera_pos` 1 instead of 3), and the other 70 are minimal
+shaders with fewer records. The values read as masks rather than sizes or
+offsets: `camera_pos` 3, `back_buffer_size` 8, `frame_number` 1, `time` FF, and
+the texture slots' `F` is the four uv sets - which is what the per-program masks
+(`01`/`02`/`04`/`08`/`0F`/`07`) that patch the first texture slot look like, one
+bit per uv set. So the leading reading is that a record says which slots read
+the variable, and an override block says it for one pass.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
