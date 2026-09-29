@@ -72,19 +72,32 @@ fn to_hex(bytes: &[u8]) -> String {
 fn extract_engine_data(
     data_path: &Path,
     out_path: &Path,
+    no_containers: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let engine_data = EngineData::from_path(data_path)?;
+    let mut engine_data = EngineData::from_path(data_path)?;
+    // A mod that ships its shader sources compiles its own containers, so the
+    // captured ones are dead weight; dropping them leaves the programs without a
+    // container reference and the build fails loudly if the sources go missing.
+    if no_containers {
+        engine_data.containers.clear();
+        engine_data.program_containers = vec![None; engine_data.programs.len()];
+    }
     fs::write(out_path, engine_data.to_text())?;
 
     println!(
         "=== {} ===\n  wrote the engine data of {} program(s) ({} contexts, {} condition bytes, \
-         {} group data bytes, {} preamble bytes) to {}",
+         {} group data bytes, {} preamble bytes{}) to {}",
         data_path.display(),
         engine_data.programs.len(),
         engine_data.context_count,
         engine_data.conditions.len(),
         engine_data.group_data.len(),
         engine_data.device_preamble.len(),
+        if no_containers {
+            ", containers dropped"
+        } else {
+            ""
+        },
         out_path.display()
     );
 
@@ -133,11 +146,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut generate_from: Option<PathBuf> = None;
     let mut vs: Option<PathBuf> = None;
     let mut ps: Option<PathBuf> = None;
+    let mut no_containers = false;
     let mut files: Vec<PathBuf> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--no-containers" => no_containers = true,
             "--engine-data" => {
                 i += 1;
                 engine_data_out = Some(PathBuf::from(
@@ -167,7 +182,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let data = files
             .first()
             .ok_or("usage: generate_shader --engine-data <out.txt> <material data file>")?;
-        return extract_engine_data(data, out);
+        return extract_engine_data(data, out, no_containers);
     }
 
     if let Some(engine_data_path) = &generate_from {

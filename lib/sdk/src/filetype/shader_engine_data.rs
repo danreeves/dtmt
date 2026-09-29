@@ -22,7 +22,7 @@ use std::fs;
 use color_eyre::eyre::{Context, Result, bail};
 
 use super::shader::{self, Stage};
-use crate::filetype::group_data::{GroupData, GroupParts, GroupTemplate, Record};
+use crate::filetype::group_data::{Dependency, GroupData, GroupParts, GroupTemplate, Record};
 use crate::murmur;
 
 fn u32_at(data: &[u8], offset: usize) -> u32 {
@@ -97,6 +97,60 @@ fn records_from_hex(text: &str) -> Result<Vec<Record>> {
             size: u32::from_le_bytes(chunk[16..20].try_into().unwrap()),
         })
         .collect())
+}
+
+/// Writes a block: its own bytes, or - when that is smaller - the preamble's
+/// body with the bytes that differ patched in.
+///
+/// The block is the body with a per-program header in front and a few fields
+/// patched (the UI shader's blocks are a 0- or 4-byte header and one patched
+/// byte), so the diff is usually a few bytes against the 550-byte body.
+fn block_spec(block: &[u8], preamble: &[u8]) -> String {
+    let body = preamble.get(12..).unwrap_or_default();
+    if body.is_empty() || block.len() < body.len() || block.len() - body.len() > 64 {
+        return to_hex(block);
+    }
+    let header = block.len() - body.len();
+    let patches: Vec<(usize, u8)> = (0..body.len())
+        .filter(|at| block[header + at] != body[*at])
+        .map(|at| (at, block[header + at]))
+        .collect();
+    // Each patch is five characters or more, so a diff only pays off when it is
+    // small against the block.
+    if 5 * patches.len() + header >= block.len() {
+        return to_hex(block);
+    }
+    let mut out = format!("@body {} ", to_hex(&block[..header]));
+    for (offset, value) in patches {
+        out.push_str(&format!("{offset:X}:{value:02X} "));
+    }
+    out.trim_end().to_string()
+}
+
+/// Reads a block written by [`block_spec`].
+fn block_from_spec(spec: &str, preamble: &[u8]) -> Result<Vec<u8>> {
+    let Some(rest) = spec.strip_prefix("@body ") else {
+        return from_hex(spec);
+    };
+    let mut fields = rest.split_whitespace();
+    let header = from_hex(fields.next().unwrap_or(""))?;
+    let body = preamble
+        .get(12..)
+        .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
+    let header_len = header.len();
+    let mut block = header;
+    block.extend_from_slice(body);
+    for patch in fields {
+        let (offset, value) = patch
+            .split_once(':')
+            .ok_or_else(|| color_eyre::eyre::eyre!("malformed patch '{patch}'"))?;
+        let offset = usize::from_str_radix(offset, 16)?;
+        let value = u8::from_str_radix(value, 16)?;
+        *block
+            .get_mut(header_len + offset)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a patch is out of range"))? = value;
+    }
+    Ok(block)
 }
 
 /// The engine-side data of a shipped section: the parts the generator cannot
@@ -354,6 +408,20 @@ impl EngineData {
                 continue;
             }
 
+            // The block that belongs to a tail, when it is written separately.
+            // The tail line comes first, so the block is appended to it.
+            if let Some(rest) = line.strip_prefix("block ") {
+                let (index, spec) = rest.split_once(' ').unwrap_or((rest, ""));
+                let index = index.parse::<usize>()?;
+                let block = block_from_spec(spec, &engine_data.device_preamble)?;
+                let tail = engine_data
+                    .tails
+                    .get_mut(index)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("block #{index} has no tail"))?;
+                tail.extend_from_slice(&block);
+                continue;
+            }
+
             // Deduplicated containers, referenced by `program <stage> #n #m`.
             if let Some(rest) = line.strip_prefix("container ") {
                 let (index, hex) = rest
@@ -453,10 +521,17 @@ impl EngineData {
         let mut text = String::new();
         text.push_str(&format!("opaque {}\n", self.opaque));
         text.push_str(&format!("context_count {}\n", self.context_count));
-        text.push_str(&format!("dependency_count {}\n", self.dependency_count));
+        // The dependency is the engine's one library (the renderer path's
+        // hash), so it is only written when the file carries something else.
+        if self.dependency_count != 0 && self.dependency_count != 1 {
+            text.push_str(&format!("dependency_count {}\n", self.dependency_count));
+        }
         text.push_str(&format!("contexts {}\n", to_hex(&self.contexts)));
         text.push_str(&format!("conditions {}\n", to_hex(&self.conditions)));
-        text.push_str(&format!("dependencies {}\n", to_hex(&self.dependencies)));
+        let default_dependency = Dependency::of().write();
+        if !self.dependencies.is_empty() && self.dependencies[..] != default_dependency[..] {
+            text.push_str(&format!("dependencies {}\n", to_hex(&self.dependencies)));
+        }
         match &self.group_template {
             Some(template) => {
                 // The template: the prefix, the engine's table once, the distinct
@@ -510,7 +585,22 @@ impl EngineData {
             }
         }
         for (index, tail) in distinct.iter().enumerate() {
-            text.push_str(&format!("tail {index} {}\n", to_hex(tail)));
+            // A tail is written as its lists plus its block, and a block that is
+            // the preamble's body with a few bytes patched - which is what the
+            // UI shader's blocks are - is written as that diff instead of as its
+            // own 550 bytes.
+            let split = shader::Tail::parse(tail)
+                .and_then(|parsed| {
+                    shader::TailLists::parse(&parsed.rest)
+                        .map(|lists| tail.len() - lists.block.len())
+                })
+                .unwrap_or(tail.len());
+            let (lists, block) = tail.split_at(split);
+            text.push_str(&format!("tail {index} {}\n", to_hex(lists)));
+            text.push_str(&format!(
+                "block {index} {}\n",
+                block_spec(block, &self.device_preamble)
+            ));
         }
 
         // The same for the containers: the UI base's 96 programs carry two
@@ -614,10 +704,23 @@ impl EngineData {
             None => self.group_data.clone(),
         };
 
+        // The dependency is the engine's one library, so a file that does not
+        // carry it gets the constant.
+        let dependencies = if self.dependencies.is_empty() {
+            Dependency::of().write().to_vec()
+        } else {
+            self.dependencies.clone()
+        };
+        let dependency_count = if self.dependency_count == 0 {
+            1
+        } else {
+            self.dependency_count
+        };
+
         let contexts_offset = 48usize;
         let conditions_offset = contexts_offset + self.contexts.len();
         let dependencies_offset = conditions_offset + self.conditions.len();
-        let group_offset = dependencies_offset + self.dependencies.len();
+        let group_offset = dependencies_offset + dependencies.len();
         let device_offset = group_offset + group_data.len();
         let default_offset = device_offset + device.len();
 
@@ -629,7 +732,7 @@ impl EngineData {
             conditions_offset as u32,
             default_offset as u32,
             dependencies_offset as u32,
-            self.dependency_count,
+            dependency_count,
             group_offset as u32,
             group_data.len() as u32,
             device_offset as u32,
@@ -642,7 +745,7 @@ impl EngineData {
         }
         section.extend_from_slice(&self.contexts);
         section.extend_from_slice(&self.conditions);
-        section.extend_from_slice(&self.dependencies);
+        section.extend_from_slice(&dependencies);
         section.extend_from_slice(&group_data);
         section.extend_from_slice(&device);
         section.extend_from_slice(&[0u8; 16]);
