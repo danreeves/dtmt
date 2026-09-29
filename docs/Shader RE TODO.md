@@ -498,6 +498,14 @@ carry a variant (`camera_pos` 1 instead of 3), and the other 70 are minimal
 shaders with fewer records. The values read as masks rather than sizes or
 offsets: `camera_pos` 3, `back_buffer_size` 8, `frame_number` 1, `time` FF.
 
+**The minimal form needs no config records at all.** All 70 minimal sections -
+the single-pass shaders with no override blocks - carry `w2 = 2` and a **zero**
+config count: their preamble is `{1, query_count, 2, 0}` followed by the stream
+count and records and a 7 or 20 byte zero tail. So a from-scratch single-pass
+shader needs no config base, no override blocks and no `w2` question: the head
+is constants, the stream is derivable (verified), and the tail is a zero run.
+The config base as an engine constant is a rich-shader concern only.
+
 The texture slots' `F` is a mask too, and the first reading of it - one bit per
 interpolated uv channel - is **refuted**: across 30 sampled materials, 75 of the
 300 programs with a patched mask carry a bit with no matching interpolator
@@ -652,30 +660,33 @@ and `--compile --against` matches both interfaces. So the source now carries the
 interface by name, which is what lets the build derive the tails' cbuffer and
 resource lists from it instead of the engine data.
 
-### The records' binding fields, and the first word as a group-data index
+### The records' binding fields, corrected against the naming pass
 
-Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
-settles the resource records' fields: the second word is the **binding** and the
-fourth the **set**. 38ECBAD1's pixel container reflects `separate_images` set 2
-binding 0 (global_texture2D), set 0 bindings 0-2 (linear_depth, 39A56531,
-D1D67F3B); `separate_samplers` set 0 bindings 0-2 and set 31 binding 0
-(static_minlod_sampler); and `ubos` bindings 0/1 with sizes 1776/384 - matching
-the tail's records field for field, with the sampler records reading
-`{name, binding, 1, set}`. The engine records (bones, idata) are buffer records
-of the same shape: 004F18EA's vertex container reflects `usamplerBuffer`s at set
-9 and 12, and the records say set 9/12 with the buffer size (16/64 bytes) in the
-fifth word where a texture has `FFFFFFFF`.
+The resource record's word order, as the tail dumps and the working naming pass
+read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
 
-The first word is an index into the group data's record table. 38ECBAD1's table
-reads global_viewport, c_per_object, global_texture2D, linear_depth, 39A56531,
-D1D67F3B, global_feedback_buffers - indices 0..6, exactly its tails' first
-words; the UI base's reads c_per_object, global_viewport, global_texture2D,
-global_feedback_buffers - 0..3, exactly its tails' (which is why its two
-cbuffers are numbered the other way round from 38ECBAD1's). 004F18EA's resources
-match too (6, 7, 8), but its `B3A2EB88` cbuffer entry says 7 where the table's
-index 7 is `linear_depth`, so either the cbuffers index a second table or that
-entry needs another look. So both the cbuffer entry's `+4` word and the resource
-records' first word are derived from the group data the build generates.
+- word 0 is the **name hash** - the naming pass resolves `3AFC636C` =
+  `global_texture2D` and `41B1CFF8` = `global_feedback_buffers` through it;
+- word 1 is the **index into the shader's own resource table** - it varies per
+  shader (`linear_depth` is 11 in one section and 3 in another), matching the
+  group data's table order on the UI base (`c_per_object`, `global_viewport`,
+  `global_texture2D`, `global_feedback_buffers` = 0..3);
+- word 2 is the **binding**, word 4 the **set**.
+
+The binding and set words are confirmed against the containers' reflection
+(`dxil-spirv` then `spirv-cross --reflect`): 38ECBAD1's pixel container
+reflects `separate_images` set 2 binding 0 (`global_texture2D`), set 0 bindings
+0-2 (`linear_depth`, `39A56531`, `D1D67F3B`), `separate_samplers` set 0
+bindings 0-2 and set 31 binding 0 (`static_minlod_sampler`), and `ubos`
+bindings 0/1 with sizes 1776/384 - matching the tail records field for field.
+The engine records (`bones`, `idata`) are buffer records of the same shape, with
+the byte size in word 5 where an array has `FFFFFFFF`.
+
+An earlier reading in this note put the index in word 0 and the binding in word
+1; that is a miscount, superseded by the measurement. The sampler records do
+read `{name, binding, 1, set}`. The `B3A2EB88` cbuffer entry saying 7 where the
+resource table's 7 is `linear_depth` stays odd - either the cbuffer entries
+index a second table or that entry needs another look.
 
 ### The compiled shaders carry the engine's names
 
