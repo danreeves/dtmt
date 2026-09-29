@@ -42,34 +42,25 @@ fn main() -> Result<(), Box<dyn Error>> {
         let group = sdk::filetype::group_data::GroupData::new(section.group_data().to_vec());
         sections += 1;
 
-        // The descriptor entries start at 32 and run while they look like
-        // descriptors: a cbuffer/texture/UAV kind in the low flags byte and an X
-        // that advances by 24 (a cbuffer) or 8 (anything else).
+        // The descriptor entries start at 32, one 16-byte entry each, while the
+        // first word is a real name hash - the table headers that follow are
+        // small words, so the size tells the boundary.
         let mut entries: BTreeMap<u32, usize> = BTreeMap::new();
         let mut index = 0usize;
-        let mut previous_x: Option<u32> = None;
         while 32 + index * 16 + 16 <= group.bytes().len() {
             let at = 32 + index * 16;
             let name = u32_at(group.bytes(), at);
-            let flags = u32_at(group.bytes(), at + 4);
-            let x = u32_at(group.bytes(), at + 8);
-            let kind = flags & 0xFF;
-            let plausible_kind = matches!(kind, 0 | 1 | 3 | 5);
-            let plausible_x = match previous_x {
-                None => x == 24 || x == 0,
-                Some(previous) => x == previous + 8 || x == previous + 24,
-            };
-            if name == 0 || !plausible_kind || !plausible_x {
+            if name <= 0x1_0000 {
                 break;
             }
             entries.insert(name, index);
-            previous_x = Some(x);
             index += 1;
         }
 
         let device = section.device_data();
         let programs = shader::parse_programs(device)?;
-        let mut offsets: BTreeMap<i64, usize> = BTreeMap::new();
+        let mut offsets: BTreeMap<(usize, i64), usize> = BTreeMap::new();
+        let mut by_list: BTreeMap<usize, (usize, usize)> = BTreeMap::new();
         for (program_index, program) in programs.iter().enumerate() {
             let next = programs
                 .get(program_index + 1)
@@ -91,11 +82,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         continue;
                     }
                     checked += 1;
-                    match entries.get(&record[0]) {
+                    let entry = entries.get(&record[0]);
+                    let counts = by_list.entry(list).or_default();
+                    counts.0 += 1;
+                    match entry {
                         Some(entry) => {
                             let offset = record[1] as i64 - *entry as i64;
-                            *offsets.entry(offset).or_default() += 1;
+                            *offsets.entry((list, offset)).or_default() += 1;
                             if offset == 1 {
+                                counts.1 += 1;
                                 matched += 1;
                             }
                         }
@@ -111,11 +106,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         if std::env::var("RESOURCE_TABLE_VERBOSE").is_ok() {
             let histogram = offsets
                 .iter()
-                .map(|(offset, count)| format!("{offset}:{count}"))
+                .map(|((list, offset), count)| format!("L{list}:{offset}:{count}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let lists = by_list
+                .iter()
+                .map(|(list, (total, good))| format!("L{list} {good}/{total}"))
                 .collect::<Vec<_>>()
                 .join(" ");
             println!(
-                "  {}: {index} entries, word1-entry offsets: {histogram}",
+                "  {}: {index} entries [{lists}] {histogram}",
                 std::path::Path::new(&path)
                     .file_name()
                     .map(|name| name.to_string_lossy().to_string())

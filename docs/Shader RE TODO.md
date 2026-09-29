@@ -697,14 +697,20 @@ and its records read 2, 3, 4, 5, 6 - one more each. So the index is derivable
 from the descriptor list the build generates, and with the names and registers
 now in the source the resource lists stop being carried.
 
-`resource_table` checks the rule corpus-wide: of 19 sampled sections, 740
-7-word records and 202 match a straightforward extraction. The failures are the
-extraction's, not the rule's: entries are taken while the low flags byte is
-0/1/3/5 and `X` advances by 24 or 8, which stops early on some shaders (their
-records then find no entry) and over-reaches on others. Every record that does
-find its entry matches with the +1. Decoding the descriptor-list framing
-exactly - its start and length variants - is the next step, and list 2's buffer
-records (`bones`, `idata`) index something else again.
+`resource_table` checks the rule corpus-wide by list. Where the descriptor list
+extracts cleanly it holds completely: the UI base (L3 48/48, L5 48/48),
+`38ECBAD1` (L2 3/3, L3 1/1, L5 1/1), `2c835432` (L2 3/3, L4 8/8), `9a4b0de0`
+(L2 2/2, L3 1/1, L4 10/10), `e1ba243c`, `8d142d8c`, `390fa53d`, `95d0251a`, and
+partials on `17A3DC01`, `427B5E6E` and `081fc1d4` (L2 216/227). Across 19
+sampled sections 942 7-word records give 638 matches; the mismatches are
+extraction, not the rule - the descriptor region's exact start varies between
+shaders (some sections read with offsets of 0 or -1, as if one entry too few or
+too many is being taken) and the boundary rule, a name above `0x10000`, is a
+heuristic. Decoding the descriptor region's framing exactly - its start and
+length - is the next step; list 2's buffer records (`bones`, `idata`) mostly
+follow the same rule with occasional outliers.
+
+### The records' binding fields, corrected against the naming pass
 
 ### The records' binding fields, corrected against the naming pass
 
