@@ -601,6 +601,23 @@ queries are the groups, every conditions offset lands inside the blob, and the
 first query is the group data's hash.
 
 
+### The conditions payload: an unmapped opcode in the shipped small families
+
+Dumping contexts and records together (`shader43 --conditions-map`,
+`conditions_dump`) shows the shape: a context's queries are its groups in order,
+each with a query id (the group data's own hash on the first) and a conditions
+offset; the record there is evaluated per group. The UI base's 35 records use
+the opcodes the reader maps (`20xx` tests, `10xx` results, `70xx` jump to the
+end, `50xx` fallback, `9000` end), but the shipped small families do not:
+2A04418E, 004F18EA and 3F08AC44 each carry the same payload,
+`3001 7007 2000 1000 3004 5005 5007 9000`, whose `30xx` words the reader
+refuses (and 38ECBAD1 carries no conditions at all - every query is
+`NO_CONDITIONS`). So the opcode set is incomplete: `30xx` is at least a jump or
+a guard, and the payload's results (0, 4, 5 and 7 here) still have no
+established meaning. The group headers' 17-byte entries carry render-setting
+hashes (`6BBDF5FD = wireframe`, found in 38ECBAD1's container), so the
+conditions key on render settings as well as material channels.
+
 ## The whole section round trips, and the dependencies entry is a u64
 
 `Section::parse` walks the layout above and `Section::into_bytes` recomputes it,

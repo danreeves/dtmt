@@ -11,8 +11,11 @@ use sdk::filetype::shader_engine_data::EngineData;
 
 fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let text = std::fs::read_to_string(&args[0])?;
-    let engine = EngineData::from_text(&text)?;
+    let bytes = std::fs::read(&args[0])?;
+    let engine = match String::from_utf8(bytes.clone()) {
+        Ok(text) if text.contains("program ") => EngineData::from_text(&text)?,
+        _ => EngineData::from_material(&bytes)?,
+    };
     if let Some(path) = args.get(2) {
         // Concatenate every container so the names can be mined out of it.
         let mut all: Vec<u8> = Vec::new();
