@@ -370,6 +370,12 @@ kind 5 (73) raises the walk from 479 to 593 of 600 sampled preambles; the 7
 remaining failures carry other shapes still to decode. The sampled stream's
 records: kind 4 1958, kind 5 1084, type 0 38, type 3 24, type 1 23, kind 6 22,
 kind 3 16, type 2 10.
+
+The 7 remaining walk failures carry records with a name hash but a kind that is
+not 5 and a count above 1 (for example `{89BFEFF1, 1, 4}` in a 788-byte
+preamble), so their length is not 60 - they are the variable-length records the
+notes mention ("can carry 64 bit hashes"). Everything else reads at 60 or 73
+bytes.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
