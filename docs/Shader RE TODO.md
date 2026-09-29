@@ -376,6 +376,14 @@ not 5 and a count above 1 (for example `{89BFEFF1, 1, 4}` in a 788-byte
 preamble), so their length is not 60 - they are the variable-length records the
 notes mention ("can carry 64 bit hashes"). Everything else reads at 60 or 73
 bytes.
+
+Across 489 rich preambles there are only six distinct config index sets: a base
+of 1, 3, 5, 8, 12..26, 28, 29, 30 and 94..101 (389 of them), the same without
+38, 46 and 54 (86), and four variants adding rows strided by eight -
+31/39/47/55, 32/40/48/56, 4, and 38/46/54. So the index space is a grid whose
+columns run eight apart (30, 38, 46, 54, ...) and a shader emits the rows it
+uses: a generator can start from the base plus the channel row 94..101 and the
+rows its own passes need.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
