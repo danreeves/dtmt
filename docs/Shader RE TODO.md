@@ -603,6 +603,32 @@ their names are the declaration's `samplers` (`resource_set` and material) plus
 the engine's bindless arrays, and their bindings/spaces look like an engine
 convention rather than per-shader data.
 
+### The resource records: names yes, index/set/binding not yet
+
+`tail_resources` dumps every program tail's nine lists across a sample. The
+shapes are confirmed: the 7-word records are `{name, ?, binding, flag, set,
+FFFFFFFF-or-size, 0}` (a buffer's byte size replaces the array sentinel - 64 for
+`18DEAD01`, 4 for `3181096C`), the 4-word list 6 and 3-word list 8 are the
+samplers (`{4B42C5E6, 0, 1, 1F}` = `static_minlod_sampler` at space 31), and
+list 7 is the signature run.
+
+The names resolve to the engine's render-set textures (`9B8038E0` =
+`linear_depth`, `DB7E5380` = `global_diffuse_map`, `87088C15` = `fog_volume`,
+`B85584A2` = `sun_shadow_map`), the bindless arrays (`3AFC636C` =
+`global_texture2D`, `41B1CFF8` = `global_feedback_buffers`, `DA560F03` =
+`global_samplers`) and the shader's own resources - so the names are the
+declaration's `samplers` plus the engine's vocabulary.
+
+What is *not* derivable yet is the second word and the set: they follow the
+shader's own resource table, not a fixed convention. On the UI base
+`global_texture2D` carries 2 and the UAV 3, matching the group data's table
+order (`c_per_object`, `global_viewport`, `global_texture2D`,
+`global_feedback_buffers`), but across the sample the same engine texture
+carries different second words in different shaders (`linear_depth` is 11 in one
+and 3 in another), and the sets range over 0, 2, 9, 10, 12, 31. So a tail's
+resource lists need either the container's reflection or a declaration paired
+with its own section - the corpus has neither, so this stays carried.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
