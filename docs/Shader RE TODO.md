@@ -285,6 +285,11 @@ variable block (0x0C..0x1A, 474 records each), eight channel slots (0x5E..0x65,
 0xC0000000). Indices repeat - 0x0D averages 2.35 records per preamble - so the
 records are a list of (index, value) pairs rather than a map, and the values are
 small masks (0/1, 2/5, 96/120/255, 0/7/15) apart from those two flag words.
+
+The head's w2 is not the program, query, channel or context count: it runs 1..6
+and the same counts pair with different values (w2 = 2 with 2, 8, 16 or 48
+programs per stage; w2 = 5 with 4 to 56), so it likely counts something
+declaration-side that a section does not carry.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
