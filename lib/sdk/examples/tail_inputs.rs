@@ -65,10 +65,16 @@ fn main() -> color_eyre::Result<()> {
                 failed += 1;
                 continue;
             }
-            if lists.list(7) == original.as_slice() {
+            // The public entry point must reproduce the tail byte for byte.
+            let api_matches =
+                tail.with_inputs(container).map(|rebuilt| rebuilt.bytes()) == Some(tail.bytes());
+            if lists.list(7) == original.as_slice() && api_matches {
                 rebuilt += 1;
             } else {
                 println!("  program {index} {stage:?}: list 7 differs");
+                if !api_matches {
+                    println!("    Tail::with_inputs does not reproduce the tail");
+                }
                 for (record_index, (tail_record, rebuilt_record)) in
                     original.iter().zip(lists.list(7)).enumerate()
                 {

@@ -410,13 +410,21 @@ impl EngineData {
             let frame = shader::encode_frame(container)?;
             let key = murmur::hash(&frame, 0);
 
+            // The input list describes the container's signature, so rebuild it
+            // for whichever container this program gets: a mod shader with
+            // different IO then still gets a tail that matches its programs.
+            let tail = shader::Tail::parse(tail)
+                .and_then(|parsed| parsed.with_inputs(container))
+                .map(|rebuilt| rebuilt.bytes())
+                .unwrap_or_else(|| tail.clone());
+
             device.extend_from_slice(&1u32.to_le_bytes());
             device.extend_from_slice(&(frame.len() as u32).to_le_bytes());
             device.extend_from_slice(&frame);
             device.extend_from_slice(&5u32.to_le_bytes());
             device.extend_from_slice(&(container.len() as u32).to_le_bytes());
             device.extend_from_slice(&key.to_le_bytes());
-            device.extend_from_slice(tail);
+            device.extend_from_slice(&tail);
         }
 
         Ok(device)

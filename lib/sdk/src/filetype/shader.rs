@@ -204,6 +204,18 @@ impl Tail {
         out.extend_from_slice(&self.rest);
         out
     }
+
+    /// The tail with its input signature list rebuilt from a container's
+    /// signature. `None` when the tail's lists do not parse or the container
+    /// has no signature.
+    pub fn with_inputs(&self, container: &[u8]) -> Option<Tail> {
+        let mut lists = TailLists::parse(&self.rest)?;
+        lists.set_inputs(container)?;
+        Some(Tail {
+            cbuffers: self.cbuffers.clone(),
+            rest: lists.bytes(),
+        })
+    }
 }
 
 /// The nine counted lists that follow a tail's constant buffer list, plus the
