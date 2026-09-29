@@ -1,8 +1,10 @@
 //! Reading and writing a declaration's group data.
 //!
 //! The group data is what tells the engine, per group, which material variables
-//! live where. It is a 32-byte global header, then per group three 16-byte
-//! descriptors, then the variable tables those descriptors point at. A canonical
+//! live where. It is an 8-byte global header (`{group_count, hash}`), then per
+//! group a 12-byte prefix - `{query_id, an unidentified word (0x130 and 0x390
+//! measured), descriptor_count}` - followed by that many 16-byte descriptors,
+//! then the variable tables those descriptors point at. A canonical
 //! variable record is 20 bytes:
 //!
 //! ```text
@@ -448,12 +450,12 @@ impl GroupData {
     /// A lower bound for where a table may start: 56 bytes, so the header words
     /// cannot read as records.
     ///
-    /// The descriptor list itself starts at `+16`, right after the group's
-    /// 12-byte prefix, and runs while the entries look like descriptors; its
-    /// length varies with the shader (three on the UI base, where the first is
-    /// `c_per_object`, six on `38ECBAD1`, five or more elsewhere). An earlier
-    /// reading had it as one set of three descriptors at `+8`, `+24` and `+40`,
-    /// which a corpus dump has since falsified.
+    /// The descriptor list itself is the group's 12-byte prefix (`{query_id, an
+    /// unidentified word, count}`) followed by `count` 16-byte entries, and the
+    /// count varies with the shader (4 on the UI base, 6 or 7 on `38ECBAD1`, 12
+    /// on `3F08AC44`, up to 36). An earlier reading had it as one set of three
+    /// descriptors at `+8`, `+24` and `+40`, which a corpus dump has falsified;
+    /// every group carries and counts its own list.
     pub fn descriptor_bytes(&self) -> usize {
         8 + 48
     }
@@ -520,12 +522,14 @@ impl GroupData {
     /// The entries at `+32`, `+48` and `+64`: on the UI base the engine's
     /// `global_viewport` cbuffer, the section's texture and its UAV.
     ///
-    /// The group's descriptor list actually starts at `+16` (entry 0, the
-    /// material's `c_per_object` on the UI base, `{B5639618, 0, 0, 0}`); these
-    /// three are entries 1..3 of it. The earlier reading took the words at `+8`
-    /// - `{0x130, 4, c_per_object, 0, 0, 0}` - for descriptors; those are the
-    /// header's own words. The entries are `{name_hash, flags, X, Y}`, measured
-    /// against the documented rule on the UI base: `global_viewport
+    /// The UI base's group 0 starts at 4, so its descriptor list - the group's
+    /// 12-byte prefix `{query_id, word, 4}` followed by four entries - starts at
+    /// 16; these three are entries 1..3 of it, and entry 0 is the material's
+    /// `c_per_object`, `{B5639618, 0, 0, 0}`. Every group carries its own
+    /// counted list. The earlier reading took the words at `+8` - `{0x130, 4,
+    /// c_per_object, 0, 0, 0}` - for descriptors; those are the header's own
+    /// words. The entries are `{name_hash, flags, X, Y}`, measured against the
+    /// documented rule on the UI base: `global_viewport
     /// {516D5CCD, 0x101, 24, 0}`, texture `{3AFC636C, 0x103, 48, 5}` and UAV
     /// `{41B1CFF8, 0x105, 56, 10}`.
     pub fn descriptors(&self) -> Option<Descriptors> {

@@ -687,31 +687,35 @@ and a zero tail.
 
 ### A resource record's second word is its descriptor's index
 
-The group's descriptor list starts at offset 16, right after the group's 12-byte
-prefix (`{query, w, w}`), one 16-byte entry each (`{name_hash, flags, X, Y}`, `X`
-the entry's byte offset in the per-draw binding table, advancing by 24 for a
-constant buffer and 8 otherwise). A 7-word resource record's word 1 is that
-entry's index.
+A group's prefix is three words - `{query_id, an unidentified word (0x130 and
+0x390 measured), count}` - and its descriptor list is the `count` 16-byte
+entries that follow at +12: `{name_hash, flags, X, Y}`, `X` the entry's byte
+offset in the per-draw binding table (24 bytes for a constant buffer, 8
+otherwise). A 7-word resource record's word 1 is the resource's **index in the
+descriptor list of the group its program belongs to**.
 
-Sections that extract cleanly all match completely: the UI base's source 96/96
-(L3 48/48, L5 48/48 - `global_texture2D` is entry 2 -> 2,
-`global_feedback_buffers` entry 3 -> 3), `e1e0f38f` 144/144 (L2, L3 and L5 48
-each), `0300888c` 48/48 (16 in each list), `38ECBAD1` 5/5, and `ad839ae4`,
-`b5735a93`, `e92aedcc`, `b4199c91`, `50825bbf`, `b204cc90`, `09e0204b`,
-`ee46faff`, `7e484d03`, `658b614c`, `24a80e62`, `496640f1`, `0eeaab0b` and
-`e1ba243c` all at offset 0. An earlier reading had the list starting at 32 and
-the word as `1 + index`; the UI base's `c_per_object` at 16 is the entry both
-readings skipped and the +1 fitted.
+`resource_table` matches each program against every group's list, since the
+program-to-group mapping is not decoded, and requires a single fully matching
+group. On 27 sampled sections: **355 programs with 7-word records, 355 fully
+matched by one group; 1004 records, 1004 matched** - no exceptions. The UI base
+has 36 groups whose four entries are the same (`c_per_object`,
+`global_viewport`, `global_texture2D`, `global_feedback_buffers`), so all 48
+programs match any group and the 96 records all land. `eb09dd77` splits 26/26/2/2/16/16
+across six groups (groups with identical lists cannot be told apart);
+`3F08AC44` 7/7/1/2/2 across five. So the index is derivable from the descriptor
+list the build generates, and with the names and registers now in the source the
+resource lists stop being carried.
 
-`resource_table` checks the rule corpus-wide. Of 27 sampled sections 1045
-7-word records give 859 at offset 0, and the sections that extract cleanly
-match completely. The rest show offsets of -1 to -5 as if the extraction took a
-few extra entries at the start, with a handful of single-record outliers (+7 to
-+10); whether that is the extraction's boundary or a per-group list inside one
-section is open. Decoding the descriptor list's framing exactly is the next
-step; then the index is derivable from the list the build generates, and with
-the names and registers now in the source the resource lists stop being
-carried.
+How the earlier readings were wrong: entries "at +8, +24 and +40" were a
+different sample's header words; the list "at 32" with word1 = `1 + index` fit
+because the UI base's `c_per_object` at 16 is the entry it skipped. The count
+word at +8 is what fixes the boundary exactly; the previous probe's heuristic
+(a first word above 0x10000, `X` advancing by 24 or 8) is gone.
+
+The per-group program counts are also a lead on the program-to-group mapping
+(the multi-job blocker): a section with distinct lists per group partitions its
+programs among them (e.g. `eb09dd77` 26/26/2/2/16/16, `3F08AC44` 7/7/1/2/2),
+though identical lists make it ambiguous.
 
 ### The records' binding fields, corrected against the naming pass
 
