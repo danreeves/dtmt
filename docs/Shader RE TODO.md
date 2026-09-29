@@ -434,13 +434,17 @@ engine's index/value table once per shader.
 
 The head's `w2` is still not identified. Falsified against 400 sampled
 sections: the cbuffer count (97/400), the query count (69), the context count
-(69), the program/tail count (70), the stream count (35), the distinct block
-count (91), the distinct interface count (155). Its distribution is 1 x49,
-2 x190, 3 x4, 4 x38, 5 x101, 6 x14, 7 x4, and it is a per-shader property (the
-two materials of one shader share it). Partial correlations: w2 = 4 on all 38
-sections with two contexts and w2 = 5 on 100 of 101 with three contexts, so w2
-tracks the context count for the higher values but not for 1-3. `w2_probe`
-prints `w2` next to the counts so a new hypothesis can be tested the same way.
+(69), the contexts that carry queries (105), the condition record count (75),
+the distinct program-block count (91), the distinct interface count (155), the
+program/tail count (70), the stream count (35) and the config count (0). Its
+distribution is 1 x49, 2 x190, 3 x4, 4 x38, 5 x101, 6 x14, 7 x4, and it is a
+per-shader property (the two materials of one shader share it). Partial
+correlations: w2 = 4 on all 38 sections with two contexts and w2 = 5 on 100 of
+101 with three contexts, so w2 tracks the context count for the higher values
+but not for 1-3. The leading hypothesis left is the pass count - a
+declaration-side number the section does not carry, which would explain both the
+context correlation and the 1..7 range. `w2_probe` prints `w2` next to the
+counts so a new hypothesis can be tested the same way.
 
 Across 489 rich preambles there are only six distinct config index sets: a base
 of 1, 3, 5, 8, 12..26, 28, 29, 30 and 94..101 (389 of them), the same without
@@ -449,6 +453,29 @@ of 1, 3, 5, 8, 12..26, 28, 29, 30 and 94..101 (389 of them), the same without
 columns run eight apart (30, 38, 46, 54, ...) and a shader emits the rows it
 uses: a generator can start from the base plus the channel row 94..101 and the
 rows its own passes need.
+
+### The config records are a base table plus per-pass overrides
+
+The index-set variants are the union of a base table and the override blocks
+that follow it. The base is 29 records, byte-identical across the sampled
+shaders: `30:0 3:0 29:0 8:1 28:0 1:3 5:0 15:0 18:1 22:1 21:8 25:8 16:FF 20:1
+24:1 26:1 17:FF 19:1 23:1 94:F 95:F 96:F 97:F 98:F 99:F 100:F 101:F 12:1 14:4
+13:1`. After it come override blocks - a block re-states the indices whose value
+differs for that pass - e.g. `54:1 46:6 38:5 13:0`, or `26:20 29:1 15:1 18:1
+22:1 21:8 25:8 16:78 20:3 24:3 17:78 19:1 23:1 98:1 99:F 100:7 101:0 1:3`; a
+shader carries 0, 1 or 2 of them. So the per-index value distributions measured
+earlier are the base values against the override ones: 16 is `FF` in the base
+and `78`/`60` in overrides, 20/24 are `1` then `3`, 26 is `1` then `20`/`40`/
+`0`, 94 is `F` then `7` - and the `7` matches the per-program channel masks the
+blocks patch. Index 38's `2`/`5` reads as a render-state-like enum.
+
+What selects a block and sets its values is still open. The block count is not
+the context count (69 of 400), the contexts with queries (105), the condition
+records (75), the distinct program blocks (91), the program count (70) or the
+stream count (35); the pass is the leading candidate, since a pass has a render
+state and a channel set. `config_probe` dumps each section's config list beside
+those features so the next hypothesis is a re-run.
+
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
