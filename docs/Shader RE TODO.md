@@ -277,6 +277,14 @@ right after it are the section preamble's own head fields - the config count
 header then `preamble[12..]` byte for byte. The other programs' bodies are their
 own variants, which is why only 11% of the whole corpus ends with the section's
 body verbatim.
+
+The config records' index space, measured on 413 rich preambles: an engine
+variable block (0x0C..0x1A, 474 records each), eight channel slots (0x5E..0x65,
+427-503), and shader-specific entries (0x0D 972, 0x1E 776, 0x26/0x36/0x2E 573,
+0x0C 524, 0x01 510, plus 0x03 and 0x05 carrying the flag values 0xFFFFFFFF and
+0xC0000000). Indices repeat - 0x0D averages 2.35 records per preamble - so the
+records are a list of (index, value) pairs rather than a map, and the values are
+small masks (0/1, 2/5, 96/120/255, 0/7/15) apart from those two flag words.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
