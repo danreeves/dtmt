@@ -161,12 +161,12 @@ carry the real stream and vertex tails end in a small zero placeholder).
 | 8 | 3 words | the bindless sampler array (`global_samplers`) |
 
 Lists 0 and 1 are empty in every sample, so their record size is unknown. The
-observed field layouts are `{name, register, array index, flag, space,
-FFFFFFFF, 0}` for resources (`flag` is `1` for a single texture, `FFFFFFFF` for
-an array), `{name, index, 0, FFFFFFFF, offset, size, 0}` for engine records,
-`{name, register, 1, space}` for samplers and `{name, semantic index, register}`
-for inputs. Which fields are which is not proven for the engine records.
-
+observed field layouts are `{name, index, binding, flag, set, FFFFFFFF, 0}` for
+resources (`flag` is `1` for a single texture, `FFFFFFFF` for an array),
+`{name, index, binding, flag, set, size, 0}` for buffer records (`bones`,
+`idata`), `{name, binding, 1, set}` for samplers and
+`{name, semantic index, register}` for inputs. The binding and set fields are
+confirmed against the compiled containers' reflection (see below).
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
 `TailLists::set_inputs` hashes each element's name upper cased, groups the
@@ -184,19 +184,40 @@ Cbuffer entries are `{murmur32(name), ?, size, register, 1, 0}`: the size at
 `+8` and the register at `+12` are confirmed across five families; the word at
 `+4` is small (0/1/2/7) and still unread.
 
-### The tail block and the device preamble
+### The tail block is the program's device-table stream
 
-The block at the end of a pixel tail is *not* simply the section's
-`device_preamble`. Some programs' blocks end with the preamble's body (the
-preamble minus its 3-word header `{1, N, M}`): 1 of 13 (2A04418E, after a
-144-byte prefix), 1 of 7 (004F18EA, 112), 1 of 13 (3F08AC44, 64), 0 of 2
-(38ECBAD1) and 7 of 48 (the UI base, 32 for two programs and 36 for five). The
-UI base's first pixel program is the cleanest case: its block is a 32-byte
-header `{2, 0 x 7}` followed by exactly `preamble[12..]` (549 bytes), and the
-other programs add per-program records between the header and the body. The
-block starts with `{2, 0, ...}` in every sample, where the preamble starts
-`{1, N, M}`. `preamble_block` prints both heads and the match.
+`block_census` (every program of the five carried families and the UI base)
+shows the block is per program, not a copy of the device preamble:
 
+- vertex programs end in a 12-byte all-zero block (`0 0 0`); 004F18EA's seven
+  vertex programs share one block across five different interfaces;
+- a pixel program that uses no channel or resource ends in a 32-byte all-zero
+  block (38ECBAD1's second pixel program);
+- every other pixel block opens `{2, 0, ...}` and then carries that program's
+  device records: the material's cbuffer variable descriptors, its resource
+  records and the channel records it uses.
+
+The channel record is one structure written in two places: it appears
+identically in the device preamble and in the pixel block that uses it, and
+never in a vertex tail. 38ECBAD1 and 004F18EA both carry
+`{name_hash, kind 4, count 1, 0x100, 0, 0x200, 0x10000, 0, 0x30000, 1, 0, 0,
+0, 0x15, 0}` - 60 bytes, the same body for both materials; only the name (the
+per-material channel instance, e.g. `texture_map_1453a433`) differs. Generating
+the channel records therefore covers the preamble and every block that uses
+them.
+
+The preamble itself is `{1, group_count, cbuffer_count, ...}` plus a 120-byte
+header and the record table: the UI base's table runs +0x78..+0x1F1 with its
+channel record at +0x1F5 (561 bytes total), 38ECBAD1's is 1178 bytes with its
+channel record in the last 60. A block opens `{2, 0, ...}` instead. Some blocks
+end with the preamble body verbatim (UI base: 7 of 48; 004F18EA: 1 of 7;
+2A04418E: 1 of 13; 3F08AC44: 1 of 13; 38ECBAD1: 0 of 2) after a per-program
+prefix - the exception, not the rule.
+
+The engine-prologue claim does not survive: `linear_depth` is in 38ECBAD1's and
+004F18EA's preambles but not the UI base's or 2A04418E's, and
+`global_diffuse_map`, `sun_shadow_map` and `fog_volume` are in none of the four.
+The records are the shader's own resource usage.
 ### The records' binding fields, and the first word as a group-data index
 
 Decompiling a shipped container (`dxil-spirv` then `spirv-cross --reflect`)
