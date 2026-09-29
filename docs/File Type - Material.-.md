@@ -93,7 +93,7 @@ Fields:
 | `material_contexts` | map | no | context name → context material name |
 | `textures` | map | no | channel name → texture resource path |
 | `variables` | map | no | variable name → `{ type, value, offset?, elements?, stride? }` |
-| `channels` | string[] | no | the material's bound shader channels (`unk1` in the layout); the device stream is this list intersected with the shader's channels plus its engine resources |
+| `channels` | string[] | no | the material's bound shader channels (`unk1` in the layout); the device stream is this list intersected with the shader's channels plus its engine resources. The name follows the SDK's own vocabulary (`channels` in the `.shader_node` declarations, `has_visualizer_channels` in the sources); an authoring material carries no channel field, so the toolchain derives the list |
 | `shader_size` | integer | no | set when decompiling a base material |
 | `extra_data` | string | no | hex of `variable_data` bytes not covered by variables |
 | `unk2` | map | no | unnamed `(name, bool)` pairs |
