@@ -17,7 +17,7 @@ fn main() -> color_eyre::Result<()> {
     for arg in std::env::args().skip(1) {
         let bytes = fs::read(&arg)?;
         let engine = match String::from_utf8(bytes.clone()) {
-            Ok(text) if text.contains("program ") => EngineData::from_text(&text)?,
+            Ok(text) if EngineData::looks_like_text(&text) => EngineData::from_text(&text)?,
             _ => EngineData::from_material(&bytes)?,
         };
         for (_, tail_bytes) in &engine.programs {

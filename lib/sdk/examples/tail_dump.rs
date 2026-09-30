@@ -53,7 +53,7 @@ fn main() -> color_eyre::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bytes = fs::read(&args[0])?;
     let engine = match String::from_utf8(bytes.clone()) {
-        Ok(text) if text.contains("program ") => EngineData::from_text(&text)?,
+        Ok(text) if EngineData::looks_like_text(&text) => EngineData::from_text(&text)?,
         _ => EngineData::from_material(&bytes)?,
     };
     let want = match args.get(1).map(String::as_str) {

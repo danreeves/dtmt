@@ -8,6 +8,14 @@
 //! complete section from its own compiled programs instead of shipping a
 //! shipped shader blob.
 //!
+//! The text form is the same Stingray source dialect the `core/` files use -
+//! `key = value`, `{}` tables, `[]` arrays, quoted hex blobs - so an engine data
+//! file is a source file beside `.shader_node`, `.shader_source` and
+//! `.material`, not a format of its own. What the build derives from those
+//! sources is not stored: the group data's variable tables come from the
+//! material, the tail inputs from the compiled containers, and the bytes a
+//! field would repeat are omitted.
+//!
 //! ```text
 //! let engine_data = EngineData::from_material(&data)?;          // extract once per shader
 //! std::fs::write("ui.engine_data", engine_data.to_text())?;
@@ -20,6 +28,8 @@ use std::collections::HashMap;
 use std::fs;
 
 use color_eyre::eyre::{Context, Result, bail};
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::shader::{self, Stage};
 use crate::filetype::group_data::{Dependency, GroupData, GroupParts, GroupTemplate, Record};
@@ -86,8 +96,8 @@ fn to_hex(bytes: &[u8]) -> String {
     text
 }
 
-/// A record table as hex: five little-endian words per record.
-fn records_hex(records: &[Record]) -> String {
+/// A record table as its packed bytes: five little-endian words per record.
+fn records_bytes(records: &[Record]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(records.len() * 20);
     for record in records {
         for word in [
@@ -100,12 +110,16 @@ fn records_hex(records: &[Record]) -> String {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
     }
-    to_hex(&bytes)
+    bytes
 }
 
-/// Reads a record table written by [`records_hex`].
-fn records_from_hex(text: &str) -> Result<Vec<Record>> {
-    let bytes = from_hex(text)?;
+/// A record table as hex: five little-endian words per record.
+fn records_hex(records: &[Record]) -> String {
+    to_hex(&records_bytes(records))
+}
+
+/// Reads a record table written by [`records_bytes`].
+fn records_from_bytes(bytes: &[u8]) -> Result<Vec<Record>> {
     if bytes.len() % 20 != 0 {
         bail!("a record table needs a multiple of 20 bytes");
     }
@@ -121,82 +135,269 @@ fn records_from_hex(text: &str) -> Result<Vec<Record>> {
         .collect())
 }
 
+/// Reads a record table written by [`records_hex`].
+fn records_from_hex(text: &str) -> Result<Vec<Record>> {
+    records_from_bytes(&from_hex(text)?)
+}
+
 /// The index of a value in a deduplicated list, adding it when it is new.
-fn dedup_index(list: &mut Vec<Vec<u8>>, value: Vec<u8>) -> usize {
-    match list.iter().position(|other| *other == value) {
+fn dedup_index(list: &mut Vec<Hex>, value: Vec<u8>) -> usize {
+    match list.iter().position(|other| other.0 == value) {
         Some(index) => index,
         None => {
-            list.push(value);
+            list.push(value.into());
             list.len() - 1
         }
     }
 }
 
-/// Writes a block: its own bytes, or - when that is smaller - the preamble's
-/// body with the bytes that differ patched in.
+/// The engine data's text model, in the Stingray source dialect the `core/`
+/// files use: `key = value`, `{}` tables, `[]` arrays and quoted blobs.
+#[derive(Debug, Serialize, Deserialize)]
+struct Text {
+    opaque: u32,
+    context_count: u32,
+    /// Only written when it is not the engine's one dependency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dependency_count: Option<u32>,
+    contexts: Hex,
+    /// Empty blobs are not written.
+    #[serde(default, skip_serializing_if = "Hex::is_empty")]
+    conditions: Hex,
+    /// Only written when it is not the engine's one dependency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dependencies: Option<Hex>,
+    preamble: PreambleText,
+    /// The fallback when the group data has no template.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_data: Option<Hex>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group_template: Option<GroupTemplateText>,
+    /// Distinct compiled containers, referenced by `programs[].container`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    containers: Vec<Hex>,
+    /// Distinct program tails, referenced by `programs[].tail`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tails: Vec<TailText>,
+    programs: Vec<ProgramText>,
+}
+
+/// A quoted hex blob. Always quoted, so a hex string cannot read back as a
+/// number or an identifier.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Hex(Vec<u8>);
+
+impl Hex {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl From<Vec<u8>> for Hex {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl Serialize for Hex {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let mut out = String::with_capacity(self.0.len() * 2 + 2);
+        out.push('"');
+        for byte in &self.0 {
+            use std::fmt::Write as _;
+            let _ = write!(out, "{byte:02X}");
+        }
+        out.push('"');
+        serializer.serialize_bytes(out.as_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for Hex {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct HexVisitor;
+        impl Visitor<'_> for HexVisitor {
+            type Value = Hex;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a quoted hex blob")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> std::result::Result<Self::Value, E> {
+                from_hex(v).map(Hex).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(HexVisitor)
+    }
+}
+
+/// A string written quoted, the way the source files write names and kinds.
+fn serialize_quoted<S: Serializer>(value: &str, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    serializer.serialize_bytes(out.as_bytes())
+}
+
+/// The device preamble: its head and rest around the engine's config base, or
+/// its whole bytes when it does not start with the base.
+#[derive(Debug, Serialize, Deserialize)]
+struct PreambleText {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head: Option<Hex>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rest: Option<Hex>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bytes: Option<Hex>,
+}
+
+/// The group data's template: the shared prefix, the engine's table (only when
+/// it is not the toolchain's), the distinct material tables and group parts,
+/// and one entry per group.
+#[derive(Debug, Serialize, Deserialize)]
+struct GroupTemplateText {
+    prefix: Hex,
+    /// The engine's table as packed records, only when it is not the
+    /// toolchain's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engine: Option<Hex>,
+    /// Distinct material record tables, as packed records.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    materials: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    heads: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    betweens: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mids: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tails: Vec<Hex>,
+    groups: Vec<GroupText>,
+}
+
+/// One group of the template: its query id and the parts it uses.
+#[derive(Debug, Serialize, Deserialize)]
+struct GroupText {
+    query: Hex,
+    #[serde(default)]
+    head: usize,
+    #[serde(default)]
+    between: usize,
+    #[serde(default)]
+    mid: usize,
+    #[serde(default)]
+    tail: usize,
+    #[serde(default)]
+    material: usize,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    material_first: bool,
+}
+
+/// One distinct program tail: the bytes before its block.
+#[derive(Debug, Serialize, Deserialize)]
+struct TailText {
+    lists: Hex,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    block: Option<BlockText>,
+}
+
+/// A block: its own bytes, or the preamble's body with a header in front and
+/// the bytes that differ patched in.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum BlockText {
+    Hex(Hex),
+    Body(BlockDiff),
+}
+
+/// A block written as a diff against the preamble's body.
+#[derive(Debug, Serialize, Deserialize)]
+struct BlockDiff {
+    /// The bytes before the body; absent when the block *is* the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    head: Option<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    patches: Vec<PatchText>,
+}
+
+/// One patched byte of a block: its offset into the body and the value.
+#[derive(Debug, Serialize, Deserialize)]
+struct PatchText {
+    offset: u32,
+    value: u32,
+}
+
+/// One program: its stage and the tail and container it uses.
+#[derive(Debug, Serialize, Deserialize)]
+struct ProgramText {
+    #[serde(serialize_with = "serialize_quoted")]
+    stage: String,
+    tail: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    container: Option<usize>,
+}
+
+/// Writes a block as its own bytes, or - when that is smaller - as the
+/// preamble's body with the bytes that differ patched in.
 ///
 /// The block is the body with a per-program header in front and a few fields
 /// patched (the UI shader's blocks are a 0- or 4-byte header and one patched
 /// byte), so the diff is usually a few bytes against the 550-byte body.
-fn block_spec(block: &[u8], preamble: &[u8]) -> String {
+fn block_text(block: &[u8], preamble: &[u8]) -> BlockText {
     let body = preamble.get(12..).unwrap_or_default();
     if body.is_empty() || block.len() < body.len() || block.len() - body.len() > 64 {
-        return to_hex(block);
+        return BlockText::Hex(block.to_vec().into());
     }
     let header = block.len() - body.len();
-    let patches: Vec<(usize, u8)> = (0..body.len())
+    let patches: Vec<PatchText> = (0..body.len())
         .filter(|at| block[header + at] != body[*at])
-        .map(|at| (at, block[header + at]))
+        .map(|at| PatchText {
+            offset: at as u32,
+            value: block[header + at] as u32,
+        })
         .collect();
-    // Each patch is five characters or more, so a diff only pays off when it is
-    // small against the block.
+    // Each patch is a few characters, so a diff only pays off when it is small
+    // against the block.
     if 5 * patches.len() + header >= block.len() {
-        return to_hex(block);
+        return BlockText::Hex(block.to_vec().into());
     }
-    // `-` stands in for an empty header, so the patch list is never mistaken for
-    // one.
-    let header = if header == 0 {
-        "-".to_string()
-    } else {
-        to_hex(&block[..header])
-    };
-    let mut out = format!("@body {header}");
-    for (offset, value) in patches {
-        out.push_str(&format!(" {offset:X}:{value:02X}"));
-    }
-    out
+    BlockText::Body(BlockDiff {
+        head: (header != 0).then(|| block[..header].to_vec().into()),
+        patches,
+    })
 }
 
-/// Reads a block written by [`block_spec`].
-fn block_from_spec(spec: &str, preamble: &[u8]) -> Result<Vec<u8>> {
-    // `@body` alone is the block that *is* the body: no header, no patches.
-    let Some(rest) = spec.strip_prefix("@body") else {
-        return from_hex(spec);
-    };
-    let mut fields = rest.trim_start().split_whitespace();
-    let header_field = fields.next().unwrap_or("");
-    let header = if header_field.is_empty() || header_field == "-" {
-        Vec::new()
-    } else {
-        from_hex(header_field)?
-    };
-    let body = preamble
-        .get(12..)
-        .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
-    let header_len = header.len();
-    let mut block = header;
-    block.extend_from_slice(body);
-    for patch in fields {
-        let (offset, value) = patch
-            .split_once(':')
-            .ok_or_else(|| color_eyre::eyre::eyre!("malformed patch '{patch}'"))?;
-        let offset = usize::from_str_radix(offset, 16)?;
-        let value = u8::from_str_radix(value, 16)?;
-        *block
-            .get_mut(header_len + offset)
-            .ok_or_else(|| color_eyre::eyre::eyre!("a patch is out of range"))? = value;
+/// Reads a block written by [`block_text`].
+fn block_bytes(spec: &BlockText, preamble: &[u8]) -> Result<Vec<u8>> {
+    match spec {
+        BlockText::Hex(hex) => Ok(hex.0.clone()),
+        BlockText::Body(diff) => {
+            let body = preamble
+                .get(12..)
+                .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
+            let mut block = diff.head.clone().map(Hex::into_bytes).unwrap_or_default();
+            let header_len = block.len();
+            block.extend_from_slice(body);
+            for patch in &diff.patches {
+                let value = u8::try_from(patch.value)
+                    .map_err(|_| color_eyre::eyre::eyre!("a patch value is out of range"))?;
+                *block
+                    .get_mut(header_len + patch.offset as usize)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a patch is out of range"))? = value;
+            }
+            Ok(block)
+        }
     }
-    Ok(block)
 }
 
 /// The engine-side data of a shipped section: the parts the generator cannot
@@ -354,13 +555,16 @@ impl EngineData {
 
     /// Parses the engine data from its text form.
     pub fn from_text(text: &str) -> Result<Self> {
+        let text: Text =
+            serde_sjson::from_str(text).wrap_err("Failed to parse the engine data text")?;
+
         let mut engine_data = Self {
-            opaque: 0,
-            context_count: 0,
-            dependency_count: 0,
-            contexts: Vec::new(),
-            conditions: Vec::new(),
-            dependencies: Vec::new(),
+            opaque: text.opaque,
+            context_count: text.context_count,
+            dependency_count: text.dependency_count.unwrap_or(0),
+            contexts: text.contexts.into_bytes(),
+            conditions: text.conditions.into_bytes(),
+            dependencies: text.dependencies.map(Hex::into_bytes).unwrap_or_default(),
             group_data: Vec::new(),
             group_template: None,
             material_tables: Vec::new(),
@@ -371,278 +575,95 @@ impl EngineData {
             program_containers: Vec::new(),
         };
 
-        // The group data's template, when the groups walk. The lines may come in
-        // any order, so they are collected first and assembled after the loop.
-        let mut group_prefix: Option<Vec<u8>> = None;
-        let mut engine_table: Option<Vec<Record>> = None;
-        let mut materials: Vec<Vec<Record>> = Vec::new();
-        let mut group_heads: Vec<Vec<u8>> = Vec::new();
-        let mut group_betweens: Vec<Vec<u8>> = Vec::new();
-        let mut group_mids: Vec<Vec<u8>> = Vec::new();
-        let mut group_tails: Vec<Vec<u8>> = Vec::new();
-        let mut groups: Vec<(GroupParts, usize)> = Vec::new();
-        let mut preamble_head: Option<Vec<u8>> = None;
-
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            // Program lines carry the stage, a tail (hex or `#n`) and, when the
-            // containers were captured, a container (hex or `#n`).
-            if let Some(rest) = line.strip_prefix("program ") {
-                let mut fields = rest.split_whitespace();
-                let stage = fields
-                    .next()
-                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed program line"))?;
-                let tail = fields
-                    .next()
-                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed program line"))?;
-                let container = fields.next();
-                let stage = match stage {
-                    "Vertex" => Stage::Vertex,
-                    "Pixel" => Stage::Pixel,
-                    other => bail!("unsupported program stage '{other}'"),
-                };
-                let tail = match tail.strip_prefix('#') {
-                    Some(index) => engine_data
-                        .tails
-                        .get(index.parse::<usize>()?)
-                        .cloned()
-                        .ok_or_else(|| color_eyre::eyre::eyre!("unknown tail #{index}"))?,
-                    None => from_hex(tail)?,
-                };
-                let container = match container {
-                    Some(field) => Some(match field.strip_prefix('#') {
-                        Some(index) => engine_data
-                            .containers
-                            .get(index.parse::<usize>()?)
-                            .cloned()
-                            .ok_or_else(|| color_eyre::eyre::eyre!("unknown container #{index}"))?,
-                        None => from_hex(field)?,
-                    }),
-                    None => None,
-                };
-                let container = match container {
-                    Some(container) => {
-                        let index = match engine_data
-                            .containers
-                            .iter()
-                            .position(|other| *other == container)
-                        {
-                            Some(index) => index,
-                            None => {
-                                engine_data.containers.push(container);
-                                engine_data.containers.len() - 1
-                            }
-                        };
-                        Some(index)
-                    }
-                    None => None,
-                };
-                engine_data.programs.push((stage, tail));
-                engine_data.program_containers.push(container);
-                continue;
-            }
-
-            // Deduplicated tails, referenced by `program <stage> #n`.
-            if let Some(rest) = line.strip_prefix("tail ") {
-                let (index, hex) = rest
-                    .split_once(' ')
-                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed tail line"))?;
-                let index = index.parse::<usize>()?;
-                if engine_data.tails.len() <= index {
-                    engine_data.tails.resize(index + 1, Vec::new());
+        // The preamble: the engine's config base is a toolchain constant, so a
+        // file writes only what lies around it.
+        engine_data.device_preamble =
+            match (&text.preamble.head, &text.preamble.rest, &text.preamble.bytes) {
+                (Some(head), Some(rest), None) => {
+                    let mut preamble = head.0.clone();
+                    preamble.extend_from_slice(&config_base()?);
+                    preamble.extend_from_slice(&rest.0);
+                    preamble
                 }
-                engine_data.tails[index] = from_hex(hex)?;
-                continue;
-            }
+                (None, None, Some(bytes)) => bytes.0.clone(),
+                _ => bail!("a preamble is either its `head` and `rest` or its `bytes`"),
+            };
 
-            // The block that belongs to a tail, when it is written separately.
-            // The tail line comes first, so the block is appended to it.
-            if let Some(rest) = line.strip_prefix("block ") {
-                let (index, spec) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                let block = block_from_spec(spec, &engine_data.device_preamble)?;
-                let tail = engine_data
-                    .tails
-                    .get_mut(index)
-                    .ok_or_else(|| color_eyre::eyre::eyre!("block #{index} has no tail"))?;
-                tail.extend_from_slice(&block);
-                continue;
-            }
-
-            // Deduplicated containers, referenced by `program <stage> #n #m`.
-            if let Some(rest) = line.strip_prefix("container ") {
-                let (index, hex) = rest
-                    .split_once(' ')
-                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed container line"))?;
-                let index = index.parse::<usize>()?;
-                if engine_data.containers.len() <= index {
-                    engine_data.containers.resize(index + 1, Vec::new());
-                }
-                engine_data.containers[index] = from_hex(hex)?;
-                continue;
-            }
-
-            // The device preamble, split around the engine's standard config
-            // base, which the toolchain carries.
-            if let Some(rest) = line.strip_prefix("preamble_head ") {
-                preamble_head = Some(from_hex(rest)?);
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("preamble_rest ") {
-                let head = preamble_head
-                    .take()
-                    .ok_or_else(|| color_eyre::eyre::eyre!("a preamble rest needs its head"))?;
-                let mut preamble = head;
-                preamble.extend_from_slice(&config_base()?);
-                preamble.extend_from_slice(&from_hex(rest)?);
-                engine_data.device_preamble = preamble;
-                continue;
-            }
-
-            // The group data's template: the prefix, the engine's table, the
-            // distinct material tables and one `group` line per group, in group
-            // order.
-            if let Some(rest) = line.strip_prefix("group_prefix ") {
-                group_prefix = Some(from_hex(rest)?);
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("engine_table ") {
-                engine_table = Some(records_from_hex(rest)?);
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("material ") {
-                // An empty table writes no hex, and the line trim eats the
-                // trailing space with it.
-                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                if materials.len() <= index {
-                    materials.resize(index + 1, Vec::new());
-                }
-                materials[index] = records_from_hex(hex)?;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("ghead ") {
-                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                if group_heads.len() <= index {
-                    group_heads.resize(index + 1, Vec::new());
-                }
-                group_heads[index] = from_hex(hex)?;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("gbetween ") {
-                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                if group_betweens.len() <= index {
-                    group_betweens.resize(index + 1, Vec::new());
-                }
-                group_betweens[index] = from_hex(hex)?;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("gmid ") {
-                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                if group_mids.len() <= index {
-                    group_mids.resize(index + 1, Vec::new());
-                }
-                group_mids[index] = from_hex(hex)?;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("gtail ") {
-                let (index, hex) = rest.split_once(' ').unwrap_or((rest, ""));
-                let index = index.parse::<usize>()?;
-                if group_tails.len() <= index {
-                    group_tails.resize(index + 1, Vec::new());
-                }
-                group_tails[index] = from_hex(hex)?;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("group ") {
-                let fields: Vec<&str> = rest.split_whitespace().collect();
-                // Six fields is the form that carries the four parts inline;
-                // seven is the deduplicated form: query id, four part indexes,
-                // the table order and the material reference.
-                let (parts, index) = match fields.len() {
-                    6 => (
-                        GroupParts {
-                            head: from_hex(fields[0])?,
-                            material_first: fields[4] == "1",
-                            between: from_hex(fields[1])?,
-                            mid: from_hex(fields[2])?,
-                            tail: from_hex(fields[3])?,
-                        },
-                        fields[5],
-                    ),
-                    7 => {
-                        let query = u32::from_str_radix(fields[0], 16)?.to_le_bytes();
-                        let part = |list: &Vec<Vec<u8>>, field: &str| -> Result<Vec<u8>> {
-                            let index = field.parse::<usize>()?;
-                            list.get(index)
-                                .cloned()
-                                .ok_or_else(|| color_eyre::eyre::eyre!("unknown group part #{index}"))
-                        };
-                        let mut head = query.to_vec();
-                        head.extend_from_slice(&part(&group_heads, fields[1])?);
-                        (
-                            GroupParts {
-                                head,
-                                material_first: fields[5] == "1",
-                                between: part(&group_betweens, fields[2])?,
-                                mid: part(&group_mids, fields[3])?,
-                                tail: part(&group_tails, fields[4])?,
-                            },
-                            fields[6],
-                        )
-                    }
-                    _ => bail!("malformed group line"),
-                };
-                let index = index
-                    .strip_prefix('#')
-                    .ok_or_else(|| color_eyre::eyre::eyre!("malformed group line"))?
-                    .parse::<usize>()?;
-                groups.push((parts, index));
-                continue;
-            }
-
-            let (key, value) = line.split_once(' ').unwrap_or((line, ""));
-            match key {
-                "opaque" => engine_data.opaque = value.parse()?,
-                "context_count" => engine_data.context_count = value.parse()?,
-                "dependency_count" => engine_data.dependency_count = value.parse()?,
-                "contexts" => engine_data.contexts = from_hex(value)?,
-                "conditions" => engine_data.conditions = from_hex(value)?,
-                "dependencies" => engine_data.dependencies = from_hex(value)?,
-                "group_data" => engine_data.group_data = from_hex(value)?,
-                "device_preamble" => engine_data.device_preamble = from_hex(value)?,
-                other => bail!("unknown engine data key '{other}'"),
-            }
+        for container in text.containers {
+            engine_data.containers.push(container.into_bytes());
         }
 
-        // Assemble the template once every line is in. The engine's table is the
-        // toolchain's when the file does not carry one.
-        if let Some(prefix) = group_prefix {
-            let engine = match engine_table {
-                Some(engine) => engine,
+        // The group data: the carried bytes, or the template they are rebuilt
+        // from.
+        engine_data.group_data = text.group_data.map(Hex::into_bytes).unwrap_or_default();
+        if let Some(template) = text.group_template {
+            let engine = match &template.engine {
+                Some(engine) => records_from_bytes(&engine.0)?,
                 None => tool_engine_table()?,
             };
-            let mut parts = Vec::with_capacity(groups.len());
-            let mut tables = Vec::with_capacity(groups.len());
-            for (entry, index) in groups {
-                tables.push(materials.get(index).cloned().ok_or_else(|| {
-                    color_eyre::eyre::eyre!("group references material #{index}, which is missing")
-                })?);
-                parts.push(entry);
+            let part = |list: &[Hex], index: usize, what: &str| -> Result<Vec<u8>> {
+                list.get(index).map(|hex| hex.0.clone()).ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a group names a {what} at #{index}, which is missing")
+                })
+            };
+            let mut groups = Vec::with_capacity(template.groups.len());
+            let mut tables = Vec::with_capacity(template.groups.len());
+            for group in &template.groups {
+                // A group starts with its query id, which the contexts also
+                // carry, so the head stores only what follows it.
+                let mut head = group.query.0.clone();
+                head.extend_from_slice(&part(&template.heads, group.head, "head")?);
+                groups.push(GroupParts {
+                    head,
+                    material_first: group.material_first,
+                    between: part(&template.betweens, group.between, "between")?,
+                    mid: part(&template.mids, group.mid, "mid")?,
+                    tail: part(&template.tails, group.tail, "tail")?,
+                });
+                tables.push(records_from_bytes(&part(
+                    &template.materials,
+                    group.material,
+                    "material",
+                )?)?);
             }
             engine_data.group_template = Some(GroupTemplate {
-                prefix,
-                groups: parts,
+                prefix: template.prefix.into_bytes(),
+                groups,
                 engine,
             });
             engine_data.material_tables = tables;
+        }
+
+        // The tails: their lists, then the block that closes them.
+        for tail in text.tails {
+            let mut bytes = tail.lists.into_bytes();
+            if let Some(block) = &tail.block {
+                bytes.extend_from_slice(&block_bytes(block, &engine_data.device_preamble)?);
+            }
+            engine_data.tails.push(bytes);
+        }
+
+        for program in text.programs {
+            let stage = match program.stage.as_str() {
+                "Vertex" => Stage::Vertex,
+                "Pixel" => Stage::Pixel,
+                "Geometry" => Stage::Geometry,
+                "Hull" => Stage::Hull,
+                "Domain" => Stage::Domain,
+                "Compute" => Stage::Compute,
+                "Other" => Stage::Other,
+                other => bail!("Unsupported program stage '{other}'"),
+            };
+            let tail = engine_data.tails.get(program.tail).cloned().ok_or_else(|| {
+                color_eyre::eyre::eyre!("a program names tail #{}, which is missing", program.tail)
+            })?;
+            if let Some(container) = program.container
+                && container >= engine_data.containers.len()
+            {
+                bail!("a program names container #{container}, which is missing");
+            }
+            engine_data.programs.push((stage, tail));
+            engine_data.program_containers.push(program.container);
         }
 
         Ok(engine_data)
@@ -650,153 +671,129 @@ impl EngineData {
 
     /// Serializes the engine data to its text form.
     pub fn to_text(&self) -> String {
-        let mut text = String::new();
-        text.push_str(&format!("opaque {}\n", self.opaque));
-        text.push_str(&format!("context_count {}\n", self.context_count));
-        // The dependency is the engine's one library (the renderer path's
-        // hash), so it is only written when the file carries something else.
-        if self.dependency_count != 0 && self.dependency_count != 1 {
-            text.push_str(&format!("dependency_count {}\n", self.dependency_count));
-        }
-        text.push_str(&format!("contexts {}\n", to_hex(&self.contexts)));
-        text.push_str(&format!("conditions {}\n", to_hex(&self.conditions)));
-        let default_dependency = Dependency::of().write();
-        if !self.dependencies.is_empty() && self.dependencies[..] != default_dependency[..] {
-            text.push_str(&format!("dependencies {}\n", to_hex(&self.dependencies)));
-        }
-        match &self.group_template {
-            Some(template) => {
-                // The template: the prefix, the engine's table once, the distinct
-                // material tables, the distinct group parts and one `group` line
-                // per group.
-                text.push_str(&format!("group_prefix {}\n", to_hex(&template.prefix)));
-                // The engine's table is a toolchain constant, so it is only
-                // written when the file carries a different one.
-                let tool_table = tool_engine_table().unwrap_or_default();
-                if template.engine != tool_table {
-                    text.push_str(&format!(
-                        "engine_table {}\n",
-                        records_hex(&template.engine)
-                    ));
-                }
-                let mut distinct_tables: Vec<&Vec<Record>> = Vec::new();
-                let mut table_indexes = Vec::with_capacity(self.material_tables.len());
-                for table in &self.material_tables {
-                    match distinct_tables.iter().position(|other| **other == *table) {
-                        Some(index) => table_indexes.push(index),
-                        None => {
-                            distinct_tables.push(table);
-                            table_indexes.push(distinct_tables.len() - 1);
-                        }
-                    }
-                }
-                for (index, table) in distinct_tables.iter().enumerate() {
-                    text.push_str(&format!("material {index} {}\n", records_hex(table)));
-                }
-                // The group parts dedupe independently: the heads (once their
-                // query id is off), the bytes between the tables, the packed runs
-                // and the condition-header tails all repeat across a shader's
-                // groups.
-                let mut heads: Vec<Vec<u8>> = Vec::new();
-                let mut betweens: Vec<Vec<u8>> = Vec::new();
-                let mut mids: Vec<Vec<u8>> = Vec::new();
-                let mut tails: Vec<Vec<u8>> = Vec::new();
-                let mut lines = Vec::with_capacity(template.groups.len());
-                for parts in &template.groups {
-                    // A group starts with its query id, which the contexts also
-                    // carry, so it moves to the group line and the head keeps the
-                    // rest.
-                    let query = parts
-                        .head
-                        .get(..4)
-                        .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
-                        .unwrap_or(0);
-                    let head = parts.head.get(4..).unwrap_or_default().to_vec();
-                    let h = dedup_index(&mut heads, head);
-                    let b = dedup_index(&mut betweens, parts.between.clone());
-                    let m = dedup_index(&mut mids, parts.mid.clone());
-                    let t = dedup_index(&mut tails, parts.tail.clone());
-                    lines.push((query, h, b, m, t, parts.material_first));
-                }
-                for (name, list) in [
-                    ("ghead", &heads),
-                    ("gbetween", &betweens),
-                    ("gmid", &mids),
-                    ("gtail", &tails),
-                ] {
-                    for (index, bytes) in list.iter().enumerate() {
-                        text.push_str(&format!("{name} {index} {}\n", to_hex(bytes)));
-                    }
-                }
-                for ((query, h, b, m, t, first), material) in lines.iter().zip(&table_indexes) {
-                    text.push_str(&format!(
-                        "group {query:08X} {h} {b} {m} {t} {} #{material}\n",
-                        if *first { 1 } else { 0 },
-                    ));
-                }
-            }
-            None => text.push_str(&format!("group_data {}\n", to_hex(&self.group_data))),
-        }
+        serde_sjson::to_string(&self.text_model()).expect("the engine data text serializes")
+    }
+
+    /// The text model for the current data: the fields laid out and
+    /// deduplicated, in the Stingray source dialect (see the module docs).
+    fn text_model(&self) -> Text {
         // The preamble's config records start with the engine's standard base, a
-        // toolchain constant, so only what lies beyond it is stored.
+        // toolchain constant, so only what lies around it is stored.
         let base = config_base().unwrap_or_default();
         let starts_with_base = !base.is_empty()
             && self
                 .device_preamble
                 .get(16..16 + base.len())
                 .is_some_and(|configs| configs == base.as_slice());
-        if starts_with_base {
-            text.push_str(&format!(
-                "preamble_head {}\n",
-                to_hex(&self.device_preamble[..16])
-            ));
-            text.push_str(&format!(
-                "preamble_rest {}\n",
-                to_hex(&self.device_preamble[16 + base.len()..])
-            ));
+        let preamble = if starts_with_base {
+            PreambleText {
+                head: Some(self.device_preamble[..16].to_vec().into()),
+                rest: Some(self.device_preamble[16 + base.len()..].to_vec().into()),
+                bytes: None,
+            }
         } else {
-            text.push_str(&format!(
-                "device_preamble {}\n",
-                to_hex(&self.device_preamble)
-            ));
-        }
+            PreambleText {
+                head: None,
+                rest: None,
+                bytes: Some(self.device_preamble.clone().into()),
+            }
+        };
+
+        let group_template = self.group_template.as_ref().map(|template| {
+            // The engine's table is a toolchain constant, so it is only written
+            // when the file carries a different one.
+            let tool_table = tool_engine_table().unwrap_or_default();
+            let engine = (template.engine != tool_table).then(|| records_bytes(&template.engine).into());
+
+            // Distinct material tables, referenced by the groups.
+            let mut materials: Vec<Hex> = Vec::new();
+            let mut material_indexes = Vec::with_capacity(self.material_tables.len());
+            for table in &self.material_tables {
+                let bytes = records_bytes(table);
+                material_indexes.push(match materials.iter().position(|other| other.0 == bytes) {
+                    Some(index) => index,
+                    None => {
+                        materials.push(bytes.into());
+                        materials.len() - 1
+                    }
+                });
+            }
+
+            // The group parts dedupe independently: the heads (once their query
+            // id is off), the bytes between the tables, the packed runs and the
+            // condition-header tails all repeat across a shader's groups.
+            let mut heads: Vec<Hex> = Vec::new();
+            let mut betweens: Vec<Hex> = Vec::new();
+            let mut mids: Vec<Hex> = Vec::new();
+            let mut tails: Vec<Hex> = Vec::new();
+            let mut groups = Vec::with_capacity(template.groups.len());
+            for (index, parts) in template.groups.iter().enumerate() {
+                let query = parts
+                    .head
+                    .get(..4)
+                    .map(|bytes| Hex(bytes.to_vec()))
+                    .unwrap_or_default();
+                groups.push(GroupText {
+                    query,
+                    head: dedup_index(&mut heads, parts.head.get(4..).unwrap_or_default().to_vec()),
+                    between: dedup_index(&mut betweens, parts.between.clone()),
+                    mid: dedup_index(&mut mids, parts.mid.clone()),
+                    tail: dedup_index(&mut tails, parts.tail.clone()),
+                    material: material_indexes[index],
+                    material_first: parts.material_first,
+                });
+            }
+
+            GroupTemplateText {
+                prefix: template.prefix.clone().into(),
+                engine,
+                materials,
+                heads,
+                betweens,
+                mids,
+                tails,
+                groups,
+            }
+        });
 
         // Deduplicate the tails: programs that share one reference the same
-        // `tail` line, which shrinks engine data files a lot (the UI shader has 96
+        // entry, which shrinks engine data files a lot (the UI shader has 96
         // programs but only about 20 distinct tails).
-        let mut distinct: Vec<&Vec<u8>> = Vec::new();
-        let mut indexes = Vec::with_capacity(self.programs.len());
+        let mut tails: Vec<&Vec<u8>> = Vec::new();
+        let mut tail_indexes = Vec::with_capacity(self.programs.len());
         for (_, tail) in &self.programs {
-            match distinct.iter().position(|other| **other == *tail) {
-                Some(index) => indexes.push(index),
+            match tails.iter().position(|other| **other == *tail) {
+                Some(index) => tail_indexes.push(index),
                 None => {
-                    distinct.push(tail);
-                    indexes.push(distinct.len() - 1);
+                    tails.push(tail);
+                    tail_indexes.push(tails.len() - 1);
                 }
             }
         }
-        for (index, tail) in distinct.iter().enumerate() {
-            // A tail is written as its lists plus its block, and a block that is
-            // the preamble's body with a few bytes patched - which is what the
-            // UI shader's blocks are - is written as that diff instead of as its
-            // own 550 bytes.
-            let split = shader::Tail::parse(tail)
-                .and_then(|parsed| {
-                    shader::TailLists::parse(&parsed.rest)
-                        .map(|lists| tail.len() - lists.block.len())
-                })
-                .unwrap_or(tail.len());
-            let (lists, block) = tail.split_at(split);
-            text.push_str(&format!("tail {index} {}\n", to_hex(lists)));
-            text.push_str(&format!(
-                "block {index} {}\n",
-                block_spec(block, &self.device_preamble)
-            ));
-        }
+        let tails: Vec<TailText> = tails
+            .iter()
+            .map(|tail| {
+                // A tail is written as its lists plus its block, and a block that
+                // is the preamble's body with a few bytes patched - which is what
+                // the UI shader's blocks are - is written as that diff instead of
+                // as its own 550 bytes.
+                let split = shader::Tail::parse(tail)
+                    .and_then(|parsed| {
+                        shader::TailLists::parse(&parsed.rest)
+                            .map(|lists| tail.len() - lists.block.len())
+                    })
+                    .unwrap_or(tail.len());
+                let (lists, block) = tail.split_at(split);
+                TailText {
+                    lists: lists.to_vec().into(),
+                    block: (!block.is_empty()).then(|| block_text(block, &self.device_preamble)),
+                }
+            })
+            .collect();
 
         // The same for the containers: the UI base's 96 programs carry two
         // distinct payloads, so the dedup keeps the file small.
-        let mut distinct_containers: Vec<&Vec<u8>> = Vec::new();
+        let mut containers: Vec<&Vec<u8>> = Vec::new();
         let mut container_indexes = Vec::with_capacity(self.programs.len());
         for index in 0..self.programs.len() {
             let container = self
@@ -807,38 +804,60 @@ impl EngineData {
                 .and_then(|container| self.containers.get(container));
             match container {
                 Some(container) => {
-                    match distinct_containers
-                        .iter()
-                        .position(|other| **other == *container)
-                    {
+                    match containers.iter().position(|other| **other == *container) {
                         Some(index) => container_indexes.push(Some(index)),
                         None => {
-                            distinct_containers.push(container);
-                            container_indexes.push(Some(distinct_containers.len() - 1));
+                            containers.push(container);
+                            container_indexes.push(Some(containers.len() - 1));
                         }
                     }
                 }
                 None => container_indexes.push(None),
             }
         }
-        for (index, container) in distinct_containers.iter().enumerate() {
-            text.push_str(&format!("container {index} {}\n", to_hex(container)));
-        }
 
-        for ((stage, _), (tail, container)) in self
+        let programs = self
             .programs
             .iter()
-            .zip(indexes.iter().zip(&container_indexes))
-        {
-            match container {
-                Some(container) => {
-                    text.push_str(&format!("program {stage:?} #{tail} #{container}\n"))
-                }
-                None => text.push_str(&format!("program {stage:?} #{tail}\n")),
-            }
-        }
+            .zip(tail_indexes.iter().zip(&container_indexes))
+            .map(|((stage, _), (tail, container))| ProgramText {
+                stage: match stage {
+                    Stage::Vertex => "Vertex".to_string(),
+                    Stage::Pixel => "Pixel".to_string(),
+                    Stage::Geometry => "Geometry".to_string(),
+                    Stage::Hull => "Hull".to_string(),
+                    Stage::Domain => "Domain".to_string(),
+                    Stage::Compute => "Compute".to_string(),
+                    Stage::Other => "Other".to_string(),
+                },
+                tail: *tail,
+                container: *container,
+            })
+            .collect();
 
-        text
+        Text {
+            opaque: self.opaque,
+            context_count: self.context_count,
+            // The dependency is the engine's one library, so it is only written
+            // when the file carries something else.
+            dependency_count: (self.dependency_count != 0 && self.dependency_count != 1)
+                .then_some(self.dependency_count),
+            contexts: self.contexts.clone().into(),
+            conditions: self.conditions.clone().into(),
+            dependencies: {
+                let default_dependency = Dependency::of().write();
+                (!self.dependencies.is_empty()
+                    && self.dependencies[..] != default_dependency[..])
+                    .then(|| self.dependencies.clone().into())
+            },
+            preamble,
+            group_data: (self.group_template.is_none() && !self.group_data.is_empty())
+                .then(|| self.group_data.clone().into()),
+            group_template,
+            containers: containers.iter().map(|bytes| Hex((*bytes).clone())).collect(),
+            tails,
+            programs,
+        }
     }
 
     /// Builds the device data: the engine data's preamble, then one framed program
@@ -947,6 +966,12 @@ impl EngineData {
         Ok(section)
     }
 
+    /// Whether `text` parses as an engine data file. The tooling uses it to tell
+    /// engine data from material data files.
+    pub fn looks_like_text(text: &str) -> bool {
+        serde_sjson::from_str::<Text>(text).is_ok()
+    }
+
     /// Extracts the engine data straight from a material data file path.
     pub fn from_path(path: &std::path::Path) -> Result<Self> {
         let data = fs::read(path)?;
@@ -989,11 +1014,11 @@ mod tests {
         ];
 
         let text = engine_data.to_text();
-        assert!(text.contains("tail 0 01020304"));
-        assert!(text.contains("tail 1 05060708"));
-        assert!(text.contains("program Vertex #0"));
-        assert!(text.contains("program Pixel #1"));
-        assert_eq!(text.matches("program Vertex #0").count(), 2);
+        assert!(text.contains("lists = \"01020304\""), "{text}");
+        assert!(text.contains("lists = \"05060708\""), "{text}");
+        assert!(text.contains("stage = \"Vertex\""), "{text}");
+        assert!(text.contains("stage = \"Pixel\""), "{text}");
+        assert_eq!(text.matches("stage = \"Vertex\"").count(), 2);
 
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.programs.len(), 3);
@@ -1019,10 +1044,9 @@ mod tests {
         engine_data.program_containers = vec![Some(0), Some(1), Some(0)];
 
         let text = engine_data.to_text();
-        assert!(text.contains("container 0 "), "{text}");
-        assert!(text.contains("container 1 "), "{text}");
-        assert!(text.contains("program Vertex #0 #0"), "{text}");
-        assert!(text.contains("program Pixel #0 #1"), "{text}");
+        assert!(text.contains("container = 0"), "{text}");
+        assert!(text.contains("container = 1"), "{text}");
+        assert!(text.contains("\"44584243"), "{text}");
 
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.containers, vec![container_a.clone(), container_b.clone()]);
@@ -1133,9 +1157,9 @@ mod tests {
         let mut headed = vec![2u8, 0, 0, 0];
         headed.extend_from_slice(&body);
         for block in [body.clone(), patched, headed] {
-            let spec = block_spec(&block, &preamble);
-            let parsed = block_from_spec(&spec, &preamble).unwrap();
-            assert_eq!(parsed, block, "spec '{spec}'");
+            let spec = block_text(&block, &preamble);
+            let parsed = block_bytes(&spec, &preamble).unwrap();
+            assert_eq!(parsed, block, "spec {spec:?}");
         }
     }
 
@@ -1148,9 +1172,9 @@ mod tests {
         engine_data.device_preamble = preamble.clone();
 
         let text = engine_data.to_text();
-        assert!(text.contains("preamble_head "), "{text}");
-        assert!(text.contains("preamble_rest "), "{text}");
-        assert!(!text.contains("device_preamble "), "{text}");
+        assert!(text.contains("head = \""), "{text}");
+        assert!(text.contains("rest = \""), "{text}");
+        assert!(!text.contains("bytes = \""), "{text}");
 
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.device_preamble, preamble);
@@ -1158,11 +1182,14 @@ mod tests {
 
     #[test]
     fn a_rewrite_line_is_refused() {
-        // The engine data used to carry DTMT-only `variable`/`clone` lines; they are
-        // gone, and a file that still has one must fail rather than silently
+        // The engine data used to carry DTMT-only `variable`/`clone` lines; they
+        // are gone, and a file that still has one must fail rather than silently
         // ignore it.
         let err = EngineData::from_text("variable dev_wireframe_color mod_tint 224 16\n")
-            .expect_err("a rewrite line is not an engine data key");
-        assert!(err.to_string().contains("unknown engine data key"), "{err}");
+            .expect_err("a rewrite line is not engine data");
+        assert!(
+            err.to_string().contains("Failed to parse the engine data text"),
+            "{err}"
+        );
     }
 }

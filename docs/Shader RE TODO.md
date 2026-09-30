@@ -561,12 +561,21 @@ where the readers are and refuses where they are not instead of guessing.
 `group_build` runs the check and `group_parts` prints the part map.
 
 Wired into the engine data and `generate`: `EngineData` carries the template
-(`group_prefix`, `engine_table`, deduplicated `material` tables, the deduplicated
-group parts as `ghead`/`gbetween`/`gmid`/`gtail` lines - a group's query id moves
-to its `group` line because the contexts carry it - and one `group` line per
-group) instead of the whole `group_data`, and `generate` rebuilds the group data
-from it. A section whose groups do not walk keeps the old `group_data` line, so
-nothing regresses.
+(the `group_template` table: the prefix, the engine's table only when it is not
+the toolchain's, the deduplicated material tables, the deduplicated group parts -
+a group's query id moves to its `groups` entry because the contexts carry it -
+and one entry per group) instead of the whole `group_data`, and `generate`
+rebuilds the group data from it. A section whose groups do not walk keeps the
+`group_data` blob, so nothing regresses.
+
+The text form is the Stingray source dialect (`key = value`, `{}` tables, `[]`
+arrays, `"quoted"` hex blobs), the same dialect `.shader_node`, `.shader_source`
+and `.material` are written in, so an engine data file is a source file beside
+them rather than a format of its own; `EngineData::looks_like_text` tells it
+apart from a material data file. Snoopy-mod's file was converted on 2026-09-30
+and the build is byte-identical with it. The dialect's tall layout (a table
+field or array element per line) costs bytes - 15605 -> 24189 on the UI base's
+file - which the derivations below take back.
 
 The file also stopped carrying three derivable things:
 

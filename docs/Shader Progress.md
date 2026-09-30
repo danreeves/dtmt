@@ -191,6 +191,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   renders (user-observed). The tree is backed up in the scratch directory
   (`snoopy-core-backup`); the template cube/pumpkin assets stay in the mod.
   [one run]
+- **The engine data text form is the Stingray dialect** (2026-09-30): `to_text`
+  writes `key = value`, `{}` tables, `[]` arrays and quoted hex blobs, the same
+  dialect as `.shader_node`/`.shader_source`/`.material`, and `from_text` reads
+  it back with `serde_sjson`; `looks_like_text` tells it from a material data
+  file. Snoopy-mod's file was converted with
+  `generate_shader --engine-data --no-containers` and **every built asset is
+  byte-identical**. The dialect's tall layout (a table field or array element
+  per line) costs bytes - 15605 to 24189 on the UI base's file - which the
+  derivations take back. [one conversion, one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An
