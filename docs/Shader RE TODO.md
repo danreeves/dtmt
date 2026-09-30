@@ -936,6 +936,20 @@ groups, so the counts do not line up yet). The shipped section's queries came
 from the game's own compiled shader, so a mod that starts from a shipped section
 carries them; a from-scratch one must *choose* them.
 
+**The minimal-section probe.** `minimal_section` reduces the engine data to one
+context (`default`), one query (`5A5A5A5A`), one group and two programs - 9904
+bytes against 421696 - and the game **finds the shader by our derived
+identity**: its crash context names `shader #ID[4cc21b79]` (murmur32 of the
+mod's base material path, which `generate` derives) under `material
+#ID[62a04071]`. It then crashes, and the dump names the inner handle it wanted:
+`SHADER(0xf036c545f9dfc27b, 2, PS, SINGLE, ...)` - a 64-bit permutation key for
+a PS with no defines. So the identity word is the engine's *shader* handle and
+the queries/programs are the *permutation* slots under it: the engine picks a
+permutation (stage + defines) and the section must serve it. The bisect from
+here: reduce *one* axis at a time from the working full section (programs first,
+with the contexts and groups kept) and read the dump's `SHADER(...)` line when
+it breaks.
+
 **The conditions tree is the source graph.** `conditions_walk` parses the blob
 as what it is - 35 records of `{u16 tag=1, u16 words, u16 payload_offset, u16
 count}`, `count` hashes then `words` u16 children whose top nibble is an op (2,
