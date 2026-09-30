@@ -1097,6 +1097,36 @@ section served the shipping programs for a different permutation. Each
 permutation therefore needs its own compiled programs: the remaining half is
 compiling the code blocks per variant (the node rules) and pairing them.
 
+**The framing is decoded; `Y` is the blocker (2026-09-30, later).** The group
+head reads `{group count, library hash, 0x130, descriptor count, descriptors…,
+0x02, material table count}`. Everything but two fields is derivable: the
+descriptor names come from the shader's resources (`c_per_object`,
+`global_viewport`, `global_texture2D`, `global_feedback_buffers` here), `flags`
+is `space << 16 | kind` (0 material cbuffer, 1 engine cbuffer, 3 texture, 5 UAV),
+`X` is the byte offset in the per-draw binding table (24 per cbuffer, 8 per
+other, in list order), `0x130`/`0x02` are engine constants and both table counts
+are rewritten by `build`. The blockers are the **library hash** (the group node,
+below) and `Y`, the packed 2-bit-per-slot per-program binding counts
+(`{0, 0, 5, 10}` here, `{0, 5, 10}`/`{0, 1, 2}` per permutation in the shipped
+UI base). Until `Y` is modelled the head cannot be emitted, so framing stays
+carried.
+
+**The group node is the shipped library identity (2026-09-30, later).** The head
+word after the count (`28B0AB00` here) is not a dictionary string and not
+`high32(murmur64(x))` for any candidate path (`materials/mods/snoopymod/
+ui_default_base`, `ui_default_base`, the shipped `content/ui/materials/
+backgrounds/splash_screen_partner_logos`, nor their `.shader_node`/
+`.shader_library` forms). On shipped sections it equals the first context's first
+query, i.e. a *shipped permutation id* of the UI base family; our reduced section
+keeps it while the context names our own permutation id, and forcing the two
+equal crashes `dispatch_loadtime`. So it is the shader-library identity the
+material references, not a value our declaration computes - deriving it means
+finding (or setting) the material's library reference, not hashing a path.
+
+Side-finding: the engine's 32-bit ids are `high32(murmur64)`, confirmed by
+`high32(murmur64("default")) = F2760503`, the `default` context header. The SDK's
+`Murmur32` is that convention, not classic MurmurHash3-32.
+
 **The declaration drives the contexts (2026-09-30, last).** The engine data no
 longer names the variants. `EngineData` still accepts a `permutations` block for
 a rebuilt/foreign section, but when a material's declaration is available the
