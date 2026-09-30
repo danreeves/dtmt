@@ -44,6 +44,11 @@ pub struct DeploymentData {
     pub data_files: Vec<String>,
     #[serde(with = "time::serde::iso8601")]
     pub timestamp: OffsetDateTime,
+    /// Content hashes of the bundle database and the boot bundle as this
+    /// deployment wrote them, so a later deploy can tell the game updating
+    /// those files from our own writes touching their directory.
+    #[serde(default)]
+    pub deployed_hashes: Vec<u64>,
 }
 
 #[tracing::instrument]
@@ -687,6 +692,30 @@ async fn previously_deployed_data_files(bundle_dir: &Path) -> HashSet<String> {
     }
 }
 
+/// The content hashes (database, boot bundle) a deployment records so a later
+/// deploy can tell the game rewriting those files from our own writes. A file
+/// that is absent hashes to zero, keeping the vector's shape stable.
+async fn deployment_hashes(bundle_dir: &Path, boot_bundle_path: &str) -> Vec<u64> {
+    async fn hash(path: PathBuf) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        match fs::read(&path).await {
+            Ok(bytes) => {
+                let mut hasher = DefaultHasher::new();
+                bytes.hash(&mut hasher);
+                hasher.finish()
+            }
+            Err(_) => 0,
+        }
+    }
+
+    vec![
+        hash(bundle_dir.join(BUNDLE_DATABASE_NAME)).await,
+        hash(bundle_dir.join(boot_bundle_path)).await,
+    ]
+}
+
 /// Whether `relative` is a plain, safe relative path: not absolute and without
 /// any parent-directory components, so joining it to the bundle directory can
 /// never escape it.
@@ -858,6 +887,7 @@ fn build_deployment_data(
     bundles: impl AsRef<[Bundle]>,
     mod_folders: impl AsRef<[String]>,
     data_files: impl AsRef<[String]>,
+    deployed_hashes: Vec<u64>,
 ) -> Result<String> {
     let info = DeploymentData {
         timestamp: OffsetDateTime::now_utc(),
@@ -869,6 +899,7 @@ fn build_deployment_data(
         // TODO:
         mod_folders: mod_folders.as_ref().to_vec(),
         data_files: data_files.as_ref().to_vec(),
+        deployed_hashes,
     };
     serde_sjson::to_string(&info).wrap_err("Failed to serizalize deployment data")
 }
@@ -952,32 +983,53 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
                     Attempting to reconcile game files."
         );
 
-        tokio::try_join!(
-            async {
-                let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
-                let backup_path = path.with_extension("data.bak");
+        // The game rewrites the bundle files it owns - a Steam update does, and
+        // so does a boot. Our own deployments touch the same files, so "the
+        // bundle directory changed" alone means nothing: re-creating the
+        // backups then would capture patched content as if it were the game's,
+        // and every later deploy would stack another set of dirty patches until
+        // the game could no longer resolve its own resource types. Compare the
+        // live files against the hashes the last deployment recorded instead;
+        // only back up when something other than us wrote them.
+        let recorded = deployment_info
+            .as_ref()
+            .map(|info| info.deployed_hashes.clone())
+            .unwrap_or_default();
+        let live = deployment_hashes(&bundle_dir, &boot_bundle_path).await;
 
-                fs::copy(&path, &backup_path)
-                    .await
-                    .wrap_err("Failed to re-create backup for bundle database.")
-            },
-            async {
-                let path = bundle_dir.join(boot_bundle_path);
-                let backup_path = path.with_extension("bak");
+        if !recorded.is_empty() && recorded == live {
+            tracing::info!(
+                "Bundle files are exactly as the last deployment wrote them; \
+                        skipping the game-update reconciliation."
+            );
+        } else {
+            tokio::try_join!(
+                async {
+                    let path = bundle_dir.join(BUNDLE_DATABASE_NAME);
+                    let backup_path = path.with_extension("data.bak");
 
-                fs::copy(&path, &backup_path)
-                    .await
-                    .wrap_err("Failed to re-create backup for boot bundle")
-            }
-        )
-        .with_suggestion(|| {
-            "Reset the game using 'Reset Game', then verify game files.".to_string()
-        })?;
+                    fs::copy(&path, &backup_path)
+                        .await
+                        .wrap_err("Failed to re-create backup for bundle database.")
+                },
+                async {
+                    let path = bundle_dir.join(&boot_bundle_path);
+                    let backup_path = path.with_extension("bak");
 
-        tracing::info!(
-            "Successfully re-created game file backups. \
-                    Continuing mod deployment."
-        );
+                    fs::copy(&path, &backup_path)
+                        .await
+                        .wrap_err("Failed to re-create backup for boot bundle")
+                }
+            )
+            .with_suggestion(|| {
+                "Reset the game using 'Reset Game', then verify game files.".to_string()
+            })?;
+
+            tracing::info!(
+                "Successfully re-created game file backups. \
+                        Continuing mod deployment."
+            );
+        }
     }
 
     check_mod_order(&state)?;
@@ -999,8 +1051,11 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
         .wrap_err("Failed to build mod bundles")?;
 
     // Rendered into the boot script as a record of what is being deployed.
-    let script_deployment_info = build_deployment_data(&bundles, &mod_folders, &data_files)
-        .wrap_err("Failed to build new deployment data")?;
+    // The hashes are not known yet (the boot bundle changes below), so this
+    // pre-render carries none; the file's copy is built after the writing.
+    let script_deployment_info =
+        build_deployment_data(&bundles, &mod_folders, &data_files, Vec::new())
+            .wrap_err("Failed to build new deployment data")?;
 
     tracing::info!("Patch boot bundle");
     let (mut boot_bundles, boot_data_files) =
@@ -1017,8 +1072,11 @@ pub(crate) async fn deploy_mods(state: ActionState) -> Result<()> {
 
     // Every file has been written by now, so record the complete deployment for
     // the reset path to undo.
-    let new_deployment_info = build_deployment_data(&bundles, &mod_folders, &data_files)
-        .wrap_err("Failed to build new deployment data")?;
+    let boot_bundle_file = format!("{:016x}", Murmur64::hash(BOOT_BUNDLE_NAME.as_bytes()));
+    let deployed_hashes = deployment_hashes(&bundle_dir, &boot_bundle_file).await;
+    let new_deployment_info =
+        build_deployment_data(&bundles, &mod_folders, &data_files, deployed_hashes)
+            .wrap_err("Failed to build new deployment data")?;
 
     if let Some(info) = &deployment_info {
         let bundle_dir = Arc::new(bundle_dir);
