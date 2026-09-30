@@ -154,9 +154,9 @@ fn dedup_index(list: &mut Vec<Hex>, value: Vec<u8>) -> usize {
 /// The engine data's text model, in the Stingray source dialect the `core/`
 /// files use: `key = value`, `{}` tables, `[]` arrays and quoted blobs.
 ///
-/// The section's `material_hash` word is not here: it is murmur32 of the base
-/// material's resource path, which [`EngineData::generate`] takes as an
-/// argument.
+/// The section's `material_hash` word is not here: it is murmur32 of the
+/// generating material's resource path, which [`EngineData::generate`] takes as
+/// an argument.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Text {
@@ -916,12 +916,14 @@ impl EngineData {
     }
 
     /// Assembles a complete shader section from the engine data and our
-    /// programs. `material` is the base material's resource path: the section's
-    /// `material_hash` word is murmur32 of it, the identity the engine reads off a
-    /// section. (A shipped section carries the identity of the material that
-    /// defined it - measured: one section's material_hash is
-    /// `content/ui/materials/backgrounds/splash_screen_partner_logos` - and a
-    /// from-scratch material carries its own; verified in game.)
+    /// programs. `material` is the generating material's resource path: the
+    /// section's `material_hash` word is murmur32 of it - the identity the
+    /// engine reads off a section (measured: the UI base's is murmur32 of
+    /// `content/ui/materials/backgrounds/splash_screen_partner_logos`; whether
+    /// a shipped section names its own file's material or the material the
+    /// shared shader was compiled for is not settled, and does not matter here
+    /// because a generated section is its own shader's). Verified in game with
+    /// snoopy-mod's own path.
     pub fn generate(
         &self,
         containers: &HashMap<Stage, Vec<u8>>,

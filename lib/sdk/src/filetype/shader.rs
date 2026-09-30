@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! u32 version                         // 43
-//! u32 material_hash   // murmur32 of the owning material's resource path
+//! u32 material_hash   // the section's identity: murmur32 of a material path
 //! u32 contexts_offset
 //! u32 context_count
 //! u32 conditions_offset
@@ -794,8 +794,9 @@ impl ContextRecord {
 /// own parts (the contexts, the conditions and a group data), and writes the rest.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Carried {
-    /// The header's second word: murmur32 of the owning material's resource
-    /// path, the section's identity.
+    /// The header's second word: the section's identity, murmur32 of a material
+    /// resource path (for a section this toolchain writes, the generating
+    /// material's own - see `EngineData::generate`).
     pub material_hash: u32,
     /// The header's sixth word, which points into the tail.
     pub default_data: u32,

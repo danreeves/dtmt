@@ -614,15 +614,24 @@ The header's second word - `opaque` while it was unidentified, now
 string grounds it yet, and named fields are working names until one does) - is
 murmur32 of the resource path of the material whose shader the section is.
 
-Measured: 40 of 40 sampled sections carry distinct values. The UI base's section
-carries `439A40FC` = murmur32(`content/ui/materials/backgrounds/splash_screen_partner_logos`),
-the material that defines the shader - not the data file's own resource (an
-instance's section names its base). The toolchain no longer carries it:
-`EngineData::generate` takes the base material's resource path and writes
-murmur32 of it, and snoopy-mod's file lost its `opaque` line. Verified in game:
-snoopy-mod built with its own path hash (`4CC21B79` =
-murmur32(`materials/mods/snoopymod/ui_default_base`)) renders the title, and the
-derived build is byte-identical to that tested one.
+Measured: 40 of 40 sampled sections carry distinct values; 2094 mined base
+sections carry 2094 distinct identities. The UI base's section carries
+`439A40FC` = murmur32(`content/ui/materials/backgrounds/splash_screen_partner_logos`).
+
+What that hash names is not fully settled. Not the file's parent: the mined file
+`bundle/data/e3/e3370cb2107d8aca` has `parent = 0` and still carries the splash
+hash. Two readings fit: the file *is* splash's own data file (the bundle's file
+names are then not resource-path hashes - none of them resolve in either
+dictionary - and the identity is the material's own resource path), or the file
+is another material's copy of the shared shader (the identity names the material
+the shader was compiled for). The mod's flow does not distinguish them: it
+generates its own shader, so its own path is right either way - built with
+`4CC21B79` = murmur32(`materials/mods/snoopymod/ui_default_base`) it renders in
+game, and the derived build is byte-identical to that tested one.
+
+The toolchain no longer carries the word: `EngineData::generate` takes the
+generating material's resource path and writes murmur32 of it, and snoopy-mod's
+file lost its `opaque` line.
 
 ### The tails' cbuffer entries are derivable from the group data and the source
 
