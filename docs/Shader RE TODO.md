@@ -658,8 +658,7 @@ engine's own keeps the whole bytes in `lists` (no `cbuffers` field, the carry
 form), and a file that names them without a template is refused. snoopy-mod's
 file went **24169 -> 23260 bytes** and the build is byte-identical.
 
-**The lists are by role.** A tail's lists are written as a table - `engine`
-(list 2), `textures` (3), `buffers` (5), `samplers` (6), `sampler_arrays` (8) -
+**The lists are by role.** A tail's lists are written as a table - `engine`(list 2), `textures` (3), `buffers` (5), `samplers` (6), `sampler_arrays` (8) -
 each record one hex string, and the lists that are always empty (0, 1, 4) and
 the **inputs** (7) are not stored at all: the reader writes their zero counts
 and the build rebuilds the inputs from the compiled container's signature - a
@@ -884,6 +883,23 @@ preamble's body).
    `source = "resource_set"`; and the cbuffer *names* from the source's own
    `cbuffer` declarations (the build assembles them; `tail_build` proves the
    mapping).
+
+   **The stage-attribution problem, measured**: reading the raw source does not
+   say which *stage* uses what, because the sources declare their texture and
+   sampler arrays at file scope, outside the `#if defined(STAGE_...)` guards, and
+   the macros that use them are unguarded too. Deriving both stages from the same
+   text gave the vertex the pixel's samplers and changed the build (421696 ->
+   423040 bytes), so the derivation is now gated on reproducing the carried
+   lists (a mismatch keeps them) - the pixel's matches, the vertex's does not.
+
+   **And there is no RDEF to read**: the compiled containers are Shader Model 6
+   DXIL, and DXC dropped the RDEF chunk for SM6 - `rdef_dump` shows exactly
+   `SFI0, ISG1, OSG1, PSV0, STAT, HASH, DXIL`. So the reflection has no chunk:
+   it lives in the DXIL metadata (the `dx.resources` records and the RDAT
+   section), which is LLVM bitcode. The two honest routes are (a) DXC's own
+   reflection API - `IDxcUtils::CreateReflection` + `IDxcShaderReflection`,
+   which `lib/dxc` can host next to the compiler vtables it already has - or
+   (b) the source text plus a *usage* rule that can see through the macros.
 3. `group_template` (~6.7 KB): `materials` from the `.material`'s bindings plus
    the engine's standard rows (decoded: the 7 rows over `c_per_object`); the
    framing parts (heads/betweens/mids/tails, ~1 KB) from the shader's
@@ -915,8 +931,9 @@ it grounds or confirms:
   `material_hash`), `contexts_offset`/`context_count`, `conditions_offset`,
   `default_data_offset`, `dependency_offset`/`dependency_count`,
   `group_data_offset`/`size`, `device_data_offset`/`size` - word for word our
-  layout. (They read section version 43 on their materials; our current ones are
-  60-62, so the version has a range.)
+  layout. Their section version 43 is *ours* too: `rdef_dump` confirms the
+  containers parse at 43 (the 60-62 in the material header is the *material
+  stream*'s version, not the section's).
 - **The device framing**: `u32 envelope` (observed 1), `u32 frame_length`, the
   frame, `u32 metadata_kind` (observed 5), `u32 decoded length`, `u64 frame_key`,
   then the metadata tables and opaque state - ours exactly.

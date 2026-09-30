@@ -15,7 +15,7 @@ use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
 use sdk::filetype::shader_graph::{Evaluation, Graph, NodeDef};
-use sdk::filetype::shader_node::{ShaderNode, STAGES, entry_for, profile_for};
+use sdk::filetype::shader_node::{ShaderNode, STAGES, StageResources, entry_for, profile_for};
 use sdk::filetype::shader_engine_data::EngineData;
 use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur::IdString64;
@@ -360,6 +360,16 @@ async fn compile_declaration(
             continue;
         };
         let source = node.job_source(job, stage, &libraries, evaluation);
+        // What the stage's HLSL declares, for deriving the tail lists.
+        if let Some(stage) = match stage {
+            "vertex" => Some(Stage::Vertex),
+            "pixel" => Some(Stage::Pixel),
+            _ => None,
+        } {
+            overrides
+                .resources
+                .insert(stage, StageResources::from_source(&source));
+        }
         let profile_arg = profile.to_string();
         let entry_arg = entry.to_string();
         let container =
@@ -548,6 +558,7 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 let overrides = compile_shader_overrides(&path, cfg).await?.unwrap_or_default();
 
                 let carried = overrides.is_empty();
+                let resources = overrides.resources.clone();
                 let mut containers = HashMap::new();
                 if let Some(vertex) = overrides.vertex {
                     containers.insert(Stage::Vertex, vertex);
@@ -556,9 +567,11 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     containers.insert(Stage::Pixel, pixel);
                 }
 
-                let generated = engine_data.generate(&containers, &identity).wrap_err_with(|| {
-                    format!("Failed to generate a shader section for '{}'", path.display())
-                })?;
+                let generated = engine_data
+                    .generate(&containers, &identity, &resources)
+                    .wrap_err_with(|| {
+                        format!("Failed to generate a shader section for '{}'", path.display())
+                    })?;
 
                 tracing::info!(
                     "{} a {} byte shader section from '{}'",

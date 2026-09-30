@@ -128,7 +128,7 @@ fn generate(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
-    let section = engine_data.generate(&containers, &identity)?;
+    let section = engine_data.generate(&containers, &identity, &HashMap::new())?;
 
     let base = fs::read_to_string(base_path)?;
     let base = replace_hex_field(&base, "shader_data", &to_hex(&section))?;

@@ -1214,6 +1214,10 @@ pub fn compile_with_shader(
 pub struct ShaderOverrides {
     pub vertex: Option<Vec<u8>>,
     pub pixel: Option<Vec<u8>>,
+    /// What each stage's HLSL declares - its textures, samplers and UAVs - so
+    /// the engine data can derive the tail lists from the source instead of
+    /// carrying them. Empty for a caller that has no source.
+    pub resources: std::collections::HashMap<super::shader::Stage, super::shader_node::StageResources>,
 }
 
 impl ShaderOverrides {

@@ -32,6 +32,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::shader::{self, Stage};
+use super::shader_node::StageResources;
 use crate::filetype::group_data::{Dependency, GroupData, GroupParts, GroupTemplate, Record};
 use crate::murmur;
 
@@ -68,6 +69,39 @@ const C_PER_OBJECT: u32 = 0xB563_9618;
 /// murmur32 of `global_viewport`: the engine's viewport constant buffer, whose
 /// size the engine table gives.
 const GLOBAL_VIEWPORT: u32 = 0x516D_5CCD;
+
+/// murmur32 of `static_minlod_sampler`: the engine's static sampler, which a
+/// stage takes when it declares a non-array sampler at set 31.
+const STATIC_MINLOD_SAMPLER: u32 = 0x4B42_C5E6;
+
+/// murmur32 of `global_samplers`: the engine's bindless sampler array, which a
+/// stage takes when it declares a sampler array.
+const GLOBAL_SAMPLERS: u32 = 0xDA56_0F03;
+
+/// A stage's sampler lists (6 and 8) from what its HLSL declares: a non-array
+/// sampler is the shader's own at its register and space - except at space 31,
+/// which is the engine's static sampler - and an array sampler is the engine's
+/// bindless sampler array.
+fn sampler_lists(resources: &StageResources) -> (Vec<Vec<u32>>, Vec<Vec<u32>>) {
+    let samplers = resources
+        .samplers
+        .iter()
+        .map(|decl| {
+            let name = if decl.space == 31 {
+                STATIC_MINLOD_SAMPLER
+            } else {
+                u32::from(murmur::Murmur32::hash(decl.name.as_bytes()))
+            };
+            vec![name, decl.register, 1, decl.space]
+        })
+        .collect();
+    let arrays = resources
+        .sampler_arrays
+        .iter()
+        .map(|_| vec![GLOBAL_SAMPLERS, 0, 0])
+        .collect();
+    (samplers, arrays)
+}
 
 /// A record table's size: the largest `offset + size`, rounded up to the
 /// 16-byte granularity the tail entries record.
@@ -1142,7 +1176,14 @@ impl EngineData {
     /// Builds the device data: the engine data's preamble, then one framed program
     /// record per engine data program, using `containers[stage]` when the caller
     /// compiled one and the carried container otherwise, plus that program's tail.
-    pub fn build_device(&self, containers: &HashMap<Stage, Vec<u8>>) -> Result<Vec<u8>> {
+    ///
+    /// `resources`, when it has an entry for a stage, replaces that stage's
+    /// sampler lists (6 and 8) with the ones its HLSL declares.
+    pub fn build_device(
+        &self,
+        containers: &HashMap<Stage, Vec<u8>>,
+        resources: &HashMap<Stage, StageResources>,
+    ) -> Result<Vec<u8>> {
         let mut device = self.device_preamble.clone();
 
         for (index, (stage, tail)) in self.programs.iter().enumerate() {
@@ -1161,6 +1202,37 @@ impl EngineData {
 
             let frame = shader::encode_frame(container)?;
             let key = murmur::hash(&frame, 0);
+
+            // The sampler lists come from the stage's own declarations when the
+            // build read them - but only when they reproduce the carried lists.
+            // The sources declare their texture and sampler arrays at file
+            // scope, with the macros that use them unguarded, so a stage's
+            // declarations cannot be told from another stage's yet; a
+            // disagreement keeps the carried list. (The container's own
+            // reflection is the right source, when the toolchain reads it.)
+            let derived = match (resources.get(stage), shader::Tail::parse(tail)) {
+                (Some(resources), Some(parsed)) => {
+                    shader::TailLists::parse(&parsed.rest).and_then(|mut lists| {
+                        let (samplers, arrays) = sampler_lists(resources);
+                        let same = lists.list(6) == samplers.as_slice()
+                            && lists.list(8) == arrays.as_slice();
+                        if !same {
+                            return None;
+                        }
+                        lists.lists[6] = samplers;
+                        lists.lists[8] = arrays;
+                        Some(
+                            shader::Tail {
+                                cbuffers: parsed.cbuffers,
+                                rest: lists.bytes(),
+                            }
+                            .bytes(),
+                        )
+                    })
+                }
+                _ => None,
+            };
+            let tail: &[u8] = derived.as_deref().unwrap_or(tail);
 
             // The input list describes the container's signature, so rebuild it
             // for whichever container this program gets: a mod shader with
@@ -1182,7 +1254,7 @@ impl EngineData {
                              rebuild its inputs from"
                         );
                     }
-                    tail.clone()
+                    tail.to_vec()
                 }
             };
 
@@ -1210,8 +1282,9 @@ impl EngineData {
         &self,
         containers: &HashMap<Stage, Vec<u8>>,
         material: &str,
+        resources: &HashMap<Stage, StageResources>,
     ) -> Result<Vec<u8>> {
-        let device = self.build_device(containers)?;
+        let device = self.build_device(containers, resources)?;
 
         // The group data: written from the template and the material's tables
         // when the template is there, carried otherwise.
@@ -1384,7 +1457,7 @@ mod tests {
             decoded
         };
 
-        let device = parsed.build_device(&HashMap::new()).unwrap();
+        let device = parsed.build_device(&HashMap::new(), &HashMap::new()).unwrap();
         assert_eq!(
             decode_all(&device),
             vec![container_a.clone(), container_b.clone(), container_a.clone()]
@@ -1393,7 +1466,7 @@ mod tests {
         // A compiled override wins over the carried container.
         let mut overrides = HashMap::new();
         overrides.insert(Stage::Vertex, container_b.clone());
-        let device = parsed.build_device(&overrides).unwrap();
+        let device = parsed.build_device(&overrides, &HashMap::new()).unwrap();
         assert_eq!(
             decode_all(&device),
             vec![container_b.clone(), container_b.clone(), container_b.clone()]
@@ -1449,7 +1522,7 @@ mod tests {
         assert_eq!(parsed.material_tables, material);
 
         let section = parsed
-            .generate(&HashMap::new(), "materials/test/base")
+            .generate(&HashMap::new(), "materials/test/base", &HashMap::new())
             .unwrap();
         // The section's identity word is murmur32 of the material path it was
         // generated for.
@@ -1534,6 +1607,37 @@ mod tests {
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.programs.len(), 1);
         assert_eq!(parsed.programs[0].1, tail);
+    }
+
+    #[test]
+    fn a_sampler_list_comes_from_the_stage_declarations() {
+        // The two engine names the derived lists use.
+        assert_eq!(
+            STATIC_MINLOD_SAMPLER,
+            u32::from(murmur::Murmur32::hash(b"static_minlod_sampler"))
+        );
+        assert_eq!(
+            GLOBAL_SAMPLERS,
+            u32::from(murmur::Murmur32::hash(b"global_samplers"))
+        );
+
+        // A stage source in the SDK's shape: a texture array, a sampler array
+        // and the engine's static sampler.
+        let source = "\
+Texture2D<float4> g_material_textures[] : register(t0, space2);
+SamplerState g_material_samplers[] : register(s0, space2);
+SamplerState g_material_sampler : register(s0, space31);";
+        let resources = StageResources::from_source(source);
+        assert_eq!(resources.texture_arrays.len(), 1);
+        assert_eq!(resources.texture_arrays[0].name, "g_material_textures");
+        assert_eq!(resources.texture_arrays[0].register, 0);
+        assert_eq!(resources.texture_arrays[0].space, 2);
+        assert_eq!(resources.sampler_arrays.len(), 1);
+        assert_eq!(resources.samplers.len(), 1);
+
+        let (samplers, arrays) = sampler_lists(&resources);
+        assert_eq!(samplers, vec![vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]]);
+        assert_eq!(arrays, vec![vec![GLOBAL_SAMPLERS, 0, 0]]);
     }
 
     #[test]

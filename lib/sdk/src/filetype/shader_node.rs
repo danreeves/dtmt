@@ -35,6 +35,109 @@ use super::shader_decl::{
     Permutation, PermutationSet, ProgramDef, ShaderContext, ValueType, VariableDef,
 };
 
+/// One resource a stage's HLSL declares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceDecl {
+    /// The name the HLSL gives it.
+    pub name: String,
+    /// The register's number (`register(t0, ...)` -> 0).
+    pub register: u32,
+    /// The register's space (`space2` -> 2).
+    pub space: u32,
+}
+
+/// What a shader stage's HLSL declares, read off an assembled source: the
+/// `Texture2D NAME ... : register(tN, spaceM)` and `SamplerState NAME ... :
+/// register(sN, spaceM)` lines, arrays told apart by a `[` before the register.
+///
+/// This is the source the engine's tail lists are derived from: a non-array
+/// sampler is the shader's own (at space 31, the engine's static sampler), an
+/// array sampler is the engine's bindless sampler array, and the texture
+/// declarations say whether the stage samples at all.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StageResources {
+    pub textures: Vec<ResourceDecl>,
+    pub texture_arrays: Vec<ResourceDecl>,
+    pub uavs: Vec<ResourceDecl>,
+    pub samplers: Vec<ResourceDecl>,
+    pub sampler_arrays: Vec<ResourceDecl>,
+}
+
+impl StageResources {
+    /// Reads the declarations out of an assembled stage source.
+    pub fn from_source(source: &str) -> Self {
+        let mut resources = Self::default();
+        for line in source.lines() {
+            // Strip a line comment: the sources write their declarations one
+            // per line.
+            let line = line.split("//").next().unwrap_or("").trim();
+            let (kind, rest) = if let Some(rest) = line.strip_prefix("Texture2D") {
+                ('t', rest)
+            } else if let Some(rest) = line.strip_prefix("RWTexture2D") {
+                ('u', rest)
+            } else if let Some(rest) = line.strip_prefix("SamplerState") {
+                ('s', rest)
+            } else {
+                continue;
+            };
+            let Some((_, registers)) = line.split_once("register(") else {
+                continue;
+            };
+            let Some((register_kind, register, space)) = parse_register(registers) else {
+                continue;
+            };
+            if register_kind != kind {
+                continue;
+            }
+            // The name is the identifier before the array brackets or the
+            // register clause, with any template arguments before it.
+            let name = rest
+                .split(['[', ':'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .rsplit(|c: char| c.is_whitespace() || c == '>')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let decl = ResourceDecl {
+                name,
+                register,
+                space,
+            };
+            let is_array = rest.contains('[');
+            match (kind, is_array) {
+                ('s', false) => resources.samplers.push(decl),
+                ('s', true) => resources.sampler_arrays.push(decl),
+                ('t', false) => resources.textures.push(decl),
+                ('t', true) => resources.texture_arrays.push(decl),
+                ('u', _) => resources.uavs.push(decl),
+                _ => {}
+            }
+        }
+        resources
+    }
+}
+
+/// Reads `register(t0, space2)`'s inner text: the kind letter, the register
+/// number and the space (0 when it names none).
+fn parse_register(text: &str) -> Option<(char, u32, u32)> {
+    let inner = text.split(')').next()?;
+    let mut parts = inner.split(',');
+    let register = parts.next()?.trim();
+    let kind = register.chars().next()?;
+    let number = register[1..].trim().parse::<u32>().ok()?;
+    let space = parts
+        .next()
+        .and_then(|part| part.trim().strip_prefix("space"))
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or(0);
+    Some((kind, number, space))
+}
+
 /// A parsed `.shader_node` file: the declaration the emitters consume.
 ///
 /// The fields the file names are deserialized as written, named `raw_*` where
