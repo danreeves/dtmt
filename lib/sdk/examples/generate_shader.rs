@@ -128,7 +128,19 @@ fn generate(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_default();
-    let section = engine_data.generate(&containers, &identity, &HashMap::new())?;
+
+    // The tail lists come from the containers' own reflection; a stage without
+    // a container cannot be generated.
+    let mut resources: HashMap<Stage, sdk::filetype::shader_node::StageResources> = HashMap::new();
+    for (stage, container) in &containers {
+        if let Ok(stage_resources) =
+            sdk::filetype::shader_node::StageResources::from_container(container)
+        {
+            resources.insert(*stage, stage_resources);
+        }
+    }
+
+    let section = engine_data.generate(&containers, &identity, &resources)?;
 
     let base = fs::read_to_string(base_path)?;
     let base = replace_hex_field(&base, "shader_data", &to_hex(&section))?;

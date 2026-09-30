@@ -24,7 +24,7 @@
 //! let section = engine_data.generate(&containers, "materials/mods/x/base")?;  // Stage -> DXBC
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 
 use color_eyre::eyre::{Context, Result, bail};
@@ -78,29 +78,128 @@ const STATIC_MINLOD_SAMPLER: u32 = 0x4B42_C5E6;
 /// stage takes when it declares a sampler array.
 const GLOBAL_SAMPLERS: u32 = 0xDA56_0F03;
 
-/// A stage's sampler lists (6 and 8) from what its HLSL declares: a non-array
-/// sampler is the shader's own at its register and space - except at space 31,
-/// which is the engine's static sampler - and an array sampler is the engine's
-/// bindless sampler array.
-fn sampler_lists(resources: &StageResources) -> (Vec<Vec<u32>>, Vec<Vec<u32>>) {
-    let samplers = resources
-        .samplers
-        .iter()
-        .map(|decl| {
-            let name = if decl.space == 31 {
-                STATIC_MINLOD_SAMPLER
-            } else {
-                u32::from(murmur::Murmur32::hash(decl.name.as_bytes()))
-            };
-            vec![name, decl.register, 1, decl.space]
+/// murmur32 of `global_texture2D`: the engine's bindless texture array.
+const GLOBAL_TEXTURE2D: u32 = 0x3AFC_636C;
+
+/// murmur32 of `global_feedback_buffers`: the engine's feedback UAV.
+const GLOBAL_FEEDBACK_BUFFERS: u32 = 0x41B1_CFF8;
+
+/// The group's descriptor list (`name -> index`). Every group must agree,
+/// because the program-to-group mapping is not decoded.
+fn descriptors(template: &GroupTemplate) -> Result<BTreeMap<u32, u32>> {
+    let mut agreed: Option<BTreeMap<u32, u32>> = None;
+    for parts in &template.groups {
+        // The head is the query id, the group's two words, its descriptor
+        // list, then the first table's header: skip the query and the header
+        // word, then the count opens the list.
+        let head = parts
+            .head
+            .get(8..)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a group head is too short"))?;
+        let count = u32::from_le_bytes(
+            head[..4]
+                .try_into()
+                .map_err(|_| color_eyre::eyre::eyre!("a group head is too short"))?,
+        ) as usize;
+        let bytes = head
+            .get(4..4 + count * 16)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a group's descriptor list is short"))?;
+        let mut list = BTreeMap::new();
+        for index in 0..count {
+            let name = u32::from_le_bytes(bytes[index * 16..index * 16 + 4].try_into().unwrap());
+            list.insert(name, index as u32);
+        }
+        match &agreed {
+            None => agreed = Some(list),
+            Some(previous) if *previous != list => {
+                bail!("the groups disagree on their descriptor lists")
+            }
+            Some(_) => {}
+        }
+    }
+    agreed.ok_or_else(|| color_eyre::eyre::eyre!("the template has no groups"))
+}
+
+/// The lists (3, 5, 6 and 8) a stage's tail should hold, from its own
+/// reflection and the engine's conventions:
+///
+/// - a texture array becomes the engine's `global_texture2D` record and an
+///   unbounded sampler array its `global_samplers` one;
+/// - a stage that samples gets the engine's `static_minlod_sampler` record and,
+///   as the UI base shows, its `global_feedback_buffers` one;
+/// - any other binding becomes its own record, named by its HLSL name.
+///
+/// The 7-word records carry the resource's index in the group's descriptor
+/// list, so the descriptor table comes in with them.
+fn set_derived_lists(
+    lists: &mut shader::TailLists,
+    resources: &StageResources,
+    descriptors: &BTreeMap<u32, u32>,
+) -> Result<()> {
+    let index = |name: u32| -> Result<u32> {
+        descriptors.get(&name).copied().ok_or_else(|| {
+            color_eyre::eyre::eyre!("{name:08X} is not in the group's descriptor list")
         })
-        .collect();
-    let arrays = resources
+    };
+
+    let mut textures = Vec::new();
+    for decl in &resources.textures {
+        // The bounded-texture record's shape is not measured yet; fail rather
+        // than write a guess.
+        bail!(
+            "the bounded texture binding '{}' has no measured record shape yet",
+            decl.name
+        );
+    }
+    for decl in &resources.texture_arrays {
+        textures.push(vec![
+            GLOBAL_TEXTURE2D,
+            index(GLOBAL_TEXTURE2D)?,
+            decl.register,
+            0xFFFF_FFFF,
+            decl.space,
+            0xFFFF_FFFF,
+            0,
+        ]);
+    }
+
+    let mut buffers = Vec::new();
+    if resources.samples() {
+        buffers.push(vec![
+            GLOBAL_FEEDBACK_BUFFERS,
+            index(GLOBAL_FEEDBACK_BUFFERS)?,
+            0,
+            0xFFFF_FFFF,
+            31,
+            0xFFFF_FFFF,
+            0,
+        ]);
+    }
+
+    let mut samplers = Vec::new();
+    if resources.samples() {
+        samplers.push(vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]);
+    }
+    for decl in &resources.samplers {
+        samplers.push(vec![
+            u32::from(murmur::Murmur32::hash(decl.name.as_bytes())),
+            decl.register,
+            1,
+            decl.space,
+        ]);
+    }
+
+    let sampler_arrays = resources
         .sampler_arrays
         .iter()
         .map(|_| vec![GLOBAL_SAMPLERS, 0, 0])
         .collect();
-    (samplers, arrays)
+
+    lists.lists[3] = textures;
+    lists.lists[5] = buffers;
+    lists.lists[6] = samplers;
+    lists.lists[8] = sampler_arrays;
+    Ok(())
 }
 
 /// A record table's size: the largest `offset + size`, rounded up to the
@@ -146,56 +245,33 @@ fn cbuffer_prefix(
     material_tables: &[Vec<Record>],
     names: &[Hex],
 ) -> Result<Vec<u8>> {
+    let descriptors = descriptors(template)?;
     let mut out = Vec::with_capacity(4 + names.len() * 24);
     out.extend_from_slice(&(names.len() as u32).to_le_bytes());
     for (register, name) in names.iter().enumerate() {
         let name = u32::from_le_bytes(name.0.as_slice().try_into().map_err(|_| {
             color_eyre::eyre::eyre!("a tail cbuffer name must be four bytes")
         })?);
-        let mut agreed: Option<(u32, u32)> = None;
-        for (group, parts) in template.groups.iter().enumerate() {
-            // The head is the query id, the group's two words, its descriptor
-            // list, then the first table's header: skip the query and the
-            // header word, then the count opens the list.
-            let head = parts
-                .head
-                .get(8..)
-                .ok_or_else(|| color_eyre::eyre::eyre!("a group head is too short"))?;
-            let count = u32::from_le_bytes(
-                head[..4]
-                    .try_into()
-                    .map_err(|_| color_eyre::eyre::eyre!("a group head is too short"))?,
-            ) as usize;
-            let descriptors = head
-                .get(4..4 + count * 16)
-                .ok_or_else(|| color_eyre::eyre::eyre!("a group's descriptor list is short"))?;
-            let index = (0..count)
-                .find(|i| {
-                    u32::from_le_bytes(
-                        descriptors[i * 16..i * 16 + 4].try_into().unwrap(),
-                    ) == name
-                })
-                .ok_or_else(|| {
-                    color_eyre::eyre::eyre!(
-                        "the cbuffer {name:08X} is not a descriptor of the shader"
-                    )
-                })? as u32;
+        let index = descriptors.get(&name).copied().ok_or_else(|| {
+            color_eyre::eyre::eyre!("the cbuffer {name:08X} is not a descriptor of the shader")
+        })?;
+        let mut agreed: Option<u32> = None;
+        for group in 0..template.groups.len() {
             let size = match name {
                 GLOBAL_VIEWPORT => table_size(&template.engine),
                 C_PER_OBJECT => table_size(&material_tables[group]),
                 other => bail!("the cbuffer {other:08X} has no size source"),
             };
             match agreed {
-                None => agreed = Some((index, size)),
-                Some(previous) if previous != (index, size) => bail!(
-                    "the groups disagree about the cbuffer {name:08X} \
-                     ({previous:?} vs {index}/{size}); the program-to-group mapping is not decoded"
+                None => agreed = Some(size),
+                Some(previous) if previous != size => bail!(
+                    "the groups disagree about the cbuffer {name:08X}'s size \
+                     ({previous} vs {size}); the program-to-group mapping is not decoded"
                 ),
                 Some(_) => {}
             }
         }
-        let (index, size) = agreed
-            .ok_or_else(|| color_eyre::eyre::eyre!("the template has no groups"))?;
+        let size = agreed.ok_or_else(|| color_eyre::eyre::eyre!("the template has no groups"))?;
         for word in [name, index, size, register as u32, 1, 0] {
             out.extend_from_slice(&word.to_le_bytes());
         }
@@ -454,20 +530,25 @@ struct GroupText {
     material_first: bool,
 }
 
-/// One distinct program tail: the constant buffers it names, its lists and the
-/// block that closes the tail.
+/// One distinct program tail: the constant buffers it names, its lists when
+/// they have to be carried, and the block that closes the tail.
 ///
 /// The constant-buffer list is stored as names (murmur32 hashes) when every one
 /// of them is the engine's own - `c_per_object` or `global_viewport` - and the
 /// template is there to size them; the reader rebuilds the 24-byte entries from
-/// the group data, the engine table and the register order. Otherwise `lists`
-/// carries the whole tail.
+/// the group data, the engine table and the register order.
+///
+/// The lists are *not* stored when the tail splits: the build derives them from
+/// the compiled container's own reflection (the texture/sampler arrays, the
+/// static sampler and the feedback buffers, with their registers and spaces).
+/// `lists` carries them only for a tail this reader cannot split.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TailText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cbuffers: Option<Vec<Hex>>,
-    lists: ListsText,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lists: Option<ListsText>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     block: Option<BlockText>,
 }
@@ -487,7 +568,7 @@ enum ListsText {
 /// The lists that are always empty in every sample (0, 1 and 4) and the input
 /// list (7) are not stored at all: the reader writes their empty counts and the
 /// build rebuilds the inputs from the compiled container's signature.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RoleLists {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -502,15 +583,6 @@ struct RoleLists {
     sampler_arrays: Vec<Hex>,
 }
 
-/// One list record as hex: its words, little-endian.
-fn words_hex(words: &[u32]) -> Hex {
-    let mut bytes = Vec::with_capacity(words.len() * 4);
-    for word in words {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    Hex(bytes)
-}
-
 /// Reads a list record of `size` words.
 fn words_from_hex(hex: &Hex, size: usize) -> Result<Vec<u32>> {
     if hex.0.len() != size * 4 {
@@ -521,25 +593,6 @@ fn words_from_hex(hex: &Hex, size: usize) -> Result<Vec<u32>> {
         .chunks(4)
         .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
         .collect())
-}
-
-/// The roles of a parsed lists region. The inputs (list 7) are dropped: they
-/// are rebuilt from the container at build time.
-fn lists_text(lists: &shader::TailLists) -> RoleLists {
-    let role = |index: usize| -> Vec<Hex> {
-        lists
-            .list(index)
-            .iter()
-            .map(|record| words_hex(record))
-            .collect()
-    };
-    RoleLists {
-        engine: role(2),
-        textures: role(3),
-        buffers: role(5),
-        samplers: role(6),
-        sampler_arrays: role(8),
-    }
 }
 
 /// Writes a tail's lists back out: the nine counted lists, with 0, 1, 4 and the
@@ -922,8 +975,12 @@ impl EngineData {
                 None => Vec::new(),
             };
             match &tail.lists {
-                ListsText::Roles(roles) => bytes.extend_from_slice(&lists_bytes(roles)?),
-                ListsText::Raw(raw) => bytes.extend_from_slice(&raw.0),
+                Some(ListsText::Roles(roles)) => bytes.extend_from_slice(&lists_bytes(roles)?),
+                Some(ListsText::Raw(raw)) => bytes.extend_from_slice(&raw.0),
+                // No lists stored: they are derived from the compiled
+                // container, so the reader writes the empty counts the build
+                // fills in.
+                None => bytes.extend_from_slice(&lists_bytes(&RoleLists::default())?),
             }
             if let Some(block) = &tail.block {
                 bytes.extend_from_slice(&block_bytes(block, &engine_data.device_preamble)?);
@@ -1086,16 +1143,14 @@ impl EngineData {
                     (Some(_), Some(parsed)) => &parsed.rest,
                     _ => tail,
                 };
-                // The lists by role; a region this reader cannot split is
-                // carried as its raw bytes. The block closes the tail, and a
-                // block that is the preamble's body with a few bytes patched -
-                // which is what the UI shader's blocks are - is written as that
-                // diff instead of as its own 550 bytes.
+                // The lists are derived from the compiled container, so a tail
+                // that splits stores none of them; the block closes the tail,
+                // and a block that is the preamble's body with a few bytes
+                // patched - which is what the UI shader's blocks are - is
+                // written as that diff instead of as its own 550 bytes.
                 let (lists, block) = match shader::TailLists::parse(rest) {
-                    Some(parsed_lists) => {
-                        (ListsText::Roles(lists_text(&parsed_lists)), parsed_lists.block)
-                    }
-                    None => (ListsText::Raw(rest.to_vec().into()), Vec::new()),
+                    Some(parsed_lists) => (None, parsed_lists.block),
+                    None => (Some(ListsText::Raw(rest.to_vec().into())), Vec::new()),
                 };
                 TailText {
                     cbuffers,
@@ -1203,24 +1258,28 @@ impl EngineData {
             let frame = shader::encode_frame(container)?;
             let key = murmur::hash(&frame, 0);
 
-            // The sampler lists come from the stage's own declarations when the
-            // build read them - but only when they reproduce the carried lists.
-            // The sources declare their texture and sampler arrays at file
-            // scope, with the macros that use them unguarded, so a stage's
-            // declarations cannot be told from another stage's yet; a
-            // disagreement keeps the carried list. (The container's own
-            // reflection is the right source, when the toolchain reads it.)
-            let derived = match (resources.get(stage), shader::Tail::parse(tail)) {
-                (Some(resources), Some(parsed)) => {
-                    shader::TailLists::parse(&parsed.rest).and_then(|mut lists| {
-                        let (samplers, arrays) = sampler_lists(resources);
-                        let same = lists.list(6) == samplers.as_slice()
-                            && lists.list(8) == arrays.as_slice();
-                        if !same {
-                            return None;
-                        }
-                        lists.lists[6] = samplers;
-                        lists.lists[8] = arrays;
+            // The resource lists come from the container's own reflection: the
+            // file does not carry them, so a stage without one cannot be
+            // generated, and a binding shape that is not measured yet is an
+            // error rather than a guess. A tail whose lists did not split is
+            // carried whole and left alone.
+            let derived = match shader::Tail::parse(tail) {
+                Some(parsed) => match shader::TailLists::parse(&parsed.rest) {
+                    Some(mut lists) => {
+                        let resources = resources.get(stage).ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "no reflection for program {index} ({stage:?}): its resource \
+                                 lists are derived from the compiled container"
+                            )
+                        })?;
+                        let template = self.group_template.as_ref().ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "program {index} ({stage:?}) needs a group template to index its \
+                                 resource records"
+                            )
+                        })?;
+                        let descriptors = descriptors(template)?;
+                        set_derived_lists(&mut lists, resources, &descriptors)?;
                         Some(
                             shader::Tail {
                                 cbuffers: parsed.cbuffers,
@@ -1228,9 +1287,10 @@ impl EngineData {
                             }
                             .bytes(),
                         )
-                    })
-                }
-                _ => None,
+                    }
+                    None => None,
+                },
+                None => None,
             };
             let tail: &[u8] = derived.as_deref().unwrap_or(tail);
 
@@ -1610,8 +1670,8 @@ mod tests {
     }
 
     #[test]
-    fn a_sampler_list_comes_from_the_stage_declarations() {
-        // The two engine names the derived lists use.
+    fn the_resource_lists_come_from_the_container_reflection() {
+        // The engine names the derived lists use.
         assert_eq!(
             STATIC_MINLOD_SAMPLER,
             u32::from(murmur::Murmur32::hash(b"static_minlod_sampler"))
@@ -1620,24 +1680,78 @@ mod tests {
             GLOBAL_SAMPLERS,
             u32::from(murmur::Murmur32::hash(b"global_samplers"))
         );
+        assert_eq!(
+            GLOBAL_TEXTURE2D,
+            u32::from(murmur::Murmur32::hash(b"global_texture2D"))
+        );
+        assert_eq!(
+            GLOBAL_FEEDBACK_BUFFERS,
+            u32::from(murmur::Murmur32::hash(b"global_feedback_buffers"))
+        );
 
-        // A stage source in the SDK's shape: a texture array, a sampler array
-        // and the engine's static sampler.
-        let source = "\
-Texture2D<float4> g_material_textures[] : register(t0, space2);
-SamplerState g_material_samplers[] : register(s0, space2);
-SamplerState g_material_sampler : register(s0, space31);";
-        let resources = StageResources::from_source(source);
+        // A pixel stage's reflection, as the UI base's container reports it.
+        let bindings = vec![
+            dxc::BoundResource {
+                name: "global_viewport".into(),
+                kind: 0,
+                bind_point: 0,
+                bind_count: 1,
+                flags: 1,
+                space: 0,
+            },
+            dxc::BoundResource {
+                name: "c_per_object".into(),
+                kind: 0,
+                bind_point: 1,
+                bind_count: 1,
+                flags: 1,
+                space: 0,
+            },
+            dxc::BoundResource {
+                name: "g_material_samplers".into(),
+                kind: 3,
+                bind_point: 0,
+                bind_count: 0,
+                flags: 0,
+                space: 2,
+            },
+            dxc::BoundResource {
+                name: "g_material_textures".into(),
+                kind: 2,
+                bind_point: 0,
+                bind_count: 0,
+                flags: 0xC,
+                space: 2,
+            },
+        ];
+        let resources = StageResources::from_bindings(&bindings);
+        assert_eq!(resources.cbuffers, vec!["global_viewport", "c_per_object"]);
         assert_eq!(resources.texture_arrays.len(), 1);
-        assert_eq!(resources.texture_arrays[0].name, "g_material_textures");
-        assert_eq!(resources.texture_arrays[0].register, 0);
-        assert_eq!(resources.texture_arrays[0].space, 2);
         assert_eq!(resources.sampler_arrays.len(), 1);
-        assert_eq!(resources.samplers.len(), 1);
+        assert!(resources.samples());
 
-        let (samplers, arrays) = sampler_lists(&resources);
-        assert_eq!(samplers, vec![vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]]);
-        assert_eq!(arrays, vec![vec![GLOBAL_SAMPLERS, 0, 0]]);
+        // The descriptors the records index into, in the UI base's order.
+        let descriptors = std::collections::BTreeMap::from([
+            (C_PER_OBJECT, 0),
+            (GLOBAL_VIEWPORT, 1),
+            (GLOBAL_TEXTURE2D, 2),
+            (GLOBAL_FEEDBACK_BUFFERS, 3),
+        ]);
+        let mut lists = shader::TailLists {
+            lists: vec![Vec::new(); 9],
+            block: Vec::new(),
+        };
+        set_derived_lists(&mut lists, &resources, &descriptors).unwrap();
+        assert_eq!(
+            lists.lists[3],
+            vec![vec![GLOBAL_TEXTURE2D, 2, 0, 0xFFFF_FFFF, 2, 0xFFFF_FFFF, 0]]
+        );
+        assert_eq!(
+            lists.lists[5],
+            vec![vec![GLOBAL_FEEDBACK_BUFFERS, 3, 0, 0xFFFF_FFFF, 31, 0xFFFF_FFFF, 0]]
+        );
+        assert_eq!(lists.lists[6], vec![vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]]);
+        assert_eq!(lists.lists[8], vec![vec![GLOBAL_SAMPLERS, 0, 0]]);
     }
 
     #[test]

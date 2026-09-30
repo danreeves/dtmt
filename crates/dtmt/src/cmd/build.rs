@@ -360,22 +360,27 @@ async fn compile_declaration(
             continue;
         };
         let source = node.job_source(job, stage, &libraries, evaluation);
-        // What the stage's HLSL declares, for deriving the tail lists.
-        if let Some(stage) = match stage {
-            "vertex" => Some(Stage::Vertex),
-            "pixel" => Some(Stage::Pixel),
-            _ => None,
-        } {
-            overrides
-                .resources
-                .insert(stage, StageResources::from_source(&source));
-        }
         let profile_arg = profile.to_string();
         let entry_arg = entry.to_string();
         let container =
             tokio::task::spawn_blocking(move || shader_compile::compile(&source, &profile_arg, &entry_arg))
                 .await
                 .wrap_err("The shader compiler task panicked")??;
+
+        // What the container binds, from its own reflection: the per-stage
+        // attribution the source text cannot give.
+        if let Some(stage) = match stage {
+            "vertex" => Some(Stage::Vertex),
+            "pixel" => Some(Stage::Pixel),
+            _ => None,
+        } {
+            match StageResources::from_container(&container) {
+                Ok(resources) => {
+                    overrides.resources.insert(stage, resources);
+                }
+                Err(err) => tracing::warn!("no reflection for the {stage:?} stage: {err}"),
+            }
+        }
 
         tracing::info!(
             "Compiled '{}' ({} block '{}', {profile}/{entry}, {} bytes)",

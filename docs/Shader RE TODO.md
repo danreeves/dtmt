@@ -874,32 +874,22 @@ preamble's body).
    one to one with the groups and in the same order (that is what `group_starts`
    walks), so the file does not store them; the reader takes them by position,
    and a file whose contexts lack one keeps its own (the fallback).
-2. The tails' remaining lists (~9 KB of the ~11 KB): `samplers` (one record per
-   pixel tail) from the source's `SamplerState ... : register(sN, spaceM)`
-   declarations plus the engine's static-sampler vocabulary; `textures` and
-   `buffers` from the source's array declarations and registers plus the
-   engine's vocabulary (`global_texture2D`, `global_feedback_buffers` - both
-   grounded names); `engine` (list 2) from the declaration's `samplers` with
-   `source = "resource_set"`; and the cbuffer *names* from the source's own
-   `cbuffer` declarations (the build assembles them; `tail_build` proves the
-   mapping).
-
-   **The stage-attribution problem, measured**: reading the raw source does not
-   say which *stage* uses what, because the sources declare their texture and
-   sampler arrays at file scope, outside the `#if defined(STAGE_...)` guards, and
-   the macros that use them are unguarded too. Deriving both stages from the same
-   text gave the vertex the pixel's samplers and changed the build (421696 ->
-   423040 bytes), so the derivation is now gated on reproducing the carried
-   lists (a mismatch keeps them) - the pixel's matches, the vertex's does not.
-
-   **And there is no RDEF to read**: the compiled containers are Shader Model 6
-   DXIL, and DXC dropped the RDEF chunk for SM6 - `rdef_dump` shows exactly
-   `SFI0, ISG1, OSG1, PSV0, STAT, HASH, DXIL`. So the reflection has no chunk:
-   it lives in the DXIL metadata (the `dx.resources` records and the RDAT
-   section), which is LLVM bitcode. The two honest routes are (a) DXC's own
-   reflection API - `IDxcUtils::CreateReflection` + `IDxcShaderReflection`,
-   which `lib/dxc` can host next to the compiler vtables it already has - or
-   (b) the source text plus a *usage* rule that can see through the macros.
+2. ~~**The tails' remaining lists** (~9 KB)~~ **done**: they derive from the
+   containers' own reflection. The containers are SM6 DXIL with no RDEF chunk
+   (`SFI0, ISG1, OSG1, PSV0, STAT, HASH, DXIL`), but `lib/dxc` now calls
+   `IDxcUtils::CreateReflection` + `ID3D12ShaderReflection`, and that gives the
+   per-stage attribution the source text could not: the vertex binds only
+   `c_per_object` (b0, space 0); the pixel binds `global_viewport` (b0),
+   `c_per_object` (b1), `g_material_samplers` (s0, unbounded, space 2) and
+   `g_material_textures` (t0, unbounded, space 2). The lists are built from that
+   plus the engine's conventions - an unbounded texture array is
+   `global_texture2D`, an unbounded sampler array `global_samplers`, and a
+   sampling stage gets `static_minlod_sampler` and `global_feedback_buffers` -
+   and are no longer stored: a tail that splits stores none of them, the reader
+   writes the empty counts, and the build fills them. snoopy-mod's file went
+   **22107 -> 15532 bytes** and every built asset is byte-identical. The cbuffer
+   *names* are now the last thing that reflection could supply; they are still
+   carried (~10 bytes a tail).
 3. `group_template` (~6.7 KB): `materials` from the `.material`'s bindings plus
    the engine's standard rows (decoded: the 7 rows over `c_per_object`); the
    framing parts (heads/betweens/mids/tails, ~1 KB) from the shader's

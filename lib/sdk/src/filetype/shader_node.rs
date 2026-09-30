@@ -35,107 +35,80 @@ use super::shader_decl::{
     Permutation, PermutationSet, ProgramDef, ShaderContext, ValueType, VariableDef,
 };
 
-/// One resource a stage's HLSL declares.
+/// One resource a stage's compiled container binds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResourceDecl {
-    /// The name the HLSL gives it.
+    /// The name the HLSL gave it.
     pub name: String,
-    /// The register's number (`register(t0, ...)` -> 0).
+    /// The register it binds at.
     pub register: u32,
-    /// The register's space (`space2` -> 2).
+    /// The register space.
     pub space: u32,
+    /// The number of contiguous registers: 0 is an unbounded array.
+    pub count: u32,
 }
 
-/// What a shader stage's HLSL declares, read off an assembled source: the
-/// `Texture2D NAME ... : register(tN, spaceM)` and `SamplerState NAME ... :
-/// register(sN, spaceM)` lines, arrays told apart by a `[` before the register.
+/// What a stage's compiled container binds, as the engine's tail lists need it.
 ///
-/// This is the source the engine's tail lists are derived from: a non-array
-/// sampler is the shader's own (at space 31, the engine's static sampler), an
-/// array sampler is the engine's bindless sampler array, and the texture
-/// declarations say whether the stage samples at all.
+/// Built from the container's own reflection ([`StageResources::from_bindings`])
+/// - the per-stage attribution the HLSL text cannot give, because the sources
+/// declare their arrays at file scope with unguarded macros. The engine's own
+/// conventions layer on top when a list is written: an unbounded texture array
+/// is the engine's `global_texture2D`, an unbounded sampler array its
+/// `global_samplers`, a stage that binds a texture gets its static sampler, and
+/// the engine's `global_feedback_buffers` likewise.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StageResources {
+    /// The constant buffers the stage binds, in register order.
+    pub cbuffers: Vec<String>,
+    /// Bounded texture bindings.
     pub textures: Vec<ResourceDecl>,
+    /// Unbounded texture arrays.
     pub texture_arrays: Vec<ResourceDecl>,
-    pub uavs: Vec<ResourceDecl>,
+    /// Bounded sampler bindings.
     pub samplers: Vec<ResourceDecl>,
+    /// Unbounded sampler arrays.
     pub sampler_arrays: Vec<ResourceDecl>,
+    /// UAV bindings (kinds 4 and up).
+    pub uavs: Vec<ResourceDecl>,
 }
 
 impl StageResources {
-    /// Reads the declarations out of an assembled stage source.
-    pub fn from_source(source: &str) -> Self {
+    /// Sorts a container's reflection into the lists the tail needs.
+    pub fn from_bindings(bindings: &[dxc::BoundResource]) -> Self {
         let mut resources = Self::default();
-        for line in source.lines() {
-            // Strip a line comment: the sources write their declarations one
-            // per line.
-            let line = line.split("//").next().unwrap_or("").trim();
-            let (kind, rest) = if let Some(rest) = line.strip_prefix("Texture2D") {
-                ('t', rest)
-            } else if let Some(rest) = line.strip_prefix("RWTexture2D") {
-                ('u', rest)
-            } else if let Some(rest) = line.strip_prefix("SamplerState") {
-                ('s', rest)
-            } else {
-                continue;
-            };
-            let Some((_, registers)) = line.split_once("register(") else {
-                continue;
-            };
-            let Some((register_kind, register, space)) = parse_register(registers) else {
-                continue;
-            };
-            if register_kind != kind {
-                continue;
-            }
-            // The name is the identifier before the array brackets or the
-            // register clause, with any template arguments before it.
-            let name = rest
-                .split(['[', ':'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .rsplit(|c: char| c.is_whitespace() || c == '>')
-                .next()
-                .unwrap_or("")
-                .to_string();
-            if name.is_empty() {
-                continue;
-            }
-            let decl = ResourceDecl {
-                name,
-                register,
-                space,
-            };
-            let is_array = rest.contains('[');
-            match (kind, is_array) {
-                ('s', false) => resources.samplers.push(decl),
-                ('s', true) => resources.sampler_arrays.push(decl),
-                ('t', false) => resources.textures.push(decl),
-                ('t', true) => resources.texture_arrays.push(decl),
-                ('u', _) => resources.uavs.push(decl),
-                _ => {}
+        let decl = |binding: &dxc::BoundResource| ResourceDecl {
+            name: binding.name.clone(),
+            register: binding.bind_point,
+            space: binding.space,
+            count: binding.bind_count,
+        };
+        for binding in bindings {
+            match binding.kind {
+                0 => resources.cbuffers.push(binding.name.clone()),
+                2 if binding.bind_count == 0 => resources.texture_arrays.push(decl(binding)),
+                2 => resources.textures.push(decl(binding)),
+                3 if binding.bind_count == 0 => resources.sampler_arrays.push(decl(binding)),
+                3 => resources.samplers.push(decl(binding)),
+                // 1 tbuffer, 4+ UAV kinds.
+                _ => resources.uavs.push(decl(binding)),
             }
         }
         resources
     }
-}
 
-/// Reads `register(t0, space2)`'s inner text: the kind letter, the register
-/// number and the space (0 when it names none).
-fn parse_register(text: &str) -> Option<(char, u32, u32)> {
-    let inner = text.split(')').next()?;
-    let mut parts = inner.split(',');
-    let register = parts.next()?.trim();
-    let kind = register.chars().next()?;
-    let number = register[1..].trim().parse::<u32>().ok()?;
-    let space = parts
-        .next()
-        .and_then(|part| part.trim().strip_prefix("space"))
-        .and_then(|value| value.trim().parse::<u32>().ok())
-        .unwrap_or(0);
-    Some((kind, number, space))
+    /// Whether the stage reads a texture at all, which is what the engine's
+    /// static sampler and feedback-buffer records follow from.
+    pub fn samples(&self) -> bool {
+        !self.textures.is_empty() || !self.texture_arrays.is_empty()
+    }
+
+    /// Reads a compiled container's own reflection into the lists the tail
+    /// needs.
+    pub fn from_container(container: &[u8]) -> color_eyre::Result<Self> {
+        let bindings = dxc::reflect(container)?;
+        Ok(Self::from_bindings(&bindings))
+    }
 }
 
 /// A parsed `.shader_node` file: the declaration the emitters consume.

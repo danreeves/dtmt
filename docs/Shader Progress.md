@@ -240,6 +240,15 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   does not store them; the reader takes them by position and a file whose
   contexts lack one keeps its own. The UI base's file went 23007 -> 22107 bytes
   and **every built asset is byte-identical**. [one build]
+- **The tail lists derive from the container's own reflection** (2026-09-30):
+  `lib/dxc` calls `IDxcUtils::CreateReflection` + `ID3D12ShaderReflection`
+  (vtables from the SDK headers); the stage's bindings drive the lists - an
+  unbounded texture array is `global_texture2D`, an unbounded sampler array
+  `global_samplers`, a sampling stage gets `static_minlod_sampler` and
+  `global_feedback_buffers`, all at their real registers and spaces. The file no
+  longer stores them (a split tail stores none), the reader writes the empty
+  counts and the build fills them: snoopy-mod's file went **22107 -> 15532
+  bytes** and **every built asset is byte-identical**. [one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An
