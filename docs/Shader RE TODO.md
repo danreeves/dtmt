@@ -916,6 +916,26 @@ preamble's body).
 - **`w2`** (the preamble head's third word; the leading hypothesis is the pass
   count).
 
+### The contexts, decoded
+
+The section's contexts are the *shader's own* declared contexts, not the
+material's: snoopy-mod's section carries two - `default` with 30 queries and
+`gui_render_pass` with 6 (both names grounded: murmur32 of the strings, in the
+dictionary). Every query there has `conditions = FFFFFFFF` (none), and the
+queries are *not* in the dictionary and *not* among the conditions tree's
+hashes, so they are the engine's (context, value) pair ids - the variants a
+context supports (for `gui_render_pass`, its six passes; for the shipped
+`default`, thirty values that look like the engine's surface or usage types).
+
+That is the structural data the file still carries, and the deletion path is the
+declaration: a from-scratch shader's `shader_contexts` names its contexts, and
+the values each supports are the section's queries. The missing piece is the
+mapping from the declaration's contexts and passes to the queries, the groups
+and the programs (48 passes x 2 stages is 96 programs, but 30 + 6 queries is 36
+groups, so the counts do not line up yet). The shipped section's queries came
+from the game's own compiled shader, so a mod that starts from a shipped section
+carries them; a from-scratch one must *choose* them.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
