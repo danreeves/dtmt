@@ -979,6 +979,42 @@ decisive test: build a section holding one context, one query with a chosen id
 and two programs, run it, and read the id the engine demands in its log; then
 match that id against the declaration's pass fields.
 
+### The query ids are derivable: the hash is pinned (2026-09-30, later)
+
+The engine's identities are **MurmurHash64A (seed 0) over their canonical name
+string**. Two independent confirmations, from the VT2 SDK's own data compiler
+(`bin/stingray_win64_dev_x64.exe`, run offline on the SDK's example mod):
+
+- 263/264 entries of its `debug_file_index.sjson` satisfy
+  `filename == murmur64a(name)`: `gui:diffuse_map:one_bit_alpha.shader_library`
+  -> `1ae3055122b27b54`, `linearize_depth.shader_library` -> `0205d79d3be91999`,
+  `gui_gradient:diffuse_map:gradient.shader_library` -> `01b5b82d032ec091`, ...
+- The compiler logs the canonical permutation keys as it compiles:
+  `[ShaderCompiler] Compiling shader: `gui:DEPTH_TEST_ENABLED:DIFFUSE_MAP:ONE_BIT_ALPHA``
+  - `<shader>:<defines, uppercase, colon-joined>`; the full key appends the
+  platform/renderer (the VT2 string tables carry
+  `<shader>:<context>:<defines>:PLATFORM_WIN32:RENDERER_D3D11|D3D12`).
+- The **query id** stored in a compiled shader library is the **high 32 bits of
+  `murmur64a(full key)`**. Verified: `murmur64a("gui:default:DIFFUSE_MAP:ONE_BIT_ALPHA:PLATFORM_WIN32:RENDERER_D3D12") >> 32`
+  = `E39F328F`, which appears in `gui:diffuse_map:one_bit_alpha.shader_library`
+  twice, each time in a record of the shape
+  `<id> <count> <word> 02 00 00 00 4D 3F 72 28 ...`; likewise
+  `...:CIRCULAR_MASK:UV_SCALE:PLATFORM_WIN32:RENDERER_D3D12` -> `2B314E79` in
+  `gui_gradient:diffuse_map:circular_mask:uv_scale.shader_library`.
+
+So the ids are a function of the *declaration*: shader name, context, the
+material's defines, platform/renderer. The `renew` probe's crash therefore only
+proves those particular values were wrong - not that the ids must be carried.
+
+Caveat: the VT2 compiler is an older engine. None of our 36 Darktide ids equals
+the hash (any of the four forms) of any of the 876,995 collected
+VT2/dictionary strings, so Darktide's key strings - its define vocabulary and
+context naming - are still missing. Next: (a) run the reduced-section probe with
+a *controlled* material and read the id the engine demands in
+`dispatch_loadtime`, then fit the key string (the hash is now known); or (b)
+mine Darktide's own shader-library resources and brute-force their keys with a
+Darktide vocabulary.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
