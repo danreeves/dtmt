@@ -936,6 +936,25 @@ groups, so the counts do not line up yet). The shipped section's queries came
 from the game's own compiled shader, so a mod that starts from a shipped section
 carries them; a from-scratch one must *choose* them.
 
+**The conditions tree is the source graph.** `conditions_walk` parses the blob
+as what it is - 35 records of `{u16 tag=1, u16 words, u16 payload_offset, u16
+count}`, `count` hashes then `words` u16 children whose top nibble is an op (2,
+1, 7, 5, 9 seen) and whose low bits an index - and its hashes are murmur32 of
+*source* names: `9FCFE126` = `gui`, `BC4EE226` = `gui_hdr` (two hits of the 744
+names mined from the VT2 SDK's sources, against the tree's 82 distinct words).
+So the tree is the shader source graph (the includes), not engine-side data -
+the user's correction holds.
+
+**The queries are the last unknown**, and the key: they are not the murmur32 or
+murmur64 (either half) of any of the 874k dictionary names nor of the 744
+source names, and not any hash of the tree's records or children. The candidate
+that fits is an id the engine's compiler assigns per *pass*, hashing the pass's
+own fields (`layer`, `code_block`, `render_state`, its defines) from the
+declaration - which a from-scratch declaration would let us compute. The
+decisive test: build a section holding one context, one query with a chosen id
+and two programs, run it, and read the id the engine demands in its log; then
+match that id against the declaration's pass fields.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
