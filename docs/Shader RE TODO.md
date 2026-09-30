@@ -1049,6 +1049,21 @@ id it wanted, and that pair (our known declaration + its id) fits the key. The
 probe is not `murmur64a` of any key built from our material's obvious tokens;
 it remains unidentified.
 
+**The probe ran, and the rule held (2026-09-30, last).** `probe2` - a min-style
+section (one `default` and one `gui_render_pass` context, 32 query ids *computed*
+by the rule from candidate keys over {`materials/mods/snoopymod/ui_default_base`,
+`ui_default_base`} x {`SINGLE`, `HAS_BASE_COLOR:SINGLE`} x {lower, upper,
+byte-reversed}) with the shipped two programs - **reached the material stage**:
+the log shows `[snoopymod] material set: background_image -> ...`. So the engine
+found the permutation it needed among our computed ids: the id derivation and
+the key format are confirmed in game.
+
+The failure then moved *past* the id lookup to the programs - `E_INVALIDARG,
+assert: shader '#ID[6fa3fccf]'` - which is expected: the section reuses the
+shipped two programs for every permutation. Next: bisect the 32 candidates to
+the one the engine accepted (halving runs), then enumerate the permutation sets
+(from the node rules) and pair each with its own compiled programs.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
