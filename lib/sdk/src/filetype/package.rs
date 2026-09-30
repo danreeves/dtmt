@@ -267,15 +267,27 @@ impl Package {
     pub fn to_binary(&self) -> Result<Vec<u8>> {
         let mut w = Cursor::new(Vec::new());
 
+        // The game binary-searches a package's file entries, so they have to be
+        // ordered by (type, name). `add_file` inserts into unordered sets, and
+        // iteration order varies between runs, so collect and sort here.
+        let mut entries: Vec<(u64, u64)> = self
+            .iter()
+            .flat_map(|(t, names)| {
+                let t: u64 = t.hash().into();
+                names
+                    .iter()
+                    .map(move |name| (t, Murmur64::hash(name.as_bytes()).into()))
+            })
+            .collect();
+        entries.sort_unstable();
+
         // TODO: Figure out what this is
         w.write_u32(0x2b)?;
-        w.write_u32(self.values().flatten().count() as u32)?;
+        w.write_u32(entries.len() as u32)?;
 
-        for (t, names) in self.iter() {
-            for name in names.iter() {
-                w.write_u64(t.hash().into())?;
-                w.write_u64(Murmur64::hash(name.as_bytes()).into())?;
-            }
+        for (t, name) in entries {
+            w.write_u64(t)?;
+            w.write_u64(name)?;
         }
 
         w.write_u8(self.flags)?;
