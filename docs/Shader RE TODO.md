@@ -1125,6 +1125,25 @@ assignment only - the render itself was crashing. The in-game verdicts for the
 derived contexts, prefix and material table therefore need re-running once the
 regression is cleared.
 
+**Bisect: the toolchain is exonerated (2026-10-01).** Checking out `8758c94`
+(the commit/hand the 16:09 run used), rebuilding `dtmt` and `dtmm`, and building
+the same `ui_min_single.engine_data` produces a section **byte-identical** to
+HEAD's (sha256 `60EECF76AA50BD99`), and it still `RENDER_FAIL`s. Restoring the
+16:09-era `bundle_database.data` (16,600,148) and the patched files from their
+`.bak`s, and dropping the extra `9ba626afa44a3aa3` (`packages/boot`) entry from
+the deployment, likewise still fails. So neither the programs, the derivations,
+the deployment shape, nor the game files explain it: the remaining variable is
+the **PSO cache generation**. `launcher\Launcher.exe` is the documented way to
+regenerate it but needs a UI "Play" click (it does not auto-launch), so the
+recovery has to be run by hand: launcher once with the mod deployed, then
+`shader-render-test.ps1`.
+
+`docs/scripts/shader-render-test.ps1` is the harness that keeps this honest: it
+classifies the crash (`RENDER_OK` / `RENDER_FAIL` / `NO_LOAD`), treats only the
+known unload crash as benign, and prints an environment snapshot (section hash,
+db size, boot_script, pso size and mtime, deployment bundle count) with every
+verdict.
+
 **The framing is decoded; `Y` is the blocker (2026-09-30, later).** The group
 head reads `{group count, library hash, 0x130, descriptor count, descriptors…,
 0x02, material table count}`. Everything but two fields is derivable: the
