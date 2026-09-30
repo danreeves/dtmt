@@ -30,6 +30,36 @@ fn main() -> Result<(), Box<dyn Error>> {
     let text = fs::read_to_string(&input)?;
     let mut engine_data = EngineData::from_text(&text)?;
     let mode = args.next().unwrap_or_else(|| "min".to_string());
+    if mode == "renew" {
+        // Every query id is replaced with a fresh one, the structure otherwise
+        // untouched: the engine reads the ids from the section, so generated
+        // tags should serve as well as the shipped ones.
+        let mut contexts = Vec::new();
+        let mut at = 0usize;
+        let mut index = 0u32;
+        let old = engine_data.contexts.clone();
+        while at + 12 <= old.len() {
+            let count = u32::from_le_bytes(old[at + 8..at + 12].try_into().unwrap()) as usize;
+            contexts.extend_from_slice(&old[at..at + 12]);
+            for query in 0..count {
+                let record = at + 12 + query * 8;
+                let renewed = u32::from(sdk::murmur::Murmur32::hash(
+                    format!("renew{index}").as_bytes(),
+                ));
+                contexts.extend_from_slice(&renewed.to_le_bytes());
+                contexts.extend_from_slice(&old[record + 4..record + 8]);
+                index += 1;
+            }
+            at += 12 + count * 8;
+        }
+        engine_data.contexts = contexts;
+        fs::write(&output, engine_data.to_text())?;
+        println!(
+            "wrote {} bytes to {output}: {index} query ids renewed",
+            fs::metadata(&output)?.len()
+        );
+        return Ok(());
+    }
     if mode == "programs" {
         // Only the programs are reduced: the contexts and groups stay as
         // shipped, so the permutation slots the engine asks about are covered
