@@ -1015,6 +1015,40 @@ a *controlled* material and read the id the engine demands in
 mine Darktide's own shader-library resources and brute-force their keys with a
 Darktide vocabulary.
 
+**The rule schema, confirmed in the SDK's own nodes (2026-09-30, later).** The
+VT2 SDK ships 187 `.shader_node` files whose rules generate the macros, e.g.
+`{ if: "num_skin_weights() == 2" define: { "macros": ["SKINNED_2WEIGHTS"]
+stages: ["vertex"] } }`, `defines={ macros: ["BILLBOARD"] ... }` on passes, and
+`permute_with` links between options. The engine binary carries
+`PLATFORM_WIN32/PS4/XB1/XB12/LINUX` next to a render-profile enum (the
+`RENDERER_*` tokens) and the murmur64A constant (92 sites); `gui_render_pass` is
+absent from VT2 entirely (engine and shaders) but is in the Darktide
+dictionary (`E2C8865F...`), so it is a Darktide engine context - consistent
+with our sections.
+
+Darktide's own sources are not reachable from the shipped data: no
+`*.shader_node`/`*.shader_source` in the bundle database, none under the SDK's
+paths as loose files, none in `packages/boot`, none in `bundle/build_output`;
+`shader_cache.hans` is opaque. (The mod's old `core/stingray_renderer` tree was
+copied from the VT2 SDK, not extracted from Darktide.)
+
+`permutation_search` (mode landed) exercises the rule: `--ids`/`--hashes`,
+shader names, contexts, and sorted define subsets. ~133M candidate keys built
+from the VT2 vocabularies so far produced one hit
+(`title_screen_background:gui_render_pass:skinned_2weights:uv0:write1:
+PLATFORM_WIN32:RENDERER_D3D12` -> `9678EEC6`, the first `gui_render_pass`
+query). With ~1.1 chance collisions expected over that search, one hit is *not*
+evidence; its `title_screen_background` token cannot be the shipping section's
+material either.
+
+**The probe is the oracle**: compile a simple material from our declaration and
+a section whose query ids are the values the rule computes for candidate keys.
+If the engine renders, the rule is confirmed; if it fails, the log prints the
+id it wanted, and that pair (our known declaration + its id) fits the key. The
+`SHADER(0xf036c545f9dfc27b, 2, PS, SINGLE, ...)` handle from the earlier `min`
+probe is not `murmur64a` of any key built from our material's obvious tokens;
+it remains unidentified.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
