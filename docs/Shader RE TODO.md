@@ -663,6 +663,46 @@ is a per-program channel set over a small vocabulary; which program gets which
 set is the next correlation, with the declaration's passes and their conditions
 the obvious candidates.
 
+### Notes from Polychromatic's reverse engineering (2026-09-30)
+
+[Polychromatic's colour
+notes](https://github.com/Wobin/Polychromatic/blob/main/docs/how-each-effect-is-coloured.md)
+are a second, independent extraction of the material layer. What they ground for
+this work:
+
+- **Names.** `lighting_far_range` (a `c_per_object` scalar some colour shaders
+  ignore, hijacked as a live colour carrier), `lerp_color_a`, `color_a`,
+  `beam_color` (material vectors), `offset_time_duration` (a burn timing
+  vector), `rainbow_barrels_hue` (a custom shader export), and the shader
+  variants `const_mask`/`const_hsv`/`live_hsv`. These are engine-extraction
+  names, so they are the grounded form the naming convention wants.
+- **Reflection rows are per material.** "Each child needs its own reflection
+  row because children do not inherit the parent's" - which is what the group
+  data's material table holds, and what a build writes back per material. A
+  custom export costs one row (+24 bytes per child), so the table's content is
+  the material's own variable set, not the base's.
+
+  Decoding snoopy-mod's own table with that in mind: its 7 rows are the
+  `c_per_object` layout - `texture_map` at 0 (kind 5: the sampler index),
+  `texture_map` at 4 (float2: the texture index), `texture_map` at 16 (the
+  second texture), `view_proj` at 32, `world_view_proj` at 96, `world` at 160
+  and `dev_wireframe_color` at 224 (the material's own graph export). The first
+  three are the material's `texture_map` slot feeding three offsets, the three
+  matrices are the engine's standard fields, and the last is the material's.
+  So the table is the material's reflection: the engine's standard rows plus
+  what the material binds, and a next candidate for removal from the engine
+  data (its inputs are the `.material`'s bindings and the engine's standard row
+  names).
+- **The format is 62** and a format-61 material crashes the current engine -
+  matching what this toolchain reads and writes.
+- **Shaders can be patched to read a cbuffer scalar they ignore**
+  (`lighting_far_range`), so a shader's cbuffer schema is not necessarily fully
+  used by its programs - worth remembering when a tail's cbuffers look wider
+  than the source's reads.
+- The mask byte is not addressed there: their "channels" are colour channels
+  (vertex colour routing, red-channel routing), not the config record's channel
+  set.
+
 The other cbuffers a shader's tails name are its own, and they resolve as
 shader-source names: `c_billboard`, `c_material_exports`, `lighting_data`,
 `c_depth_only` - the VT2 reference's "cbuffers are declared in HLSL inside the
