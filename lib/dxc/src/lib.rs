@@ -126,6 +126,15 @@ const IID_IDXC_UTILS: Guid = Guid {
     data4: [0xad, 0xa4, 0x65, 0xf2, 0x0b, 0xb7, 0xd6, 0x7f],
 };
 
+/// `IID_ID3D12ShaderReflection`: the reflection interface
+/// `IDxcUtils::CreateReflection` hands back.
+const IID_ID3D12_SHADER_REFLECTION: Guid = Guid {
+    data1: 0x5a58_797d,
+    data2: 0xa72c,
+    data3: 0x478d,
+    data4: [0x8b, 0xa2, 0xef, 0xc6, 0xb0, 0xef, 0xe8, 0x8e],
+};
+
 /// `DXC_OUT_OBJECT`: the compiled shader or library object.
 const DXC_OUT_OBJECT: u32 = 1;
 /// `DXC_CP_UTF8`: the source is UTF-8.
@@ -218,8 +227,8 @@ struct IDxcValidator {
     vtable: *const IDxcValidatorVtbl,
 }
 
-/// The `IDxcUtils` vtable, up to `CreateBlob` (the methods before it are never
-/// called and stand in as opaque slots so the offsets line up).
+/// The `IDxcUtils` vtable, up to `CreateReflection` (the methods never called
+/// stand in as opaque slots so the offsets line up with the header's order).
 #[repr(C)]
 struct IDxcUtilsVtbl {
     base: IUnknownVtbl,
@@ -233,11 +242,77 @@ struct IDxcUtilsVtbl {
         u32,
         *mut *mut c_void,
     ) -> Hresult,
+    load_file: *const c_void,
+    create_read_only_stream_from_blob: *const c_void,
+    create_default_include_handler: *const c_void,
+    get_blob_as_utf8: *const c_void,
+    get_blob_as_utf16: *const c_void,
+    get_dxil_container_part: *const c_void,
+    create_reflection: unsafe extern "system" fn(
+        *mut c_void,
+        *const DxcBuffer,
+        *const Guid,
+        *mut *mut c_void,
+    ) -> Hresult,
 }
 
 #[repr(C)]
 struct IDxcUtils {
     vtable: *const IDxcUtilsVtbl,
+}
+
+/// `D3D12_SHADER_INPUT_BIND_DESC`, as `d3d12shader.h` lays it out.
+#[repr(C)]
+#[derive(Default)]
+struct ShaderInputBindDesc {
+    name: *const u8,
+    kind: u32,
+    bind_point: u32,
+    bind_count: u32,
+    flags: u32,
+    return_type: u32,
+    dimension: u32,
+    samples: u32,
+    space: u32,
+    id: u32,
+}
+
+/// The `ID3D12ShaderReflection` methods this crate calls, in the header's
+/// order: `GetDesc` then the two constant-buffer getters (never called, kept
+/// for the offsets) then `GetResourceBindingDesc`.
+#[repr(C)]
+struct ID3D12ShaderReflectionVtbl {
+    base: IUnknownVtbl,
+    get_desc: *const c_void,
+    get_constant_buffer_by_index: *const c_void,
+    get_constant_buffer_by_name: *const c_void,
+    get_resource_binding_desc: unsafe extern "system" fn(
+        *mut c_void,
+        u32,
+        *mut ShaderInputBindDesc,
+    ) -> Hresult,
+}
+
+#[repr(C)]
+struct ID3D12ShaderReflection {
+    vtable: *const ID3D12ShaderReflectionVtbl,
+}
+
+/// One resource a shader binds, as the reflection reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BoundResource {
+    /// The name the HLSL gave it.
+    pub name: String,
+    /// `D3D_SHADER_INPUT_TYPE`: 0 cbuffer, 2 texture, 3 sampler, 4+ UAV kinds.
+    pub kind: u32,
+    /// The register the resource binds at.
+    pub bind_point: u32,
+    /// The number of contiguous registers (1, or the array's size).
+    pub bind_count: u32,
+    /// `D3D_SIF_*` flags.
+    pub flags: u32,
+    /// The register space.
+    pub space: u32,
 }
 
 /// The `DxcCreateInstance` export's signature.
@@ -357,6 +432,21 @@ pub fn compile(source: &str, profile: &str, entry: &str) -> Result<Vec<u8>> {
     }
 }
 
+/// Reflects a compiled container with the shared compiler, loading the library
+/// on first use: the resources it binds, with the names, registers and spaces
+/// the compiler recorded - per stage, without reading the source.
+pub fn reflect(container: &[u8]) -> Result<Vec<BoundResource>> {
+    let compiler = COMPILER.get_or_init(|| {
+        find_library(LIBRARY_PATH.get().map(PathBuf::as_path))
+            .and_then(|path| Compiler::load(&path))
+            .map_err(|err| err.to_string())
+    });
+    match compiler {
+        Ok(compiler) => compiler.reflect(container),
+        Err(err) => bail!("{err}"),
+    }
+}
+
 /// A loaded DXC library.
 pub struct Compiler {
     /// Held so the library stays loaded for the compiler's lifetime.
@@ -405,8 +495,7 @@ impl Compiler {
     }
 
     /// Compiles one source for a profile and entry point, in process.
-    pub fn compile(&self, source: &str, profile: &str, entry: &str) -> Result<Vec<u8>> {
-        let mut compiler: *mut c_void = ptr::null_mut();
+    pub fn compile(&self, source: &str, profile: &str, entry: &str) -> Result<Vec<u8>> {        let mut compiler: *mut c_void = ptr::null_mut();
         let hr = unsafe {
             (self.create_instance)(&CLSID_DXC_COMPILER, &IID_IDXC_COMPILER3, &mut compiler)
         };
@@ -421,6 +510,72 @@ impl Compiler {
             ((*(*compiler).vtable).base.release)(compiler as *mut c_void);
         }
         result
+    }
+
+    /// The resources a compiled container binds, through the compiler's own
+    /// reflection (`IDxcUtils::CreateReflection`): per stage, names, kinds,
+    /// registers and spaces - the source the engine's tail lists derive from,
+    /// without reading the HLSL text.
+    pub fn reflect(&self, container: &[u8]) -> Result<Vec<BoundResource>> {
+        let mut utils: *mut c_void = ptr::null_mut();
+        let hr = unsafe { (self.create_instance)(&CLSID_DXC_UTILS, &IID_IDXC_UTILS, &mut utils) };
+        if hr < 0 || utils.is_null() {
+            bail!("DxcCreateInstance(IDxcUtils) failed ({hr:#010x})");
+        }
+        let utils = utils as *mut IDxcUtils;
+
+        // A container is raw binary: the encoding is 0, not a code page.
+        let buffer = DxcBuffer {
+            ptr: container.as_ptr() as *const c_void,
+            size: container.len(),
+            encoding: 0,
+        };
+        let mut reflection: *mut c_void = ptr::null_mut();
+        let hr = unsafe {
+            ((*(*utils).vtable).create_reflection)(
+                utils as *mut c_void,
+                &buffer,
+                &IID_ID3D12_SHADER_REFLECTION,
+                &mut reflection,
+            )
+        };
+        unsafe { ((*(*utils).vtable).base.release)(utils as *mut c_void) };
+        if hr < 0 || reflection.is_null() {
+            bail!("IDxcUtils::CreateReflection failed ({hr:#010x})");
+        }
+        let reflection = reflection as *mut ID3D12ShaderReflection;
+        let vtable = unsafe { (*reflection).vtable };
+
+        // The count lives in `D3D12_SHADER_DESC`, whose layout is ABI-sized;
+        // asking until the call fails avoids depending on it.
+        let mut bindings = Vec::new();
+        for index in 0..1024u32 {
+            let mut desc = ShaderInputBindDesc::default();
+            let hr = unsafe {
+                ((*vtable).get_resource_binding_desc)(reflection as *mut c_void, index, &mut desc)
+            };
+            if hr < 0 {
+                break;
+            }
+            let name = if desc.name.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(desc.name as *const i8) }
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            bindings.push(BoundResource {
+                name,
+                kind: desc.kind,
+                bind_point: desc.bind_point,
+                bind_count: desc.bind_count,
+                flags: desc.flags,
+                space: desc.space,
+            });
+        }
+
+        unsafe { ((*vtable).base.release)(reflection as *mut c_void) };
+        Ok(bindings)
     }
 
     unsafe fn compile_with(
