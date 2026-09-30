@@ -874,6 +874,9 @@ preamble's body).
    one to one with the groups and in the same order (that is what `group_starts`
    walks), so the file does not store them; the reader takes them by position,
    and a file whose contexts lack one keeps its own (the fallback).
+1b. ~~**The blocks' repeated heads** (~1 KB)~~ **done**: the tails' blocks share
+   four distinct heads, so they are a `block_heads` pool the diffs index rather
+   than a hex string per block. The file went 14409 -> 13384 bytes.
 2. ~~**The tails' remaining lists** (~9 KB)~~ **done**: they derive from the
    containers' own reflection. The containers are SM6 DXIL with no RDEF chunk
    (`SFI0, ISG1, OSG1, PSV0, STAT, HASH, DXIL`), but `lib/dxc` now calls

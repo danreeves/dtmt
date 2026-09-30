@@ -400,6 +400,10 @@ struct Text {
     /// Distinct compiled containers, referenced by `programs[].container`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     containers: Vec<Hex>,
+    /// The distinct bytes a block puts in front of the preamble body, which the
+    /// blocks' `head` indexes name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    block_heads: Vec<Hex>,
     /// Distinct program tails, referenced by `programs[].tail`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tails: Vec<TailText>,
@@ -628,9 +632,10 @@ enum BlockText {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BlockDiff {
-    /// The bytes before the body; absent when the block *is* the body.
+    /// The index of the bytes before the body in the file's shared head pool;
+    /// absent when the block *is* the body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    head: Option<Hex>,
+    head: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     patches: Vec<PatchText>,
 }
@@ -660,7 +665,7 @@ struct ProgramText {
 /// The block is the body with a per-program header in front and a few fields
 /// patched (the UI shader's blocks are a 0- or 4-byte header and one patched
 /// byte), so the diff is usually a few bytes against the 550-byte body.
-fn block_text(block: &[u8], preamble: &[u8]) -> BlockText {
+fn block_text(block: &[u8], preamble: &[u8], heads: &mut Vec<Hex>) -> BlockText {
     let body = preamble.get(12..).unwrap_or_default();
     if body.is_empty() || block.len() < body.len() || block.len() - body.len() > 64 {
         return BlockText::Hex(block.to_vec().into());
@@ -678,21 +683,34 @@ fn block_text(block: &[u8], preamble: &[u8]) -> BlockText {
     if 5 * patches.len() + header >= block.len() {
         return BlockText::Hex(block.to_vec().into());
     }
-    BlockText::Body(BlockDiff {
-        head: (header != 0).then(|| block[..header].to_vec().into()),
-        patches,
-    })
+    // The head goes into the file's shared pool: the tails repeat a handful of
+    // them.
+    let head = (header != 0).then(|| match heads.iter().position(|other| other.0 == block[..header])
+    {
+        Some(index) => index,
+        None => {
+            heads.push(block[..header].to_vec().into());
+            heads.len() - 1
+        }
+    });
+    BlockText::Body(BlockDiff { head, patches })
 }
 
 /// Reads a block written by [`block_text`].
-fn block_bytes(spec: &BlockText, preamble: &[u8]) -> Result<Vec<u8>> {
+fn block_bytes(spec: &BlockText, preamble: &[u8], heads: &[Hex]) -> Result<Vec<u8>> {
     match spec {
         BlockText::Hex(hex) => Ok(hex.0.clone()),
         BlockText::Body(diff) => {
             let body = preamble
                 .get(12..)
                 .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
-            let mut block = diff.head.clone().map(Hex::into_bytes).unwrap_or_default();
+            let mut block = match diff.head {
+                Some(index) => heads
+                    .get(index)
+                    .map(|head| head.0.clone())
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a block head is out of range"))?,
+                None => Vec::new(),
+            };
             let header_len = block.len();
             block.extend_from_slice(body);
             for patch in &diff.patches {
@@ -971,7 +989,11 @@ impl EngineData {
                 }
             };
             if let Some(block) = &tail.block {
-                bytes.extend_from_slice(&block_bytes(block, &engine_data.device_preamble)?);
+                bytes.extend_from_slice(&block_bytes(
+                    block,
+                    &engine_data.device_preamble,
+                    &text.block_heads,
+                )?);
             }
             engine_data.tails.push(bytes);
         }
@@ -1105,6 +1127,7 @@ impl EngineData {
                 }
             }
         }
+        let mut block_heads: Vec<Hex> = Vec::new();
         let tails: Vec<TailText> = tails
             .iter()
             .map(|tail| {
@@ -1128,8 +1151,9 @@ impl EngineData {
                 match (split, lists) {
                     (true, Some(lists)) => TailText {
                         lists: None,
-                        block: (!lists.block.is_empty())
-                            .then(|| block_text(&lists.block, &self.device_preamble)),
+                        block: (!lists.block.is_empty()).then(|| {
+                            block_text(&lists.block, &self.device_preamble, &mut block_heads)
+                        }),
                     },
                     _ => TailText {
                         lists: Some(ListsText::Raw(tail.to_vec().into())),
@@ -1202,6 +1226,7 @@ impl EngineData {
                 .then(|| self.group_data.clone().into()),
             group_template,
             containers: containers.iter().map(|bytes| Hex((*bytes).clone())).collect(),
+            block_heads,
             tails,
             programs,
         }
@@ -1801,8 +1826,9 @@ mod tests {
         let mut headed = vec![2u8, 0, 0, 0];
         headed.extend_from_slice(&body);
         for block in [body.clone(), patched, headed] {
-            let spec = block_text(&block, &preamble);
-            let parsed = block_bytes(&spec, &preamble).unwrap();
+            let mut heads = Vec::new();
+            let spec = block_text(&block, &preamble, &mut heads);
+            let parsed = block_bytes(&spec, &preamble, &heads).unwrap();
             assert_eq!(parsed, block, "spec {spec:?}");
         }
     }
