@@ -1083,6 +1083,17 @@ section served the shipping programs for a different permutation. Each
 permutation therefore needs its own compiled programs: the remaining half is
 compiling the code blocks per variant (the node rules) and pairing them.
 
+**The declaration drives the contexts (2026-09-30, last).** The engine data no
+longer names the variants. `EngineData` still accepts a `permutations` block for
+a rebuilt/foreign section, but when a material's declaration is available the
+build *derives* the block: the `.shader_node`'s compile jobs grouped by context,
+each query the job's macro set, and `generate` hashes those macros by the pinned
+rule. The token belongs in the declaration, so the UI base's pass now writes
+`defines=["SINGLE"]` in its `.shader_node`; the engine data carries no contexts,
+no `permutations` and no subject query. The build is **byte-identical** to the
+carried version (10024-byte file, the 20-byte `default` context with
+`6FA3FCCF`), and the game material-sets in 16 s - a strict replacement.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE

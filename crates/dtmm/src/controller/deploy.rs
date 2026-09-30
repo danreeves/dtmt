@@ -64,7 +64,10 @@ mod hash_list {
     where
         S: Serializer,
     {
-        let words: Vec<String> = hashes.iter().map(|hash| format!("0x{hash:x}")).collect();
+        // No `0x` prefix: the lexer would read that as the integer and leave
+        // the rest for the next token (bare words that begin with a letter,
+        // exactly like the bundle names, lex as strings).
+        let words: Vec<String> = hashes.iter().map(|hash| format!("{hash:x}")).collect();
         words.serialize(serializer)
     }
 
@@ -82,14 +85,21 @@ mod hash_list {
             values
                 .into_iter()
                 .map(|value| match value {
-                    Value::Text(text) => text
-                        .strip_prefix("0x")
-                        .map_or_else(
-                            || u64::from_str_radix(&text, 10),
-                            |digits| u64::from_str_radix(digits, 16),
-                        )
-                        .map_err(serde::de::Error::custom),
-                    Value::Number(number) => u64::try_from(number).map_err(serde::de::Error::custom),
+                    Value::Text(text) => {
+                        // A hex word and a decimal one both land here; a
+                        // hash written as bare decimal digits is a legacy
+                        // write, so hex wins only when letters are present.
+                        let text = text.strip_prefix("0x").unwrap_or(&text);
+                        let radix = if text.bytes().any(|b| (b'a'..=b'f').contains(&b)) {
+                            16
+                        } else {
+                            10
+                        };
+                        u64::from_str_radix(text, radix).map_err(serde::de::Error::custom)
+                    }
+                    Value::Number(number) => {
+                        u64::from_str_radix(&number.to_string(), 10).map_err(serde::de::Error::custom)
+                    }
                 })
                 .collect()
         })

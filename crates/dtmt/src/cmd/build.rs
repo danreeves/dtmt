@@ -15,8 +15,8 @@ use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
 use sdk::filetype::shader_graph::{Evaluation, Graph, NodeDef};
-use sdk::filetype::shader_node::{ShaderNode, STAGES, StageResources, entry_for, profile_for};
-use sdk::filetype::shader_engine_data::EngineData;
+use sdk::filetype::shader_node::{CompileJob, ShaderNode, STAGES, StageResources, entry_for, profile_for};
+use sdk::filetype::shader_engine_data::{EngineData, PermutationPlan};
 use sdk::filetype::shader_source::ShaderSource;
 use sdk::murmur::IdString64;
 use sdk::{Bundle, BundleFile, BundleFileType};
@@ -349,9 +349,15 @@ async fn compile_declaration(
     }
     let job = &jobs[0];
 
-    let libraries = load_libraries(&cfg.dir)?;
+    // The permutations the engine keys this declaration by: one query per
+    // compile job, grouped by context, in declaration order. The engine data's
+    // contexts are then derived from these rather than carried.
+    let mut overrides = ShaderOverrides {
+        permutations: permutation_plans(&jobs),
+        ..ShaderOverrides::default()
+    };
 
-    let mut overrides = ShaderOverrides::default();
+    let libraries = load_libraries(&cfg.dir)?;
     for stage in STAGES {
         let Some(profile) = profile_for(stage) else {
             continue;
@@ -398,6 +404,32 @@ async fn compile_declaration(
     }
 
     Ok(overrides)
+}
+
+/// The permutation plans a declaration's compile jobs stand for: one plan per
+/// context, its queries the macro sets of the jobs in that context, in order.
+/// The engine keys its variants by `<material path>:<macros sorted>:PLATFORM_…
+/// :RENDERER_…`, so this is what the engine data's contexts derive their ids
+/// from.
+fn permutation_plans(jobs: &[CompileJob]) -> Vec<PermutationPlan> {
+    let mut plans: Vec<PermutationPlan> = Vec::new();
+    for job in jobs {
+        let plan = match plans.iter_mut().find(|plan| plan.context == job.context) {
+            Some(plan) => plan,
+            None => {
+                plans.push(PermutationPlan {
+                    context: job.context.clone(),
+                    queries: Vec::new(),
+                });
+                plans.last_mut().expect("just pushed")
+            }
+        };
+        let tokens: Vec<String> = job.macros.iter().map(|macro_def| macro_def.name.clone()).collect();
+        if !plan.queries.contains(&tokens) {
+            plan.queries.push(tokens);
+        }
+    }
+    plans
 }
 
 /// Every `.shader_source` under the mod root, parsed as a library, in path
@@ -552,7 +584,7 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                             engine_data_path.display()
                         )
                     })?;
-                let engine_data =
+                let mut engine_data =
                     EngineData::from_text(&engine_data_text).wrap_err_with(|| {
                         format!(
                             "Failed to parse engine data '{}'",
@@ -561,6 +593,13 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     })?;
 
                 let overrides = compile_shader_overrides(&path, cfg).await?.unwrap_or_default();
+
+                // The contexts' ids come from the declaration's permutations
+                // when the engine data does not carry its own: the file names
+                // the shader, the source names the variants.
+                if engine_data.permutations.is_none() && !overrides.permutations.is_empty() {
+                    engine_data.permutations = Some(overrides.permutations.clone());
+                }
 
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();

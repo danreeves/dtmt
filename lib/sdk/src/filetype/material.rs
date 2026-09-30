@@ -1218,6 +1218,11 @@ pub struct ShaderOverrides {
     /// the engine data can derive the tail lists from the source instead of
     /// carrying them. Empty for a caller that has no source.
     pub resources: std::collections::HashMap<super::shader::Stage, super::shader_node::StageResources>,
+    /// The permutations the declaration asks the engine to key: one plan per
+    /// context, each listing the macro sets its queries stand for. The engine
+    /// data derives its query ids from these instead of carrying them, so a
+    /// declaration that names a define moves the id with it.
+    pub permutations: Vec<super::shader_engine_data::PermutationPlan>,
 }
 
 impl ShaderOverrides {
