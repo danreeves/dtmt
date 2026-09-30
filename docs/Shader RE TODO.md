@@ -857,6 +857,52 @@ the interface, the mask the channels), the vertex side is constant, and the 48
 pixel programs decompose 12 + 11 + 24 + 1. The 36 groups equal 12 + 11 + 6 + 6
 + 1, which is suggestive but not a rule yet.
 
+### Deleting the engine data: the map
+
+The file goes away when every field is an SDK constant or derived from the
+sources. The state, field by field:
+
+**Already out**: containers (compiled from the sources), the dependency (the
+engine's one library), conditions (dropped, verified in game), the section's
+identity word (murmur32 of the material path), the constant-buffer *entries*
+(the names are carried for now), the tail *inputs* (rebuilt from the compiled
+container's signature), the always-empty lists 0/1/4, the blocks' bodies (the
+preamble's body).
+
+**Derivable now, largest first**:
+
+1. `groups[].query` (~0.8 KB) - pure duplication: the contexts' query ids are
+   one to one with the groups and in the same order (that is what
+   `group_starts` walks).
+2. The tails' remaining lists (~9 KB of the ~11 KB): `samplers` (one record per
+   pixel tail) from the source's `SamplerState ... : register(sN, spaceM)`
+   declarations plus the engine's static-sampler vocabulary; `textures` and
+   `buffers` from the source's array declarations and registers plus the
+   engine's vocabulary (`global_texture2D`, `global_feedback_buffers` - both
+   grounded names); `engine` (list 2) from the declaration's `samplers` with
+   `source = "resource_set"`; and the cbuffer *names* from the source's own
+   `cbuffer` declarations (the build assembles them; `tail_build` proves the
+   mapping).
+3. `group_template` (~6.7 KB): `materials` from the `.material`'s bindings plus
+   the engine's standard rows (decoded: the 7 rows over `c_per_object`); the
+   framing parts (heads/betweens/mids/tails, ~1 KB) from the shader's
+   descriptors plus the tables' own headers and extents (`build` already
+   rewrites the count words); the prefix is nearly constant.
+4. `preamble` (~0.4 KB): the stream is the material's channel list (measured
+   164/400 exact plus a fixed engine vocabulary); the config records are per
+   shader but have only six distinct index sets across 489 preambles.
+5. The blocks' per-program bytes: the head plus the mask byte (a channel set
+   over `01/02/04/08/0F`), whose per-pass source is the open correlation.
+
+**Blocking deletion** (all structural - the shader's compiled shape):
+
+- the **contexts** and the **group and program order**: which queries exist,
+  which group each program belongs to, and the order of both. The declaration's
+  contexts x passes x conditions must produce them (the multi-job mapping);
+- the **mask byte** and the blocks' heads, per program;
+- **`w2`** (the preamble head's third word; the leading hypothesis is the pass
+  count).
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
