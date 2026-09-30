@@ -1064,6 +1064,25 @@ shipped two programs for every permutation. Next: bisect the 32 candidates to
 the one the engine accepted (halving runs), then enumerate the permutation sets
 (from the node rules) and pair each with its own compiled programs.
 
+**The winner, and the exact key form (same day, later).** That assert named the
+id the engine was building a pipeline for, and it is exactly our computed one:
+
+`high32(murmur64a("materials/mods/snoopymod/ui_default_base:SINGLE:PLATFORM_WIN32:RENDERER_D3D12")) = 6FA3FCCF`
+
+So the accepted key is: the lowercased shader/material path, then the
+define/render-state tokens upper-cased and sorted (`SINGLE` - the same token the
+engine's own `SHADER(...)` dump carried), then `PLATFORM_WIN32:RENDERER_D3D12`;
+there is no context token, and the id is the plain high 32 bits (not
+byte-reversed). The search over the shipped 36 ids found nothing, which is
+consistent: those were compiled for another material with its own define sets.
+The ids that matter are the ones the *engine demands* for our shader, and those
+are enumerable - the `SHADER(...)` complaints and this assert name them.
+
+The engine then failed the pipeline (`E_INVALIDARG` on that same id) because the
+section served the shipping programs for a different permutation. Each
+permutation therefore needs its own compiled programs: the remaining half is
+compiling the code blocks per variant (the node rules) and pairing them.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
