@@ -1089,10 +1089,23 @@ a rebuilt/foreign section, but when a material's declaration is available the
 build *derives* the block: the `.shader_node`'s compile jobs grouped by context,
 each query the job's macro set, and `generate` hashes those macros by the pinned
 rule. The token belongs in the declaration, so the UI base's pass now writes
-`defines=["SINGLE"]` in its `.shader_node`; the engine data carries no contexts,
-no `permutations` and no subject query. The build is **byte-identical** to the
-carried version (10024-byte file, the 20-byte `default` context with
-`6FA3FCCF`), and the game material-sets in 16 s - a strict replacement.
+`defines=["SINGLE"]` in its `.shader_node` (the VT2 convention: passes carry
+`defines`, e.g. `MOTION_BLUR`/`SUPPORTS_FOG`/`CALCULATE_LIGHTING`); the engine
+data carries no contexts, no `permutations` and no subject query. The build is
+**byte-identical** to the carried version (10024-byte file, the 20-byte
+`default` context with `6FA3FCCF`), and the game material-sets in 16 s - a strict
+replacement.
+
+**The group data's first word (2026-09-30, later).** Our built section's group
+data starts `24 00 00 00` and `Section::check` reads that as the group count
+(rejecting the section: "the contexts carry 1 queries and the group data has 36
+groups") while the game renders it. `GroupTemplate.prefix` is exactly those four
+bytes - the shipped UI base's group count (30 + 6 queries), which the reduction
+to one group left stale. The engine finds the group through the context's query
+id, not this word, so the reduction is tolerated. A **derived** template has to
+write it (either the group count, or confirm the engine ignores it), and
+`Section::check` has to stop treating it as a hard equality for reduced sections
+before `group_parts`/`group_build` can run on them.
 
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
