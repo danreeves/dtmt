@@ -644,9 +644,24 @@ program-to-group mapping is not decoded). [48 sections: 2569 cbuffer entries,
 2569 match; word 4 is 1 and word 5 is 0 in every entry, and word 3 is the
 register, 0..5.] So a tail's cbuffer list is fully specified from the shader's
 own cbuffer declarations (per stage, in register order - which the build has),
-the group data's descriptor list and tables, and the engine table. This is the
-next thing to drop from the engine data file: the only input not already there
-is the per-stage declaration list, which the build assembles.
+the group data's descriptor list and tables, and the engine table. `tail_build`
+builds it and checks it against the shipped tails: **144/144 entries on the UI
+base's section** (names and registers parsed out of `ui_default_base.shader_source`,
+sizes 240 and 1792 from the two tables). This is the next thing to drop from the
+engine data file: the only input not already there is the per-stage declaration
+list, which the build assembles.
+
+### The block's mask byte, first table
+
+`tail_build` prints it: the byte a block patches into the preamble body, from the
+UI base's shipped section. 40 of the 48 pixel programs patch it, the other 8
+leave the body's 0; every vertex program leaves it. The values are 01, 02, 04,
+08 and 0F - single bits and all four - in a pattern: 01 01 02 02 04 04 08 08 0F
+0F, then two programs with 0, then the same, then 01 02 04 08 0F twice with one
+program each. The note's earlier "07" does not occur in this section. So the byte
+is a per-program channel set over a small vocabulary; which program gets which
+set is the next correlation, with the declaration's passes and their conditions
+the obvious candidates.
 
 The other cbuffers a shader's tails name are its own, and they resolve as
 shader-source names: `c_billboard`, `c_material_exports`, `lighting_data`,
