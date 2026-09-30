@@ -658,11 +658,12 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
 
                 // The attribute tables: the declaration names the material's
                 // variants (permutations) and its own record table (the
-                // material table), so neither is carried.
-                if engine_data.permutations.is_none() {
+                // material table). A file that carries its own contexts keeps
+                // them: only a declaration-only file is derived.
+                if engine_data.permutations.is_none() && engine_data.contexts.is_empty() {
                     if !overrides.permutations.is_empty() {
                         engine_data.permutations = Some(overrides.permutations.clone());
-                    } else if engine_data.contexts.is_empty() && engine_data.context_count > 0 {
+                    } else if engine_data.context_count > 0 {
                         eyre::bail!(
                             "engine data '{}' names {} context(s) but carries neither a \
                              `permutations` block nor a context blob, and its declaration \

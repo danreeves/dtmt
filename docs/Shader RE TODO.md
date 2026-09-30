@@ -1097,6 +1097,34 @@ section served the shipping programs for a different permutation. Each
 permutation therefore needs its own compiled programs: the remaining half is
 compiling the code blocks per variant (the node rules) and pairing them.
 
+### The render regression (2026-10-01)
+
+A build that rendered is now crashing, and it is not the derivations. The exact
+`ui_min_single.engine_data` that drew the tint and wave for **104 s** at 16:09
+(rebuilt, deployed and launched in the current tree) crashes **~0.8 s** after
+`material set`, in `ShaderTemplate::initialize` - as does every build since
+~16:58. `Y` and the group node are **load-bearing**: zeroing the descriptor `Y`
+fields or setting the node to an arbitrary `0x12345678` both crash the same way,
+and setting the node *equal to* the context query crashes earlier, at
+`dispatch_loadtime`. So a section needs the shipped `Y` `{0, 5, 10}` and the
+shipped node `28B0AB00`; neither is derivable yet.
+
+Steam revalidation (`steam://validate/1361210`) restored the pristine files
+(`bundle_database.data` 16421204, the boot bundle, `settings_common.ini`
+`boot_script = scripts/main`), and a clean deploy from that state (db ->
+16481012) **still crashes** the 16:09 engine data. So the game files are not the
+cause; the change is in the toolchain or the deployment. Suspects: dtmt's
+compiled programs (the build still says "Generated", 9904 bytes) or dtmm's deploy
+writing the patched `packages/boot` bundle into the deployment. Next: a bisect
+over the dtmt/dtmm commits (`8758c94` and earlier vs now) with
+`ui_min_single.engine_data`, reading whether `ShaderTemplate::initialize`
+completes.
+
+Caution: every "material set" success reported between 16:58 and now is the Lua
+assignment only - the render itself was crashing. The in-game verdicts for the
+derived contexts, prefix and material table therefore need re-running once the
+regression is cleared.
+
 **The framing is decoded; `Y` is the blocker (2026-09-30, later).** The group
 head reads `{group count, library hash, 0x130, descriptor count, descriptors…,
 0x02, material table count}`. Everything but two fields is derivable: the
