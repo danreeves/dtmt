@@ -818,6 +818,43 @@ The per-group program counts are also a lead on the program-to-group mapping
 programs among them (e.g. `eb09dd77` 26/26/2/2/16/16, `3F08AC44` 7/7/1/2/2),
 though identical lists make it ambiguous.
 
+### Notes from RainbowFlame's reverse engineering (2026-09-30)
+
+[RainbowFlame's RE
+diary](https://github.com/Vansinnet/RainbowFlame/blob/main/REVERSE_ENGINEERING.md)
+is a third, independent extraction, of the particle/material/shader chain. What
+it grounds or confirms:
+
+- **The header's field names**: `version`, `opaque` (their name for what we call
+  `material_hash`), `contexts_offset`/`context_count`, `conditions_offset`,
+  `default_data_offset`, `dependency_offset`/`dependency_count`,
+  `group_data_offset`/`size`, `device_data_offset`/`size` - word for word our
+  layout. (They read section version 43 on their materials; our current ones are
+  60-62, so the version has a range.)
+- **The device framing**: `u32 envelope` (observed 1), `u32 frame_length`, the
+  frame, `u32 metadata_kind` (observed 5), `u32 decoded length`, `u64 frame_key`,
+  then the metadata tables and opaque state - ours exactly.
+- **The frame key is `MurmurHash64A(frame, seed=0)`** over the whole frame
+  (`8c 06`, the quantum header and the payload; the envelope and metadata
+  excluded) - what `encode_frame`/`generate` compute. [their eight records]
+- **The material's trailing section** is their "following section"; ours is
+  `unk2_data`, a candidate for a better name.
+- **A profile observation, not a law**: their 32-program impact shader has eight
+  resource groups with the colour pixel shaders at indices 1, 5, 9, ... - one
+  quad per group - and the flamer's 48-program parent has twelve colour pixels,
+  again every fourth. `program_census` over 41 sampled sections says the ratio
+  is not universal: 4-per-group 13 times, 2-per-group 10, 8-per-group 4, then
+  1.75-9; V = P in almost all (exceptions: `0f4688a9` 14/18, `25b4747f` 4/5).
+  The UI base is 2 contexts, 36 queries, 96 programs - 48 passes x 2 contexts
+  fits - so "programs = passes x contexts" is the better lead, with the groups
+  coming from elsewhere.
+- **The material buffer carries the descriptor indices**: "the pixel shader
+  obtains descriptor indices from material data at runtime", i.e. the
+  `c_per_object` rows our `materials` table decodes to (the `texture_map` slot
+  at 0/4/16).
+- Their shader clock is the viewport constant at byte 1440 (`c90.x`) - the
+  `global_viewport.time` our UI base's source also reads at 1440.
+
 ### The records' binding fields, corrected against the naming pass
 
 The resource record's word order, as the tail dumps and the working naming pass
