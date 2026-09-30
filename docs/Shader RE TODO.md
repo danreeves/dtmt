@@ -564,10 +564,10 @@ where the readers are and refuses where they are not instead of guessing.
 Wired into the engine data and `generate`: `EngineData` carries the template
 (the `group_template` table: the prefix, the engine's table only when it is not
 the toolchain's, the deduplicated material tables, the deduplicated group parts -
-a group's query id moves to its `groups` entry because the contexts carry it -
-and one entry per group) instead of the whole `group_data`, and `generate`
-rebuilds the group data from it. A section whose groups do not walk keeps the
-`group_data` blob, so nothing regresses.
+a group's query id is not stored, the contexts carry it one to one and in the
+same order - and one entry per group) instead of the whole `group_data`, and
+`generate` rebuilds the group data from it. A section whose groups do not walk
+keeps the `group_data` blob, so nothing regresses.
 
 The text form is the Stingray source dialect (`key = value`, `{}` tables, `[]`
 arrays, `"quoted"` hex blobs), the same dialect `.shader_node`, `.shader_source`
@@ -871,9 +871,10 @@ preamble's body).
 
 **Derivable now, largest first**:
 
-1. `groups[].query` (~0.8 KB) - pure duplication: the contexts' query ids are
-   one to one with the groups and in the same order (that is what
-   `group_starts` walks).
+1. ~~**`groups[].query`** (~0.9 KB)~~ **done**: the contexts carry the query ids
+   one to one with the groups and in the same order (that is what `group_starts`
+   walks), so the file does not store them; the reader takes them by position,
+   and a file whose contexts lack one keeps its own (the fallback).
 2. The tails' remaining lists (~9 KB of the ~11 KB): `samplers` (one record per
    pixel tail) from the source's `SamplerState ... : register(sN, spaceM)`
    declarations plus the engine's static-sampler vocabulary; `textures` and

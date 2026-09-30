@@ -235,6 +235,11 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   from the compiled container's signature (and refuses a container without one).
   The UI base's vertex tail is `lists = {}`. snoopy-mod's file went
   23260 -> 23007 bytes and **every built asset is byte-identical**. [one build]
+- **A group's query id comes from the contexts** (2026-09-30): the contexts
+  carry the query ids one to one with the groups, in the same order, so the file
+  does not store them; the reader takes them by position and a file whose
+  contexts lack one keeps its own. The UI base's file went 23007 -> 22107 bytes
+  and **every built asset is byte-identical**. [one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An

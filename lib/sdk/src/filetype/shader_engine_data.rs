@@ -80,6 +80,28 @@ fn table_size(records: &[Record]) -> u32 {
     end.div_ceil(16) * 16
 }
 
+/// The query ids a contexts region carries, in order: each context is
+/// `{u32 name, u32 word, u32 count}` followed by `count` `{u32 query, u32
+/// conditions}` records.
+fn context_queries(contexts: &[u8]) -> Result<Vec<u32>> {
+    let mut queries = Vec::new();
+    let mut at = 0usize;
+    while at < contexts.len() {
+        let head = contexts
+            .get(at..at + 12)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a context record is short"))?;
+        let count = u32::from_le_bytes(head[8..12].try_into().unwrap()) as usize;
+        let records = contexts
+            .get(at + 12..at + 12 + count * 8)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a context's queries are short"))?;
+        for record in records.chunks_exact(8) {
+            queries.push(u32::from_le_bytes(record[..4].try_into().unwrap()));
+        }
+        at += 12 + count * 8;
+    }
+    Ok(queries)
+}
+
 /// Builds a tail's constant-buffer list from the names it carries: each entry
 /// is `{name, descriptor index, size, register, 1, 0}` with the index and size
 /// read from the group template. Every group must agree on both, because the
@@ -377,11 +399,13 @@ struct GroupTemplateText {
     groups: Vec<GroupText>,
 }
 
-/// One group of the template: its query id and the parts it uses.
+/// One group of the template: its query id (absent when the contexts carry it -
+/// they do, one to one and in the same order) and the parts it uses.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupText {
-    query: Hex,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    query: Option<Hex>,
     #[serde(default)]
     head: usize,
     #[serde(default)]
@@ -809,10 +833,24 @@ impl EngineData {
             };
             let mut groups = Vec::with_capacity(template.groups.len());
             let mut tables = Vec::with_capacity(template.groups.len());
-            for group in &template.groups {
-                // A group starts with its query id, which the contexts also
-                // carry, so the head stores only what follows it.
-                let mut head = group.query.0.clone();
+            let queries = context_queries(&engine_data.contexts)?;
+            for (index, group) in template.groups.iter().enumerate() {
+                // A group starts with its query id: the file's own, or the
+                // contexts' by position (they are one to one, same order), so
+                // the head stores only what follows it.
+                let query = match &group.query {
+                    Some(query) => query.0.clone(),
+                    None => queries
+                        .get(index)
+                        .map(|query| query.to_le_bytes().to_vec())
+                        .ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "group {index} has no query and the contexts carry only {}",
+                                queries.len()
+                            )
+                        })?,
+                };
+                let mut head = query;
                 head.extend_from_slice(&part(&template.heads, group.head, "head")?);
                 groups.push(GroupParts {
                     head,
@@ -943,14 +981,16 @@ impl EngineData {
             let mut mids: Vec<Hex> = Vec::new();
             let mut tails: Vec<Hex> = Vec::new();
             let mut groups = Vec::with_capacity(template.groups.len());
+            let context_queries = context_queries(&self.contexts).unwrap_or_default();
             for (index, parts) in template.groups.iter().enumerate() {
-                let query = parts
-                    .head
-                    .get(..4)
-                    .map(|bytes| Hex(bytes.to_vec()))
-                    .unwrap_or_default();
+                // The query id is the contexts' own, one per group and in the
+                // same order, so it is only written when they do not carry it.
+                let head_query = parts.head.get(..4).unwrap_or_default();
+                let derived = context_queries
+                    .get(index)
+                    .is_some_and(|query| head_query == query.to_le_bytes().as_slice());
                 groups.push(GroupText {
-                    query,
+                    query: (!derived).then(|| Hex(head_query.to_vec())),
                     head: dedup_index(&mut heads, parts.head.get(4..).unwrap_or_default().to_vec()),
                     between: dedup_index(&mut betweens, parts.between.clone()),
                     mid: dedup_index(&mut mids, parts.mid.clone()),
@@ -1494,6 +1534,64 @@ mod tests {
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.programs.len(), 1);
         assert_eq!(parsed.programs[0].1, tail);
+    }
+
+    #[test]
+    fn a_group_query_comes_from_the_contexts() {
+        // The contexts carry the query ids, one per group and in the same
+        // order, so the file does not store them.
+        use crate::filetype::group_data::{GroupParts, GroupTemplate};
+
+        // Two contexts, three queries: {name, word, count} then {query,
+        // conditions} per query.
+        let mut contexts = Vec::new();
+        for (name, queries) in [
+            (0xAAAA_AAAAu32, vec![0x1111_1111u32, 0x2222_2222]),
+            (0xBBBB_BBBB, vec![0x3333_3333]),
+        ] {
+            contexts.extend_from_slice(&name.to_le_bytes());
+            contexts.extend_from_slice(&[0u8; 4]);
+            contexts.extend_from_slice(&(queries.len() as u32).to_le_bytes());
+            for query in queries {
+                contexts.extend_from_slice(&query.to_le_bytes());
+                contexts.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+
+        let group = |query: u32| GroupParts {
+            head: {
+                let mut head = query.to_le_bytes().to_vec();
+                head.extend_from_slice(&[0u8; 8]); // the header word and a zero count
+                head
+            },
+            material_first: true,
+            between: Vec::new(),
+            mid: Vec::new(),
+            tail: Vec::new(),
+        };
+        let template = GroupTemplate {
+            prefix: 1u32.to_le_bytes().to_vec(),
+            groups: vec![group(0x1111_1111), group(0x2222_2222), group(0x3333_3333)],
+            engine: Vec::new(),
+        };
+
+        let mut engine_data = empty_engine_data();
+        engine_data.contexts = contexts;
+        engine_data.group_template = Some(template);
+        engine_data.material_tables = vec![Vec::new(); 3];
+
+        let text = engine_data.to_text();
+        assert!(!text.contains("query = "), "{text}");
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        let template = parsed.group_template.unwrap();
+        let queries: Vec<u32> = template
+            .groups
+            .iter()
+            .map(|group| u32::from_le_bytes(group.head[..4].try_into().unwrap()))
+            .collect();
+        assert_eq!(queries, vec![0x1111_1111, 0x2222_2222, 0x3333_3333]);
+        assert_eq!(parsed.material_tables.len(), 3);
     }
 
     #[test]
