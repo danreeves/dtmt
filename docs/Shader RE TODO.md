@@ -638,6 +638,16 @@ descriptor (`global_viewport`), the size from the table's records - the largest
 UI base's source (`e3370cb2107d8aca`) all 144 entries match, including
 `global_viewport`'s 1788 rounded to 1792.
 
+Its index word follows the resource records' rule: word 1 is the cbuffer's index
+in its group's descriptor list (matched against every group, since the
+program-to-group mapping is not decoded). [48 sections: 2569 cbuffer entries,
+2569 match; word 4 is 1 and word 5 is 0 in every entry, and word 3 is the
+register, 0..5.] So a tail's cbuffer list is fully specified from the shader's
+own cbuffer declarations (per stage, in register order - which the build has),
+the group data's descriptor list and tables, and the engine table. This is the
+next thing to drop from the engine data file: the only input not already there
+is the per-stage declaration list, which the build assembles.
+
 The other cbuffers a shader's tails name are its own, and they resolve as
 shader-source names: `c_billboard`, `c_material_exports`, `lighting_data`,
 `c_depth_only` - the VT2 reference's "cbuffers are declared in HLSL inside the

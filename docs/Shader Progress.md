@@ -200,6 +200,16 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   byte-identical**. The dialect's tall layout (a table field or array element
   per line) costs bytes - 15605 to 24189 on the UI base's file - which the
   derivations take back. [one conversion, one build]
+- **The tails' cbuffer lists are fully specified** (2026-09-30): an entry is
+  `{name, descriptor index, size, register, 1, 0}` - the index follows the
+  resource records' rule (word 1 = the cbuffer's position in its group's
+  descriptor list), the size comes from the group data's table or the engine
+  table, the register is its position in the source's declaration order, and
+  1/0 are constant. [48 sections: 2569 entries, 2569 match the index rule; word
+  4 is 1 and word 5 is 0 in every entry; `tail_sources` 144/144 on the UI base
+  for the sizes] The remaining input is the per-stage `cbuffer` declaration
+  list, which `dtmt` assembles - so the next removal from `.engine_data` is the
+  cbuffer bytes of each tail.
 - **The section's identity word is derived** (2026-09-30): the header's second
   word (was `opaque`, now `material_hash` - a working name) is murmur32 of the
   owning material's resource path (UI base: `439A40FC` =
