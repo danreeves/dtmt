@@ -658,6 +658,17 @@ engine's own keeps the whole bytes in `lists` (no `cbuffers` field, the carry
 form), and a file that names them without a template is refused. snoopy-mod's
 file went **24169 -> 23260 bytes** and the build is byte-identical.
 
+**The lists are by role.** A tail's lists are written as a table - `engine`
+(list 2), `textures` (3), `buffers` (5), `samplers` (6), `sampler_arrays` (8) -
+each record one hex string, and the lists that are always empty (0, 1, 4) and
+the **inputs** (7) are not stored at all: the reader writes their zero counts
+and the build rebuilds the inputs from the compiled container's signature - a
+container with no signature is refused rather than written with no inputs. A
+region the reader cannot split is carried as raw hex (the carry form). The UI
+base's vertex tail is therefore `lists = {}` and its pixel tails carry only
+`textures`/`buffers`/`samplers`/`sampler_arrays`. snoopy-mod's file went
+**23260 -> 23007 bytes** and the build is byte-identical.
+
 ### The block's mask byte, first table
 
 `tail_build` prints it: the byte a block patches into the preamble body, from the

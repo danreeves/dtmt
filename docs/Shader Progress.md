@@ -228,6 +228,13 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   and a file that names cbuffers without a template is refused. snoopy-mod's
   file went 24169 -> 23260 bytes and **every built asset is byte-identical**,
   matching the in-game-verified build. [one build]
+- **The tail lists are by role, the inputs derived** (2026-09-30): a tail writes
+  `lists = { engine = [...] textures = [...] buffers = [...] samplers = [...]
+  sampler_arrays = [...] }`, one hex record per entry; the always-empty lists
+  (0, 1, 4) and the inputs (7) are not stored - the build rebuilds the inputs
+  from the compiled container's signature (and refuses a container without one).
+  The UI base's vertex tail is `lists = {}`. snoopy-mod's file went
+  23260 -> 23007 bytes and **every built asset is byte-identical**. [one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An

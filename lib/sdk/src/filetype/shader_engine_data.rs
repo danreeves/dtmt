@@ -396,8 +396,8 @@ struct GroupText {
     material_first: bool,
 }
 
-/// One distinct program tail: the constant buffers it names, the bytes that
-/// follow them, and the block that closes the tail.
+/// One distinct program tail: the constant buffers it names, its lists and the
+/// block that closes the tail.
 ///
 /// The constant-buffer list is stored as names (murmur32 hashes) when every one
 /// of them is the engine's own - `c_per_object` or `global_viewport` - and the
@@ -409,9 +409,102 @@ struct GroupText {
 struct TailText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cbuffers: Option<Vec<Hex>>,
-    lists: Hex,
+    lists: ListsText,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     block: Option<BlockText>,
+}
+
+/// A tail's lists: by role, or the raw bytes of the whole region for a tail
+/// this reader cannot split.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ListsText {
+    Roles(RoleLists),
+    Raw(Hex),
+}
+
+/// The tail's lists by role, one record per hex string (the record's words,
+/// little-endian).
+///
+/// The lists that are always empty in every sample (0, 1 and 4) and the input
+/// list (7) are not stored at all: the reader writes their empty counts and the
+/// build rebuilds the inputs from the compiled container's signature.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoleLists {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    engine: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    textures: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    buffers: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    samplers: Vec<Hex>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sampler_arrays: Vec<Hex>,
+}
+
+/// One list record as hex: its words, little-endian.
+fn words_hex(words: &[u32]) -> Hex {
+    let mut bytes = Vec::with_capacity(words.len() * 4);
+    for word in words {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    Hex(bytes)
+}
+
+/// Reads a list record of `size` words.
+fn words_from_hex(hex: &Hex, size: usize) -> Result<Vec<u32>> {
+    if hex.0.len() != size * 4 {
+        bail!("a list record needs {} bytes, got {}", size * 4, hex.0.len());
+    }
+    Ok(hex
+        .0
+        .chunks(4)
+        .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
+        .collect())
+}
+
+/// The roles of a parsed lists region. The inputs (list 7) are dropped: they
+/// are rebuilt from the container at build time.
+fn lists_text(lists: &shader::TailLists) -> RoleLists {
+    let role = |index: usize| -> Vec<Hex> {
+        lists
+            .list(index)
+            .iter()
+            .map(|record| words_hex(record))
+            .collect()
+    };
+    RoleLists {
+        engine: role(2),
+        textures: role(3),
+        buffers: role(5),
+        samplers: role(6),
+        sampler_arrays: role(8),
+    }
+}
+
+/// Writes a tail's lists back out: the nine counted lists, with 0, 1, 4 and the
+/// inputs empty.
+fn lists_bytes(text: &RoleLists) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for index in 0..shader::TailLists::SIZES.len() {
+        let (size, records): (usize, &[Hex]) = match index {
+            2 => (7, &text.engine),
+            3 => (7, &text.textures),
+            5 => (7, &text.buffers),
+            6 => (4, &text.samplers),
+            8 => (3, &text.sampler_arrays),
+            _ => (0, &[]),
+        };
+        out.extend_from_slice(&(records.len() as u32).to_le_bytes());
+        for record in records {
+            for word in words_from_hex(record, size)? {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// A block: its own bytes, or the preamble's body with a header in front and
@@ -756,7 +849,10 @@ impl EngineData {
                 }
                 None => Vec::new(),
             };
-            bytes.extend_from_slice(&tail.lists.into_bytes());
+            match &tail.lists {
+                ListsText::Roles(roles) => bytes.extend_from_slice(&lists_bytes(roles)?),
+                ListsText::Raw(raw) => bytes.extend_from_slice(&raw.0),
+            }
             if let Some(block) = &tail.block {
                 bytes.extend_from_slice(&block_bytes(block, &engine_data.device_preamble)?);
             }
@@ -916,18 +1012,21 @@ impl EngineData {
                     (Some(_), Some(parsed)) => &parsed.rest,
                     _ => tail,
                 };
-                // The block closes the tail, and a block that is the preamble's
-                // body with a few bytes patched - which is what the UI shader's
-                // blocks are - is written as that diff instead of as its own
-                // 550 bytes.
-                let split = shader::TailLists::parse(rest)
-                    .map(|lists| rest.len() - lists.block.len())
-                    .unwrap_or(rest.len());
-                let (lists, block) = rest.split_at(split);
+                // The lists by role; a region this reader cannot split is
+                // carried as its raw bytes. The block closes the tail, and a
+                // block that is the preamble's body with a few bytes patched -
+                // which is what the UI shader's blocks are - is written as that
+                // diff instead of as its own 550 bytes.
+                let (lists, block) = match shader::TailLists::parse(rest) {
+                    Some(parsed_lists) => {
+                        (ListsText::Roles(lists_text(&parsed_lists)), parsed_lists.block)
+                    }
+                    None => (ListsText::Raw(rest.to_vec().into()), Vec::new()),
+                };
                 TailText {
                     cbuffers,
-                    lists: lists.to_vec().into(),
-                    block: (!block.is_empty()).then(|| block_text(block, &self.device_preamble)),
+                    lists,
+                    block: (!block.is_empty()).then(|| block_text(&block, &self.device_preamble)),
                 }
             })
             .collect();
@@ -1026,10 +1125,26 @@ impl EngineData {
             // The input list describes the container's signature, so rebuild it
             // for whichever container this program gets: a mod shader with
             // different IO then still gets a tail that matches its programs.
-            let tail = shader::Tail::parse(tail)
+            // A tail whose input list is *empty* is one whose inputs are
+            // derived from the signature, so without one it must fail rather
+            // than write a program with no inputs.
+            let tail = match shader::Tail::parse(tail)
                 .and_then(|parsed| parsed.with_inputs(container))
-                .map(|rebuilt| rebuilt.bytes())
-                .unwrap_or_else(|| tail.clone());
+            {
+                Some(rebuilt) => rebuilt.bytes(),
+                None => {
+                    let derived_inputs = shader::Tail::parse(tail)
+                        .and_then(|parsed| shader::TailLists::parse(&parsed.rest))
+                        .is_some_and(|lists| lists.list(7).is_empty());
+                    if derived_inputs {
+                        bail!(
+                            "the container for program {index} ({stage:?}) has no signature to \
+                             rebuild its inputs from"
+                        );
+                    }
+                    tail.clone()
+                }
+            };
 
             device.extend_from_slice(&1u32.to_le_bytes());
             device.extend_from_slice(&(frame.len() as u32).to_le_bytes());
