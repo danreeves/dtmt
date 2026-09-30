@@ -825,6 +825,27 @@ The per-group program counts are also a lead on the program-to-group mapping
 programs among them (e.g. `eb09dd77` 26/26/2/2/16/16, `3F08AC44` 7/7/1/2/2),
 though identical lists make it ambiguous.
 
+### The UI base's program order, measured
+
+`program_order` prints the section's shape: 96 programs alternate Vertex and
+Pixel; every vertex program carries the *same* tail (one distinct vertex tail,
+its lists `[0,0,0,0,0,0,0,3,0]` - three input records, POSITION/COLOR/TEXCOORD),
+and the 48 pixel programs share 19 tails (`[0,0,0,1,0,1,1,4,1]` - one
+`global_texture2D`, one UAV, one sampler, four inputs, one bindless sampler
+record; the four inputs are SV_Position/CUSTOM/CUSTOM1/CUSTOM2, the mod's
+source's structs). The (tail, mask) triples over the pixel programs:
+
+- programs 1..23: tails 1..12, masks `00 01 01 02 02 04 04 08 08 0F 0F 00`
+- programs 25..45: tails 1..11, masks `00 01 01 02 02 04 04 08 08 0F 0F`
+- programs 47..93: tails 13..18, four rounds of `00 01 02 04 08 0F`
+- program 95: tail 19, no mask
+
+So the mask is a channel set (a single bit or `0F` for all), the same mask pairs
+*different* tails (2 and 3 both `01`, 4 and 5 both `02`, ... - the tail carries
+the interface, the mask the channels), the vertex side is constant, and the 48
+pixel programs decompose 12 + 11 + 24 + 1. The 36 groups equal 12 + 11 + 6 + 6
++ 1, which is suggestive but not a rule yet.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE
