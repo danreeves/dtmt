@@ -979,12 +979,21 @@ impl Section {
                 }
             }
         }
+        // The first context's first query is the group data's own hash on every
+        // *shipped* section - the convention that made the id look
+        // un-derivable. It is not a requirement: a section whose group node is
+        // carried from the shipping family while the context names its own
+        // permutation id renders, and forcing the two equal crashes the engine
+        // at dispatch_loadtime. So a mismatch is a warning, not a reader error.
         let default = self
             .contexts
             .first()
             .and_then(|context| context.queries.first());
         if !matches!(default, Some(query) if query.id == hash) {
-            bail!("the first context has no query for the group data's hash {hash:08X}");
+            tracing::debug!(
+                "the first context's query {:08X} is not the group data's hash {hash:08X}",
+                default.map_or(0, |query| query.id)
+            );
         }
         Ok(())
     }
@@ -1155,9 +1164,12 @@ mod tests {
     }
 
     #[test]
-    fn a_built_section_refuses_contexts_that_do_not_match_the_group_data() {
+    fn a_built_section_checks_the_query_count_not_the_group_node() {
         // The mistakes a round trip could never catch, because a generated
-        // section has no template to catch it against.
+        // section has no template to catch it against. The group *node* is not
+        // checked against the first query: a section whose group carries the
+        // shipping node while the context names its own permutation id renders,
+        // and forcing the two equal crashes the engine at dispatch_loadtime.
         let mut group_data = vec![0u8; 8];
         group_data[0..4].copy_from_slice(&1u32.to_le_bytes());
         group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
@@ -1171,8 +1183,8 @@ mod tests {
             }],
         };
         assert!(
-            Section::build(&[stale.clone()], Vec::new(), group_data.clone(), &carried).is_err(),
-            "a first context whose query is not the group data's hash is refused"
+            Section::build(&[stale.clone()], Vec::new(), group_data.clone(), &carried).is_ok(),
+            "a permutation id distinct from the group node is accepted"
         );
         let empty = ContextRecord {
             queries: Vec::new(),

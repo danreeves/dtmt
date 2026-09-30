@@ -1107,6 +1107,25 @@ write it (either the group count, or confirm the engine ignores it), and
 `Section::check` has to stop treating it as a hard equality for reduced sections
 before `group_parts`/`group_build` can run on them.
 
+**Settled: the word is the count, and the group's node is not the query
+(2026-09-30, later still).** Writing `1` renders (material set, 16 s), so the
+first word is the group count and a derived template writes the real one. The
+reader and the tools were then unblocked: `Section::check` no longer asserts
+`first context query == group hash` (a shipping convention, not a rule) and
+`GroupData::group_starts` falls back to the group data's own hash when a single
+query id is not in the data.
+
+The fallback was forced by a **measured negative**: the next word, the group's
+node (`28B0AB00` here), must stay the shipping value. Deriving it as the
+context's query id (`6FA3FCCF`) - which the shipped sections' invariant suggests
+- puts `6FA3FCCF` in both places and the engine **crashes at
+`dispatch_loadtime`** (error context `shader #ID[6fa3fccf]`). With the node left
+at `28B0AB00` and the context query `6FA3FCCF` it renders. So the section holds
+*two* distinct identities: the group node (the shipping group's own hash, still
+to be derived) and the context query (the engine-demanded permutation id). The
+`group_starts` walk that assumed they are equal is why the tools had been unable
+to open our own builds.
+
 ### Notes from RainbowFlame's reverse engineering (2026-09-30)
 
 [RainbowFlame's RE

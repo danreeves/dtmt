@@ -469,9 +469,27 @@ impl GroupData {
     /// start, in order. `None` when an id is missing, out of order, or the first
     /// id is not at the start of the data.
     pub fn group_starts(&self, query_ids: &[u32]) -> Option<Vec<usize>> {
-        let mut starts = Vec::with_capacity(query_ids.len());
+        if let Some(starts) = self.walk(query_ids) {
+            return Some(starts);
+        }
+        // A section whose contexts name their own permutation ids carries the
+        // shipping family's group nodes, so the query ids do not appear in the
+        // group data. Measured: the group node `28B0AB00` with the context query
+        // `6FA3FCCF` renders, and forcing the two equal crashes the engine at
+        // `dispatch_loadtime`. The first group's node is the group data's own
+        // hash, which is the walk for the single-group case.
+        if query_ids.len() == 1 {
+            return self.walk(&[self.hash()]);
+        }
+        None
+    }
+
+    /// Walks the data for each id, in order: the shipped sections name every
+    /// group by its query id, so the ids are the group nodes.
+    fn walk(&self, ids: &[u32]) -> Option<Vec<usize>> {
+        let mut starts = Vec::with_capacity(ids.len());
         let mut at = 0;
-        for id in query_ids {
+        for id in ids {
             let needle = id.to_le_bytes();
             let end = self.data.len().checked_sub(4)?;
             let found = (at..=end).find(|offset| self.data[*offset..*offset + 4] == needle)?;
@@ -1343,7 +1361,13 @@ mod tests {
             data.group_starts(&[0x1234_5678, 0x8BE2_82AA]).is_none(),
             "out of order is not a walk"
         );
-        assert!(data.group_starts(&[0xDEAD_BEEF]).is_none());
+        // A single id the walk cannot find falls back to the group data's own
+        // hash: a section whose contexts name permutation ids carries the
+        // shipping group nodes, and group 0's node is that hash.
+        assert_eq!(
+            data.group_starts(&[0xDEAD_BEEF]).expect("fallback"),
+            vec![4]
+        );
     }
 
     #[test]

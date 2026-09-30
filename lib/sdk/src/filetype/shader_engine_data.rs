@@ -1444,7 +1444,10 @@ impl EngineData {
         let device = self.build_device(containers, resources)?;
 
         // The group data: written from the template and the material's tables
-        // when the template is there, carried otherwise.
+        // when the template is there, carried otherwise. The group's own node
+        // (its first word after the count) is **not** the context's query id:
+        // setting it to the query id crashes the engine at dispatch_loadtime,
+        // while the shipped node value renders - so it is a separate identity.
         let group_data = match &self.group_template {
             Some(template) => GroupData::build(template, &self.material_tables, &template.engine)?,
             None => self.group_data.clone(),
