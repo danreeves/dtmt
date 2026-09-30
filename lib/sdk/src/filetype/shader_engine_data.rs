@@ -917,13 +917,12 @@ impl EngineData {
 
     /// Assembles a complete shader section from the engine data and our
     /// programs. `material` is the generating material's resource path: the
-    /// section's `material_hash` word is murmur32 of it - the identity the
-    /// engine reads off a section (measured: the UI base's is murmur32 of
-    /// `content/ui/materials/backgrounds/splash_screen_partner_logos`; whether
-    /// a shipped section names its own file's material or the material the
-    /// shared shader was compiled for is not settled, and does not matter here
-    /// because a generated section is its own shader's). Verified in game with
-    /// snoopy-mod's own path.
+    /// section's `material_hash` word is murmur32 of it, the section's identity
+    /// (measured: the UI base's section is murmur32 of its own material path,
+    /// `content/ui/materials/backgrounds/splash_screen_partner_logos`; the
+    /// shipped data file is that material's, named by murmur64 of its *file*
+    /// path, which the resource-path dictionaries do not key on). Verified in
+    /// game with snoopy-mod's own path.
     pub fn generate(
         &self,
         containers: &HashMap<Stage, Vec<u8>>,
