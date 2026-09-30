@@ -384,6 +384,13 @@ struct Text {
     /// Only written when it is not the engine's one dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dependency_count: Option<u32>,
+    /// The permutations to derive the contexts' ids from, instead of carrying
+    /// the `contexts` blob itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permutations: Option<Vec<PermutationPlanText>>,
+    /// The concrete ids, carried by a section rebuilt from a shipped blob;
+    /// empty when the ids come from `permutations`.
+    #[serde(default, skip_serializing_if = "Hex::is_empty")]
     contexts: Hex,
     /// Empty blobs are not written.
     #[serde(default, skip_serializing_if = "Hex::is_empty")]
@@ -569,6 +576,73 @@ enum ListsText {
 /// The lists that are always empty in every sample (0, 1 and 4) and the input
 /// list (7) are not stored at all: the reader writes their empty counts and the
 /// build rebuilds the inputs from the compiled container's signature.
+/// One context's permutation plan in its binary form for `to_text`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermutationPlanText {
+    /// The context's name, hashed into the header.
+    pub context: String,
+    /// One key-defining token list per query, in the section's order.
+    pub queries: Vec<Vec<String>>,
+}
+
+impl From<PermutationPlanText> for PermutationPlan {
+    fn from(text: PermutationPlanText) -> Self {
+        Self {
+            context: text.context,
+            queries: text.queries,
+        }
+    }
+}
+
+impl From<&PermutationPlan> for PermutationPlanText {
+    fn from(plan: &PermutationPlan) -> Self {
+        Self {
+            context: plan.context.clone(),
+            queries: plan.queries.clone(),
+        }
+    }
+}
+
+/// The binary form of a permutation plan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PermutationPlan {
+    pub context: String,
+    pub queries: Vec<Vec<String>>,
+}
+
+/// Builds the contexts blob: each plan becomes a context whose query ids are
+/// the permutation rule's values over that context's key token sets.
+fn permutations_contexts(
+    material: &str,
+    plans: &[PermutationPlan],
+) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    for plan in plans {
+        let context_hash =
+            u32::from(murmur::Murmur32::hash(plan.context.as_bytes()));
+        out.extend_from_slice(&context_hash.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&(plan.queries.len() as u32).to_le_bytes());
+        for tokens in &plan.queries {
+            // The key carries the material path, the define tokens and the
+            // environment tail — not the context name (the context lives in
+            // the header hash; the verified in-game key had no context token).
+            let key = crate::filetype::permutation::key(
+                material,
+                "",
+                &tokens.iter().map(String::as_str).collect::<Vec<_>>(),
+                "WIN32",
+                "D3D12",
+            );
+            let id = crate::filetype::permutation::id(&key);
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&0xFFFFFFFFu32.to_le_bytes());
+        }
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RoleLists {
@@ -733,6 +807,10 @@ pub struct EngineData {
     pub context_count: u32,
     pub dependency_count: u32,
     pub contexts: Vec<u8>,
+    /// The permutation plans the file carries instead of concrete ids: one per
+    /// context, each listing the queries the engine hashes its keys into. When
+    /// present, `generate` derives the ids rather than carrying them.
+    pub permutations: Option<Vec<PermutationPlan>>,
     pub conditions: Vec<u8>,
     pub dependencies: Vec<u8>,
     pub group_data: Vec<u8>,
@@ -875,6 +953,7 @@ impl EngineData {
             tails: Vec::new(),
             containers,
             program_containers,
+            permutations: None,
         })
     }
 
@@ -900,6 +979,9 @@ impl EngineData {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            permutations: text
+                .permutations
+                .map(|plans| plans.into_iter().map(Into::into).collect()),
         };
 
         // The preamble: the engine's config base is a toolchain constant, so a
@@ -1213,6 +1295,13 @@ impl EngineData {
             // when the file carries something else.
             dependency_count: (self.dependency_count != 0 && self.dependency_count != 1)
                 .then_some(self.dependency_count),
+            // The ids are written as they are carried; plans (when present)
+            // would let a later build re-derive them, but the round trip keeps
+            // the concrete blob.
+            permutations: self
+                .permutations
+                .as_ref()
+                .map(|plans| plans.iter().map(PermutationPlanText::from).collect()),
             contexts: self.contexts.clone().into(),
             conditions: self.conditions.clone().into(),
             dependencies: {
@@ -1345,6 +1434,13 @@ impl EngineData {
         material: &str,
         resources: &HashMap<Stage, StageResources>,
     ) -> Result<Vec<u8>> {
+        // The contexts: derived from the declaration when the file carries the
+        // permutation plans, carried otherwise (a section rebuilt from a
+        // shipped blob still carries its original ids).
+        let (contexts, context_count) = match &self.permutations {
+            Some(plans) if !plans.is_empty() => (permutations_contexts(material, plans)?, plans.iter().map(|p| p.queries.len() as u32).sum::<u32>()),
+            _ => (self.contexts.clone(), self.context_count),
+        };
         let device = self.build_device(containers, resources)?;
 
         // The group data: written from the template and the material's tables
@@ -1368,7 +1464,7 @@ impl EngineData {
         };
 
         let contexts_offset = 48usize;
-        let conditions_offset = contexts_offset + self.contexts.len();
+        let conditions_offset = contexts_offset + contexts.len();
         let dependencies_offset = conditions_offset + self.conditions.len();
         let group_offset = dependencies_offset + dependencies.len();
         let device_offset = group_offset + group_data.len();
@@ -1381,7 +1477,7 @@ impl EngineData {
             shader::VERSION,
             material_hash,
             contexts_offset as u32,
-            self.context_count,
+            context_count,
             conditions_offset as u32,
             default_offset as u32,
             dependencies_offset as u32,
@@ -1396,7 +1492,7 @@ impl EngineData {
         for word in header {
             section.extend_from_slice(&word.to_le_bytes());
         }
-        section.extend_from_slice(&self.contexts);
+        section.extend_from_slice(&contexts);
         section.extend_from_slice(&self.conditions);
         section.extend_from_slice(&dependencies);
         section.extend_from_slice(&group_data);
@@ -1432,6 +1528,7 @@ mod tests {
             context_count: 0,
             dependency_count: 0,
             contexts: Vec::new(),
+            permutations: None,
             conditions: Vec::new(),
             dependencies: Vec::new(),
             group_data: Vec::new(),
@@ -1443,6 +1540,72 @@ mod tests {
             containers: Vec::new(),
             program_containers: Vec::new(),
         }
+    }
+
+    #[test]
+    fn permutation_plans_derive_the_verified_ids() {
+        // The blob the engine accepted in game: one context, two word pairs
+        // (id, conditions) whose first id was computed by the permutation rule.
+        let plans = vec![PermutationPlan {
+            context: "default".into(),
+            queries: vec![vec!["SINGLE".into()]],
+        }];
+        let blob = permutations_contexts("materials/mods/snoopymod/ui_default_base", &plans)
+            .expect("derive");
+
+        // murmur32("default"), a zero word, one query, then the id and the
+        // wildcard conditions marker.
+        assert_eq!(blob.len(), 5 * 4);
+        let word = |at: usize| u32::from_le_bytes(blob[at..at + 4].try_into().unwrap());
+        assert_eq!(word(0), u32::from(murmur::Murmur32::hash(b"default")));
+        assert_eq!(word(8), 1);
+        let id = word(12);
+        assert_eq!(word(16), 0xFFFFFFFF);
+
+        // The exact id the engine accepted for
+        // `material:SINGLE:PLATFORM_WIN32:RENDERER_D3D12` (6FA3FCCF).
+        let verified_key =
+            "materials/mods/snoopymod/ui_default_base:SINGLE:PLATFORM_WIN32:RENDERER_D3D12";
+        assert_eq!(id, crate::filetype::permutation::id(verified_key));
+        assert_eq!(id, 0x6FA3FCCF);
+    }
+
+    #[test]
+    fn permutation_text_round_trip() {
+        let text = r#"
+context_count = 1
+permutations = [
+    {
+        context = "default"
+        queries = [ ["SINGLE"] ]
+    }
+]
+contexts = ""
+preamble = { bytes = "" }
+programs = []
+"#;
+        let parsed = EngineData::from_text(text)
+            .map_err(|error| panic!("text parse failed: {error:#}"))
+            .unwrap();
+        let plans = parsed.permutations.clone().expect("plans");
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].context, "default");
+        assert!(!plans[0].queries.is_empty(), "queries: {:?}", plans[0].queries);
+        assert_eq!(plans[0].queries.len(), 1);
+        assert_eq!(
+            plans[0].queries[0]
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["SINGLE"],
+            "queries: {:?}", plans[0].queries
+        );
+        let text_out = parsed.to_text();
+        let plans_round_tripped = EngineData::from_text(&text_out)
+            .unwrap()
+            .permutations
+            .expect("plans survive the round trip");
+        assert_eq!(plans_round_tripped, plans);
     }
 
     #[test]

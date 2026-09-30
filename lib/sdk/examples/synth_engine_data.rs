@@ -183,6 +183,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         context_count,
         dependency_count: 1,
         contexts,
+        permutations: None,
         conditions,
         dependencies: Vec::new(),
         group_data: Vec::new(),
