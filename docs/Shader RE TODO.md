@@ -22,14 +22,15 @@ conditions tree, and the in-game test that no round trip can replace.
    written, and **all seven sections measured - the six small ones and the real
    UI base - come back byte for byte**. The contexts are variable length and fill
    their region exactly; `conditions_offset` is `48 + the sum of the record
-   lengths`, and there is no link table. The carried list is: the opaque and
-   default-data header words, each context's second word (0 on every section
-   measured), the conditions blob, the slack between group data and programs, the
-   programs, and the bytes after them. The substitution test covers the half a
-   round trip cannot: a renamed context is 4 bytes at +48, a renamed variable
-   4 bytes inside the group data, and a query added moves every later offset by
-   the sum with the group data as written. See `Shader Section Generation
-   Notes.md`.
+   lengths`, and there is no link table. The carried list is: the section's
+   identity word (see below - it is murmur32 of the owning material's path, so
+   it is *derived*, not carried), the default-data header word, each context's
+   second word (0 on every section measured), the conditions blob, the slack
+   between group data and programs, the programs, and the bytes after them. The
+   substitution test covers the half a round trip cannot: a renamed context is 4
+   bytes at +48, a renamed variable 4 bytes inside the group data, and a query
+   added moves every later offset by the sum with the group data as written. See
+   `Shader Section Generation Notes.md`.
 3. ~~**Unit workstream**~~ **was already done.** `filetype::unit` has compiled
    *and* decompiled the version `0x73` payload for some time, with 16 passing
    tests including four round trips - mesh geometry, the scene graph, mesh objects
@@ -602,8 +603,26 @@ entries are verified derivable and the resource index rule is decoded - the
 wiring waits on the build having the containers' reflection and on a shader
 whose groups share one descriptor list, since the program-to-group mapping is
 not decoded), the contexts and groups (the engine needs them consistent with
-the shader's compiled structure - see below), the per-program masks, `opaque`
-and `w2`.
+the shader's compiled structure - see below), the per-program masks and `w2`.
+(The section's identity word is no longer on this list: it is derived from the
+material path.)
+
+### The section's identity word is murmur32 of the owning material's path
+
+The header's second word - `opaque` while it was unidentified, now
+`material_hash` (a working name: no VT2 SDK `core/` name or engine-extraction
+string grounds it yet, and named fields are working names until one does) - is
+murmur32 of the resource path of the material whose shader the section is.
+
+Measured: 40 of 40 sampled sections carry distinct values. The UI base's section
+carries `439A40FC` = murmur32(`content/ui/materials/backgrounds/splash_screen_partner_logos`),
+the material that defines the shader - not the data file's own resource (an
+instance's section names its base). The toolchain no longer carries it:
+`EngineData::generate` takes the base material's resource path and writes
+murmur32 of it, and snoopy-mod's file lost its `opaque` line. Verified in game:
+snoopy-mod built with its own path hash (`4CC21B79` =
+murmur32(`materials/mods/snoopymod/ui_default_base`)) renders the title, and the
+derived build is byte-identical to that tested one.
 
 ### The tails' cbuffer entries are derivable from the group data and the source
 

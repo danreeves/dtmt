@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // The text round trip, then the section it generates.
     let again = EngineData::from_text(&engine_data.to_text())?;
-    let section = again.generate(&HashMap::new())?;
+    let section = again.generate(&HashMap::new(), "materials/test/base")?;
     let group_offset = u32_at(&section, 32) as usize;
     let group_size = u32_at(&section, 36) as usize;
     let generated = &section[group_offset..group_offset + group_size];

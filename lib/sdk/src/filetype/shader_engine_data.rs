@@ -21,7 +21,7 @@
 //! std::fs::write("ui.engine_data", engine_data.to_text())?;
 //!
 //! let engine_data = EngineData::from_text(&text)?;              // generate from it
-//! let section = engine_data.generate(&containers)?;         // Stage -> DXBC container
+//! let section = engine_data.generate(&containers, "materials/mods/x/base")?;  // Stage -> DXBC
 //! ```
 
 use std::collections::HashMap;
@@ -153,9 +153,13 @@ fn dedup_index(list: &mut Vec<Hex>, value: Vec<u8>) -> usize {
 
 /// The engine data's text model, in the Stingray source dialect the `core/`
 /// files use: `key = value`, `{}` tables, `[]` arrays and quoted blobs.
+///
+/// The section's `material_hash` word is not here: it is murmur32 of the base
+/// material's resource path, which [`EngineData::generate`] takes as an
+/// argument.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Text {
-    opaque: u32,
     context_count: u32,
     /// Only written when it is not the engine's one dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -252,6 +256,7 @@ fn serialize_quoted<S: Serializer>(value: &str, serializer: S) -> std::result::R
 /// The device preamble: its head and rest around the engine's config base, or
 /// its whole bytes when it does not start with the base.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PreambleText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     head: Option<Hex>,
@@ -265,6 +270,7 @@ struct PreambleText {
 /// it is not the toolchain's), the distinct material tables and group parts,
 /// and one entry per group.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GroupTemplateText {
     prefix: Hex,
     /// The engine's table as packed records, only when it is not the
@@ -287,6 +293,7 @@ struct GroupTemplateText {
 
 /// One group of the template: its query id and the parts it uses.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GroupText {
     query: Hex,
     #[serde(default)]
@@ -305,6 +312,7 @@ struct GroupText {
 
 /// One distinct program tail: the bytes before its block.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct TailText {
     lists: Hex,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -322,6 +330,7 @@ enum BlockText {
 
 /// A block written as a diff against the preamble's body.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BlockDiff {
     /// The bytes before the body; absent when the block *is* the body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -332,6 +341,7 @@ struct BlockDiff {
 
 /// One patched byte of a block: its offset into the body and the value.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PatchText {
     offset: u32,
     value: u32,
@@ -339,6 +349,7 @@ struct PatchText {
 
 /// One program: its stage and the tail and container it uses.
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProgramText {
     #[serde(serialize_with = "serialize_quoted")]
     stage: String,
@@ -404,7 +415,7 @@ fn block_bytes(spec: &BlockText, preamble: &[u8]) -> Result<Vec<u8>> {
 /// currently derive, captured once from a shipped material.
 #[derive(Debug)]
 pub struct EngineData {
-    pub opaque: u32,
+    pub material_hash: u32,
     pub context_count: u32,
     pub dependency_count: u32,
     pub contexts: Vec<u8>,
@@ -536,7 +547,7 @@ impl EngineData {
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
-            opaque: u32_at(section, 4),
+            material_hash: u32_at(section, 4),
             context_count: u32_at(section, 12),
             dependency_count: u32_at(section, 28),
             contexts,
@@ -559,7 +570,9 @@ impl EngineData {
             serde_sjson::from_str(text).wrap_err("Failed to parse the engine data text")?;
 
         let mut engine_data = Self {
-            opaque: text.opaque,
+            // The section's identity comes from the material at `generate`
+            // time, not from the file.
+            material_hash: 0,
             context_count: text.context_count,
             dependency_count: text.dependency_count.unwrap_or(0),
             contexts: text.contexts.into_bytes(),
@@ -836,7 +849,6 @@ impl EngineData {
             .collect();
 
         Text {
-            opaque: self.opaque,
             context_count: self.context_count,
             // The dependency is the engine's one library, so it is only written
             // when the file carries something else.
@@ -903,8 +915,18 @@ impl EngineData {
         Ok(device)
     }
 
-    /// Assembles a complete shader section from the engine data and our programs.
-    pub fn generate(&self, containers: &HashMap<Stage, Vec<u8>>) -> Result<Vec<u8>> {
+    /// Assembles a complete shader section from the engine data and our
+    /// programs. `material` is the base material's resource path: the section's
+    /// `material_hash` word is murmur32 of it, the identity the engine reads off a
+    /// section. (A shipped section carries the identity of the material that
+    /// defined it - measured: one section's material_hash is
+    /// `content/ui/materials/backgrounds/splash_screen_partner_logos` - and a
+    /// from-scratch material carries its own; verified in game.)
+    pub fn generate(
+        &self,
+        containers: &HashMap<Stage, Vec<u8>>,
+        material: &str,
+    ) -> Result<Vec<u8>> {
         let device = self.build_device(containers)?;
 
         // The group data: written from the template and the material's tables
@@ -934,9 +956,12 @@ impl EngineData {
         let device_offset = group_offset + group_data.len();
         let default_offset = device_offset + device.len();
 
+        // The section's identity: murmur32 of the base material's resource path.
+        let material_hash = u32::from(murmur::Murmur32::hash(material.as_bytes()));
+
         let header = [
             shader::VERSION,
-            self.opaque,
+            material_hash,
             contexts_offset as u32,
             self.context_count,
             conditions_offset as u32,
@@ -985,7 +1010,7 @@ mod tests {
 
     fn empty_engine_data() -> EngineData {
         EngineData {
-            opaque: 0,
+            material_hash: 0,
             context_count: 0,
             dependency_count: 0,
             contexts: Vec::new(),
@@ -1139,7 +1164,15 @@ mod tests {
         assert!(parsed.group_template.is_some());
         assert_eq!(parsed.material_tables, material);
 
-        let section = parsed.generate(&HashMap::new()).unwrap();
+        let section = parsed
+            .generate(&HashMap::new(), "materials/test/base")
+            .unwrap();
+        // The section's identity word is murmur32 of the material path it was
+        // generated for.
+        assert_eq!(
+            u32::from_le_bytes(section[4..8].try_into().unwrap()),
+            u32::from(murmur::Murmur32::hash(b"materials/test/base"))
+        );
         let offset = u32::from_le_bytes(section[32..36].try_into().unwrap()) as usize;
         let size = u32::from_le_bytes(section[36..40].try_into().unwrap()) as usize;
         assert_eq!(&section[offset..offset + size], &built[..]);

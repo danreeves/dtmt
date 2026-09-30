@@ -200,6 +200,14 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   byte-identical**. The dialect's tall layout (a table field or array element
   per line) costs bytes - 15605 to 24189 on the UI base's file - which the
   derivations take back. [one conversion, one build]
+- **The section's identity word is derived** (2026-09-30): the header's second
+  word (was `opaque`, now `material_hash` - a working name) is murmur32 of the
+  owning material's resource path (UI base: `439A40FC` =
+  `content/ui/materials/backgrounds/splash_screen_partner_logos`). `generate`
+  takes the base material's path and writes it; snoopy-mod's file lost its
+  `opaque` line, built with its own path hash `4CC21B79`, **renders in game**,
+  and the derived build is byte-identical to the tested one. [40 sections for
+  the per-section distinctness; one in-game run]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An

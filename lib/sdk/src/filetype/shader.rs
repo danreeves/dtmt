@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! u32 version                         // 43
-//! u32 opaque
+//! u32 material_hash   // murmur32 of the owning material's resource path
 //! u32 contexts_offset
 //! u32 context_count
 //! u32 conditions_offset
@@ -27,7 +27,7 @@
 //! u32 metadata_kind                   // 5
 //! u32 decoded_dxbc_length
 //! u64 frame_key                       // MurmurHash64A(frame, seed 0)
-//! counted metadata tables and opaque state
+//! counted metadata tables and carried state
 //! ```
 //!
 //! Frames are Oodle streams: the whole frame, including its Oodle header, is
@@ -794,8 +794,9 @@ impl ContextRecord {
 /// own parts (the contexts, the conditions and a group data), and writes the rest.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Carried {
-    /// The header's second word, which no declaration sets.
-    pub opaque: u32,
+    /// The header's second word: murmur32 of the owning material's resource
+    /// path, the section's identity.
+    pub material_hash: u32,
     /// The header's sixth word, which points into the tail.
     pub default_data: u32,
     /// The bytes between the group data and the programs.
@@ -811,7 +812,7 @@ impl Carried {
     /// against the same engine data rather than against nothing.
     pub fn of(template: &Section) -> Self {
         Self {
-            opaque: template.opaque,
+            material_hash: template.material_hash,
             default_data: template.default_data,
             trailing: template.trailing.clone(),
             device_data: template.device_data.clone(),
@@ -832,14 +833,14 @@ impl Carried {
 /// and its writer can agree and still be wrong, so the substitution tests and the
 /// query/group count check are what test the model.
 ///
-/// The words this does not own are carried: the header's opaque and default-data
+/// The words this does not own are carried: the header's material_hash and default-data
 /// words, the bytes between the group data and the programs, the programs and
 /// whatever follows them. The contexts' second word is carried too; every
 /// shipped section has zero there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Section {
     version: u32,
-    opaque: u32,
+    material_hash: u32,
     default_data: u32,
     contexts: Vec<ContextRecord>,
     /// The conditions region, a byte-addressed blob: a query's `conditions` word
@@ -875,7 +876,7 @@ impl Section {
     /// prefix a content file wraps it in.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let word = |i: usize| u32_at(bytes, i * 4);
-        let (version, opaque) = (word(0), word(1));
+        let (version, material_hash) = (word(0), word(1));
         if version != VERSION {
             bail!("the section is version {version}, not {VERSION}");
         }
@@ -922,7 +923,7 @@ impl Section {
 
         let section = Self {
             version,
-            opaque,
+            material_hash,
             default_data,
             contexts,
             conditions,
@@ -1057,7 +1058,7 @@ impl Section {
         }
         let section = Self {
             version: VERSION,
-            opaque: carried.opaque,
+            material_hash: carried.material_hash,
             default_data: carried.default_data,
             contexts: contexts.to_vec(),
             conditions,
@@ -1084,7 +1085,7 @@ impl Section {
         let mut out = Vec::with_capacity(device_at + self.device_data.len());
         for word in [
             self.version,
-            self.opaque,
+            self.material_hash,
             contexts_at as u32,
             self.contexts.len() as u32,
             conditions_at as u32,
@@ -1127,7 +1128,7 @@ mod tests {
         group_data[4..8].copy_from_slice(&0x8BE2_82AAu32.to_le_bytes());
         group_data.extend_from_slice(&[0x11; 88]);
         let carried = Carried {
-            opaque: 0x1234_5678,
+            material_hash: 0x1234_5678,
             default_data: 0,
             trailing: vec![0x00],
             device_data: vec![0x22; 24],
@@ -1211,7 +1212,7 @@ mod tests {
         group_data.extend_from_slice(&[0x11; 96]);
         Section {
             version: VERSION,
-            opaque: 0x1234_5678,
+            material_hash: 0x1234_5678,
             default_data: 0,
             contexts: vec![
                 ContextRecord {

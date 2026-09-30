@@ -511,6 +511,10 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
 
+            // The material's resource name is the section's identity: its
+            // material-hash word is murmur32 of this path.
+            let identity = path.with_extension("").to_slash_lossy().to_string();
+
             // A material can declare the engine data to generate from; the
             // section is built in memory and handed to the material compile, so
             // neither the material source nor a side file carries it. Sibling
@@ -552,7 +556,7 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     containers.insert(Stage::Pixel, pixel);
                 }
 
-                let generated = engine_data.generate(&containers).wrap_err_with(|| {
+                let generated = engine_data.generate(&containers, &identity).wrap_err_with(|| {
                     format!("Failed to generate a shader section for '{}'", path.display())
                 })?;
 

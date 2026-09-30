@@ -179,7 +179,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     let synthesized = EngineData {
-        opaque: current.opaque,
+        material_hash: current.material_hash,
         context_count,
         dependency_count: 1,
         contexts,

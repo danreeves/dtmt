@@ -121,7 +121,14 @@ fn generate(
         containers.insert(Stage::Pixel, fs::read(ps)?);
     }
 
-    let section = engine_data.generate(&containers)?;
+    // The section's identity word is murmur32 of the base material's path; this
+    // dev tool uses the base file's stem.
+    let identity = base_path
+        .with_extension("")
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let section = engine_data.generate(&containers, &identity)?;
 
     let base = fs::read_to_string(base_path)?;
     let base = replace_hex_field(&base, "shader_data", &to_hex(&section))?;
