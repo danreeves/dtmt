@@ -47,8 +47,53 @@ pub struct DeploymentData {
     /// Content hashes of the bundle database and the boot bundle as this
     /// deployment wrote them, so a later deploy can tell the game updating
     /// those files from our own writes touching their directory.
-    #[serde(default)]
+    ///
+    /// Written as strings: sjson's integers do not fit a u64's range, and a
+    /// plain number overflows the reader on the way back in.
+    #[serde(default, with = "hash_list")]
     pub deployed_hashes: Vec<u64>,
+}
+
+/// Round-trips the hashes as hex (`0x…`) strings: sjson writes integers as
+/// bare tokens the reader takes as an i64, which cannot carry a u64's range,
+/// while a hex word with letters stays a string on the way back.
+mod hash_list {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(hashes: &Vec<u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let words: Vec<String> = hashes.iter().map(|hash| format!("0x{hash:x}")).collect();
+        words.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Value {
+            Text(String),
+            Number(i64),
+        }
+        Vec::<Value>::deserialize(deserializer).and_then(|values| {
+            values
+                .into_iter()
+                .map(|value| match value {
+                    Value::Text(text) => text
+                        .strip_prefix("0x")
+                        .map_or_else(
+                            || u64::from_str_radix(&text, 10),
+                            |digits| u64::from_str_radix(digits, 16),
+                        )
+                        .map_err(serde::de::Error::custom),
+                    Value::Number(number) => u64::try_from(number).map_err(serde::de::Error::custom),
+                })
+                .collect()
+        })
+    }
 }
 
 #[tracing::instrument]
