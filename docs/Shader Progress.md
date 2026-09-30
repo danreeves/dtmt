@@ -249,6 +249,13 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   longer stores them (a split tail stores none), the reader writes the empty
   counts and the build fills them: snoopy-mod's file went **22107 -> 15532
   bytes** and **every built asset is byte-identical**. [one build]
+- **A split tail stores only its block** (2026-09-30): the constant-buffer names
+  are flushed too - `derived_cbuffers` writes the entries from the reflection
+  (names in register order, sizes from the material table and the engine table,
+  indexes from the descriptor list) - and the whole tail is carried only when its
+  cbuffers are not the engine's own or its lists do not parse. snoopy-mod's file
+  went **15532 -> 14409 bytes**, below the old line format's 15605, and every
+  built asset is byte-identical. [one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An

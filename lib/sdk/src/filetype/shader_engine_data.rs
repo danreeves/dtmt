@@ -235,44 +235,46 @@ fn context_queries(contexts: &[u8]) -> Result<Vec<u32>> {
     Ok(queries)
 }
 
-/// Builds a tail's constant-buffer list from the names it carries: each entry
-/// is `{name, descriptor index, size, register, 1, 0}` with the index and size
-/// read from the group template. Every group must agree on both, because the
-/// program-to-group mapping is not decoded; a disagreement is an error rather
-/// than a guess.
-fn cbuffer_prefix(
+/// The constant-buffer list a split tail should hold, from the container's own
+/// reflection: the names in register order, with the sizes from the group data's
+/// material table (`c_per_object`) and the engine table (`global_viewport`), the
+/// indexes from the group's descriptor list, and the constant 1 and 0 words.
+///
+/// Every group must agree on a size, because the program-to-group mapping is not
+/// decoded; a cbuffer with no size source is an error rather than a guess.
+fn derived_cbuffers(
+    resources: &StageResources,
     template: &GroupTemplate,
     material_tables: &[Vec<Record>],
-    names: &[Hex],
+    descriptors: &BTreeMap<u32, u32>,
 ) -> Result<Vec<u8>> {
-    let descriptors = descriptors(template)?;
-    let mut out = Vec::with_capacity(4 + names.len() * 24);
-    out.extend_from_slice(&(names.len() as u32).to_le_bytes());
-    for (register, name) in names.iter().enumerate() {
-        let name = u32::from_le_bytes(name.0.as_slice().try_into().map_err(|_| {
-            color_eyre::eyre::eyre!("a tail cbuffer name must be four bytes")
-        })?);
-        let index = descriptors.get(&name).copied().ok_or_else(|| {
-            color_eyre::eyre::eyre!("the cbuffer {name:08X} is not a descriptor of the shader")
+    let mut out = Vec::with_capacity(4 + resources.cbuffers.len() * 24);
+    out.extend_from_slice(&(resources.cbuffers.len() as u32).to_le_bytes());
+    for (register, name) in resources.cbuffers.iter().enumerate() {
+        let hash = u32::from(murmur::Murmur32::hash(name.as_bytes()));
+        let index = descriptors.get(&hash).copied().ok_or_else(|| {
+            color_eyre::eyre::eyre!(
+                "the cbuffer {hash:08X} ({name}) is not a descriptor of the shader"
+            )
         })?;
-        let mut agreed: Option<u32> = None;
-        for group in 0..template.groups.len() {
-            let size = match name {
-                GLOBAL_VIEWPORT => table_size(&template.engine),
-                C_PER_OBJECT => table_size(&material_tables[group]),
-                other => bail!("the cbuffer {other:08X} has no size source"),
-            };
-            match agreed {
-                None => agreed = Some(size),
-                Some(previous) if previous != size => bail!(
-                    "the groups disagree about the cbuffer {name:08X}'s size \
-                     ({previous} vs {size}); the program-to-group mapping is not decoded"
-                ),
-                Some(_) => {}
+        let size = match hash {
+            C_PER_OBJECT => {
+                let mut sizes = material_tables.iter().map(|table| table_size(table));
+                let first = sizes
+                    .next()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("the file has no material table"))?;
+                if sizes.any(|size| size != first) {
+                    bail!(
+                        "the groups disagree about c_per_object's size; the program-to-group \
+                         mapping is not decoded"
+                    );
+                }
+                first
             }
-        }
-        let size = agreed.ok_or_else(|| color_eyre::eyre::eyre!("the template has no groups"))?;
-        for word in [name, index, size, register as u32, 1, 0] {
+            GLOBAL_VIEWPORT => table_size(&template.engine),
+            other => bail!("the cbuffer {other:08X} ({name}) has no size source"),
+        };
+        for word in [hash, index, size, register as u32, 1, 0] {
             out.extend_from_slice(&word.to_le_bytes());
         }
     }
@@ -530,23 +532,18 @@ struct GroupText {
     material_first: bool,
 }
 
-/// One distinct program tail: the constant buffers it names, its lists when
-/// they have to be carried, and the block that closes the tail.
+/// One distinct program tail: the block that closes it, and the lists only when
+/// they have to be carried.
 ///
-/// The constant-buffer list is stored as names (murmur32 hashes) when every one
-/// of them is the engine's own - `c_per_object` or `global_viewport` - and the
-/// template is there to size them; the reader rebuilds the 24-byte entries from
-/// the group data, the engine table and the register order.
-///
-/// The lists are *not* stored when the tail splits: the build derives them from
-/// the compiled container's own reflection (the texture/sampler arrays, the
-/// static sampler and the feedback buffers, with their registers and spaces).
-/// `lists` carries them only for a tail this reader cannot split.
+/// Everything else derives from the compiled container's own reflection at
+/// build time: the constant-buffer list (names in register order, with the
+/// sizes from the group data's material table and the engine table, and the
+/// indexes from the group's descriptor list) and the resource lists (the
+/// texture/sampler arrays, the static sampler and the feedback buffers). A tail
+/// this reader cannot split is carried whole in `lists`.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TailText {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    cbuffers: Option<Vec<Hex>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lists: Option<ListsText>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -960,28 +957,19 @@ impl EngineData {
             engine_data.material_tables = tables;
         }
 
-        // The tails: the constant-buffer list (rebuilt from the names the file
-        // carries), the lists, then the block.
+        // The tails: a split tail's constant-buffer list and resource lists are
+        // derived at build time, so the reader writes an empty prefix and empty
+        // lists for it to fill; a carried tail is the whole tail.
         for tail in text.tails {
-            let mut bytes = match &tail.cbuffers {
-                Some(names) => {
-                    let template = engine_data.group_template.as_ref().ok_or_else(|| {
-                        color_eyre::eyre::eyre!(
-                            "a tail names its cbuffers, but the file carries no group template"
-                        )
-                    })?;
-                    cbuffer_prefix(template, &engine_data.material_tables, names)?
+            let mut bytes = match &tail.lists {
+                Some(ListsText::Roles(roles)) => lists_bytes(roles)?,
+                Some(ListsText::Raw(raw)) => raw.0.clone(),
+                None => {
+                    let mut bytes = 0u32.to_le_bytes().to_vec();
+                    bytes.extend_from_slice(&lists_bytes(&RoleLists::default())?);
+                    bytes
                 }
-                None => Vec::new(),
             };
-            match &tail.lists {
-                Some(ListsText::Roles(roles)) => bytes.extend_from_slice(&lists_bytes(roles)?),
-                Some(ListsText::Raw(raw)) => bytes.extend_from_slice(&raw.0),
-                // No lists stored: they are derived from the compiled
-                // container, so the reader writes the empty counts the build
-                // fills in.
-                None => bytes.extend_from_slice(&lists_bytes(&RoleLists::default())?),
-            }
             if let Some(block) = &tail.block {
                 bytes.extend_from_slice(&block_bytes(block, &engine_data.device_preamble)?);
             }
@@ -1120,42 +1108,33 @@ impl EngineData {
         let tails: Vec<TailText> = tails
             .iter()
             .map(|tail| {
-                // When every constant buffer is the engine's own and the
-                // template is there to size them, the list is written as the
-                // names it carries and the reader rebuilds the 24-byte
-                // entries from the group data, the engine table and the
-                // register order.
+                // A tail is split - and stores only its block - when its
+                // constant buffers are all the engine's own and its lists
+                // parse: the build derives both from the container's own
+                // reflection. Anything else is carried whole.
                 let parsed = shader::Tail::parse(tail);
-                let cbuffers = parsed.as_ref().and_then(|parsed| {
-                    (self.group_template.is_some()
-                        && parsed.cbuffers.iter().all(|entry| {
-                            matches!(entry.name_hash(), C_PER_OBJECT | GLOBAL_VIEWPORT)
-                        }))
-                    .then(|| {
-                        parsed
-                            .cbuffers
-                            .iter()
-                            .map(|entry| Hex(entry.name_hash().to_le_bytes().to_vec()))
-                            .collect::<Vec<Hex>>()
-                    })
-                });
-                let rest: &[u8] = match (&cbuffers, &parsed) {
-                    (Some(_), Some(parsed)) => &parsed.rest,
-                    _ => tail,
+                let lists = parsed
+                    .as_ref()
+                    .and_then(|parsed| shader::TailLists::parse(&parsed.rest));
+                let split = match (&parsed, &lists) {
+                    (Some(parsed), Some(_)) => {
+                        self.group_template.is_some()
+                            && parsed.cbuffers.iter().all(|entry| {
+                                matches!(entry.name_hash(), C_PER_OBJECT | GLOBAL_VIEWPORT)
+                            })
+                    }
+                    _ => false,
                 };
-                // The lists are derived from the compiled container, so a tail
-                // that splits stores none of them; the block closes the tail,
-                // and a block that is the preamble's body with a few bytes
-                // patched - which is what the UI shader's blocks are - is
-                // written as that diff instead of as its own 550 bytes.
-                let (lists, block) = match shader::TailLists::parse(rest) {
-                    Some(parsed_lists) => (None, parsed_lists.block),
-                    None => (Some(ListsText::Raw(rest.to_vec().into())), Vec::new()),
-                };
-                TailText {
-                    cbuffers,
-                    lists,
-                    block: (!block.is_empty()).then(|| block_text(&block, &self.device_preamble)),
+                match (split, lists) {
+                    (true, Some(lists)) => TailText {
+                        lists: None,
+                        block: (!lists.block.is_empty())
+                            .then(|| block_text(&lists.block, &self.device_preamble)),
+                    },
+                    _ => TailText {
+                        lists: Some(ListsText::Raw(tail.to_vec().into())),
+                        block: None,
+                    },
                 }
             })
             .collect();
@@ -1258,39 +1237,36 @@ impl EngineData {
             let frame = shader::encode_frame(container)?;
             let key = murmur::hash(&frame, 0);
 
-            // The resource lists come from the container's own reflection: the
-            // file does not carry them, so a stage without one cannot be
-            // generated, and a binding shape that is not measured yet is an
-            // error rather than a guess. A tail whose lists did not split is
-            // carried whole and left alone.
+            // A split tail (the reader wrote it an empty prefix) derives its
+            // constant-buffer list and its resource lists from the container's
+            // own reflection; a carried tail is left alone.
             let derived = match shader::Tail::parse(tail) {
-                Some(parsed) => match shader::TailLists::parse(&parsed.rest) {
-                    Some(mut lists) => {
-                        let resources = resources.get(stage).ok_or_else(|| {
-                            color_eyre::eyre::eyre!(
-                                "no reflection for program {index} ({stage:?}): its resource \
-                                 lists are derived from the compiled container"
-                            )
-                        })?;
-                        let template = self.group_template.as_ref().ok_or_else(|| {
-                            color_eyre::eyre::eyre!(
-                                "program {index} ({stage:?}) needs a group template to index its \
-                                 resource records"
-                            )
-                        })?;
-                        let descriptors = descriptors(template)?;
-                        set_derived_lists(&mut lists, resources, &descriptors)?;
-                        Some(
-                            shader::Tail {
-                                cbuffers: parsed.cbuffers,
-                                rest: lists.bytes(),
-                            }
-                            .bytes(),
+                Some(parsed) if parsed.cbuffers.is_empty() => {
+                    let resources = resources.get(stage).ok_or_else(|| {
+                        color_eyre::eyre::eyre!(
+                            "no reflection for program {index} ({stage:?}): its constant buffers \
+                             and resource lists are derived from the compiled container"
                         )
-                    }
-                    None => None,
-                },
-                None => None,
+                    })?;
+                    let template = self.group_template.as_ref().ok_or_else(|| {
+                        color_eyre::eyre::eyre!(
+                            "program {index} ({stage:?}) needs a group template to index its \
+                             records"
+                        )
+                    })?;
+                    let descriptors = descriptors(template)?;
+                    let mut lists = shader::TailLists::parse(&parsed.rest).ok_or_else(|| {
+                        color_eyre::eyre::eyre!(
+                            "program {index} ({stage:?}): a split tail's lists do not parse"
+                        )
+                    })?;
+                    set_derived_lists(&mut lists, resources, &descriptors)?;
+                    let mut bytes =
+                        derived_cbuffers(resources, template, &self.material_tables, &descriptors)?;
+                    bytes.extend_from_slice(&lists.bytes());
+                    Some(bytes)
+                }
+                _ => None,
             };
             let tail: &[u8] = derived.as_deref().unwrap_or(tail);
 
@@ -1596,46 +1572,53 @@ mod tests {
     }
 
     #[test]
-    fn a_cbuffer_tail_round_trips_through_names() {
-        // A tail whose constant buffers are the engine's own is written as the
-        // names it carries; the reader rebuilds the entries from the group's
-        // descriptor list, the material table's size and the engine table's.
+    fn a_cbuffer_tail_derives_from_the_reflection() {
+        // The names, their sizes and their indexes, from a stage's reflection
+        // and the group template.
         use crate::filetype::group_data::{GroupParts, GroupTemplate, Record};
 
-        assert_eq!(C_PER_OBJECT, u32::from(murmur::Murmur32::hash(b"c_per_object")));
+        assert_eq!(
+            C_PER_OBJECT,
+            u32::from(murmur::Murmur32::hash(b"c_per_object"))
+        );
         assert_eq!(
             GLOBAL_VIEWPORT,
             u32::from(murmur::Murmur32::hash(b"global_viewport"))
         );
 
-        // One group: its head is the query id, the group's two words, its two
-        // descriptors, then the first table's header.
+        // A one-group template whose descriptors are the UI base's four.
         let mut head = vec![0u8; 4]; // the query id, filled by the test
         head.extend_from_slice(&[0u8; 4]); // the header word
-        head.extend_from_slice(&2u32.to_le_bytes());
-        head.extend_from_slice(&C_PER_OBJECT.to_le_bytes());
-        head.extend_from_slice(&[0u8; 12]);
-        head.extend_from_slice(&GLOBAL_VIEWPORT.to_le_bytes());
-        head.extend_from_slice(&[0u8; 12]);
+        head.extend_from_slice(&4u32.to_le_bytes());
+        for name in [
+            C_PER_OBJECT,
+            GLOBAL_VIEWPORT,
+            GLOBAL_TEXTURE2D,
+            GLOBAL_FEEDBACK_BUFFERS,
+        ] {
+            head.extend_from_slice(&name.to_le_bytes());
+            head.extend_from_slice(&[0u8; 12]);
+        }
         let template = GroupTemplate {
             prefix: 1u32.to_le_bytes().to_vec(),
             groups: vec![GroupParts {
                 head,
                 material_first: true,
-                between: vec![0u8; 12],
-                mid: vec![0u8; 28],
-                tail: vec![0u8; 8],
+                between: Vec::new(),
+                mid: Vec::new(),
+                tail: Vec::new(),
             }],
+            // The engine table's extent gives global_viewport 1792 (1788
+            // rounded up to 16).
             engine: vec![Record {
                 kind: 2,
                 flags: 0,
                 hash: 0x6BC9_1D73,
                 offset: 0,
-                size: 12,
+                size: 1788,
             }],
         };
-        // The material table's largest offset + size is 224 + 16, so its
-        // cbuffer is 240 bytes.
+        // The material table's extent gives c_per_object 240.
         let material_table = vec![Record {
             kind: 3,
             flags: 0,
@@ -1643,30 +1626,24 @@ mod tests {
             offset: 224,
             size: 16,
         }];
+        let resources = StageResources {
+            cbuffers: vec!["global_viewport".to_string(), "c_per_object".to_string()],
+            ..Default::default()
+        };
 
-        // The shipped tail: two entries and eight bytes of lists.
-        let mut tail = 2u32.to_le_bytes().to_vec();
-        for word in [C_PER_OBJECT, 0, 240, 0, 1, 0] {
-            tail.extend_from_slice(&word.to_le_bytes());
-        }
-        for word in [GLOBAL_VIEWPORT, 1, 16, 1, 1, 0] {
-            tail.extend_from_slice(&word.to_le_bytes());
-        }
-        tail.extend_from_slice(&[0xAB; 8]);
-
-        let mut engine_data = empty_engine_data();
-        engine_data.group_template = Some(template);
-        engine_data.material_tables = vec![material_table];
-        engine_data.programs = vec![(Stage::Pixel, tail.clone())];
-
-        let text = engine_data.to_text();
-        assert!(text.contains("cbuffers = ["), "{text}");
-        assert!(text.contains("\"189663B5\""), "{text}");
-        assert!(text.contains("\"CD5C6D51\""), "{text}");
-
-        let parsed = EngineData::from_text(&text).unwrap();
-        assert_eq!(parsed.programs.len(), 1);
-        assert_eq!(parsed.programs[0].1, tail);
+        let descriptors = descriptors(&template).unwrap();
+        let prefix =
+            derived_cbuffers(&resources, &template, &[material_table], &descriptors).unwrap();
+        assert_eq!(prefix.len(), 4 + 2 * 24);
+        assert_eq!(u32::from_le_bytes(prefix[0..4].try_into().unwrap()), 2);
+        let entry = |index: usize| -> [u32; 6] {
+            let at = 4 + index * 24;
+            std::array::from_fn(|word| {
+                u32::from_le_bytes(prefix[at + word * 4..at + word * 4 + 4].try_into().unwrap())
+            })
+        };
+        assert_eq!(entry(0), [GLOBAL_VIEWPORT, 1, 1792, 0, 1, 0]);
+        assert_eq!(entry(1), [C_PER_OBJECT, 0, 240, 1, 1, 0]);
     }
 
     #[test]

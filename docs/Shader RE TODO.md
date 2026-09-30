@@ -886,10 +886,13 @@ preamble's body).
    `global_texture2D`, an unbounded sampler array `global_samplers`, and a
    sampling stage gets `static_minlod_sampler` and `global_feedback_buffers` -
    and are no longer stored: a tail that splits stores none of them, the reader
-   writes the empty counts, and the build fills them. snoopy-mod's file went
-   **22107 -> 15532 bytes** and every built asset is byte-identical. The cbuffer
-   *names* are now the last thing that reflection could supply; they are still
-   carried (~10 bytes a tail).
+   writes the empty counts, and the build fills them. **A split tail now stores
+   only its block**: the constant-buffer *names* are flushed too (the reflection
+   supplies them in register order, so `derived_cbuffers` writes the entries),
+   and the whole tail is carried only when its constant buffers are not the
+   engine's own or its lists do not parse. snoopy-mod's file went **22107 ->
+   14409 bytes** and every built asset is byte-identical - below the old line
+   format's 15605, with far less carried.
 3. `group_template` (~6.7 KB): `materials` from the `.material`'s bindings plus
    the engine's standard rows (decoded: the 7 rows over `c_per_object`); the
    framing parts (heads/betweens/mids/tails, ~1 KB) from the shader's
