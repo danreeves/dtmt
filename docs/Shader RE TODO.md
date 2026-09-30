@@ -950,6 +950,16 @@ here: reduce *one* axis at a time from the working full section (programs first,
 with the contexts and groups kept) and read the dump's `SHADER(...)` line when
 it breaks.
 
+**Both structural axes are load-bearing.** The follow-up runs: reducing only
+the *programs* (contexts and groups shipped) crashes at
+`stingray::D3D12RenderDevice::dispatch_loadtime` asking for `#ID[28b0ab00]` -
+the first context's first query - so the engine looks queries up by id and the
+section must pair each with its own programs. Reducing the *contexts and groups*
+(programs shipped) gets past that lookup and crashes inside the shader. A
+section with one query is forgiven a *missing* query (the crash moves deeper
+in), but a *present* query whose programs are gone is fatal. So the structure is
+the engine's compiled pairing, and neither axis can be reduced freely.
+
 **The conditions tree is the source graph.** `conditions_walk` parses the blob
 as what it is - 35 records of `{u16 tag=1, u16 words, u16 payload_offset, u16
 count}`, `count` hashes then `words` u16 children whose top nibble is an op (2,
