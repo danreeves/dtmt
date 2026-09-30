@@ -598,12 +598,11 @@ table (`lib/sdk/data/global_viewport.hex`) and the 30-record standard config bas
 carries them; the conditions blob is dropped, verified in game; the dependency
 is written from the constant; and the containers are compiled from the module's
 own sources. `engine_data_check <file> [<source material>]` runs the round trip
-and the group-data comparison. What is left: the tails' lists (their cbuffer
-entries are verified derivable and the resource index rule is decoded - the
-wiring waits on the build having the containers' reflection and on a shader
-whose groups share one descriptor list, since the program-to-group mapping is
-not decoded), the contexts and groups (the engine needs them consistent with
-the shader's compiled structure - see below), the per-program masks and `w2`.
+and the group-data comparison. What is left: the tails' resource lists (the
+cbuffer entries are derived now; the index rule is decoded, the names come from
+the declaration's `samplers` and the bindings from the source's registers), the
+contexts and groups (the engine needs them consistent with the shader's compiled
+structure - see below), the per-program masks and `w2`.
 (The section's identity word is no longer on this list: it is derived from the
 material path.)
 
@@ -647,9 +646,17 @@ own cbuffer declarations (per stage, in register order - which the build has),
 the group data's descriptor list and tables, and the engine table. `tail_build`
 builds it and checks it against the shipped tails: **144/144 entries on the UI
 base's section** (names and registers parsed out of `ui_default_base.shader_source`,
-sizes 240 and 1792 from the two tables). This is the next thing to drop from the
-engine data file: the only input not already there is the per-stage declaration
-list, which the build assembles.
+sizes 240 and 1792 from the two tables).
+
+**Dropped from the engine data file.** A tail now writes the names it carries
+(`cbuffers = [ "189663B5" ]`) and its `lists` start after the constant-buffer
+list; `from_text` rebuilds the 24-byte entries - the index from the group's
+descriptor list (every group must agree, since the program-to-group mapping is
+not decoded), the size from the material table or the engine table, the register
+from the order, and the 1/0 constants; a tail whose cbuffers are not the
+engine's own keeps the whole bytes in `lists` (no `cbuffers` field, the carry
+form), and a file that names them without a template is refused. snoopy-mod's
+file went **24169 -> 23260 bytes** and the build is byte-identical.
 
 ### The block's mask byte, first table
 

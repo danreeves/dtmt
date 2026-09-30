@@ -218,6 +218,16 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   `opaque` line, built with its own path hash `4CC21B79`, **renders in game**,
   and the derived build is byte-identical to the tested one. [40 sections for
   the per-section distinctness; one in-game run]
+- **The tails' cbuffer lists are derived** (2026-09-30): a tail in the engine
+  data now carries only the names of its constant buffers
+  (`cbuffers = [ "189663B5" ]`) and its `lists` start after the constant-buffer
+  list; the reader rebuilds the 24-byte entries from the group's descriptor list
+  (all groups must agree - the mapping is not decoded), the material table or
+  the engine table for the size, the register order and the constant 1/0 words.
+  The carry form (no `cbuffers`, whole bytes in `lists`) covers anything else,
+  and a file that names cbuffers without a template is refused. snoopy-mod's
+  file went 24169 -> 23260 bytes and **every built asset is byte-identical**,
+  matching the in-game-verified build. [one build]
 - **The build is reproducible** (2026-09-30): two consecutive `dtmt build` runs
   are byte-identical for every file under `out/data` (MD5 per file). Only the
   listing files (`files.sjson`, the bundle manifest) reorder between runs. An
