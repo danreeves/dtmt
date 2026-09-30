@@ -1223,6 +1223,10 @@ pub struct ShaderOverrides {
     /// data derives its query ids from these instead of carrying them, so a
     /// declaration that names a define moves the id with it.
     pub permutations: Vec<super::shader_engine_data::PermutationPlan>,
+    /// One group's material record table, derived from the graph's material
+    /// inputs and the engine's standard rows. The engine data writes it in
+    /// place of the carried `materials` hex.
+    pub material_records: Vec<super::group_data::Record>,
 }
 
 impl ShaderOverrides {

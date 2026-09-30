@@ -1043,12 +1043,15 @@ impl EngineData {
                     mid: part(&template.mids, group.mid, "mid")?,
                     tail: part(&template.tails, group.tail, "tail")?,
                 });
-                tables.push(records_from_bytes(&part(
-                    &template.materials,
-                    group.material,
-                    "material",
-                )?)?);
-            }
+                // An empty `materials` list means the table is derived - the
+                // declaration names it - so the caller fills `material_tables`.
+                if !template.materials.is_empty() {
+                    tables.push(records_from_bytes(&part(
+                        &template.materials,
+                        group.material,
+                        "material",
+                    )?)?);
+                }            }
             engine_data.group_template = Some(GroupTemplate {
                 prefix: template.prefix.into_bytes(),
                 groups,

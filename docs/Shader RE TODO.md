@@ -901,6 +901,20 @@ preamble's body).
    framing parts (heads/betweens/mids/tails, ~1 KB) from the shader's
    descriptors plus the tables' own headers and extents (`build` already
    rewrites the count words); the prefix is nearly constant.
+
+**`materials` is derived (2026-09-30, later).** The 7 rows decode as one
+texture slot per sampled channel (`texture_map` kind 5 at 0, kind 1 at 4, kind 1
+at 16), the engine's `c_per_object` matrices (`view_proj` 32, `world_view_proj`
+96, `world` 160, all kind 4 size 64) and the graph's exported variables from 224
+(`dev_wireframe_color` kind 3). `build.rs` emits them from
+`Evaluation::samplers` + `Evaluation::exports` plus the engine's fixed rows, the
+text's `materials` list is gone, and the built table is **row-for-row identical**
+to the carried one (kind/hash/offset/size); the game material-sets in 16 s. The
+new `ShaderOverrides.material_records` seam is what the per-group rebuilder will
+use. What remains of `group_template` is the framing: the group head (84 B -
+node, header and the descriptor list), the two 12-B gaps and the condition tail
+(46 B).
+
 4. `preamble` (~0.4 KB): the stream is the material's channel list (measured
    164/400 exact plus a fixed engine vocabulary); the config records are per
    shader but have only six distinct index sets across 489 preambles.

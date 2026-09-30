@@ -10,6 +10,7 @@ use dtmt_shared::ModConfig;
 use futures::StreamExt;
 use futures::future::try_join_all;
 use path_slash::PathExt;
+use sdk::filetype::group_data::Record;
 use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
@@ -354,6 +355,7 @@ async fn compile_declaration(
     // contexts are then derived from these rather than carried.
     let mut overrides = ShaderOverrides {
         permutations: permutation_plans(&jobs),
+        material_records: material_records(evaluation),
         ..ShaderOverrides::default()
     };
 
@@ -404,6 +406,66 @@ async fn compile_declaration(
     }
 
     Ok(overrides)
+}
+
+/// The material table's records, derived from the graph's material inputs and
+/// the engine's standard rows.
+///
+/// One texture slot per sampled channel - the sampler index, the texture index
+/// and the second texture, all named after the channel (measured on the UI
+/// base: `texture_map` at 0 kind 5, at 4 kind 1 and at 16 kind 1) - then the
+/// engine's `c_per_object` matrices (`view_proj` at 32, `world_view_proj` at
+/// 96, `world` at 160) and the graph's exported variables from 224.
+fn material_records(evaluation: Option<&Evaluation>) -> Vec<Record> {
+    let mut records = Vec::new();
+    let Some(evaluation) = evaluation else {
+        return records;
+    };
+    let mut offset = 0u32;
+    for channel in &evaluation.samplers {
+        for (kind, at, size) in [(5u32, 0u32, 4u32), (1, 4, 8), (1, 16, 8)] {
+            records.push(record(kind, channel, offset + at, size));
+        }
+        offset += 24;
+    }
+    offset = offset.next_multiple_of(16);
+    for name in ["view_proj", "world_view_proj", "world"] {
+        records.push(record(4, name, offset, 64));
+        offset += 64;
+    }
+    for (name, kind, _) in &evaluation.exports {
+        let Some((code, size)) = export_kind(kind) else {
+            continue;
+        };
+        offset = offset.next_multiple_of(16);
+        records.push(record(code, name, offset, size));
+        offset += size;
+    }
+    records
+}
+
+/// One material record for a named variable: the kind and size its type gives.
+fn record(kind: u32, name: &str, offset: u32, size: u32) -> Record {
+    Record {
+        kind,
+        flags: 0,
+        hash: u32::from(sdk::murmur::Murmur32::hash(name.as_bytes())),
+        offset,
+        size,
+    }
+}
+
+/// The record kind and byte size of an HLSL type, or `None` when the group
+/// data cannot size it.
+fn export_kind(kind: &str) -> Option<(u32, u32)> {
+    Some(match kind {
+        "float" | "scalar" => (0, 4),
+        "float2" | "vector2" => (1, 8),
+        "float3" | "vector3" => (2, 12),
+        "float4" | "vector4" => (3, 16),
+        "float4x4" | "matrix" => (4, 64),
+        _ => return None,
+    })
 }
 
 /// The permutation plans a declaration's compile jobs stand for: one plan per
@@ -594,9 +656,9 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
 
                 let overrides = compile_shader_overrides(&path, cfg).await?.unwrap_or_default();
 
-                // The contexts' ids come from the declaration's permutations
-                // when the engine data does not carry its own: the file names
-                // the shader, the source names the variants.
+                // The attribute tables: the declaration names the material's
+                // variants (permutations) and its own record table (the
+                // material table), so neither is carried.
                 if engine_data.permutations.is_none() {
                     if !overrides.permutations.is_empty() {
                         engine_data.permutations = Some(overrides.permutations.clone());
@@ -609,6 +671,9 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                             engine_data.context_count
                         );
                     }
+                }
+                if !overrides.material_records.is_empty() {
+                    engine_data.material_tables = vec![overrides.material_records.clone()];
                 }
 
                 let carried = overrides.is_empty();
