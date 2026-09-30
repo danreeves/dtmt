@@ -597,8 +597,18 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 // The contexts' ids come from the declaration's permutations
                 // when the engine data does not carry its own: the file names
                 // the shader, the source names the variants.
-                if engine_data.permutations.is_none() && !overrides.permutations.is_empty() {
-                    engine_data.permutations = Some(overrides.permutations.clone());
+                if engine_data.permutations.is_none() {
+                    if !overrides.permutations.is_empty() {
+                        engine_data.permutations = Some(overrides.permutations.clone());
+                    } else if engine_data.contexts.is_empty() && engine_data.context_count > 0 {
+                        eyre::bail!(
+                            "engine data '{}' names {} context(s) but carries neither a \
+                             `permutations` block nor a context blob, and its declaration \
+                             has no compile jobs to derive them from",
+                            engine_data_path.display(),
+                            engine_data.context_count
+                        );
+                    }
                 }
 
                 let carried = overrides.is_empty();
