@@ -170,6 +170,14 @@ Start-Process -FilePath $LaunchBat -WorkingDirectory $GameDir | Out-Null
 $wait = [Math]::Min($WaitForTitle, $Timeout)
 while (((Get-Date) - $start).TotalSeconds -lt $wait) { Start-Sleep -Seconds 1 }
 $screen = Get-WindowStats
+# A slow boot (the deployment grows the bundle database) can still be on the
+# loading screen at the first sample. Take a second, later frame and keep the
+# clearer one - the loading screen is the black one.
+Start-Sleep -Seconds 10
+$later = Get-WindowStats
+if ($screen.Mean -lt 0 -or ($later.Mean -ge 0 -and $later.BlackFrac -lt $screen.BlackFrac)) {
+    $screen = $later
+}
 
 # Kill to flush the log, then give the flush a moment.
 Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force

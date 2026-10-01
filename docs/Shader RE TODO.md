@@ -952,6 +952,17 @@ append two eight-spaced row groups (`30:1 54:1 46:6 38:5 13:0 54:1 46:6 38:2
 eight apart (38/46/54), one group per constant buffer, with `12:0 13:0 94:7` as
 the channel-row marker - so the append is computable from the section's cbuffer
 list, which the tails already carry.
+
+**The preamble is derived (2026-10-01).** The engine's block template lives in
+`shader_engine_block` as the one engine constant of the device data - it cannot
+be synthesised, a generated minimal block fails at shader load - and an absent
+`preamble` in the file now means exactly it (the reader inserts it, and the
+writer omits it when it matches). With `preamble`, `heads`, `betweens` and `mids`
+all out, the engine data text is **12,389 bytes** (from 13,384) and the built
+section is **byte-identical** (`7348B400A52BCB1F`) and `RENDER_OK`. The harness
+also samples twice now: a slow boot (the deployment grows the bundle database)
+can still be on the loading screen at the first sample, and the clearer frame
+wins.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 

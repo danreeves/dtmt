@@ -398,7 +398,11 @@ struct Text {
     /// Only written when it is not the engine's one dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dependencies: Option<Hex>,
-    preamble: PreambleText,
+    /// The device preamble. Absent means the engine's block template
+    /// ([`crate::filetype::shader_engine_block`]) - the one engine constant of
+    /// the device data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preamble: Option<PreambleText>,
     /// The fallback when the group data has no template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     group_data: Option<Hex>,
@@ -1046,17 +1050,21 @@ impl EngineData {
 
         // The preamble: the engine's config base is a toolchain constant, so a
         // file writes only what lies around it.
-        engine_data.device_preamble =
-            match (&text.preamble.head, &text.preamble.rest, &text.preamble.bytes) {
+        // The preamble: the engine's block template when the file carries none,
+        // or the file's own head/rest around the toolchain's config base.
+        engine_data.device_preamble = match &text.preamble {
+            None => crate::filetype::shader_engine_block::engine_block(),
+            Some(preamble) => match (&preamble.head, &preamble.rest, &preamble.bytes) {
                 (Some(head), Some(rest), None) => {
-                    let mut preamble = head.0.clone();
-                    preamble.extend_from_slice(&config_base()?);
-                    preamble.extend_from_slice(&rest.0);
-                    preamble
+                    let mut block = head.0.clone();
+                    block.extend_from_slice(&config_base()?);
+                    block.extend_from_slice(&rest.0);
+                    block
                 }
                 (None, None, Some(bytes)) => bytes.0.clone(),
                 _ => bail!("a preamble is either its `head` and `rest` or its `bytes`"),
-            };
+            },
+        };
 
         for container in text.containers {
             engine_data.containers.push(container.into_bytes());
@@ -1388,7 +1396,11 @@ impl EngineData {
                     && self.dependencies[..] != default_dependency[..])
                     .then(|| self.dependencies.clone().into())
             },
-            preamble,
+            // The engine block template is not written: an absent preamble
+            // means exactly it.
+            preamble: (self.device_preamble
+                != crate::filetype::shader_engine_block::engine_block())
+            .then_some(preamble),
             group_data: (self.group_template.is_none() && !self.group_data.is_empty())
                 .then(|| self.group_data.clone().into()),
             group_template,
