@@ -930,6 +930,17 @@ declaration - the module is present but **orphaned** (only its own tests use it)
 The deletion path is thus: the header's three varying words (groups, cbuffers,
 records+8) computed, the stream built from the material's channels, and the 29
 records from one of the six index sets - the last piece still to decode.
+
+**The config records are a fixed vocabulary plus a small append (2026-10-01).**
+Grouping the corpus (`config_probe` over the game's `bundle/data`, 227k
+materials): a base set of ~31 records appears in nearly every section, and the
+varying part is a handful of appended rows. Our UI-base family (96 programs, 2
+cbuffers, contexts `F2760503`+`E2C8865F`) is the base plus
+`30:1 54:1 46:6 38:2 12:0 13:0 94:7`. The indices form the grid the probe's
+header describes - base columns 28..30, optional rows eight apart (31/32,
+38..40, 46..48, 54..56), channel row 94..101 - so the appended rows track which
+channel rows are live. Deriving the preamble is therefore: the base vocabulary,
+the append selected by the material's channels, and the header's three counts.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
