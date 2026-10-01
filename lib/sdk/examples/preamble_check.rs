@@ -35,6 +35,12 @@ fn main() -> color_eyre::Result<()> {
                 .collect();
             println!("  channels = {}", names.join(" "));
             println!("  stream   = {} bytes", template.stream().len());
+            let records: Vec<String> = template
+                .records()
+                .iter()
+                .map(|(index, value)| format!("{index}:{value}"))
+                .collect();
+            println!("  pairs    = {}", records.join(" "));
         }
         Err(err) => println!("does NOT parse: {err:#}"),
     }
