@@ -1184,23 +1184,31 @@ descriptor names come from the shader's resources (`c_per_object`,
 is `space << 16 | kind` (0 material cbuffer, 1 engine cbuffer, 3 texture, 5 UAV),
 `X` is the byte offset in the per-draw binding table (24 per cbuffer, 8 per
 other, in list order), `0x130`/`0x02` are engine constants and both table counts
-are rewritten by `build`. The blockers are the **library hash** (the group node,
-below) and `Y`, the packed 2-bit-per-slot per-program binding counts
-(`{0, 0, 5, 10}` here, `{0, 5, 10}`/`{0, 1, 2}` per permutation in the shipped
-UI base). Until `Y` is modelled the head cannot be emitted, so framing stays
-carried.
+are rewritten by `build`. The one blocker left in the head is `Y`, the packed
+2-bit-per-slot per-program binding counts (`{0, 0, 5, 10}` here, `{0, 5, 10}` /
+`{0, 1, 2}` per permutation in the shipped UI base).
 
-**The group node is the shipped library identity (2026-09-30, later).** The head
-word after the count (`28B0AB00` here) is not a dictionary string and not
-`high32(murmur64(x))` for any candidate path (`materials/mods/snoopymod/
-ui_default_base`, `ui_default_base`, the shipped `content/ui/materials/
-backgrounds/splash_screen_partner_logos`, nor their `.shader_node`/
-`.shader_library` forms). On shipped sections it equals the first context's first
-query, i.e. a *shipped permutation id* of the UI base family; our reduced section
-keeps it while the context names our own permutation id, and forcing the two
-equal crashes `dispatch_loadtime`. So it is the shader-library identity the
-material references, not a value our declaration computes - deriving it means
-finding (or setting) the material's library reference, not hashing a path.
+**The group head's first word is the query, not a library hash (2026-10-01).**
+The full control's 36 groups each start `00ABB028`, `17B45F9B`, `B44912CB`,
+`D585A0D0`, … - the contexts blob's 36 queries, one per group and in order. So
+the head's first word is **derivable** (it is the group's query), and the earlier
+"shipped library identity" reading was wrong. It also explains the old pm6 crash:
+setting the node equal to the context query was *correct*; that build only had
+two programs, which is what `dispatch_loadtime` actually wanted. The framing is
+1838 bytes per group either way:
+
+```
+head    84   query + 0x130 + descriptor count(4) + 4 descriptors + 0x02 + table count
+table  140   the material rows (derived)
+between 12   F0 40 <engine table count>
+engine 1460  global_viewport (73 records)
+mid     96   07 00 00 00 / 0 / 3  +  3 packed 28-byte copies
+tail    46   the condition header
+```
+
+The packed copies are the three `texture_map` rows re-emitted as
+`{hash, a, b, offset, kind, B5639618, 0}` (offset, kind and hash all match rows
+0-2); only `a` and `b` are still open, as is the descriptor `Y`.
 
 Side-finding: the engine's 32-bit ids are `high32(murmur64)`, confirmed by
 `high32(murmur64("default")) = F2760503`, the `default` context header. The SDK's
