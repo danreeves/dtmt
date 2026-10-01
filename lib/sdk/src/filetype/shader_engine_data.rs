@@ -646,10 +646,38 @@ fn permutations_contexts(
 /// The `c_per_object` cbuffer hash the packed copies are keyed by.
 const PACKED_CBUFFER: u32 = 0xB563_9618;
 
+/// The engine's group head after the query: the header word, the descriptor
+/// list and the two trailing words. The descriptors are the section's own
+/// resources under the engine's names and flags; `X` is the per-draw byte offset
+/// (24 per constant buffer, 8 per other) and `Y` the engine's packed usage
+/// counts (measured: `{0, 0, 5, 10}` for a texture and a feedback buffer; only a
+/// zero `Y` breaks the render).
+fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
+    let samples = resources.values().any(StageResources::samples);
+    let mut descriptors: Vec<(u32, u32, u32)> = vec![(C_PER_OBJECT, 0x0000, 0), (GLOBAL_VIEWPORT, 0x0101, 0)];
+    if samples {
+        descriptors.push((GLOBAL_TEXTURE2D, 0x0103, 5));
+        descriptors.push((GLOBAL_FEEDBACK_BUFFERS, 0x0105, 10));
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&0x130u32.to_le_bytes());
+    out.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
+    let mut x = 0u32;
+    for (name, flags, y) in &descriptors {
+        for word in [*name, *flags, x, *y] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        x += if flags & 0xFF <= 1 { 24 } else { 8 };
+    }
+    out.extend_from_slice(&0x02u32.to_le_bytes());
+    // The material table's count, which `GroupData::build` rewrites.
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
 /// The engine's `between` bytes: two constants then the engine table's count
 /// word, which [`GroupData::build`] rewrites.
-fn derived_between() -> Vec<u8> {
-    let mut out = vec![0xF0, 0, 0, 0, 0x40, 0, 0, 0];
+fn derived_between() -> Vec<u8> {    let mut out = vec![0xF0, 0, 0, 0, 0x40, 0, 0, 0];
     out.extend_from_slice(&0u32.to_le_bytes());
     out
 }
@@ -1067,7 +1095,11 @@ impl EngineData {
                         })?,
                 };
                 let mut head = query;
-                head.extend_from_slice(&part(&template.heads, group.head, "head")?);
+                if template.heads.is_empty() {
+                    // Derived in `generate`, which has the stage resources.
+                } else {
+                    head.extend_from_slice(&part(&template.heads, group.head, "head")?);
+                }
                 groups.push(GroupParts {
                     head,
                     material_first: group.material_first,
@@ -1373,10 +1405,39 @@ impl EngineData {
     ///
     /// `resources`, when it has an entry for a stage, replaces that stage's
     /// sampler lists (6 and 8) with the ones its HLSL declares.
+    /// The group template with its derived parts filled in: the head (the
+    /// descriptor list) when the file carries only the query, `between`, and
+    /// `mid`. A part the file carried wins.
+    fn derived_template(
+        &self,
+        resources: &HashMap<Stage, StageResources>,
+    ) -> Option<GroupTemplate> {
+        let mut template = self.group_template.as_ref()?.clone();
+        for (index, group) in template.groups.iter_mut().enumerate() {
+            // A head that is just the query waits for its derived rest.
+            if group.head.len() == 4 {
+                group.head.extend_from_slice(&derived_head(resources));
+            }
+            if group.between.is_empty() {
+                group.between = derived_between();
+            }
+            if group.mid.is_empty() {
+                let records = self
+                    .material_tables
+                    .get(index)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                group.mid = derived_mid(records);
+            }
+        }
+        Some(template)
+    }
+
     pub fn build_device(
         &self,
         containers: &HashMap<Stage, Vec<u8>>,
         resources: &HashMap<Stage, StageResources>,
+        template: Option<&GroupTemplate>,
     ) -> Result<Vec<u8>> {
         let mut device = self.device_preamble.clone();
 
@@ -1408,7 +1469,7 @@ impl EngineData {
                              and resource lists are derived from the compiled container"
                         )
                     })?;
-                    let template = self.group_template.as_ref().ok_or_else(|| {
+                    let template = template.ok_or_else(|| {
                         color_eyre::eyre::eyre!(
                             "program {index} ({stage:?}) needs a group template to index its \
                              records"
@@ -1487,31 +1548,13 @@ impl EngineData {
             Some(plans) if !plans.is_empty() => (permutations_contexts(material, plans)?, plans.iter().map(|p| p.queries.len() as u32).sum::<u32>()),
             _ => (self.contexts.clone(), self.context_count),
         };
-        let device = self.build_device(containers, resources)?;
+        // The template first: the device's tails read its descriptor list, so
+        // the derived head has to exist before the device is built.
+        let template = self.derived_template(resources);
+        let device = self.build_device(containers, resources, template.as_ref())?;
 
-        // The group data: written from the template and the material's tables
-        // when the template is there, carried otherwise. The group's own node
-        // (its first word after the count) is **not** the context's query id:
-        // setting it to the query id crashes the engine at dispatch_loadtime,
-        // while the shipped node value renders - so it is a separate identity.
-        let group_data = match &self.group_template {
-            Some(template) => {
-                let mut template = template.clone();
-                for (index, group) in template.groups.iter_mut().enumerate() {
-                    if group.between.is_empty() {
-                        group.between = derived_between();
-                    }
-                    if group.mid.is_empty() {
-                        let records = self
-                            .material_tables
-                            .get(index)
-                            .map(Vec::as_slice)
-                            .unwrap_or(&[]);
-                        group.mid = derived_mid(records);
-                    }
-                }
-                GroupData::build(&template, &self.material_tables, &template.engine)?
-            }
+        let group_data = match &template {
+            Some(template) => GroupData::build(template, &self.material_tables, &template.engine)?,
             None => self.group_data.clone(),
         };
 
@@ -1746,7 +1789,9 @@ programs = []
             decoded
         };
 
-        let device = parsed.build_device(&HashMap::new(), &HashMap::new()).unwrap();
+        let device = parsed
+            .build_device(&HashMap::new(), &HashMap::new(), parsed.group_template.as_ref())
+            .unwrap();
         assert_eq!(
             decode_all(&device),
             vec![container_a.clone(), container_b.clone(), container_a.clone()]
@@ -1755,7 +1800,9 @@ programs = []
         // A compiled override wins over the carried container.
         let mut overrides = HashMap::new();
         overrides.insert(Stage::Vertex, container_b.clone());
-        let device = parsed.build_device(&overrides, &HashMap::new()).unwrap();
+        let device = parsed
+            .build_device(&overrides, &HashMap::new(), parsed.group_template.as_ref())
+            .unwrap();
         assert_eq!(
             decode_all(&device),
             vec![container_b.clone(), container_b.clone(), container_b.clone()]

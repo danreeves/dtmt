@@ -1218,8 +1218,19 @@ record `{slot hash, a, b, offset, kind, B5639618, 0}` with the slot's channel
 name hashed into all three - so it derives from the material table's kind 5 rows,
 `a`/`b` being the template's own constants. Removing both pools from the control
 (13,384 -> 13,120 bytes) builds a **byte-identical** section
-(`03D2B050B67DC530`, 421,816 B) and reports `RENDER_OK`. Only `head` (the
-descriptor `Y`) and `tail` remain carried in the group framing.
+(`03D2B050B67DC530`, 421,816 B) and reports `RENDER_OK`.
+
+**The head is derived too (2026-10-01).** The descriptor list comes from the
+section's own resources under the engine's names - `c_per_object`, then
+`global_viewport`, then `global_texture2D` and `global_feedback_buffers` when a
+stage samples - with flags by role, `X` cumulative (24 per constant buffer, 8 per
+other) and `Y` the engine's packed usage counts. `Y` turns out to be **loose**:
+`{0, 0, 5, 10}` and `{0, 0, 1, 2}` both render (shipped groups 0-11 use the
+first, 12+ the second); only `0` breaks. Deriving with the constant
+`{0, 0, 5, 10}` therefore differs from the control only in groups 12+'s `Y` and
+is **`RENDER_OK`** (section `7348B400A52BCB1F`). The engine data text is down to
+**12,770 bytes**. The one framing part left is `tail`: the end of the condition
+header, per-permutation and tied to the conditions tree.
 
 Side-finding: the engine's 32-bit ids are `high32(murmur64)`, confirmed by
 `high32(murmur64("default")) = F2760503`, the `default` context header. The SDK's
