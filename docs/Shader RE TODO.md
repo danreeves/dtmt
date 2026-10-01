@@ -1220,6 +1220,16 @@ name hashed into all three - so it derives from the material table's kind 5 rows
 (13,384 -> 13,120 bytes) builds a **byte-identical** section
 (`03D2B050B67DC530`, 421,816 B) and reports `RENDER_OK`.
 
+**The tail is load-bearing (2026-10-01).** Setting every group's tail to its
+all-zero variant builds and the game runs - and reports `material set` with no
+crash - but the title screen is **black**: the material is not drawing. So
+`material set` + survival is not a render verdict, and the harness now samples
+the screen (mean luminance; near-zero is `RENDER_BLACK`, screenshot saved).
+The tail carries the shader's condition/source references (`9FCFE126` = `gui`,
+`BC4EE226` = `gui_hdr`, `625D415E`, ...), so it is not an engine constant a
+from-scratch section can replace with zeros; it has to name the section's own
+sources, which is the same source-graph data the notes list as the open area.
+
 **The head is derived too (2026-10-01).** The descriptor list comes from the
 section's own resources under the engine's names - `c_per_object`, then
 `global_viewport`, then `global_texture2D` and `global_feedback_buffers` when a

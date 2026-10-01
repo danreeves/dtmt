@@ -1,40 +1,48 @@
 <#
 .SYNOPSIS
   Launches Darktide with the deployed mod and reports whether the custom shader
-  actually RENDERED, not merely whether the Lua material assignment happened.
+  actually RENDERED. It waits a fixed time for the title screen, samples the game
+  window, kills the game, and only then reads the console log.
 
 .DESCRIPTION
-  The trap this exists to avoid: `material set: background_image` is logged by
-  the mod's Lua before the engine ever builds a pipeline for the shader. A
-  section whose programs/descriptors are wrong still logs it, then crashes in
-  `ShaderTemplate::initialize` ~1 s later. Checking only the Lua line reported
-  broken builds as healthy for a whole session.
+  The traps this exists to avoid:
+
+  * `material set: background_image` is logged by the mod's Lua before the engine
+    builds a pipeline. A section whose programs are wrong still logs it, then
+    crashes in `ShaderTemplate::initialize` ~1 s later.
+  * The material can be set and the game keep running while the shader fails to
+    draw: the title screen is then *black*. Measured on a bad group tail.
+  * **The console log is buffered** - it flushes only when enough bytes accumulate
+    or the game closes. So it cannot be polled for the material-set line while the
+    game runs: the first read that contains the line also contains everything
+    after it, including the crash.
+
+  Hence the fixed wait, then the sample, then the kill (which flushes the log).
+  The sample is `PrintWindow` on the game window by HWND - the method the scratch
+  `shot-window.ps1` uses. A screenshot is saved next to the verdict.
 
   The verdicts:
-    RENDER_OK    the game survived -WaitAfterMaterial seconds after the material
-                 was set, or it ended in the known benign unload crash
-                 (`Trying to unload resource ... refcount`).
-    RENDER_FAIL  it crashed while building the shader template or dispatching
-                 (`ShaderTemplate::initialize` / `dispatch_loadtime`), or with an
-                 access violation, before the material had a chance to draw.
-    NO_LOAD      no material-set line within the timeout (deploy/wedge problem).
-    INDETERMINATE anything else, printed with the crash context for a human.
+    RENDER_OK     the log shows the material set, no render crash, non-black window.
+    RENDER_BLACK  material set and no crash, but the window sampled near-black.
+    RENDER_FAIL   a render-time crash (`ShaderTemplate::initialize`,
+                  `dispatch_loadtime`, an access violation).
+    NO_LOAD       no material-set line in the flushed log (deploy/wedge problem).
+    INDETERMINATE anything else, printed with the crash context.
 
 .PARAMETER Label
   A name for the run, echoed in the verdict.
 
-.PARAMETER WaitAfterMaterial
-  Seconds the game must survive after the material-set line to count as OK.
-  40 is long enough to be well past the ~1 s render crash and far short of the
-  ~100 s benign unload crash.
+.PARAMETER WaitForTitle
+  Seconds after launch to sample the window. The material is set ~10 s in; the
+  game is killed right after the sample.
 
 .PARAMETER Timeout
-  Seconds to wait for the material-set line.
+  Total seconds the run may take before the game is killed and the log read.
 #>
 param(
     [string]$Label = "run",
-    [int]$WaitAfterMaterial = 40,
-    [int]$Timeout = 200,
+    [int]$WaitForTitle = 10,
+    [int]$Timeout = 90,
     [string]$GameDir = "E:\SteamLibrary\steamapps\common\Warhammer 40,000 DARKTIDE",
     [string]$LaunchBat = "C:\dev\dtmt\docs\scripts\launch.bat"
 )
@@ -47,8 +55,66 @@ function Newest-Log {
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
 }
 
-# A crash is benign when it is the known shutdown-time resource unload, not a
-# render-time failure. The context lines decide; the message alone is not enough.
+# Sample the game window by HWND. `CopyFromScreen` captured the wrong surface and
+# was quarantined by Defender; `PrintWindow` is what the scratch tool uses.
+function Get-WindowStats {
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        if (-not ("WinShot" -as [type])) {
+            Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class WinShot {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
+}
+"@
+        }
+        $p = Get-Process Darktide -ErrorAction SilentlyContinue |
+            Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+        if (-not $p) { return [pscustomobject]@{ Mean = -1; Max = -1; Path = ""; Error = "no Darktide window" } }
+
+        $r = New-Object WinShot+RECT
+        [void][WinShot]::GetWindowRect($p.MainWindowHandle, [ref]$r)
+        $w = $r.Right - $r.Left
+        $h = $r.Bottom - $r.Top
+        if ($w -le 0 -or $h -le 0) {
+            return [pscustomobject]@{ Mean = -1; Max = -1; Path = ""; Error = "window has no size" }
+        }
+
+        $bmp = New-Object System.Drawing.Bitmap($w, $h)
+        $gr = [System.Drawing.Graphics]::FromImage($bmp)
+        $hdc = $gr.GetHdc()
+        [void][WinShot]::PrintWindow($p.MainWindowHandle, $hdc, 2)
+        $gr.ReleaseHdc($hdc)
+
+        $sum = 0.0; $n = 0; $max = 0; $black = 0
+        for ($x = 0; $x -lt $w; $x += 16) {
+            for ($y = 0; $y -lt $h; $y += 16) {
+                $px = $bmp.GetPixel($x, $y)
+                $lum = ($px.R + $px.G + $px.B) / 3.0
+                $sum += $lum; $n++
+                if ($lum -gt $max) { $max = $lum }
+                if ($lum -lt 3) { $black++ }
+            }
+        }
+        $path = Join-Path $env:TEMP "shader-render-test-last.png"
+        $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $gr.Dispose(); $bmp.Dispose()
+        $blackFrac = if ($n) { $black / $n } else { 0 }
+        return [pscustomobject]@{
+            Mean = if ($n) { $sum / $n } else { 0 }
+            Max = $max
+            BlackFrac = $blackFrac
+            Path = $path
+        }
+    } catch {
+        return [pscustomobject]@{ Mean = -1; Max = -1; BlackFrac = -1; Path = ""; Error = $_.Exception.Message }
+    }
+}
+
+# A render-time crash is fatal; the known shutdown-time resource unload is benign.
 function Classify-Crash($lines, $crashIndex) {
     $from = [Math]::Max(0, $crashIndex - 10)
     $context = ($lines[$from..$crashIndex] -join "`n")
@@ -65,12 +131,7 @@ function Classify-Crash($lines, $crashIndex) {
     return "INDETERMINATE"
 }
 
-Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
-
-# The environment snapshot: a verdict without these is not reproducible. The
-# section hash in particular is what proved the toolchain was blameless during
-# the 2026-10-01 regression bisect.
+# The environment snapshot: a verdict without these is not reproducible.
 function Get-Environment {
     $out = @()
     $section = Get-ChildItem (Join-Path $GameDir "bundle\data") -Recurse -File -ErrorAction SilentlyContinue |
@@ -95,62 +156,53 @@ function Get-Environment {
     return ($out -join "  ")
 }
 
-$environment = Get-Environment
-"ENV  [$Label]: $environment"
+"ENV  [$Label]: $(Get-Environment)"
+
+Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
 
 $before = Newest-Log
 $start = Get-Date
 Start-Process -FilePath $LaunchBat -WorkingDirectory $GameDir | Out-Null
 
-$materialSet = $null
-$verdict = $null
+# Wait a fixed time for the title screen, then sample. The log cannot be polled
+# (buffered), so this is a time budget rather than an event wait.
+$wait = [Math]::Min($WaitForTitle, $Timeout)
+while (((Get-Date) - $start).TotalSeconds -lt $wait) { Start-Sleep -Seconds 1 }
+$screen = Get-WindowStats
+
+# Kill to flush the log, then give the flush a moment.
+Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 3
+
+$log = Newest-Log
+$lines = @(Get-Content $log.FullName)
+$material = $lines | Select-String "material set: background_image" | Select-Object -First 1
+$crash = $lines | Select-String "<<Crash>>" | Select-Object -First 1
+
 $detail = ""
-$logInfo = ""
+if ($material) { $detail = "material set at $($material.Line.Substring(0,12))" } else { $detail = "no material-set line (log may be unflushed on a hard kill)" }
+$detail += "; mean $([Math]::Round($screen.Mean, 2)) max $([Math]::Round($screen.Max, 2)) black $([Math]::Round($screen.BlackFrac * 100, 1))% shot=$($screen.Path)"
 
-while (((Get-Date) - $start).TotalSeconds -lt $Timeout) {
-    Start-Sleep -Seconds 3
-    $log = Newest-Log
-    if ($log.FullName -eq $before.FullName) { continue }
-    $lines = @(Get-Content $log.FullName)
-
-    if (-not $materialSet) {
-        $m = $lines | Select-String "material set: background_image" | Select-Object -First 1
-        if ($m) {
-            $materialSet = Get-Date
-            $detail = "material set at $($m.Line.Substring(0,12))"
-        }
-    }
-
-    $crash = $lines | Select-String "<<Crash>>" | Select-Object -First 1
-    if ($crash) {
-        $kind = Classify-Crash $lines ($crash.LineNumber - 1)
-        $elapsed = [int]((Get-Date) - $start).TotalSeconds
-        if ($kind -eq "BENIGN_UNLOAD") {
-            $verdict = "RENDER_OK"
-            $detail = "$detail; ended in the benign unload crash (t=${elapsed}s)"
-        } else {
-            $verdict = if ($kind -eq "INDETERMINATE") { "INDETERMINATE" } else { "RENDER_FAIL" }
-            $contextLine = ($lines | Select-Object -Skip ([Math]::Max(0, $crash.LineNumber - 3)) -First 1)
-            $detail = "$detail; crash t=${elapsed}s: $($crash.Line.Substring(0,12)) ($($contextLine.Trim().Substring(0,[Math]::Min(70, $contextLine.Trim().Length))))"
-        }
-        break
-    }
-
-    if ($materialSet -and ((Get-Date) - $materialSet).TotalSeconds -ge $WaitAfterMaterial) {
-        $verdict = "RENDER_OK"
-        $detail = "$detail; survived ${WaitAfterMaterial}s of rendering"
-        break
-    }
+$renderCrash = $null
+if ($crash) {
+    $kind = Classify-Crash $lines ($crash.LineNumber - 1)
+    if ($kind -eq "RENDER_FAIL" -or $kind -eq "INDETERMINATE") { $renderCrash = $kind }
+    $detail += "; crash: $($crash.Line.Trim().Substring(0,[Math]::Min(70, $crash.Line.Trim().Length)))"
 }
 
-$logInfo = (Newest-Log).Name
-Get-Process Darktide -ErrorAction SilentlyContinue | Stop-Process -Force
-
-if (-not $verdict) {
-    $verdict = if ($materialSet) { "INDETERMINATE" } else { "NO_LOAD" }
-    if (-not $materialSet) { $detail = "no material-set line within ${Timeout}s" }
+if ($renderCrash) {
+    $verdict = if ($renderCrash -eq "INDETERMINATE") { "INDETERMINATE" } else { "RENDER_FAIL" }
+} elseif ($screen.BlackFrac -ge 0 -and $screen.BlackFrac -gt 0.5) {
+    # The window sample is the load-bearing signal: a hard kill can lose the log,
+    # but not the picture. A mostly-black window means the material is not drawing.
+    $verdict = "RENDER_BLACK"
+} elseif ($material -or $screen.Mean -ge 6) {
+    $verdict = "RENDER_OK"
+} else {
+    $verdict = "NO_LOAD"
 }
 
 "VERDICT [$Label]: $verdict -- $detail"
-"       log: $logInfo"
+"       log: $($log.Name)"
 if ($verdict -ne "RENDER_OK") { exit 1 }
