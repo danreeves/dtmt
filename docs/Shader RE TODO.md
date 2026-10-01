@@ -918,6 +918,18 @@ node, header and the descriptor list), the two 12-B gaps and the condition tail
 4. `preamble` (~0.4 KB): the stream is the material's channel list (measured
    164/400 exact plus a fixed engine vocabulary); the config records are per
    shader but have only six distinct index sets across 489 preambles.
+
+**The preamble is the device block (2026-10-01).** The 561-byte device preamble
+parses under the existing `shader_block` model exactly: a 120-byte header, 29
+13-byte config records (`{index, pad, value, pad}`), then the channel stream - a
+count word and one 60-byte `texture_map` record. The same bytes sit in **every
+program tail** (`block[32..] == preamble[12..]`, 549 bytes), so deriving it
+derives the tails' trailing blocks too. `preamble_check` prints the parse, and
+`BlockTemplate::from_preamble` + `build_block` already generate the shape from a
+declaration - the module is present but **orphaned** (only its own tests use it).
+The deletion path is thus: the header's three varying words (groups, cbuffers,
+records+8) computed, the stream built from the material's channels, and the 29
+records from one of the six index sets - the last piece still to decode.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
