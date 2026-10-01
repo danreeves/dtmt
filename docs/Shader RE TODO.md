@@ -941,6 +941,17 @@ header describes - base columns 28..30, optional rows eight apart (31/32,
 38..40, 46..48, 54..56), channel row 94..101 - so the appended rows track which
 channel rows are live. Deriving the preamble is therefore: the base vocabulary,
 the append selected by the material's channels, and the header's three counts.
+
+**The append's selector is the cbuffer count (2026-10-01).** Grouping the base-
+prefixed corpus proves it: the config set does *not* track the channel count (the
+base appears with 0..19 stream records), but the append tracks the constant
+buffers. Cbuffers 1-2 - our family - append
+`30:1 54:1 46:6 38:2 12:0 13:0 94:7`; 2-3 append `30:1 54:1 46:6 38:2`; 3-8
+append two eight-spaced row groups (`30:1 54:1 46:6 38:5 13:0 54:1 46:6 38:2
+13:0`); 4-6 add the `29:1 26:... 16:78 20:3 24:3 17:78 ...` variant. The rows run
+eight apart (38/46/54), one group per constant buffer, with `12:0 13:0 94:7` as
+the channel-row marker - so the append is computable from the section's cbuffer
+list, which the tails already carry.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
