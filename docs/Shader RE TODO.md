@@ -1134,6 +1134,10 @@ regression is cleared.
   `dispatch_loadtime`, the error context naming the very query kept
   (`shader #ID[28b0ab00]`); **96** (48 vertex + 48 pixel) works.
 
+Bisecting upward pins it exactly: 72, 84, 90, 93 and 94 programs all
+`RENDER_FAIL`; only the complete **96** renders. So the demanded program for
+`28B0AB00` sits at the *end* of the list, and the program list must be complete.
+
 So `ShaderTemplate::initialize`/`dispatch_loadtime` index the program *list by
 position* for the query, and the query-to-program-slot mapping is the last
 structural unknown: query `28B0AB00` (the first `default` query) is served by a
