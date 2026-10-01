@@ -1125,18 +1125,25 @@ assignment only - the render itself was crashing. The in-game verdicts for the
 derived contexts, prefix and material table therefore need re-running once the
 regression is cleared.
 
-**Bisect: the toolchain is exonerated (2026-10-01).** Checking out `8758c94`
-(the commit/hand the 16:09 run used), rebuilding `dtmt` and `dtmm`, and building
-the same `ui_min_single.engine_data` produces a section **byte-identical** to
-HEAD's (sha256 `60EECF76AA50BD99`), and it still `RENDER_FAIL`s. Restoring the
-16:09-era `bundle_database.data` (16,600,148) and the patched files from their
-`.bak`s, and dropping the extra `9ba626afa44a3aa3` (`packages/boot`) entry from
-the deployment, likewise still fails. So neither the programs, the derivations,
-the deployment shape, nor the game files explain it: the remaining variable is
-the **PSO cache generation**. `launcher\Launcher.exe` is the documented way to
-regenerate it but needs a UI "Play" click (it does not auto-launch), so the
-recovery has to be run by hand: launcher once with the mod deployed, then
-`shader-render-test.ps1`.
+**The regression was the *reduced* section, not the toolchain (2026-10-01,
+resolved).** Once the harness classified the crash, the discriminator was the
+original verified control: the full section (421,696 B, 36 groups, carried
+contexts + derived tables) reports **RENDER_OK** - material set, benign unload
+crash at t=101 s - while the reduced one-group min-section reports RENDER_FAIL in
+`ShaderTemplate::initialize`. So the environment, toolchain, programs, `db` and
+PSO cache are all sound. The earlier "a build that rendered is now crashing"
+reading was wrong: the 16:09 min-single run almost certainly still had the
+*control* deployed (that era's dtmm failed the min deploy silently and the old
+script only checked the Lua line), so the reduced section was never shown to
+render.
+
+Two consequences. The **material-table derivation is validated on the real
+section**: the control build substitutes the derived records (replicated across
+all groups, which the shipped family's identical tables make exact) and renders.
+And the from-scratch work must **keep the full section structure**: the reduction
+to one query/group is what `ShaderTemplate::initialize` cannot survive, so the
+next step is deriving the contexts/ids *within* the full section (the
+multi-permutation enumeration) rather than shrinking it.
 
 `docs/scripts/shader-render-test.ps1` is the harness that keeps this honest: it
 classifies the crash (`RENDER_OK` / `RENDER_FAIL` / `NO_LOAD`), treats only the

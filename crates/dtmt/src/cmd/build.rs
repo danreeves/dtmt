@@ -674,7 +674,17 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     }
                 }
                 if !overrides.material_records.is_empty() {
-                    engine_data.material_tables = vec![overrides.material_records.clone()];
+                    // The material tables are identical across a section's
+                    // groups (measured: the shipped UI base's 36 groups carry
+                    // the same channel and variable tables), so the derived one
+                    // is replicated for however many groups the template has.
+                    let groups = engine_data
+                        .group_template
+                        .as_ref()
+                        .map(|template| template.groups.len())
+                        .unwrap_or(1)
+                        .max(1);
+                    engine_data.material_tables = vec![overrides.material_records.clone(); groups];
                 }
 
                 let carried = overrides.is_empty();
