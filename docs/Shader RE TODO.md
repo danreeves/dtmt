@@ -1125,6 +1125,27 @@ assignment only - the render itself was crashing. The in-game verdicts for the
 derived contexts, prefix and material table therefore need re-running once the
 regression is cleared.
 
+**The structural floor (2026-10-01).** A downward bisect from the full control
+(36 queries, 2 contexts, 96 programs), keeping every other byte shipped, found:
+
+- queries/groups reduce freely: N=18, 9, 4, 2 and **N=1** all `RENDER_OK`. One
+  query is enough - the min-section's failure was never the group count.
+- programs do not: N=1 with **8, 24 or 48** programs fails at
+  `dispatch_loadtime`, the error context naming the very query kept
+  (`shader #ID[28b0ab00]`); **96** (48 vertex + 48 pixel) works.
+
+So `ShaderTemplate::initialize`/`dispatch_loadtime` index the program *list by
+position* for the query, and the query-to-program-slot mapping is the last
+structural unknown: query `28B0AB00` (the first `default` query) is served by a
+slot in the upper half, not by the first pair. A section that keeps one query
+but all 96 program slots renders - the minimal shape a derived section can
+target once the slot mapping is modelled.
+
+Also fixed while chasing this: `dtmm`'s deployment hashes are written `h<hex>`
+(a bare digit-leading token lexed as an integer and made the file unreadable,
+including by dtmm), and `minimal_section` gained an `n <count> [programs]` mode
+(first N queries/groups, and the first N/2 programs per stage) for this bisect.
+
 **The regression was the *reduced* section, not the toolchain (2026-10-01,
 resolved).** Once the harness classified the crash, the discriminator was the
 original verified control: the full section (421,696 B, 36 groups, carried

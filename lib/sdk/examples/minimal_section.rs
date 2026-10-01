@@ -118,6 +118,95 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    if mode == "n" {
+        // The first `count` queries and groups, everything else shipped: the
+        // structural floor probe. Program list and all framing stay as they
+        // are, so the only variable is how many permutation slots the section
+        // declares.
+        let count: usize = args
+            .next()
+            .ok_or("usage: minimal_section <in> <out> <query> n <count> [programs]")?
+            .parse()?;
+
+        // An optional program count: the first `programs` entries of the
+        // program list, to probe what ShaderTemplate::initialize needs there.
+        let programs: Option<usize> = match args.next() {
+            Some(value) => Some(value.parse()?),
+            None => None,
+        };
+
+        // The first `count` query ids, with their own conditions offsets, from
+        // the shipped contexts blob.
+        let mut queries: Vec<(u32, u32)> = Vec::new();
+        let mut at = 0usize;
+        while at + 12 <= engine_data.contexts.len() && queries.len() < count {
+            let n = u32::from_le_bytes(engine_data.contexts[at + 8..at + 12].try_into().unwrap())
+                as usize;
+            for query in 0..n {
+                if queries.len() == count {
+                    break;
+                }
+                let record = at + 12 + query * 8;
+                let id = u32::from_le_bytes(
+                    engine_data.contexts[record..record + 4].try_into().unwrap(),
+                );
+                let conditions = u32::from_le_bytes(
+                    engine_data.contexts[record + 4..record + 8].try_into().unwrap(),
+                );
+                queries.push((id, conditions));
+            }
+            at += 12 + n * 8;
+        }
+        let mut contexts = Vec::new();
+        contexts.extend_from_slice(&DEFAULT_CONTEXT.to_le_bytes());
+        contexts.extend_from_slice(&0u32.to_le_bytes());
+        contexts.extend_from_slice(&(queries.len() as u32).to_le_bytes());
+        for (id, conditions) in &queries {
+            contexts.extend_from_slice(&id.to_le_bytes());
+            contexts.extend_from_slice(&conditions.to_le_bytes());
+        }
+        engine_data.contexts = contexts;
+        engine_data.context_count = 1;
+
+        let template = engine_data
+            .group_template
+            .as_ref()
+            .ok_or("the engine data carries no group template")?;
+        let groups: Vec<_> = template.groups.iter().take(count).cloned().collect();
+        engine_data.group_template = Some(GroupTemplate {
+            prefix: (groups.len() as u32).to_le_bytes().to_vec(),
+            groups,
+            engine: template.engine.clone(),
+        });
+        engine_data.material_tables.truncate(count);
+        if let Some(programs) = programs {
+            // Keep an equal number of each stage, in the original order: the
+            // list is 48 vertex + 48 pixel, so truncating the front would leave
+            // only one stage.
+            let per_stage = programs / 2;
+            let (mut vertex, mut pixel) = (0usize, 0usize);
+            engine_data.programs.retain(|(stage, _)| match stage {
+                Stage::Vertex => {
+                    vertex += 1;
+                    vertex <= per_stage
+                }
+                Stage::Pixel => {
+                    pixel += 1;
+                    pixel <= per_stage
+                }
+                _ => true,
+            });
+        }
+
+        fs::write(&output, engine_data.to_text())?;
+        println!(
+            "wrote {} bytes to {output}: one context, {count} quer(ies)/groups, {} programs",
+            fs::metadata(&output)?.len(),
+            engine_data.programs.len()
+        );
+        return Ok(());
+    }
+
     // One context, one query, no conditions.
     let mut contexts = Vec::new();
     contexts.extend_from_slice(&DEFAULT_CONTEXT.to_le_bytes());
