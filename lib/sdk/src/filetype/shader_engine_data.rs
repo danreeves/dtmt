@@ -643,6 +643,38 @@ fn permutations_contexts(
     Ok(out)
 }
 
+/// The `c_per_object` cbuffer hash the packed copies are keyed by.
+const PACKED_CBUFFER: u32 = 0xB563_9618;
+
+/// The engine's `between` bytes: two constants then the engine table's count
+/// word, which [`GroupData::build`] rewrites.
+fn derived_between() -> Vec<u8> {
+    let mut out = vec![0xF0, 0, 0, 0, 0x40, 0, 0, 0];
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
+/// The engine's packed copies for a group, from its material table: one
+/// three-record template per texture slot (a kind 5 row), the slot's channel
+/// name hashed into every copy and `c_per_object` as the cbuffer. Measured on
+/// the UI base: the three `texture_map` rows re-emitted with their own offsets
+/// and kinds.
+fn derived_mid(records: &[Record]) -> Vec<u8> {
+    let slots = records.iter().filter(|record| record.kind == 5).count();
+    let mut out = Vec::new();
+    out.extend_from_slice(&0x700u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&((slots * 3) as u32).to_le_bytes());
+    for record in records.iter().filter(|record| record.kind == 5) {
+        for (a, b, offset, kind) in [(5u32, 0u32, 0u32, 5u32), (0, 0, 4, 1), (8, 0, 16, 1)] {
+            for word in [record.hash, a, b, offset, kind, PACKED_CBUFFER, 0] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RoleLists {
@@ -1039,8 +1071,19 @@ impl EngineData {
                 groups.push(GroupParts {
                     head,
                     material_first: group.material_first,
-                    between: part(&template.betweens, group.between, "between")?,
-                    mid: part(&template.mids, group.mid, "mid")?,
+                    // An empty pool means the part is derived: the engine's
+                    // constants for `between`, and the material table's texture
+                    // slots for `mid` (filled in `generate`).
+                    between: if template.betweens.is_empty() {
+                        Vec::new()
+                    } else {
+                        part(&template.betweens, group.between, "between")?
+                    },
+                    mid: if template.mids.is_empty() {
+                        Vec::new()
+                    } else {
+                        part(&template.mids, group.mid, "mid")?
+                    },
                     tail: part(&template.tails, group.tail, "tail")?,
                 });
                 // An empty `materials` list means the table is derived - the
@@ -1452,7 +1495,23 @@ impl EngineData {
         // setting it to the query id crashes the engine at dispatch_loadtime,
         // while the shipped node value renders - so it is a separate identity.
         let group_data = match &self.group_template {
-            Some(template) => GroupData::build(template, &self.material_tables, &template.engine)?,
+            Some(template) => {
+                let mut template = template.clone();
+                for (index, group) in template.groups.iter_mut().enumerate() {
+                    if group.between.is_empty() {
+                        group.between = derived_between();
+                    }
+                    if group.mid.is_empty() {
+                        let records = self
+                            .material_tables
+                            .get(index)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        group.mid = derived_mid(records);
+                    }
+                }
+                GroupData::build(&template, &self.material_tables, &template.engine)?
+            }
             None => self.group_data.clone(),
         };
 

@@ -1208,7 +1208,18 @@ tail    46   the condition header
 
 The packed copies are the three `texture_map` rows re-emitted as
 `{hash, a, b, offset, kind, B5639618, 0}` (offset, kind and hash all match rows
-0-2); only `a` and `b` are still open, as is the descriptor `Y`.
+0-2); `a` and `b` are the template's own constants, below.
+
+**`between` and `mid` are derived (2026-10-01).** Both turn out to be engine
+templates, not per-material data. `between` is two constants (`F0`, `40`) then
+the engine table's count word, which `build` rewrites. `mid` is the engine's
+packed template: one three-record entry per texture slot (a kind 5 row), each
+record `{slot hash, a, b, offset, kind, B5639618, 0}` with the slot's channel
+name hashed into all three - so it derives from the material table's kind 5 rows,
+`a`/`b` being the template's own constants. Removing both pools from the control
+(13,384 -> 13,120 bytes) builds a **byte-identical** section
+(`03D2B050B67DC530`, 421,816 B) and reports `RENDER_OK`. Only `head` (the
+descriptor `Y`) and `tail` remain carried in the group framing.
 
 Side-finding: the engine's 32-bit ids are `high32(murmur64)`, confirmed by
 `high32(murmur64("default")) = F2760503`, the `default` context header. The SDK's
