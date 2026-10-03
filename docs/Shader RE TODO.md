@@ -1561,6 +1561,25 @@ other families read mostly unresolved because their device body is **not 549
 bytes** - each family needs its own body length before its table can be read, which
 is the concrete next step for particle/standard support.
 
+**Families differ structurally, not just in masks (2026-10-03, `device_shape`).**
+The device preamble's second header word is the family's own count, the
+pre-program region scales with it, and the per-program tail lengths differ:
+
+| family | header `{1, a, b, ..}` | pre-program | programs | vertex tail | pixel tails |
+| --- | --- | --- | --- | --- | --- |
+| UI base | `1, 36, 2` | 866 | 96 | 136 | 1154 / 1158 |
+| `01788473` | `1, 5, 6` | 1710 | 32 | 88-228 | 557-2058 |
+| `0028686a` | `1, 1, 2` | 1085 | 4 | 184-296 | 168-1280 |
+| `02cbef80` | `1, 5, 5` | 1009 | 30 | 64-228 | 240-1562 |
+| `01991281` | `1, 1, 2` | 40 | 2 | (no preamble body) | - |
+
+So the vertex tail is **not a universal 12 bytes** (the UI base's is 136), and
+the pixel tails follow each family's own repeating run. The construction
+principle holds - `split base + head + body + mask` - but every parameter
+(prefix, lists, body length, head sizes, mask run) is **per family**. A family is
+therefore a small recorded table of its own; `derived_programs` needs the
+family's table, not one global shape.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
