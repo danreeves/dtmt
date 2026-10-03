@@ -304,6 +304,23 @@ What the removed lines established, kept for the record:
 | `material_contexts` | 32-bit context names such as `surface_material = "bone"` | The full value set and how consumers use it |
 | Header `unk2_offset`/`unk2_size` | A small trailing blob (4 bytes on the UI base) | Contents |
 
+#### Community cross-reference (`Darktide-Asset-Compiler`)
+
+A **community** tool (`github` `fviuff/darktide-mods`' companion compiler, not the
+official toolchain) models the same stream in
+`src/stingray/material/material_v61.{h,cpp}`. It is useful as a second source for
+the *layout* and for the hash convention, but it does not decode the unknowns
+either - it names them `unknown_u32` (our `channels`), `unknown_5` (our `unk2`:
+`IdString32` + bool = 5 bytes), `unknown_8` (our `unk3`: two u32 = 8 bytes) and
+`other_blob` (our `unk2_data`). Its `build_inherited_material` emits all of them
+**empty** and a single `surface_material` context, which is its choice for props
+on v61, not evidence about v62 base materials. Its `id32_from_id64(s) = id64(s)
+>> 32` independently corroborates the rule this project proved in game
+(`high32(murmur64)`), and it enumerates the same `surface_material` values
+(`default`, `metal_solid`, `metal_sheet`, `cloth`, `concrete`, `brick`, `bone`,
+`plastic`) our material's `material_contexts` uses.
+
+
 ### Shader43 unknowns
 
 | Section | What is known | What is missing |
