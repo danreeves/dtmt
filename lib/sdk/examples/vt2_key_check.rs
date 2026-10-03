@@ -1,8 +1,13 @@
-//! Verifies the VT2 shader-key rule against the official toolchain's own data:
-//! every `static_compile` entry in the SDK's `.shader_source` files declares a
-//! `shader` and a `defines` list; the rule says the compiled library key is
-//! `<shader>:<defines sorted, lowercased>`. `debug_file_index.sjson` lists what
-//! was actually compiled, so the rule is checked against it directly.
+//! Checks how much of the VT2 compiler's compiled-key set the `.shader_source`
+//! `static_compile` entries alone reproduce, by the rule
+//! `<shader>:<defines in declaration order>` (lowercased, no context).
+//!
+//! Superseded by `vt2_editor.rs`, which reads the compiler's own `.editor`
+//! registries and verifies the rule value-for-value (220/220) against
+//! `debug_file_index.sjson`; use that for the definitive result. This tool is
+//! kept as the smaller `static_compile`-only cut, which the notes quote as
+//! "150 of 220 before the parser was fixed; 197 of 220 with the full
+//! declaration walk".
 //!
 //! ```text
 //! vt2_key_check <sdk core dir> <debug_file_index.sjson>

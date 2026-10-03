@@ -53,6 +53,7 @@ fn main() -> color_eyre::Result<()> {
     // The carried family table, as Rust arrays.
     let mut heads = Vec::new();
     let mut masks = Vec::new();
+    let mut seams = Vec::new();
     for (stage, tail) in &carried {
         if *stage != Stage::Pixel {
             continue;
@@ -60,20 +61,28 @@ fn main() -> color_eyre::Result<()> {
         // Head 36 gives a 625-byte tail, head 32 gives 621; the mask follows at
         // `4 (prefix) + 36 (lists) + head + 477`.
         let head = if tail.len() == 625 { 36 } else { 32 };
-        heads.push(head);
+        heads.push(head as u8);
         masks.push(tail.get(4 + 36 + head + 477).copied().unwrap_or(0x07));
+        // The 36-byte head's seam word's low byte, at tail offset 72.
+        seams.push(if head == 36 {
+            tail.get(72).copied().unwrap_or(0)
+        } else {
+            0
+        });
     }
-    println!("const UI_BASE_PASS_HEADS: [u8; {}] = [", heads.len());
-    for chunk in heads.chunks(16) {
-        let row: Vec<String> = chunk.iter().map(|h| h.to_string()).collect();
-        println!("    {},", row.join(", "));
-    }
-    println!("];");
-    println!("const UI_BASE_PASS_MASKS: [u8; {}] = [", masks.len());
-    for chunk in masks.chunks(16) {
-        let row: Vec<String> = chunk.iter().map(|m| format!("0x{m:02X}")).collect();
-        println!("    {},", row.join(", "));
-    }
-    println!("];");
+    let dump = |name: &str, values: &[u8], hex: bool| {
+        println!("const {name}: [u8; {}] = [", values.len());
+        for chunk in values.chunks(16) {
+            let row: Vec<String> = chunk
+                .iter()
+                .map(|v| if hex { format!("0x{v:02X}") } else { v.to_string() })
+                .collect();
+            println!("    {},", row.join(", "));
+        }
+        println!("];");
+    };
+    dump("UI_BASE_PASS_HEADS", &heads, false);
+    dump("UI_BASE_PASS_MASKS", &masks, true);
+    dump("UI_BASE_PASS_SEAMS", &seams, true);
     Ok(())
 }

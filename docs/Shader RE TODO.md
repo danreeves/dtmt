@@ -16,27 +16,64 @@ the permutation plan (ours), the group framing for the groups it ships, and the
 group `tail`.
 
 **Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
-now decoded (see "the key tokens are the shader's own `#if` defines" below):
+now decoded **and verified against the compiler's own output** (2026-10-03). The
+tools are `lib/sdk/examples/vt2_editor.rs` and `vt2_enumerate.rs`.
+
+The compiler flattens every `.shader_source` declaration into a `.editor`
+registry (one entry per compiled `.shader_library`):
 
 ```
-tokens = a declaration block's declared defines
-       + every condition name its tables test or nest under
-         (defined(X), ndefined_X, #if defined(X))
-key    = <shader>:<tokens sorted, lowercased, colon-joined>.shader_library
+"#ID[hash]" = { defines = "" | "A B" | [ "A" "B" ]; shader = "name"; ... }
 ```
 
-Implement it as: parse a `.shader_source` block's condition names (the SDK's
-`ShaderSource`/`ShaderChunk` reader already handles the dialect, and the
-`.shader_node` reader already models a table entry's `conditions`), combine with
-the pass's declared `defines`, sort, and emit the key set. Two tests, in order:
+and the library name is `<shader>:<tokens in declaration order>`, where
+`defines = ""` gives no token (`apply_fog`), `defines = [ "" ]` gives one empty
+token (`gui:`), and a list keeps its order. **`vt2_editor` reproduces the
+compiler's `debug_file_index.sjson` exactly: 220/220.** (The old "sorted"
+reading was wrong - the compiled order is the declaration's order.)
 
-1. **Reproduce VT2's 220 keys** from the SDK's own `.shader_source` files and
-   compare against `debug_file_index.sjson` (`vt2_key_check` is the scaffold - it
-   already matches the 150 keys that come from `static_compile`; the enumerator
-   must add the ~70 that come from passes and the block condition tables).
-2. Apply the same walk to a from-scratch Darktide declaration so
-   `programs`/`tails`/`block_heads` generate for **any** family, not just the UI
-   base's recorded table.
+There are **two key spaces**, and the notes must not conflate them:
+
+- **library name** (`debug_file_index.sjson`, `.editor`): `<shader>:<tokens in
+  order>`, lowercased, **no context**;
+- **query key** (a section's query id): `<shader>:<context>:<defines sorted>
+  :PLATFORM_<p>:RENDERER_<r>` - this is what `permutation::key`/`id` model.
+
+The declaration mechanisms that feed the token set:
+
+- `static_compile` entries - `{ shader = "copy" defines = "CUBE_CAPTURE" }`;
+- `passes` in a `shaders` entry - `{ hlsl_shader="copy" defines=[...] }`,
+  selected through a `defined=`/`fail=` decision tree;
+- `editor_options` - each option is `{ name=... define="DIFFUSE_MAP"
+  condition="!MASKED" }`, the material-visible define with its condition;
+- the block's condition tables (`defined_X` / `ndefined_X`) and code tests
+  (`#if defined(X)`, `#ifdef X`, bare `#elif X`).
+
+`vt2_editor --sources <core>` measures the coverage: the `.shader_source` files
+alone declare **197 of the 220**. The 23 that remain are:
+
+- **9 engine built-ins** (`apply_hdr_transparent`, `missing_shader`,
+  `depth_filter`, `error_debug`, `fill_far_plane`, `fixed_function_blend` +
+  `:point_sampler[:skin]`/`:premultiplied`, `copy_filter:cubic_filter*`) - names
+  the engine registers itself, present in no source (some only in render
+  configs);
+- **~14 combinations / compiler-internal names** - `copy:*` (`clear`,
+  `encode_rgbm`, `flip_y`, `red_to_rgb[:gamma]`, `project_to_far_plane`,
+  `cube_capture:encode_rgbm`), `apply_fog` dropping `DEVELOPMENT`,
+  `gui:yuv_video`, `temporal_aa:simple:linear_sampling`,
+  `ssr_ray_march_pass:compute`, `bright_pass:eye_adaptation`. Their tokens are
+  mostly in the global condition vocabulary (the `#if`/`ndefined_` names); a few
+  (`encode_rgbm`, `gamma`, `cubic_filter`) are named only in the build output.
+
+**On the Darktide side:** `vt2_enumerate` runs the same walk through the SDK's
+own `ShaderNode::compile_jobs`. Our `ui_default_base` declaration (one context,
+one pass, `defines=["SINGLE"]`) yields **one** library key
+(`ui_default_base:single`) - which is exactly why the section's family table has
+to come from the **inherited UI-base family**: a from-scratch declaration only
+generates as many programs as it declares passes x permutation combinations.
+Generating the whole 96 outside the family therefore means **declaring the
+family's passes and conditions** in our `.shader_node` - the enumerator is the
+tool that turns such a declaration into the key set.
 
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.

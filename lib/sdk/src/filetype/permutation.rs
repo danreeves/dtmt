@@ -1,16 +1,22 @@
 //! The engine's permutation keys and their ids.
 //!
-//! A shader's variants are named by keys of the form
-//! `<shader>:<context>:<defines, sorted>:PLATFORM_<platform>:RENDERER_<renderer>`
-//! - the VT2 SDK compiler logs exactly these while compiling, e.g.
-//! ``gui:DEPTH_TEST_ENABLED:DIFFUSE_MAP:ONE_BIT_ALPHA``. The compiled shader
-//! library file is named after the lowercased key (without the platform tail)
-//! plus `.shader_library`, and the id a section carries for a query is the high
-//! 32 bits of MurmurHash64A over the full key. All three rules are verified
-//! against the VT2 compiler's own output in the tests below.
+//! There are **two** key spaces, and they differ in more than the tail:
 //!
-//! VT2 is an older engine than Darktide, so the concrete tokens (shader names,
-//! contexts, defines) differ; the shapes do not. Treat the tokens as inputs.
+//! - the **query key**: `<shader>:<context>:<defines, sorted>:
+//!   PLATFORM_<platform>:RENDERER_<renderer>` - the VT2 SDK compiler logs these,
+//!   e.g. `gui:default:DIFFUSE_MAP:ONE_BIT_ALPHA:PLATFORM_WIN32:RENDERER_D3D12`,
+//!   and the id a Darktide section carries for a query is the high 32 bits of
+//!   MurmurHash64A over it (see [`key`], [`id`]);
+//! - the **library name**: `<shader>:<tokens in declaration order>`, lowercased,
+//!   with **no context token** - this is what `debug_file_index.sjson` lists and
+//!   what a `.editor` registry entry names, e.g. `gui:diffuse_map:one_bit_alpha`.
+//!   The file is that name plus `.shader_library` (see [`library_file`]).
+//!
+//! The two spaces were separated by re-reading the VT2 SDK compiler's own output
+//! (220/220 against `debug_file_index.sjson`; the tool is
+//! `examples/vt2_editor.rs`). VT2 is an older engine than Darktide, so the
+//! concrete tokens (shader names, contexts, defines) differ; the shapes do not.
+//! Treat the tokens as inputs.
 
 use crate::murmur::{IdString64, Murmur64};
 
@@ -119,6 +125,28 @@ mod test {
         assert_eq!(
             library_file("Linearize_Depth"),
             "linearize_depth.shader_library"
+        );
+    }
+
+    /// The compiled library name is *not* the query key: it drops the context
+    /// and keeps the declaration's token order. Both examples are entries the
+    /// VT2 compiler wrote into its `.editor` registries and into
+    /// `debug_file_index.sjson` (`examples/vt2_editor.rs` verifies all 220).
+    #[test]
+    fn library_names_drop_the_context_and_keep_declaration_order() {
+        // `{ shader="decal" defines="DIFFUSE_MAP NORMAL_MAP" }` ->
+        // `decal:diffuse_map:normal_map.shader_library`.
+        assert_eq!(
+            library_file("decal:DIFFUSE_MAP:NORMAL_MAP"),
+            "decal:diffuse_map:normal_map.shader_library"
+        );
+        // `{ shader="apply_fog" defines="DEBUG_FOG CALCULATE_LIGHTING" }` ->
+        // `apply_fog:debug_fog:calculate_lighting.shader_library`; the order is
+        // the declaration's (sorted would be calculate_lighting:debug_fog) and
+        // there is no `default` context token.
+        assert_eq!(
+            library_file("apply_fog:DEBUG_FOG:CALCULATE_LIGHTING"),
+            "apply_fog:debug_fog:calculate_lighting.shader_library"
         );
     }
 }
