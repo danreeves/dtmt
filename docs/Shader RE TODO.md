@@ -1546,6 +1546,21 @@ from a shipped section. The 2-program family also warns that not every family
 frames its device data the preamble way, so a family's shape has to be checked
 rather than assumed.
 
+**The UI base's pass table is readable (2026-10-03, `family_probe`).** Walking
+each program's own tail gives the 48 pixel masks exactly:
+
+```
+07 | 01 01 02 02 04 04 08 08 0F 0F 07 07 | 01 01 02 02 04 04 08 08 0F 0F 07 |
+01 02 04 08 0F 07 | 01 02 04 08 0F 07 | 01 02 04 08 0F 07 | 01 02 04 08 0F 07 | -
+```
+
+The domain is `01 02 04 08 0F` (single channel bits and all four) plus **`07`**
+the body's default (a tail with no patch). The pattern is symmetric and
+deterministic, so it can be carried as this family's pass table verbatim. The
+other families read mostly unresolved because their device body is **not 549
+bytes** - each family needs its own body length before its table can be read, which
+is the concrete next step for particle/standard support.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:

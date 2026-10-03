@@ -1,14 +1,16 @@
-//! Reports a section's pass structure: the contexts, the program count per
-//! stage, and the distinct `(head length, mask byte)` pairs its pixel programs
-//! use, so different shader families can be compared.
+//! Reports a section's pass table: its contexts, its programs per stage, and
+//! each pixel program's mask byte (read from its own tail block at body offset
+//! 477), in program order. One family per file, so different families' pass
+//! structures can be compared and recorded.
 //!
 //! ```text
 //! family_probe <material data file>...
 //! ```
 
-use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
+
+use sdk::filetype::shader::{self, Stage};
 
 fn u32_at(b: &[u8], o: usize) -> u32 {
     u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
@@ -27,44 +29,56 @@ fn main() -> Result<(), Box<dyn Error>> {
     for path in std::env::args().skip(1) {
         let data = fs::read(&path)?;
         let Some(sec) = section(&data) else { continue };
-        let Ok(parsed) = sdk::filetype::shader::Section::parse(sec) else {
+        let Ok(parsed) = shader::Section::parse(sec) else {
             continue;
         };
-        let contexts = parsed.contexts();
-        let queries: usize = contexts.iter().map(|c| c.queries.len()).sum();
-        let programs = sdk::filetype::shader::parse_programs(parsed.device_data())
-            .map(|p| p.len())
-            .unwrap_or(0);
-        // The device data starts with the preamble; the body is [12..].
+        let contexts: Vec<String> = parsed
+            .contexts()
+            .iter()
+            .map(|c| format!("{:08X}", c.name))
+            .collect();
         let device = parsed.device_data();
-        let body = device.get(12..561).unwrap_or_default();
-        // Count the distinct mask bytes around the body in the device data.
-        let before = body.get(..477).unwrap_or_default();
-        let after = body.get(478..).unwrap_or_default();
-        let mut masks: BTreeMap<u8, usize> = BTreeMap::new();
-        let mut at = 0;
-        while let Some(pos) = device[at..]
-            .windows(before.len().max(1))
-            .position(|w| w == before)
-        {
-            let start = at + pos;
-            let mask_at = start + 477;
-            if device.get(mask_at + 1..mask_at + 1 + after.len()) == Some(after)
-                && let Some(byte) = device.get(mask_at)
-            {
-                *masks.entry(*byte).or_default() += 1;
-            }
-            at = start + 1;
+        let Ok(programs) = shader::parse_programs(device) else {
+            continue;
+        };
+        let preamble = device.get(..561).unwrap_or_default();
+        let body_len = preamble.len().saturating_sub(12);
+
+        // Each program's tail is the bytes after its metadata record, up to the
+        // next program. The mask byte sits at `tail_body_start + 477`, where the
+        // body starts after the lists' count words (4 + 36).
+        let mut masks = Vec::new();
+        for (index, program) in programs.iter().enumerate() {
+            let tail_start = program.meta_pos + 16;
+            let tail_end = programs.get(index + 1).map_or(device.len(), |next| next.pos);
+            let tail = device.get(tail_start..tail_end).unwrap_or_default();
+            // The block inside the tail is `head + preamble body`; the body is
+            // 549 bytes and the mask sits at body offset 477. Find the body's
+            // first 64 bytes in the tail, then read +477.
+            let body_probe = device.get(12..76).unwrap_or_default();
+            let body_at = tail.windows(body_probe.len()).position(|w| w == body_probe);
+            let mask = body_at.and_then(|at| tail.get(at + 477)).copied();
+            masks.push(mask);
         }
-        let context_names: Vec<String> = contexts.iter().map(|c| format!("{:08X}", c.name)).collect();
+        let pixel_masks: Vec<String> = programs
+            .iter()
+            .zip(&masks)
+            .filter(|(program, _)| program.stage == Stage::Pixel)
+            .map(|(_, mask)| mask.map_or("-".to_string(), |m| format!("{m:02X}")))
+            .collect();
+        let vertex = programs
+            .iter()
+            .filter(|program| program.stage == Stage::Vertex)
+            .count();
+        let pixel = programs.len() - vertex;
         println!(
-            "{}: material_hash {:08X}, contexts [{}], {} queries, {} programs, masks {:?}",
+            "{}: contexts [{}], {} programs ({}V {}P), pixel masks [{}]",
             path.rsplit(['\\', '/']).next().unwrap_or(&path),
-            u32_at(sec, 4),
-            context_names.join(" "),
-            queries,
-            programs,
-            masks
+            contexts.join(" "),
+            programs.len(),
+            vertex,
+            pixel,
+            pixel_masks.join(" ")
         );
     }
     Ok(())
