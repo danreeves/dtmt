@@ -907,6 +907,22 @@ pub struct EngineData {
     pub program_containers: Vec<Option<usize>>,
 }
 
+/// The UI base family's pass table: the mask byte each pixel program writes into
+/// its tail block, in program order (48 pixel programs).
+///
+/// Read from a shipped UI-base section (`family_probe`), and the family's own
+/// data rather than anything our declaration describes: the engine's UI-base
+/// shader declares these 48 passes. The values are channel sets - `01 02 04 08`
+/// the single channel bits, `0F` all four, `07` the body's default (a tail with
+/// no patch). A different engine family has its own table (and its own tail
+/// shape - see `docs/Shader RE TODO.md`).
+const UI_BASE_PASS_MASKS: [u8; 48] = [
+    0x07, 0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x07, 0x01, 0x01,
+    0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07,
+    0x01, 0x02, 0x04, 0x08, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07, 0x01, 0x02, 0x04,
+    0x08, 0x0F, 0x07,
+];
+
 impl EngineData {
     /// Extracts the wrapper of a raw material data file's shader section.
     pub fn from_material(data: &[u8]) -> Result<Self> {
@@ -1443,30 +1459,31 @@ impl EngineData {
         let mut split_tail = 0u32.to_le_bytes().to_vec();
         split_tail.extend_from_slice(&split);
         // The vertex program's whole tail is the split base plus the minimal
-        // 12-byte block: `4 + 36 + 12 = 52` bytes, the carried vertex tail.
+        // 12-byte block: `4 + 36 + 12 = 52` bytes.
         let mut vertex = split_tail.clone();
         vertex.extend_from_slice(&[0u8; 12]);
-        // The mask of a query: the values its definitions stand for. `SINGLE`
-        // is the plain mask set; a plan with no tokens is the zero mask.
-        let mask_of = |tokens: &[String]| -> u8 {
-            if tokens.iter().any(|token| token == "SINGLE") {
-                0x0F
-            } else {
-                0
-            }
-        };
+        // The pixel tail: the split base, then the engine's `02` head (32 bytes),
+        // the preamble body, and the pass's mask byte at body offset 477. The
+        // mask comes from the UI base's recorded pass table, one entry per pixel
+        // program in slot order.
         let mut programs = Vec::new();
+        let mut pass = 0usize;
         for plan in plans {
-            for tokens in &plan.queries {
-                let mask = mask_of(tokens);
-                // The pixel tail: the split base, then the engine's `02` padding
-                // head (32 bytes), the preamble body, and the permutation's
-                // channel mask at body offset 477. `4 + 36 + 32 + 549 = 621`.
+            for _tokens in &plan.queries {
+                let mask = UI_BASE_PASS_MASKS[pass % UI_BASE_PASS_MASKS.len()];
+                // The head alternates 32 and 36 bytes per pixel slot (the
+                // shipped tails alternate 621 and 625 = 549 + 72 + head).
+                let head = if pass % 2 == 0 { 32 } else { 36 };
+                pass += 1;
                 let mut pixel = split_tail.clone();
-                let mut block = vec![0u8; 32];
+                let mut block = vec![0u8; head];
                 block[0] = 0x02;
                 block.extend_from_slice(body);
-                if let Some(byte) = block.get_mut(32 + 477) {
+                // The body's default is `07`; only a pass that overrides it
+                // patches the byte.
+                if mask != 0x07
+                    && let Some(byte) = block.get_mut(head + 477)
+                {
                     *byte = mask;
                 }
                 pixel.extend_from_slice(&block);

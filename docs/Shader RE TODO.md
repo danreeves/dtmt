@@ -1600,6 +1600,27 @@ program record plus its own interface, and the mask concept does not apply. Each
 family's generator is its own small shape, which is what makes "one table per
 family" the honest model.
 
+**Small families' tails are ordinary tails (2026-10-03, `program_records`).** The
+particle (`force_staff_arcs`) and standard (`substance_basic_wd`) programs' tails
+open `{u8 phase 01/02/03}{constant-buffer count}{hash, size}` - i.e. the same
+`count + cbuffer entries + lists + block` tail structure the UI base's programs
+use, just with the family's own cbuffer set and without the UI base's shared
+prelude body. So a small family needs no new format: its programs are ordinary
+tails, and the existing tail machinery (`Tail`, `TailLists`, `build_device`'s
+reflection fill) already models them. The UI base is the special case (the shared
+549-byte prelude and its mask byte), and it is the one that needs the recorded
+table.
+
+**The UI base table is wired (2026-10-03).** `UI_BASE_PASS_MASKS` records the 48
+masks, and `derived_programs` uses them: with a 48-query plan the generator emits
+96 programs whose **vertex tails are byte-identical** (52 B) and whose pixel tails
+have the **right lengths** (621/625, heads alternating 32/36). The only residual
+difference is **4 bytes at tail offset 72** on the 36-byte-head pixels - the seam
+between the head and the body, which needs the 36-byte head's own bytes rather
+than a `02`+zeros reconstruction. That is the last step to a byte-exact generated
+`programs`/`tails` for this family; the SDK's `shader_engine_data` tests stay
+green with the table in place.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
