@@ -1661,6 +1661,26 @@ engine's copy to the mod-tools CI scratch (`D:\a\w\vt2-modding\refs\heads\...`).
 So the symbol *universe* is Fatshark's official one - the tooling that wrote the
 format - which makes the type and function names above authoritative rather than
 a community guess. Only the field offsets need a symbol source.
+
+**The SDK ships a complete writer run (2026-10-03).** `TEMP/streamable_resources_compile`
+holds the output of a full compile the SDK itself performed: the VT2 `data/` tree
+with its section files, `debug_file_index.sjson`, **`shader_cache.db`**,
+`strings.txt`, `exploded_database.db`, and `modified_files/`. This is the writer's
+ground truth - the same kind of artifact set Darktide's own compiler would emit -
+and `shader_cache.db` in particular holds the compiler's manifest with literal
+strings:
+
+```
+shader = "gui"
+gui:depth_test_enabled:diffuse_map:one_bit_alpha.shader_library
+condition = "on_renderer(D3D11, D3D12, GNM)"
+condition = "!on_renderer(GL)"
+```
+
+So the library file names (our key format), the conditions, and the per-shader
+pass lists are all written out by the toolchain in text. That is the best decode
+source found so far: the format's *writer* left its own manifest.
+
  The
 **The community tool's new name lists were imported (2026-10-03).** The
 `Darktide-Asset-Compiler` update added `game_shaders.json` (22 shader presets with
