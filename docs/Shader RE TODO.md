@@ -1630,7 +1630,32 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
-**Cross-family validation (2026-10-03, `family_table`).** Reading three examples
+**Can we derive the conditions tree? - the exact gap (2026-10-03).** The format,
+branches and vocabulary are decoded (`condition_tree`), and the tree's meaning is
+visible in the real example (`contracts_top_candles`, 1436 B):
+
+```
+rec0 (root): hashes [gui, BDF72706, B5F45768, red, green, blue, 8FB860CF]
+             branches test subsets -> result index; fallback 7
+rec1..4:     the same, one channel swapped (red / green / blue / alpha)
+rec5 (base): hashes [gui, BDF72706, B5F45768] -> one result
+```
+
+So a record's hashes are the condition names and each branch is a conjunction of
+them returning a small result index. What is **not** established is what that
+index selects - the module's own note says "the result values are small indices
+(0..7) whose mapping to groups or interfaces is not established", and names the
+experiment: a generated family with a crafted tree and an in-game observation of
+which group the engine selects. Until that is run, a permuting material's tree
+cannot be *generated* (only carried).
+
+For the current goal this is not on the critical path: our material is
+**non-permuting** (1 channel, 0 condition bytes), and so are `decal_aoe` and the
+other small FX materials - their trees are empty, i.e. a constant. The tree only
+becomes real data for materials that switch on the shader's optional inputs
+(`contracts_top_candles` 5 ch / 1436 B, `substance_basic_wd` 17 ch / 220 B,
+`force_staff_arcs` 7 ch / 24 B), which is what standard and particle materials do.
+ **Cross-family validation (2026-10-03, `family_table`).** Reading three examples
 of each family confirms the model - each family is a small, consistent table:
 
 | family | examples | programs | masks | seams |
