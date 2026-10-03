@@ -1630,6 +1630,18 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The community tool's new name lists were imported (2026-10-03).** The
+`Darktide-Asset-Compiler` update added `game_shaders.json` (22 shader presets with
+their stream paths and variable names), `particle_schema.json` and a refreshed
+`shader_names.json`. Every string in them (plus the Blender addon's Python) was
+extracted, merged into the corpus and the dictionary (2,468 new entries, group
+`asset_compiler`) and the permutation vocabulary (2,598 tokens). It resolved one
+more name: the condition root `8FB860CF` = **`write_channels`** (with `gui`,
+`gui_hdr`, `gui_render_pass` and `alpha` already known). It did **not** resolve
+our group tail's hashes (`26E1CF9F`, `26E24EBC`, `5E415D62`) under either
+`murmur32` or `high32(murmur64)`, against 740k names - so the tail's names are
+still not in any string set we have.
+
 **The group `tail` is load-bearing even with empty conditions (2026-10-03).**
 Zeroing the group tail (a constant 46-byte zero entry, every group pointing at it)
 builds but renders **`RENDER_BLACK`** (79.9% black). So despite our conditions
