@@ -1630,7 +1630,28 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
-**The official VT2 SDK binaries name the writer (2026-10-03).** Fatshark's own
+**The VT2 pipeline is fully decoded from the compiler's own manifest (2026-10-03,
+`shader_cache`).** `shader_cache.db` parses as a run of length-prefixed strings:
+220 `<shader>:<context>:<defines>.shader_library` keys, each followed by the
+source's own `defines`/`shader` text and a `u64` hash.
+
+- **shader** is the declaration name (`gbuffer_debug`, `gui`, `ssao_ao_pass`,
+  `skin_filter`, `sun_flare`, …);
+- **context** is the **pass name** (`diffuse_map`, `horizontal_pass`,
+  `direction_x`, `depth_test_enabled`, `point_sampler`, …), not `default`;
+- **defines** are sorted and uppercased, and the key lowercases them - the exact
+  rule this project derived:
+  `defines = ["DEPTH_TEST_ENABLED" "DIFFUSE_MAP" "ONE_BIT_ALPHA"]` + `shader =
+  "gui"` -> `gui:depth_test_enabled:diffuse_map:one_bit_alpha.shader_library`.
+
+The conditions the compiler evaluates are `on_renderer(D3D11, D3D12, GNM)`,
+`on_renderer(D3D11, D3D12)` and `!on_renderer(GL)`. So the pipeline is: the
+declaration's passes each become a key with their condition evaluated, each key
+compiles to a `.shader_library` (indexed by `murmur64(lowercase key +
+".shader_library")`), and a material's section then references the key it wants by
+`high32(murmur64(full key + platform/renderer))`. `lib/sdk/examples/shader_cache.rs`
+dumps the whole manifest.
+ **The official VT2 SDK binaries name the writer (2026-10-03).** Fatshark's own
 Vermintide 2 mod tools ship two dev binaries - the shader/asset compiler
 (`sdk/engine/win64/dev/stingray_win64_dev_x64_compiler_1.exe`, 22 MB) and the
 engine (`bin/stingray_win64_dev_x64.exe`, 21 MB) - and unlike Darktide they are
