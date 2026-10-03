@@ -1630,6 +1630,31 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The VT2 declaration -> key rule is proven from both sides (2026-10-03,
+`vt2_key_check`).** The compiler ships both its inputs (the SDK's
+`.shader_source` files) and its outputs (`debug_file_index.sjson`), so the rule
+can be checked directly. Two declaration mechanisms feed the same key rule:
+
+- **`static_compile`** entries: `{ if: "on_renderer(D3D11, D3D12)" shader="sun_flare"
+  defines=["RADIAL" "BILLBOARD_CAMERA_ALIGNED"] }` compiles to
+  `sun_flare:radial:billboard_camera_aligned.shader_library`. The condition is
+  *evaluated* (not part of the key); the shader name and the sorted lowercased
+  defines build it. This alone matches **150 of the 220** compiled keys.
+- **passes** (inside `shader_contexts`/shaders entries): a pass names an
+  `hlsl_shader` plus its `defines`/`render_states`, and those identifiers become
+  the tokens - which is why the "context" token of a key mixes define-like
+  (`diffuse_map`) and state-like (`clear`, `flatten`, `shadow_mapping`,
+  `write_mask`) names. Those are the 70 keys `static_compile` does not cover
+  (`copy:clear`, `apply_hdr_transparent`, `bright_pass:eye_adaptation`, ...).
+
+So the key is `<shader>` + the entry's tokens, **sorted and lowercased, colon
+joined** - with the tokens coming from the entry's `defines` and (for a pass) its
+render-state/branch identifiers. There is no separate "context" field: the first
+position is simply the first sorted token. The one value the engine demanded of
+this project's own declaration (`6FA3FCCF`, from
+`materials/mods/snoopymod/ui_default_base:SINGLE:PLATFORM_WIN32:RENDERER_D3D12`)
+fits this rule exactly.
+
 **The shipped 36 queries are not in the key space (2026-10-03).** With the key
 rule now confirmed 220/220 against the official index, the Darktide side was
 re-searched with the *real* vocabulary drawn from the toolchain - 102 context
