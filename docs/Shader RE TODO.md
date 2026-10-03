@@ -1527,6 +1527,25 @@ and which mask each slot uses** - the plan in our file lists 48 identical
 needs a declaration that distinguishes the passes (the multi-pass enumeration),
 which is the next real step.
 
+**Families differ in size and mask set (2026-10-03, `family_probe`).** Reading
+four shipped families' sections:
+
+| family | contexts | programs | mask bytes used |
+| --- | --- | --- | --- |
+| UI base (`007bf44b`) | `F2760503 E2C8865F` | 96 | `1, 2, 4, 7, 8, 15` (8 each) |
+| `01788473` | `F2760503 5852A5B1 3100C3D2` | 32 | `8` |
+| `0028686a` | `F2760503 9E1FDE62 3100C3D2` | 4 | `6` |
+| `01991281` | `F2760503` | 2 | (none - its device data is not preamble-shaped) |
+
+So the pass structure is **family-specific and usually far smaller** than the UI
+base's 96, and the mask set differs per family. That settles the approach: carry
+**one pass table per engine family**, read from a shipped material of that family
+(as the UI base's was), and let the generator emit each family's programs from
+its table. Nothing needs the shipped *declaration* - each table is observable
+from a shipped section. The 2-program family also warns that not every family
+frames its device data the preamble way, so a family's shape has to be checked
+rather than assumed.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
