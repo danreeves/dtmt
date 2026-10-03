@@ -1509,6 +1509,24 @@ passes x 2 contexts for the shipped family), not the single pass we declare toda
 The generator therefore needs the multi-pass declaration to feed it; with one
 `SINGLE` pass there is one mask and the list cannot be correct.
 
+**The generator's shapes are now exact; only the per-slot data is missing
+(2026-10-03, `program_diff`).** Diffing `derived_programs` against the carried
+list pins every part:
+
+- the **vertex tail is 52 bytes** = `4` prefix + nine empty list counts (`36`) +
+  the 12-byte block - and the generator now matches it byte for byte;
+- the **pixel tail is `4 + 36 + head + 549`** = 621 (head 32) or 625 (head 36),
+  the block being `head + preamble body`.
+- the heads are **32 and 36 bytes** (not the 32 I first used), and a tail with
+  **no patch** keeps the body's default mask byte (`7`), so the mask is written
+  only for tails that override it.
+
+So the *construction* is solved; what the generator cannot invent is **which head
+and which mask each slot uses** - the plan in our file lists 48 identical
+`SINGLE` queries, which carries no such information. A correct generated list
+needs a declaration that distinguishes the passes (the multi-pass enumeration),
+which is the next real step.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:

@@ -1431,7 +1431,7 @@ impl EngineData {
     /// are `head + preamble body + one patch at body offset 477`, the patch
     /// value a channel bitmask (`1, 2, 4, 8, 15`), and the pattern repeats every
     /// six permutations as the context alternates.
-    fn derived_programs(&self, plans: &[PermutationPlan]) -> Option<Vec<(Stage, Vec<u8>)>> {
+    pub fn derived_programs(&self, plans: &[PermutationPlan]) -> Option<Vec<(Stage, Vec<u8>)>> {
         let body = self.device_preamble.get(12..)?;
         // A split tail's base: an empty prefix (so the build fills its lists
         // from the container's reflection) followed by empty lists.
@@ -1442,7 +1442,10 @@ impl EngineData {
         .bytes();
         let mut split_tail = 0u32.to_le_bytes().to_vec();
         split_tail.extend_from_slice(&split);
-        let vertex = split_tail.clone();
+        // The vertex program's whole tail is the split base plus the minimal
+        // 12-byte block: `4 + 36 + 12 = 52` bytes, the carried vertex tail.
+        let mut vertex = split_tail.clone();
+        vertex.extend_from_slice(&[0u8; 12]);
         // The mask of a query: the values its definitions stand for. `SINGLE`
         // is the plain mask set; a plan with no tokens is the zero mask.
         let mask_of = |tokens: &[String]| -> u8 {
@@ -1456,9 +1459,9 @@ impl EngineData {
         for plan in plans {
             for tokens in &plan.queries {
                 let mask = mask_of(tokens);
-                // The pixel tail: the split base plus the engine's `02` padding
-                // head, the preamble body and the permutation's channel mask at
-                // body offset 477.
+                // The pixel tail: the split base, then the engine's `02` padding
+                // head (32 bytes), the preamble body, and the permutation's
+                // channel mask at body offset 477. `4 + 36 + 32 + 549 = 621`.
                 let mut pixel = split_tail.clone();
                 let mut block = vec![0u8; 32];
                 block[0] = 0x02;
