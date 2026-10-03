@@ -1089,18 +1089,16 @@ impl EngineData {
             for (index, group) in template.groups.iter().enumerate() {
                 // A group starts with its query id: the file's own, or the
                 // contexts' by position (they are one to one, same order), so
-                // the head stores only what follows it.
+                // the head stores only what follows it. A file that carries
+                // neither yet (a from-scratch file whose contexts come from the
+                // declaration at build time) leaves a zero placeholder that
+                // `generate` fills from the contexts it derives.
                 let query = match &group.query {
                     Some(query) => query.0.clone(),
                     None => queries
                         .get(index)
                         .map(|query| query.to_le_bytes().to_vec())
-                        .ok_or_else(|| {
-                            color_eyre::eyre::eyre!(
-                                "group {index} has no query and the contexts carry only {}",
-                                queries.len()
-                            )
-                        })?,
+                        .unwrap_or_else(|| 0u32.to_le_bytes().to_vec()),
                 };
                 let mut head = query;
                 if template.heads.is_empty() {
@@ -1562,7 +1560,29 @@ impl EngineData {
         };
         // The template first: the device's tails read its descriptor list, so
         // the derived head has to exist before the device is built.
-        let template = self.derived_template(resources);
+        let mut template = self.derived_template(resources);
+
+        // A group's query id comes from the contexts (the engine looks a group
+        // up by it), so a from-scratch file - whose groups carry a zero
+        // placeholder because the file had no contexts - takes it here from the
+        // contexts the file derived. Setting a group node to the context query
+        // is what the shipped sections do.
+        if let Some(template) = template.as_mut() {
+            let ids = context_queries(&contexts)?;
+            for (index, group) in template.groups.iter_mut().enumerate() {
+                let placeholder = group
+                    .head
+                    .get(..4)
+                    .is_some_and(|word| word == [0u8; 4]);
+                if placeholder
+                    && let Some(id) = ids.get(index)
+                    && let Some(word) = group.head.get_mut(..4)
+                {
+                    word.copy_from_slice(&id.to_le_bytes());
+                }
+            }
+        }
+
         let device = self.build_device(containers, resources, template.as_ref())?;
 
         let group_data = match &template {

@@ -1019,6 +1019,18 @@ reading), not a function of our declaration. The runtime needs only the one quer
 the engine demands (the reduced one-query section renders), so the other 35 are
 the family's declared table rather than a runtime requirement - which is why the
 enumeration is the one carried pool with no derivation path from our sources yet.
+
+**A from-scratch section works (2026-10-03).** The last blocker was ordering: the
+reader filled a group's query id from the *text's* contexts, which a from-scratch
+file does not have, so it refused (`group 0 has no query and the contexts carry
+only 0`). The group head's query now takes a zero placeholder in the reader and
+is filled in `generate` from the contexts **it** derived - the engine-demanded
+`6FA3FCCF` for our declaration. With that, `ui_default_base.engine_data` needs no
+`contexts`, `permutations`, `materials`, `heads`, `betweens` or `mids`; it is
+**11,444 bytes** and the built section (`1792F33AFAD2B4E6`) is **`RENDER_OK`**.
+What a from-scratch file still carries: the per-permutation tail blocks +
+`block_heads` (load-bearing device streams) and the group `tail` (the shader's
+own source references), plus `group_template`'s framing for the groups it ships.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
