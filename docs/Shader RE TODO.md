@@ -103,12 +103,13 @@ needs.
 (2026-10-03).** The carried `group_template` is not opaque: it is the family's
 36 queries crossed with its 6 condition sets, and both halves are readable.
 
-- A **group tail** is a condition set: `u32 count` + that many condition hashes,
-  zero-padded to the family's slot width + a fixed header. The UI base's six,
-  each covering **six** queries, are: tail 0 `{gui}`, tail 1 `{gui_hdr}`, tail 2
-  `{transparent_mask}`, tail 3 `{gui_hdr}`, tail 4 `{gui}`, tail 5 `{}` (empty) -
-  all names now reversed (above). Tails 0 and 1 carry a second, zeroed hash slot;
-  their groups use head 0, the rest head 1.
+- A **group tail** is a condition set: `u32 n` + `n` 17-byte entries
+  (`condition hash` + 13 zero bytes) + an 8-byte trailer (`01 00 00 00 00 00 00
+  00`, or zeros for the empty set). The UI base's six, each covering **six**
+  queries, are: tail 0 `{gui, transparent_mask}`, tail 1 `{gui_hdr,
+  transparent_mask}`, tail 2 `{transparent_mask}`, tail 3 `{gui_hdr}`, tail 4
+  `{gui}`, tail 5 `{00000000}` (empty) - all names now reversed (above). Their
+  groups use head 0 for tails 0/1 and head 1 for tails 2..5.
 - A **group** is `query_id` in query order plus `(head, between, mid, tail,
   material_first)`. The UI base's 36 groups are exactly its 36 queries in order
   (verified: every group hash equals its query id), six per tail, tails 0..5 in
