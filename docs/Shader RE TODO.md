@@ -6,6 +6,41 @@ Working notes and next steps for the `shader43` reverse engineering. See
 
 ## Priority order
 
+**Current goal: delete `.engine_data` entirely** - a `.material` + `.shader_node`
++ `.shader_source` + `.texture` that builds a section from scratch, with no
+`shader_engine_data = "..."` side file. Progress and the exact remaining work are
+in **"The road to deleting .engine_data"** below. As of 2026-10-03 the side file
+is down to 12,389 bytes with the contexts, material table, group head, group
+framing, preamble, programs, tails and block heads all derived - what remains is
+the permutation plan (ours), the group framing for the groups it ships, and the
+group `tail`.
+
+**Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
+now decoded (see "the key tokens are the shader's own `#if` defines" below):
+
+```
+tokens = a declaration block's declared defines
+       + every condition name its tables test or nest under
+         (defined(X), ndefined_X, #if defined(X))
+key    = <shader>:<tokens sorted, lowercased, colon-joined>.shader_library
+```
+
+Implement it as: parse a `.shader_source` block's condition names (the SDK's
+`ShaderSource`/`ShaderChunk` reader already handles the dialect, and the
+`.shader_node` reader already models a table entry's `conditions`), combine with
+the pass's declared `defines`, sort, and emit the key set. Two tests, in order:
+
+1. **Reproduce VT2's 220 keys** from the SDK's own `.shader_source` files and
+   compare against `debug_file_index.sjson` (`vt2_key_check` is the scaffold - it
+   already matches the 150 keys that come from `static_compile`; the enumerator
+   must add the ~70 that come from passes and the block condition tables).
+2. Apply the same walk to a from-scratch Darktide declaration so
+   `programs`/`tails`/`block_heads` generate for **any** family, not just the UI
+   base's recorded table.
+
+The rest of this section is the older, still-open worklist (group data
+constructor, conditions tree), kept for reference.
+
 Items 1 and 2 are done and verified against the sections on disk; item 3 turned
 out to be done already. What is left is the group data constructor, the
 conditions tree, and the in-game test that no round trip can replace.
@@ -1449,26 +1484,22 @@ still holds and what each needs:
 **Already derived** (the file no longer names them; verified in game):
 contexts/queries via the declaration's compile jobs (when the file carries no
 `contexts`), the context/group pairing, the material table, the group head, the
-group framing constants (`between`, `mid`) and the device preamble.
+group framing constants (`between`, `mid`), the device preamble, and - as of
+2026-10-03 - **the program list and its tails**: `derived_programs` emits the
+family's whole `(head, seam, mask)` table (the UI base's 48 pixel slots, read via
+`family_table`), and with `programs`, `tails` and `block_heads` removed the built
+section is **byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and `RENDER_OK`.
 
-**Left in the file, in size order:**
+**Left in the file:**
 
-1. **`programs` (96 entries)** - the program list. Its shape is fully regular:
-   every Vertex program shares the minimal 12-byte block (`tail` 0), and the
-   Pixel programs walk a small set. `programs = passes x contexts` fits (48 x 2),
-   so the list is derivable from the declaration's `(context, permutation)` jobs
-   once the pass-program ordering is pinned.
-2. **`tails` (20 blocks)** - a tail block is `head (<=64 B) + the preamble body
-   (549 B) + per-program patches`. The blocks here are `head 0/1/2` plus **one
-   patch at body offset 477**, whose values are `1, 2, 4, 8, 15` - a **per-program
-   channel bitmask** (offset 477 is the preamble's field that reads `7`), the same
-   `01/02/04/08/0F` set the notes record. So a tail is a head plus a mask patch;
-   the head choice and the mask are the two things left.
-3. **`block_heads` (3 entries)** - the `02`-prefixed 28-byte heads the tails draw
-   from; they fall away with (2).
-4. **`group_template`'s group list and `prefix`** - one group per query (36 for
+1. ~~`programs` / `tails` / `block_heads`~~ **done** (see above). The table is
+   currently the UI base's recorded one; generating it for *any* family is the
+   enumerator in "Priority order".
+2. **`group_template`'s group list and `prefix`** - one group per query (36 for
    the shipped family; 1 for a from-scratch declaration), plus the count word.
-5. **the group `tail` pool** - the source references; still the open decode.
+3. **the group `tail` pool** - proven **load-bearing even with empty conditions**
+   (zeroing it renders `RENDER_BLACK`), so it is the same source-graph decode as
+   the conditions tree, not a constant.
 
 **The one hard requirement**: `ShaderTemplate::initialize` wants the *program
 list* complete - reducing it to the demanded program fails `dispatch_loadtime`
