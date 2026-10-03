@@ -933,6 +933,14 @@ const UI_BASE_PASS_HEADS: [u8; 48] = [
     36, 32,
 ];
 
+/// The UI base family's 36-byte head seam word's low byte, per pixel slot (0
+/// where the head is 32 bytes). Measured from a shipped section.
+const UI_BASE_PASS_SEAMS: [u8; 48] = [
+    0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02,
+    0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00,
+];
+
 impl EngineData {
     /// Extracts the wrapper of a raw material data file's shader section.
     pub fn from_material(data: &[u8]) -> Result<Self> {
@@ -1457,7 +1465,7 @@ impl EngineData {
     /// are `head + preamble body + one patch at body offset 477`, the patch
     /// value a channel bitmask (`1, 2, 4, 8, 15`), and the pattern repeats every
     /// six permutations as the context alternates.
-    pub fn derived_programs(&self, plans: &[PermutationPlan]) -> Option<Vec<(Stage, Vec<u8>)>> {
+    pub fn derived_programs(&self, _plans: &[PermutationPlan]) -> Option<Vec<(Stage, Vec<u8>)>> {
         let body = self.device_preamble.get(12..)?;
         // A split tail's base: an empty prefix (so the build fills its lists
         // from the container's reflection) followed by empty lists.
@@ -1472,24 +1480,31 @@ impl EngineData {
         // 12-byte block: `4 + 36 + 12 = 52` bytes.
         let mut vertex = split_tail.clone();
         vertex.extend_from_slice(&[0u8; 12]);
-        // The pixel tail: the split base, then the engine's `02` head (32 bytes),
-        // the preamble body, and the pass's mask byte at body offset 477. The
-        // mask comes from the UI base's recorded pass table, one entry per pixel
-        // program in slot order.
+
+        // The program list is the **family's**, not one pair per query: the UI
+        // base's section declares a single context query yet carries 48 program
+        // pairs. So the family table (heads, seams, masks) is walked whole, one
+        // pair per entry.
         let mut programs = Vec::new();
-        let mut pass = 0usize;
-        for plan in plans {
-            for _tokens in &plan.queries {
-                let mask = UI_BASE_PASS_MASKS[pass % UI_BASE_PASS_MASKS.len()];
-                // The head size, per slot, from the family's own table.
-                let head = UI_BASE_PASS_HEADS[pass % UI_BASE_PASS_HEADS.len()] as usize;
-                pass += 1;
-                let mut pixel = split_tail.clone();
-                let mut block = vec![0u8; head];
+        let passes = UI_BASE_PASS_HEADS.len();
+        for pass in 0..passes {
+            let head = UI_BASE_PASS_HEADS[pass] as usize;
+            let seam = UI_BASE_PASS_SEAMS[pass];
+            let mask = UI_BASE_PASS_MASKS[pass];
+            let last = pass == passes - 1;
+            let mut pixel = split_tail.clone();
+            let mut block = vec![0u8; head];
+            block[0] = 0x02;
+            if head == 36 {
+                block[32..36].copy_from_slice(&[seam, 0, 0, 0]);
+            }
+            if last {
+                // The family's last block is a head alone: `02` + 35 zeros, no
+                // body.
+                let mut block = vec![0u8; 36];
                 block[0] = 0x02;
-                if head == 36 {
-                    block[32..36].copy_from_slice(&[0x02, 0, 0, 0]);
-                }
+                pixel.extend_from_slice(&block);
+            } else {
                 block.extend_from_slice(body);
                 // The body's default is `07`; only a pass that overrides it
                 // patches the byte.
@@ -1499,9 +1514,9 @@ impl EngineData {
                     *byte = mask;
                 }
                 pixel.extend_from_slice(&block);
-                programs.push((Stage::Vertex, vertex.clone()));
-                programs.push((Stage::Pixel, pixel));
             }
+            programs.push((Stage::Vertex, vertex.clone()));
+            programs.push((Stage::Pixel, pixel));
         }
         Some(programs)
     }
