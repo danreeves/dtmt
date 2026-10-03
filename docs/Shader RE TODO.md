@@ -997,6 +997,16 @@ show: a universal 12-byte zero Vertex block (hash `6C9A7A05`, in every section
 measured) and a small family of Pixel shapes - all-zero 28/32 bytes,
 `02`-prefixed 16/36, a 52-byte one - plus, for some shaders, a full
 preamble-shaped block. The pick and the mask remain the open decode.
+
+**`materials` is redundant in the file (2026-10-03).** The build derives the
+material table from the declaration, so the file's `materials` pool is
+overwritten anyway: removing it leaves the built section **byte-identical**
+(`7348B400A52BCB1F`, `RENDER_OK`) and the text at **12,082 bytes** (from 12,389).
+`contexts` cannot go the same way yet - it carries the *shader's* declared
+(context, query) pairs (the UI base's 30 `default` values + 6 `gui_render_pass`
+passes), while the mod's declaration has one pass, so a derived contexts blob is
+one query and would not match the group data's 36 groups. Removing it is the
+full multi-permutation enumeration, not a redundant-pool deletion.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
