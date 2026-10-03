@@ -1653,6 +1653,28 @@ That closes the rule end to end:
 This is the same shape as the UI base's 96 programs: its passes each contribute a
 shader + render-state and the source's conditionals expand the set.
 
+**The token set comes from the block's condition tables, not just `#if`s
+(2026-10-03).** Reading `utilities.shader_source`'s `copy` block shows the three
+places a token is introduced:
+
+- the block's `code` tests it: `#if defined(FLIP_Y)`, `#ifdef ALPHA_TO_RGB` /
+  `#elif RED_TO_RGB`, `#if defined(CUBE_CAPTURE)`, `#if defined(COPY_HALF)`, …;
+- the block's tables nest under it: `samplers = { ndefined_INTERLEAVE_BUFFER = {
+  defined_POINT_SAMPLER = { … } ndefined_POINT_SAMPLER = { … } } defined_MASKED = { … } }`
+  - the `defined_X` / `ndefined_X` prefixes are the positive/negative condition
+  keys, the same shape this project's `.shader_node` reader already models as a
+  channel/sampler entry's `conditions`;
+- the shader's own `compile`/`static_compile` entries add declared `defines`.
+
+So the compiler's token candidates are every condition name the block tests or
+nests under (`defined(X)` and `ndefined_X` both name `X`), and it permutes the
+ones the pass does not already fix. Our own `ui_default_base.shader_source`
+contains only `STAGE_VERTEX`/`STAGE_FRAGMENT` (compiler built-ins), so its block
+contributes one token set - the 96 programs come from the **inherited UI-base
+family**, not from our source. Building a VT2-faithful enumerator is therefore a
+matter of walking a `.shader_source` block's condition keys, which the SDK's
+reader already parses for the `.shader_node` dialect.
+
 **The VT2 declaration -> key rule is proven from both sides (2026-10-03,
 `vt2_key_check`).** The compiler ships both its inputs (the SDK's
 `.shader_source` files) and its outputs (`debug_file_index.sjson`), so the rule
