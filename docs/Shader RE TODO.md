@@ -963,6 +963,21 @@ section is **byte-identical** (`7348B400A52BCB1F`) and `RENDER_OK`. The harness
 also samples twice now: a slow boot (the deployment grows the bundle database)
 can still be on the loading screen at the first sample, and the clearer frame
 wins.
+
+**What `tails`, `block_heads` and the group `tail` do when absent (2026-10-03).**
+The reader requires all three - a group names a tail (`a group names a tail at
+#0, which is missing`) and a program names a tail (`a program names tail #0,
+which is missing`) are hard errors - so a from-scratch material cannot build
+without them yet. But the *program* side is already stored in its minimal form:
+a `TailText` keeps only its `block`, and the constant-buffer and resource
+**lists** are derived at build time from the compiled container's own reflection
+(`build_device`), which is why the split tails in the file carry no lists. What
+stays carried there is only the **block** - the preamble body plus a per-program
+head drawn from the `block_heads` pool (three distinct heads here), i.e. the
+per-program mask the notes still list as the open correlation. The group `tail`
+is different in kind: it names the source chunks the permutation's conditions
+reference (`gui`, `gui_hdr`, ...), so a from-scratch shader must generate it from
+its own source graph - which is why zeroing it renders black.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
