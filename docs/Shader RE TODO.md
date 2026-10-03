@@ -1630,6 +1630,29 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The pass/per-permutation tokens are the shader's own `#if defined(…)`
+branches (2026-10-03).** `copy`'s declaration declares one pass
+(`{ hlsl_shader="copy" defines=["SAMPLE_RGBA"] render_states="filter" }`) and one
+`compile` entry (`{ defines=[""] }`), yet **10 `copy:` keys** compile:
+`copy:clear`, `copy:flip_y`, `copy:encode_rgbm`, `copy:red_to_rgb`,
+`copy:point_sampler`, `copy:cube_capture`, `copy:project_to_far_plane`,
+`copy:alpha_to_rgb`, `copy:red_to_rgb:gamma`, `copy:cube_capture:encode_rgbm`.
+Their tokens are exactly the `#if defined(FLIP_Y)` / `#if defined(RED_TO_RGB)` /
+`#if defined(ENCODE_RGBM)` branches **inside the shader body** - so the compiler
+permutes the code block over the conditions the source tests, and each branch
+becomes a token in the key, sorted with any declared defines.
+
+That closes the rule end to end:
+
+- **key** = `<shader>` + the tokens, sorted and lowercased, colon joined;
+- **tokens** = the entry's declared `defines` **plus** the `#if defined(…)`
+  conditions the shader body branches on (its `permutation_sets`/source `#if`s);
+- the entry's **condition** (`on_renderer(…)`) is evaluated, not part of the key;
+- there is no separate context field.
+
+This is the same shape as the UI base's 96 programs: its passes each contribute a
+shader + render-state and the source's conditionals expand the set.
+
 **The VT2 declaration -> key rule is proven from both sides (2026-10-03,
 `vt2_key_check`).** The compiler ships both its inputs (the SDK's
 `.shader_source` files) and its outputs (`debug_file_index.sjson`), so the rule
