@@ -1440,7 +1440,41 @@ it grounds or confirms:
 - Their shader clock is the viewport constant at byte 1440 (`c90.x`) - the
   `global_viewport.time` our UI base's source also reads at 1440.
 
-### The records' binding fields, corrected against the naming pass
+### The road to deleting .engine_data (2026-10-03)
+
+Goal: a purely from-scratch `.material` + `.shader_node` + `.shader_source` +
+`.texture`, with no `shader_engine_data = "…"` side file. What the side file
+still holds and what each needs:
+
+**Already derived** (the file no longer names them; verified in game):
+contexts/queries via the declaration's compile jobs (when the file carries no
+`contexts`), the context/group pairing, the material table, the group head, the
+group framing constants (`between`, `mid`) and the device preamble.
+
+**Left in the file, in size order:**
+
+1. **`programs` (96 entries)** - the program list. Its shape is fully regular:
+   every Vertex program shares the minimal 12-byte block (`tail` 0), and the
+   Pixel programs walk a small set. `programs = passes x contexts` fits (48 x 2),
+   so the list is derivable from the declaration's `(context, permutation)` jobs
+   once the pass-program ordering is pinned.
+2. **`tails` (20 blocks)** - a tail block is `head (<=64 B) + the preamble body
+   (549 B) + per-program patches`. The blocks here are `head 0/1/2` plus **one
+   patch at body offset 477**, whose values are `1, 2, 4, 8, 15` - a **per-program
+   channel bitmask** (offset 477 is the preamble's field that reads `7`), the same
+   `01/02/04/08/0F` set the notes record. So a tail is a head plus a mask patch;
+   the head choice and the mask are the two things left.
+3. **`block_heads` (3 entries)** - the `02`-prefixed 28-byte heads the tails draw
+   from; they fall away with (2).
+4. **`group_template`'s group list and `prefix`** - one group per query (36 for
+   the shipped family; 1 for a from-scratch declaration), plus the count word.
+5. **the group `tail` pool** - the source references; still the open decode.
+
+**The one hard requirement**: `ShaderTemplate::initialize` wants the *program
+list* complete - reducing it to the demanded program fails `dispatch_loadtime`
+while the complete list renders - so a generated file must emit all 96 (or as
+many as the declaration's jobs produce). That is generation, not a smaller file.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
