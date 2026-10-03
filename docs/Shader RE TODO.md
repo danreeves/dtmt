@@ -1630,6 +1630,24 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The shipped 36 queries are not in the key space (2026-10-03).** With the key
+rule now confirmed 220/220 against the official index, the Darktide side was
+re-searched with the *real* vocabulary drawn from the toolchain - 102 context
+tokens, 130 define tokens, 69 shader names (`debug_file_index.sjson`), plus the
+community tool's imported names and this project's own. Every combination tried
+(engine shader names, output-node paths, our material path, `default` /
+`gui_render_pass` / empty context, 0-2 sorted defines, both platform tails):
+**zero hits** against the 36 queries. As controls, the rule still reproduces the
+one value the engine accepted (`6FA3FCCF`, exactly), and hashing the 220 real VT2
+keys produces no collision with Darktide's 36.
+
+So the two id spaces are disjoint, and no material/context/define combination
+reaches Darktide's shipped query values. That is consistent with the earlier
+reading: the 36 are the *shipped shader family's own* declared values (its
+compiled declaration), not values derivable from a material's path - while the
+value the engine demands of **our** declaration (`6FA3FCCF`) *is* derived, because
+it is ours. This is a clean, falsifiable negative rather than an open question.
+
 **`debug_file_index.sjson` confirms the key rule 220/220 (2026-10-03).** The
 clean index (`data/xx/<hash> = <name>`) has 264 entries, 220 of them
 `.shader_library`. Testing the two readings of the key:
