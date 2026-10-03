@@ -987,6 +987,16 @@ tails are **per-permutation**, not per-program, and the `block_heads` pool is th
 small set of per-pass mask variants one permutation picks from. The remaining
 decode is exactly that pick plus the heads' semantics (their leading `02` and the
 trailing `01`/`02` word).
+
+**The program blocks are load-bearing (2026-10-03).** Collapsing all 96 programs'
+blocks to the minimal 12-byte zero block - the shape every Vertex program uses,
+and the one 108 of 136 corpus sections carry - builds a smaller section
+(394,800 B) but **crashes** the renderer (`access violation`). So the blocks are
+the programs' device-table streams and cannot be flattened. What the corpus does
+show: a universal 12-byte zero Vertex block (hash `6C9A7A05`, in every section
+measured) and a small family of Pixel shapes - all-zero 28/32 bytes,
+`02`-prefixed 16/36, a 52-byte one - plus, for some shaders, a full
+preamble-shaped block. The pick and the mask remain the open decode.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
