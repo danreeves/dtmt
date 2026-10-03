@@ -1630,6 +1630,23 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**`debug_file_index.sjson` confirms the key rule 220/220 (2026-10-03).** The
+clean index (`data/xx/<hash> = <name>`) has 264 entries, 220 of them
+`.shader_library`. Testing the two readings of the key:
+
+- "all tokens sorted" fits **187/220**;
+- **"`<shader>:<one context token>:<the rest, sorted>`" fits 220/220** - removing
+  exactly one token leaves a sorted list in every single key, and no key needs
+  more than one removal.
+
+The counterexamples are what distinguish them: `gui_gradient:atlas_color_lookup:diffuse_map:masked:anisotropic`
+is unsorted as a whole but sorted once `atlas_color_lookup` is taken as the
+context. So the rule this project derived from the VT2 compiler's logs -
+`<shader>:<context>:<defines, sorted>`, lowercased for the file name - is
+confirmed against the official toolchain's own index. The context token mixes
+define-like and pass-like names (`diffuse_map`, `flatten`, `shadow_mapping`,
+`write_mask`), which is why the two were hard to tell apart in the raw cache.
+
 **What `shader_cache.db` does and does not show (2026-10-03, corrected).** Read
 from the bytes (string lengths and the byte gaps between them, no field meanings
 assumed), the file is a sequence of `{u32 len}{ascii}` strings interleaved with
