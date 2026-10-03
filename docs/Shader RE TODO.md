@@ -99,6 +99,30 @@ ids: no hits), so what a query id hashes over is still open - but its
 **condition vocabulary and contexts are now known**, which is what a declaration
 needs.
 
+**The group list and the group tails decode out of the family's own tree
+(2026-10-03).** The carried `group_template` is not opaque: it is the family's
+36 queries crossed with its 6 condition sets, and both halves are readable.
+
+- A **group tail** is a condition set: `u32 count` + that many condition hashes,
+  zero-padded to the family's slot width + a fixed header. The UI base's six,
+  each covering **six** queries, are: tail 0 `{gui}`, tail 1 `{gui_hdr}`, tail 2
+  `{transparent_mask}`, tail 3 `{gui_hdr}`, tail 4 `{gui}`, tail 5 `{}` (empty) -
+  all names now reversed (above). Tails 0 and 1 carry a second, zeroed hash slot;
+  their groups use head 0, the rest head 1.
+- A **group** is `query_id` in query order plus `(head, between, mid, tail,
+  material_first)`. The UI base's 36 groups are exactly its 36 queries in order
+  (verified: every group hash equals its query id), six per tail, tails 0..5 in
+  order. So the group list is
+  `for (query, tail) in zip(queries, tails): group(query_id, head_of(tail), ...)` -
+  derived from the contexts and the condition tree, not carried.
+
+The `tail` field's bytes are the group's **condition header** (the
+`GroupParts::tail` after the shared 28-byte packed record), which is where those
+condition hashes live, so the tail is the tree's per-query branch. The one thing
+still named by a shipping value is the **group node** (`28B0AB00`, the first
+query id in the carried data): deriving it as the context query `6FA3FCCF`
+crashes `dispatch_loadtime`, so it stays carried for now.
+
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
 
