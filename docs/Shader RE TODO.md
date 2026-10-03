@@ -1630,6 +1630,28 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**Cross-family validation (2026-10-03, `family_table`).** Reading three examples
+of each family confirms the model - each family is a small, consistent table:
+
+| family | examples | programs | masks | seams |
+| --- | --- | --- | --- | --- |
+| GUI (UI base) | `007bf44b`, `08158dd8`, `0888983b` | 96 | `7 1 1 2 2 4 4 8 8 F F 7 7 ..` | `0 2 0 2 ..` |
+| standard | `0679f3f8` (60), `0b0b05ed` (8), `03543251` (7) | 60/8/7 | `7 .. 8` every fifth | mostly 0 |
+| particle/FX | `025e1dca`, `0f463291`, `09337f59` | 2 | all `7` | all `0` |
+
+The three **GUI** sections are identical in masks and seams, so the recorded table
+is validated. **Standard** and **particle** have their own tables (standard a
+`7..8` pattern, particle a uniform `7`/`0`), so each family needs its own small
+record - and the `head` column `family_table` prints is probe-relative, so the
+real per-family datum is `(body length, program count, seam run, mask run)`.
+
+**The program list is generated and live (2026-10-03).** `derived_programs` now
+emits the family's **whole** table (it does not tie programs to queries - the UI
+base declares one query yet carries 48 program pairs). With `programs`, `tails`
+and `block_heads` removed from the file, the built section is
+**byte-identical** to the carried one (`F3EE2651139FDEB0`, 421,508 B) and
+**`RENDER_OK`**: the first carried pool to become generated rather than carried.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
