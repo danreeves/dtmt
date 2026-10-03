@@ -1007,6 +1007,18 @@ overwritten anyway: removing it leaves the built section **byte-identical**
 passes), while the mod's declaration has one pass, so a derived contexts blob is
 one query and would not match the group data's 36 groups. Removing it is the
 full multi-permutation enumeration, not a redundant-pool deletion.
+
+**What the 36 queries are (2026-10-03).** `default` carries 30 and
+`gui_render_pass` 6, all `conditions = FFFFFFFF`. Verified: they come from no
+plausible key (the UI base's path, the shipped material path, `default`/`gui` x
+the key shapes, under `high32(murmur64)`), none is in the dictionary, and a scan
+of the whole mod tree finds them **only inside the section** - the material and
+its sources reference none of them. So they are the shipped UI-base *shader's*
+declared variant values (the engine's surface/material-axis enum, per the earlier
+reading), not a function of our declaration. The runtime needs only the one query
+the engine demands (the reduced one-query section renders), so the other 35 are
+the family's declared table rather than a runtime requirement - which is why the
+enumeration is the one carried pool with no derivation path from our sources yet.
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
