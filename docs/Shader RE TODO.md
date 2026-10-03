@@ -75,6 +75,30 @@ Generating the whole 96 outside the family therefore means **declaring the
 family's passes and conditions** in our `.shader_node` - the enumerator is the
 tool that turns such a declaration into the key set.
 
+**The shipped UI-base family's declaration is now read out of its own carried
+data (2026-10-03).** The mined section `e3370cb2107d8aca` carries, in its
+contexts and conditions, exactly the material the declaration would have to
+produce:
+
+- **contexts:** `default` (murmur32 `F2760503`, 30 queries) and
+  `gui_render_pass` (murmur32 `E2C8865F`, 6 queries) - 36 queries, the same 36
+  the section ships;
+- **conditions** (the 10 hashes its tree tests, `examples/condition_reverse.rs`
+  hashing candidates with the engine's Murmur32): `gui` (`9FCFE126`),
+  `gui_render_pass` (`E2C8865F`), `gui_hdr` (`BC4EE226`), `gui_mask`
+  (`BDF72706`), `transparent_mask` (`5E415D62`), `write_channels` (`8FB860CF`),
+  `red` (`9B8DE7E4`), `green` (`4BA4BD58`), `blue` (`0977913D`), `alpha`
+  (`3F697354`). Every one is a render layer or a channel-component test - the
+  same shape as `gui_gradient`'s `editor_options`. Only `B5F45768` is unnamed.
+
+So the family's "editor options" are layers (`gui`, `gui_hdr`, `gui_mask`,
+`transparent_mask`, `gui_render_pass`) plus the channel tests (`write_channels`,
+the four components). The 36 query ids are still not plain names or key-space
+values (re-checked 2026-10-03 against the full 884k-name dictionary and the 36
+ids: no hits), so what a query id hashes over is still open - but its
+**condition vocabulary and contexts are now known**, which is what a declaration
+needs.
+
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
 

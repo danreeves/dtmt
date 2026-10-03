@@ -38,10 +38,14 @@
 //! selects is a generated family with a crafted tree and an in-game observation
 //! of which group the engine selects.
 //!
-//! The UI base's roots resolve through the dictionary: `gui` (`9FCFE126`),
-//! `red` (`9B8DE7E4`), `green` (`4BA4BD58`), `blue` (`0977913D`) and `alpha`
-//! (`3F697354`); `BDF72706`, `B5F45768`, `8FB860CF`, `E2C8865F` and `BC4EE226`
-//! are unnamed. Records are subsets of their parent (7 -> 5 -> 4 -> 2).
+//! The UI base's roots resolve through the dictionary: `gui` (`9FCFE126`) =
+//! `gui`, `red` (`9B8DE7E4`), `green` (`4BA4BD58`), `blue` (`0977913D`),
+//! `alpha` (`3F697354`), `write_channels` (`8FB860CF`), `gui_render_pass`
+//! (`E2C8865F`, the section's second context too), `gui_hdr` (`BC4EE226`),
+//! `gui_mask` (`BDF72706`) and `transparent_mask` (`5E415D62`, a group tail's
+//! condition). Only `B5F45768` is still unnamed. Records are subsets of their
+//! parent (7 -> 5 -> 4 -> 2). The naming tool is `examples/condition_reverse.rs`
+//! (Murmur32 of a candidate name against a target hash list).
 
 use color_eyre::eyre::{Result, bail};
 
