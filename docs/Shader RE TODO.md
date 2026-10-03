@@ -978,6 +978,15 @@ per-program mask the notes still list as the open correlation. The group `tail`
 is different in kind: it names the source chunks the permutation's conditions
 reference (`gui`, `gui_hdr`, ...), so a from-scratch shader must generate it from
 its own source graph - which is why zeroing it renders black.
+
+The distribution, measured on the UI base: **20 distinct tails**. Every one of
+the 48 Vertex programs shares tail 0, whose block is the minimal 12-byte
+`000000000000000000000000`; the 48 Pixel programs use 19 tails drawing on three
+shared heads (head 0 x12, head 1 x11, head 2 x24, plus the raw block x1). So the
+tails are **per-permutation**, not per-program, and the `block_heads` pool is the
+small set of per-pass mask variants one permutation picks from. The remaining
+decode is exactly that pick plus the heads' semantics (their leading `02` and the
+trailing `01`/`02` word).
 5. The blocks' per-program bytes: the head plus the mask byte (a channel set
    over `01/02/04/08/0F`), whose per-pass source is the open correlation.
 
