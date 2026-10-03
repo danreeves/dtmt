@@ -1630,6 +1630,14 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The group `tail` is load-bearing even with empty conditions (2026-10-03).**
+Zeroing the group tail (a constant 46-byte zero entry, every group pointing at it)
+builds but renders **`RENDER_BLACK`** (79.9% black). So despite our conditions
+section being 0 bytes, the group tail's hashes (`26E1CF9F` = `gui`, `26E24EBC` =
+`gui_hdr`, `5E415D62`) still select the group's source set - it is not vestigial
+and cannot be a constant. It stays carried for now, and it belongs with the
+conditions tree work (it is the same source-graph data).
+
 **Can we derive the conditions tree? - the exact gap (2026-10-03).** The format,
 branches and vocabulary are decoded (`condition_tree`), and the tree's meaning is
 visible in the real example (`contracts_top_candles`, 1436 B):
