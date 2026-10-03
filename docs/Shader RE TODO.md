@@ -1475,6 +1475,40 @@ list* complete - reducing it to the demanded program fails `dispatch_loadtime`
 while the complete list renders - so a generated file must emit all 96 (or as
 many as the declaration's jobs produce). That is generation, not a smaller file.
 
+**The program and tail construction, measured (2026-10-03).** The 96-program list
+is fully regular:
+
+- **every Vertex program is the same 12-byte zero block** (`tail 0`);
+- the program list is `(Vertex, Pixel)` pairs, 48 of them, the pixel side cycling
+  a 6-entry tail run as the context alternates;
+- a **tail block = `head` + the preamble body (549 B) + one mask byte**. The heads
+  are generated padding - `02` then zeros (32/36 bytes, three variants) - and the
+  **only content is one byte at body offset 477**, whose values are
+  `0, 1, 2, 4, 8, 15`: the per-program **channel mask** (body[477] reads `7` in the
+  preamble, the shared default). Reconstructing `head + body + mask` reproduces
+  the exact block lengths `preamble_block` reported (581 for head 0, 585 for head
+  1), so the rule is confirmed byte for byte.
+
+So `programs`, `tails` and `block_heads` are all a function of the permutation
+list (`(context, permutation)` positions) and the mask - no shipped data. The
+generator is `EngineData::derived_programs`, which emits one `(Vertex, Pixel)`
+pair per permutation slot with the vertex's zero block and the pixel's
+head+body+mask. Remaining before it replaces the carried list: pick the head per
+permutation, and the mask from the permutation's definitions.
+
+**Why the slots cannot all be one program (2026-10-03).** A generated list
+substituting our single program into all 96 slots **crashes** (and it is the
+shader, not state: reproduced at the same `db` size the good runs use). The
+reason: each shipped pixel tail is *distinct* - its head and its mask byte are the
+pass's own - so whichever permutation the engine asks for, it gets a block whose
+mask matches that pass's channel usage. One block in every slot claims the wrong
+mask for 47 of the 48 pixel passes, and the engine faults. So the slot **count**
+and the head variants are engine constants, but the **mask is per permutation**:
+a correct generated list needs the declaration to enumerate the permutations (48
+passes x 2 contexts for the shipped family), not the single pass we declare today.
+The generator therefore needs the multi-pass declaration to feed it; with one
+`SINGLE` pass there is one mask and the list cannot be correct.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:

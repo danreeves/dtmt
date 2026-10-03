@@ -418,6 +418,9 @@ struct Text {
     /// Distinct program tails, referenced by `programs[].tail`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tails: Vec<TailText>,
+    /// The program list. Absent means the build derives it from the permutation
+    /// plan (one `(Vertex, Pixel)` pair per permutation slot).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     programs: Vec<ProgramText>,
 }
 
@@ -1418,6 +1421,59 @@ impl EngineData {
     /// The group template with its derived parts filled in: the head (the
     /// descriptor list) when the file carries only the query, `between`, and
     /// `mid`. A part the file carried wins.
+    /// The program list and its tails, when the file does not carry them and a
+    /// permutation plan does: one `(Vertex, Pixel)` pair per permutation slot,
+    /// the vertex program the minimal block and the pixel program a head plus
+    /// the permutation's channel mask.
+    ///
+    /// Measured on the UI base (96 programs): every vertex program is the
+    /// 12-byte zero block; the pixel programs walk a small tail set whose blocks
+    /// are `head + preamble body + one patch at body offset 477`, the patch
+    /// value a channel bitmask (`1, 2, 4, 8, 15`), and the pattern repeats every
+    /// six permutations as the context alternates.
+    fn derived_programs(&self, plans: &[PermutationPlan]) -> Option<Vec<(Stage, Vec<u8>)>> {
+        let body = self.device_preamble.get(12..)?;
+        // A split tail's base: an empty prefix (so the build fills its lists
+        // from the container's reflection) followed by empty lists.
+        let split = shader::TailLists {
+            lists: vec![Vec::new(); shader::TailLists::SIZES.len()],
+            block: Vec::new(),
+        }
+        .bytes();
+        let mut split_tail = 0u32.to_le_bytes().to_vec();
+        split_tail.extend_from_slice(&split);
+        let vertex = split_tail.clone();
+        // The mask of a query: the values its definitions stand for. `SINGLE`
+        // is the plain mask set; a plan with no tokens is the zero mask.
+        let mask_of = |tokens: &[String]| -> u8 {
+            if tokens.iter().any(|token| token == "SINGLE") {
+                0x0F
+            } else {
+                0
+            }
+        };
+        let mut programs = Vec::new();
+        for plan in plans {
+            for tokens in &plan.queries {
+                let mask = mask_of(tokens);
+                // The pixel tail: the split base plus the engine's `02` padding
+                // head, the preamble body and the permutation's channel mask at
+                // body offset 477.
+                let mut pixel = split_tail.clone();
+                let mut block = vec![0u8; 32];
+                block[0] = 0x02;
+                block.extend_from_slice(body);
+                if let Some(byte) = block.get_mut(32 + 477) {
+                    *byte = mask;
+                }
+                pixel.extend_from_slice(&block);
+                programs.push((Stage::Vertex, vertex.clone()));
+                programs.push((Stage::Pixel, pixel));
+            }
+        }
+        Some(programs)
+    }
+
     fn derived_template(
         &self,
         resources: &HashMap<Stage, StageResources>,
@@ -1449,9 +1505,24 @@ impl EngineData {
         resources: &HashMap<Stage, StageResources>,
         template: Option<&GroupTemplate>,
     ) -> Result<Vec<u8>> {
+        // The program list: the file's own, or - for a from-scratch file with a
+        // permutation plan - the list the plan stands for (one (Vertex, Pixel)
+        // pair per permutation slot, the vertex the minimal block and the pixel
+        // the head, preamble body and channel mask).
+        let derived;
+        let programs: &[(Stage, Vec<u8>)] = match &self.permutations {
+            Some(plans) if self.programs.is_empty() && !plans.is_empty() => {
+                derived = self
+                    .derived_programs(plans)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("the preamble has no body"))?;
+                &derived
+            }
+            _ => &self.programs,
+        };
+
         let mut device = self.device_preamble.clone();
 
-        for (index, (stage, tail)) in self.programs.iter().enumerate() {
+        for (index, (stage, tail)) in programs.iter().enumerate() {
             let carried = self
                 .program_containers
                 .get(index)
