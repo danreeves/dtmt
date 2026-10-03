@@ -1630,27 +1630,27 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
-**The VT2 pipeline is fully decoded from the compiler's own manifest (2026-10-03,
-`shader_cache`).** `shader_cache.db` parses as a run of length-prefixed strings:
-220 `<shader>:<context>:<defines>.shader_library` keys, each followed by the
-source's own `defines`/`shader` text and a `u64` hash.
+**What `shader_cache.db` does and does not show (2026-10-03, corrected).** Read
+from the bytes (string lengths and the byte gaps between them, no field meanings
+assumed), the file is a sequence of `{u32 len}{ascii}` strings interleaved with
+binary. Three things are directly evidenced - strings whose gaps are zero, i.e.
+contiguous lists:
 
-- **shader** is the declaration name (`gbuffer_debug`, `gui`, `ssao_ao_pass`,
-  `skin_filter`, `sun_flare`, …);
-- **context** is the **pass name** (`diffuse_map`, `horizontal_pass`,
-  `direction_x`, `depth_test_enabled`, `point_sampler`, …), not `default`;
-- **defines** are sorted and uppercased, and the key lowercases them - the exact
-  rule this project derived:
-  `defines = ["DEPTH_TEST_ENABLED" "DIFFUSE_MAP" "ONE_BIT_ALPHA"]` + `shader =
-  "gui"` -> `gui:depth_test_enabled:diffuse_map:one_bit_alpha.shader_library`.
+- a **`.shader_source` path** (`core/stingray_renderer/shader_libraries/lens_flare.shader_source`),
+  then a run of **pass names** (`flare_bright_pass`, `flare_merge_pass`,
+  `ghosts_bright_pass`) and the **shader name** (`lens_flare`);
+- **`.shader_library` names** of the form `<shader>:<token>[:<token>].shader_library`
+  where the tokens are lowercase define-like names (`diffuse_map`,
+  `yuv_video`, `depth_test_enabled`);
+- **condition strings** (`on_renderer(D3D11, D3D12, GNM)`, `!on_renderer(GL)`).
 
-The conditions the compiler evaluates are `on_renderer(D3D11, D3D12, GNM)`,
-`on_renderer(D3D11, D3D12)` and `!on_renderer(GL)`. So the pipeline is: the
-declaration's passes each become a key with their condition evaluated, each key
-compiles to a `.shader_library` (indexed by `murmur64(lowercase key +
-".shader_library")`), and a material's section then references the key it wants by
-`high32(murmur64(full key + platform/renderer))`. `lib/sdk/examples/shader_cache.rs`
-dumps the whole manifest.
+What it does **not** show, and an earlier reading of this note wrongly asserted:
+the key's second field is **not** the pass name (98 of 99 such tokens are not in
+the file's pass-name list - they are define/render-state tokens), and there is no
+clean fixed record stride (the inter-string gaps vary 58..129, so binary fields
+sit between records). So the file **confirms the naming shape** of library keys
+and supplies the **pass-name and condition vocabularies**, but it is not a key ->
+hash table and it does not establish the key's field meanings.
  **The official VT2 SDK binaries name the writer (2026-10-03).** Fatshark's own
 Vermintide 2 mod tools ship two dev binaries - the shader/asset compiler
 (`sdk/engine/win64/dev/stingray_win64_dev_x64_compiler_1.exe`, 22 MB) and the
