@@ -1580,6 +1580,26 @@ principle holds - `split base + head + body + mask` - but every parameter
 therefore a small recorded table of its own; `derived_programs` needs the
 family's table, not one global shape.
 
+**The `477` mask belongs to the UI base only (2026-10-03, named families).**
+Resolving real materials by name and shape:
+
+| material | family shape | pre-program | programs |
+| --- | --- | --- | --- |
+| `content/fx/materials/weapons/force_staff/force_staff_arcs` | `1, 1, 2, 0x27` | 1072 | 4 |
+| `content/parent_materials/substance_basic_wd` | `1, 10, 5, 0x30` | 936 | 60 |
+| `content/parent_materials/decal_aoe` | `1, 1, 2, 0x26` | 754 | 4 |
+| `content/fx/.../autogun_muzzle` | `1, 1, 2, 0x27` | 866 | 4 |
+
+Dumping a small family's device data shows why the UI base's model does not carry
+over: its preamble header is `1, 1, 2` with **no 36-group list**, its pre-program
+region is plain data, and its tails are **ordinary program records** (envelope 1,
+frame magic `8c 06`, the container's ISG1 signature visible in the bytes) - there
+is no 549-byte body and therefore **no mask byte at 477**. So the `head + body +
+mask` construction is the **UI base's** shape; a small family's tail is the
+program record plus its own interface, and the mask concept does not apply. Each
+family's generator is its own small shape, which is what makes "one table per
+family" the honest model.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
