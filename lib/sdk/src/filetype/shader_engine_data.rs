@@ -923,6 +923,16 @@ const UI_BASE_PASS_MASKS: [u8; 48] = [
     0x08, 0x0F, 0x07,
 ];
 
+/// The UI base family's head sizes, one per pixel program, in slot order: the
+/// 32-byte head is `02`+zeros, the 36-byte one adds a `02 00 00 00` word at the
+/// seam. Measured from a shipped section (`program_diff`): slots 0-22 alternate
+/// 32/36, slots 23-46 are 36, the last is 32.
+const UI_BASE_PASS_HEADS: [u8; 48] = [
+    32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32, 36, 32,
+    36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36, 36,
+    36, 32,
+];
+
 impl EngineData {
     /// Extracts the wrapper of a raw material data file's shader section.
     pub fn from_material(data: &[u8]) -> Result<Self> {
@@ -1471,13 +1481,15 @@ impl EngineData {
         for plan in plans {
             for _tokens in &plan.queries {
                 let mask = UI_BASE_PASS_MASKS[pass % UI_BASE_PASS_MASKS.len()];
-                // The head alternates 32 and 36 bytes per pixel slot (the
-                // shipped tails alternate 621 and 625 = 549 + 72 + head).
-                let head = if pass % 2 == 0 { 32 } else { 36 };
+                // The head size, per slot, from the family's own table.
+                let head = UI_BASE_PASS_HEADS[pass % UI_BASE_PASS_HEADS.len()] as usize;
                 pass += 1;
                 let mut pixel = split_tail.clone();
                 let mut block = vec![0u8; head];
                 block[0] = 0x02;
+                if head == 36 {
+                    block[32..36].copy_from_slice(&[0x02, 0, 0, 0]);
+                }
                 block.extend_from_slice(body);
                 // The body's default is `07`; only a pass that overrides it
                 // patches the byte.

@@ -1621,6 +1621,15 @@ than a `02`+zeros reconstruction. That is the last step to a byte-exact generate
 `programs`/`tails` for this family; the SDK's `shader_engine_data` tests stay
 green with the table in place.
 
+**The tables are measured and the last field is identified (2026-10-03).** A tool
+(`program_diff`, now emitting the carried family table as Rust arrays) confirms the
+mask and head-size tables exactly, and shows the residual: the 36-byte head's
+4-byte seam word at tail offset 72 is **not constant** - it is `02 00 00 00` on
+some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table is
+`(head size, seam word, mask)` per pixel slot, all three read off a shipped
+section. With that third field the generator should be byte-exact; the tables and
+the tooling are in place, only the per-slot seam value needs recording.
+
 
 The resource record's word order, as the tail dumps and the working naming pass
 read it, is `{name, index, binding, flag, set, FFFFFFFF-or-size, 0}`:
