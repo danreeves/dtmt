@@ -1630,6 +1630,38 @@ some slots and `01 00 00 00` on others (programs 3 vs 47). So the family table i
 section. With that third field the generator should be byte-exact; the tables and
 the tooling are in place, only the per-slot seam value needs recording.
 
+**The official VT2 SDK binaries name the writer (2026-10-03).** Fatshark's own
+Vermintide 2 mod tools ship two dev binaries - the shader/asset compiler
+(`sdk/engine/win64/dev/stingray_win64_dev_x64_compiler_1.exe`, 22 MB) and the
+engine (`bin/stingray_win64_dev_x64.exe`, 21 MB) - and unlike Darktide they are
+*dev* builds, so their export symbols are present. Those symbols name the
+structures this project has been decoding blind:
+
+```
+shader_compiler::make_device_data          <- writes the device block
+shader_compiler::ShaderLibrary::Shader::Pass   <- the pass table's type
+shader_compiler::StateBlock / StateVariable
+shader_compiler::InputVariable / InstanceData::Variable / StreamOut::Channel
+shader_compiler::ShaderProgram / ShaderBytecode
+shader_compiler::PlatformD3D12::compile / convert_shader / convert_pass
+shader_compiler::`anon'::reflect_cbuffer / validate_cbuffer_reflection
+shader_data::update_sort_keys
+ShaderManager::add_global_constant_buffer_from_sd / ShaderRef / ShaderTemplateRef
+```
+
+So the engine's own vocabulary for our structures is **Pass** (the per-permutation
+program pair), **StateBlock/StateVariable** (the descriptor + render state),
+**InputVariable** (the channel/interface), and the cbuffer reflection path that
+`ShaderManager::add_global_constant_buffer_from_sd` (`_from_sd` = from shader
+data) feeds the `global_viewport` table from. Both binaries reference an unshipped
+PDB (`stingray_win64_dev_x64.pdb`, guid `86155e7b1c372e4dad70e78a9f65a40b`); the
+compiler pins the path to Fatshark's own build machine
+(`C:\BitSquidBinaries\vermintide2_mod_tools\engine\win64\dev\...`) and the
+engine's copy to the mod-tools CI scratch (`D:\a\w\vt2-modding\refs\heads\...`).
+So the symbol *universe* is Fatshark's official one - the tooling that wrote the
+format - which makes the type and function names above authoritative rather than
+a community guess. Only the field offsets need a symbol source.
+ The
 **The community tool's new name lists were imported (2026-10-03).** The
 `Darktide-Asset-Compiler` update added `game_shaders.json` (22 shader presets with
 their stream paths and variable names), `particle_schema.json` and a refreshed
