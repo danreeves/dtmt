@@ -526,12 +526,19 @@ struct GroupTemplateText {
     mids: Vec<Hex>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tails: Vec<Hex>,
+    /// A repeating group list: when `groups` is empty and this is set, there is
+    /// one group per query (in query order) and group `i` uses tail `i / repeat`
+    /// with every other part at its zero index. The UI base writes 36 groups
+    /// that are six repeats of its six tails, so the list is derivable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repeat: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     groups: Vec<GroupText>,
 }
 
 /// One group of the template: its query id (absent when the contexts carry it -
 /// they do, one to one and in the same order) and the parts it uses.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1123,7 +1130,31 @@ impl EngineData {
             let mut groups = Vec::with_capacity(template.groups.len());
             let mut tables = Vec::with_capacity(template.groups.len());
             let queries = context_queries(&engine_data.contexts)?;
-            for (index, group) in template.groups.iter().enumerate() {
+            // A repeating list stands for `repeat` groups per tail: group `i`
+            // uses tail `i / repeat`, everything else at its zero index. The
+            // group count is the family's (`repeat x tails`), not the queries' -
+            // a from-scratch file declares one query but ships the family's
+            // groups, so the count comes from the tails, and each group's head
+            // leaves its query id as a zero placeholder for `generate` to fill
+            // from the contexts it derives.
+            let expanded: Vec<GroupText> = match (template.groups.is_empty(), template.repeat) {
+                (true, Some(repeat)) if repeat > 0 && !template.tails.is_empty() => {
+                    let count = repeat * template.tails.len();
+                    (0..count)
+                        .map(|index| GroupText {
+                            query: None,
+                            head: 0,
+                            between: 0,
+                            mid: 0,
+                            tail: index / repeat,
+                            material: 0,
+                            material_first: true,
+                        })
+                        .collect()
+                }
+                _ => template.groups.clone(),
+            };
+            for (index, group) in expanded.iter().enumerate() {
                 // A group starts with its query id: the file's own, or the
                 // contexts' by position (they are one to one, same order), so
                 // the head stores only what follows it. A file that carries
@@ -1290,9 +1321,14 @@ impl EngineData {
                 // The query id is the contexts' own, one per group and in the
                 // same order, so it is only written when they do not carry it.
                 let head_query = parts.head.get(..4).unwrap_or_default();
-                let derived = context_queries
-                    .get(index)
-                    .is_some_and(|query| head_query == query.to_le_bytes().as_slice());
+                // The query id is omitted when the contexts carry it (one per
+                // group, in order), or when they carry none at all - a
+                // from-scratch file whose contexts come from the declaration, so
+                // the head's first word is a placeholder `generate` fills.
+                let derived = match context_queries.get(index) {
+                    Some(query) => head_query == query.to_le_bytes().as_slice(),
+                    None => context_queries.is_empty(),
+                };
                 groups.push(GroupText {
                     query: (!derived).then(|| Hex(head_query.to_vec())),
                     head: dedup_index(&mut heads, parts.head.get(4..).unwrap_or_default().to_vec()),
@@ -1304,6 +1340,33 @@ impl EngineData {
                 });
             }
 
+            // A group list that is a plain repetition of the tails (group `i`
+            // uses tail `i / repeat`, every other part at its zero index - the UI
+            // base's 36 = six repeats of six) is written as the repeat count
+            // instead of the list, so it is derived from the queries at read
+            // time.
+            let plain = groups.iter().all(|group| {
+                group.query.is_none()
+                    && group.head == 0
+                    && group.between == 0
+                    && group.mid == 0
+                    && group.material == 0
+                    && group.material_first
+            });
+            let repeat = (plain && !groups.is_empty() && !tails.is_empty())
+                .then(|| groups.len() / tails.len())
+                .filter(|repeat| {
+                    *repeat > 0
+                        && groups
+                            .iter()
+                            .enumerate()
+                            .all(|(index, group)| group.tail == index / repeat)
+                });
+            let (repeat, groups) = match repeat {
+                Some(repeat) => (Some(repeat), Vec::new()),
+                None => (None, groups),
+            };
+
             GroupTemplateText {
                 prefix: template.prefix.clone().into(),
                 engine,
@@ -1312,6 +1375,7 @@ impl EngineData {
                 betweens,
                 mids,
                 tails,
+                repeat,
                 groups,
             }
         });
@@ -2019,6 +2083,78 @@ programs = []
         let offset = u32::from_le_bytes(section[32..36].try_into().unwrap()) as usize;
         let size = u32::from_le_bytes(section[36..40].try_into().unwrap()) as usize;
         assert_eq!(&section[offset..offset + size], &built[..]);
+    }
+
+    #[test]
+    fn a_repeating_group_list_round_trips_as_a_repeat() {
+        // The UI base's shape: 36 groups that are six repeats of six tails. The
+        // text form writes the repeat count, and the reader expands it back to
+        // one group per query, each with `tail = index / repeat`.
+        use crate::filetype::group_data::{GroupParts, GroupTemplate, Record};
+
+        let engine = vec![Record {
+            kind: 2,
+            flags: 0,
+            hash: 0x6BC9_1D73,
+            offset: 0,
+            size: 12,
+        }];
+        // Six queries: the head is the query id alone, as the text writes it,
+        // so the ids must be the contexts' own, derived the same way.
+        let plans = vec![PermutationPlan {
+            context: "default".into(),
+            queries: (0..6)
+                .map(|index| vec![format!("Q{index}")])
+                .collect::<Vec<_>>(),
+        }];
+        let contexts = permutations_contexts("materials/test/base", &plans).expect("contexts");
+        let query_ids = context_queries(&contexts).expect("queries");
+        assert_eq!(query_ids.len(), 6);
+        let query = |index: usize| {
+            let mut head = query_ids[index].to_le_bytes().to_vec();
+            head.extend_from_slice(&[0u8; 8]);
+            head
+        };
+        let tail = |byte: u8| vec![byte; 12];
+        let group = |index: usize, tail: Vec<u8>| GroupParts {
+            head: query(index),
+            material_first: true,
+            between: vec![0u8; 12],
+            mid: vec![0u8; 8],
+            tail,
+        };
+        let template = GroupTemplate {
+            prefix: 6u32.to_le_bytes().to_vec(),
+            groups: vec![
+                group(0, tail(0xA1)),
+                group(1, tail(0xA1)),
+                group(2, tail(0xA1)),
+                group(3, tail(0xB2)),
+                group(4, tail(0xB2)),
+                group(5, tail(0xB2)),
+            ],
+            engine: engine.clone(),
+        };
+
+        let mut engine_data = empty_engine_data();
+        engine_data.contexts = contexts;
+        engine_data.group_template = Some(template);
+        engine_data.material_tables = vec![Vec::new(); 6];
+
+        let text = engine_data.to_text();
+        assert!(text.contains("repeat = 3"), "the list is not collapsed:\n{text}");
+        assert!(!text.contains("groups ="), "the list is still written:\n{text}");
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        let groups = &parsed.group_template.as_ref().expect("template").groups;
+        assert_eq!(groups.len(), 6);
+        // Tail index is `index / repeat`: 0,0,0,1,1,1.
+        assert_eq!(groups[0].tail, groups[2].tail);
+        assert_eq!(groups[3].tail, groups[5].tail);
+        assert_ne!(groups[2].tail, groups[3].tail);
+        // Each tail is the twelve-byte run it was.
+        assert_eq!(groups[0].tail, vec![0xA1; 12]);
+        assert_eq!(groups[5].tail, vec![0xB2; 12]);
     }
 
     #[test]

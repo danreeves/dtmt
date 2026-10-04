@@ -124,6 +124,19 @@ still named by a shipping value is the **group node** (`28B0AB00`, the first
 query id in the carried data): deriving it as the context query `6FA3FCCF`
 crashes `dispatch_loadtime`, so it stays carried for now.
 
+**The group list is now derived, verified in game (2026-10-04).** Because the UI
+base's groups are a plain repetition - group `i` uses tail `i / 6`, every other
+part at its zero index - the file writes the count instead of the list: the text
+form's `group_template.repeat` field. The reader expands it to
+`repeat x tails.len()` groups (the group count is the **family's**, from the
+tails; a from-scratch file declares one query but ships the family's 36 groups),
+each with a zero query placeholder that `generate` fills from the contexts it
+derives. The writer collapses a plain repeating list back to `repeat`. So the
+mod's `ui_default_base.engine_data` dropped from **4,990 to 649 bytes** with the
+36-entry `groups` block replaced by `repeat = 6`, and the built section is
+**byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and **`RENDER_OK`** in the
+harness. Test: `a_repeating_group_list_round_trips_as_a_repeat`.
+
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
 
