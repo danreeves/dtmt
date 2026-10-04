@@ -1,8 +1,10 @@
 # Shader RE TODO
 
 Working notes and next steps for the `shader43` reverse engineering. See
-`File Type - Material.-.md` (field-level findings) and
-`Shader Section Generation Notes.md` (the target and what each section needs).
+`File Type - Material.-.md` (field-level findings),
+`Shader Section Generation Notes.md` (the target and what each section needs) and
+`Shader Permutations.md` (what a permutation key may contain, and which tokens
+are engine constants).
 
 ## Priority order
 
