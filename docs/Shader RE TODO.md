@@ -39,6 +39,45 @@ header's seam word is read by the engine - the per-program block-header grammar
 must be decoded before a section's programs can be generated. See
 `Shader Permutations.md`, "Deriving the program table too".
 
+**The VT2 SDK is the writer's ground truth (2026-10-04).** The official SDK at
+`C:\Program Files (x86)\Steam\steamapps\common\Vermintide 2 SDK` ships, under
+`TEMP/streamable_resources_compile/`, the output of a full compile the toolchain
+itself performed: `data/` holds **250 compiled `.shader_library` files** (the
+VT2 device data, not the `shader43` section - VT2's format is a plain
+`DXBC` + tail stream), the `debug_file_index.sjson` names every one
+(`<shader>:<tokens>.shader_library`), and `shader_cache.db` is the compiler's
+manifest. So this is the writer's own artifact set to diff against.
+
+The dev binaries name the types and the writer. `strings` on
+`sdk/engine/win64/dev/stingray_win64_dev_x64_compiler_1.exe` and
+`bin/stingray_win64_dev_x64.exe` shows (RTTI/assert strings, no PDB is shipped):
+
+- **`stingray::shader_compiler::make_device_data`** - the function that writes
+  the device data (`platform_interface.cpp`), i.e. the byte stream after each
+  program's compiled container;
+- the device-data type is **`stingray::D3DShaderPassData`** and its parts are
+  named exactly: `D3DShaderPassData::Shader::{ConstantBufferBindInfo,
+  ResourceBindInfo, SamplerBindInfo}`, `D3DShaderPassData::StreamOutDeclaration::Channel`,
+  `D3DShaderPassData::InstanceData::Variable`, `D3DShaderPassData::Shader`, and
+  `Vector<D3DShaderPassData>` - the same split as this project's group head
+  (cbuffer/resource descriptors), the tail lists (samplers, stream-out) and the
+  block (the per-program device records). `D3DShaderPass::init` /
+  `initialize_shader_program` (`d3d_shader.cpp`) is the D3D11-side reader;
+- `shader_compiler::ShaderLibrary::Shader::Pass`, `StateBlock` and
+  `StateVariable` (the pass and render-state tables), `reflect_cbuffer`,
+  `validate_cbuffer_reflection`, `PlatformD3D12::compile/convert_shader/convert_pass`;
+- the source paths name the modules:
+  `runtime/application/rendering/shader_compiler/{platform_interface,platform_d3d12,platform_d3d11,library_compiler,preprocessor}.cpp`.
+
+The names give the structure; the field offsets are not in any shipped symbol
+table (the `.pdata` function table is present, but the functions are otherwise
+anonymous). Two ways to turn them into offsets: run
+`compile_streamable_resources.bat` on an SDK example mod and diff the emitted
+`.shader_library` against its source (the writer's response to a known input), or
+follow `make_device_data`'s call graph in a disassembler. The compiler's own
+`--output-shader-pdb`/`--shader-pdb-path` flags mean a PDB can be produced for a
+compile if the PDB-writing dev toolchain is available.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 
