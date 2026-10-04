@@ -194,6 +194,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         tails: Vec::new(),
         containers: Vec::new(),
         program_containers: vec![None; 2],
+        pass_tail_refs: Vec::new(),
+        group_tail_slots: Vec::new(),
     };
 
     let text = synthesized.to_text();

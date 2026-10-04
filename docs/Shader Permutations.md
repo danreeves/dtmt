@@ -79,23 +79,52 @@ This is the part worth keeping straight when generating a key set.
   to the render-profile enum);
 - the **key format** itself (separators, sorting, uppercase, the murmur64A
   seed);
-- the **renderer's layer and render-state vocabulary** - because it is the
-  engine's list, the same names recur across shaders and versions. It is the one
-  part of the vocabulary that can be carried as a toolchain table rather than
-  read from each shader.
+- the **hash convention** (§ below) - a name is hashed to its id the same way
+  everywhere, and that is the only truly fixed part of the vocabulary.
 
-**Shader-specific:**
+**Shader-specific (author-declared):**
 
 - the **shader name** (the declaration's own name / material path);
 - the **contexts** the shader declares;
 - the **defines** and the **`#if` conditions** its code tests - these are the
   shader's own permutations;
-- which **layers** it emits (a GUI shader emits `gui`/`gui_hdr`/
-  `transparent_mask`; a standard shader emits `gbuffer`/`shadow_caster`/…).
+- the pass's **`layer`** and **`render_state`** values - see the correction
+  below.
 
-So a from-scratch declaration generates its key set from *its own* shader name,
-contexts, defines and `#if` conditions, plus the engine's platform/renderer tail
-and (for the layer tokens) the engine's render-state vocabulary.
+### Correction: `layer`/`render_state` are author-declared, not engine data
+
+An earlier reading of this doc called the layer/render-state vocabulary an engine
+constant to be carried as a toolchain table. That is wrong in the part that
+matters, and the distinction changes the derivation:
+
+- `renderer.render_config` is where the **renderer's valid layer names are
+  defined** (`{ name="gui" render_targets=["back_buffer"] sort="BACK_FRONT" }`,
+  `{ name="transparent_mask" render_targets=["overlay_mask"] … }`). It ships in
+  the SDK only; **Darktide ships no render_config**, so we cannot validate a
+  name against the engine's list, and must not treat the values as constants.
+- A `.shader_source`'s `layer="gui"` is a **use** of a name, not a definition.
+  The name is whatever the shader author wrote; the compiler hashes it into the
+  pass and the tail.
+- The pass line in our own declaration is therefore the source:
+  `{ layer="default" code_block="ui_default_base" render_state="default"
+  defines=["SINGLE"] }`. `layer`/`render_state`/`defines` are **ours to
+  declare**, and their names are hashed by the engine's convention exactly like
+  the VT2 names.
+
+So a from-scratch declaration generates its key set - and its condition set -
+from *its own* shader name, contexts, defines, `#if` conditions, `layer` and
+`render_state`, plus the engine's platform/renderer tail. The only constant is
+how a name is hashed.
+
+### The hash convention
+
+Every name in these structures - contexts, defines, layers, conditions - is a
+32-bit id computed the same way: **MurmurHash32 over the lowercase name**, i.e.
+`high32(murmur64A(name))` (`Murmur32::hash` in the SDK, `9FCFE126` = `gui`,
+`F2760503` = `default`). The section's **queries** are different: they are
+`high32(murmur64A(full query key))` (the whole
+`<shader>:<context>:<defines sorted>:PLATFORM…:RENDERER…` string), which is why a
+query id is never a plain name hash.
 
 ## The Darktide group-tail hashes decode as these tokens
 
@@ -147,11 +176,64 @@ remaining naming bounty for this pool.
 ## What this means for generation
 
 A key set is fully generated when the declaration is: name + contexts + defines +
-`#if` conditions, with the platform/renderer tail and the layer vocabulary as
-toolchain constants. The gap is that our `ui_default_base` declaration declares
+`#if` conditions + the passes' `layer`/`render_state`, plus the engine's
+platform/renderer tail. The gap is that our `ui_default_base` declaration declares
 one pass (`SINGLE`) while the section it builds is the inherited UI-base family's
 36-query / 6-tail shape - so the plan derives from the declaration, but the
 **tail pool** and the family's program table still come from the shipped family.
 Widening the declaration to the family's passes and conditions (the enumerator,
 fed by the token sources above) is what lets the tail pool and the program table
 derive too, after which nothing but the declaration and the sources is needed.
+
+### Deriving the group tail from the declaration
+
+The group `tail` is a condition set over the same name hashes. A pass already
+names its conditions in the declaration:
+
+```
+{ layer="default" code_block="ui_default_base" render_state="default" defines=["SINGLE"] }
+```
+
+The derivation is therefore:
+
+1. **One condition per pass** - the pass's `layer` and `render_state` (and,
+   when they are part of the permutation, its `defines`). Each name is hashed
+   with `Murmur32` (`murmer32(lowercase(name))`), the same convention as every
+   other name in the tail.
+2. **The tail bytes** - `u32 n`, then `n` 17-byte entries
+   (`{u32 hash} + 13 zero bytes`), then an 8-byte trailer (`01` when the set is
+   nonempty, zeros when it is the empty set). This is exactly
+   `GroupTailText::Conditions` in `shader_engine_data.rs`, so the file would
+   carry a pass's `layer`/`render_state` names rather than opaque hashes, and the
+   build hashes them.
+3. **The family's set** - the UI base's six tails are the GUI shader's branches
+   (`{gui, transparent_mask}`, `{gui_hdr, transparent_mask}`, `{transparent_mask}`,
+   `{gui_hdr}`, `{gui}`, empty). To generate them, the declaration must carry the
+   same branches: its passes need the `layer`/`render_state` values the shipped
+   shader used, which is the enumerator's job (declare the family's passes and
+   their conditions). With one `SINGLE` pass the derived pool is one tail, which
+   does not match the family's six - the honest reason the pool is still carried.
+
+This is the concrete path: extend `CompileJob`/`PassValue` to carry
+`layer`/`render_state`, hash them into `GroupTailText`, and widen
+`ui_default_base.shader_node` to declare the family's passes. Until then the
+288-byte pool stays.
+
+**Landed (2026-10-04).** The first half is in: `CompileJob` now carries the
+pass's `layer` and `render_state`, and `CompileJob::condition_ids()` hashes
+`layer` + `render_state` + macros with `Murmur32`. A group tail may be written
+`{ context = "default" pass = 0 }`; `EngineData::resolve_pass_tails` (called by
+`dtmt build` with the declaration's jobs) turns it into the condition set. Test:
+`a_pass_tail_resolves_from_the_declaration` (asserts `gui`/`gui_hdr`/`SINGLE` →
+`9FCFE126`/`BC4EE226`/`407AB909`). The second half - declaring the family's 48
+passes in `ui_default_base.shader_node` - is what would let the six-set pool
+derive; until then the shipped pool is still used.
+### Deriving the program table too
+
+The family's 48-pixel program table is the pass list crossed with the
+permutations, each slot's `(head, seam, mask)`. Once the declaration enumerates
+the passes (each with its `layer`, `render_state` and `defines`), the table is
+that enumeration - the mask is the pass's channel set (its defines), the head and
+seam the family's, which are recorded per family. So the same widening that
+generates the tail pool generates the program table.
+

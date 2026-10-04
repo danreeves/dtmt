@@ -1227,6 +1227,10 @@ pub struct ShaderOverrides {
     /// inputs and the engine's standard rows. The engine data writes it in
     /// place of the carried `materials` hex.
     pub material_records: Vec<super::group_data::Record>,
+    /// The declaration's compile jobs, so the engine data can resolve group
+    /// tails written as a `pass = N` reference (see
+    /// `EngineData::resolve_pass_tails`).
+    pub jobs: Vec<super::shader_node::CompileJob>,
 }
 
 impl ShaderOverrides {

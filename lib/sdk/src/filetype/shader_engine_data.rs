@@ -611,6 +611,24 @@ struct GroupTemplateText {
     groups: Vec<GroupText>,
 }
 
+/// The bytes of a condition set: `u32 n`, then `n` 17-byte entries (`u32 hash`
+/// plus thirteen zero bytes), then an eight-byte trailer (`01` when the set is
+/// nonempty, zeros when it is empty). A group's tail is exactly this.
+fn conditions_bytes(conditions: &[u32]) -> Vec<u8> {
+    let nonempty = conditions.iter().any(|hash| *hash != 0);
+    let mut out = (conditions.len() as u32).to_le_bytes().to_vec();
+    for hash in conditions {
+        out.extend_from_slice(&hash.to_le_bytes());
+        out.extend_from_slice(&[0u8; 13]);
+    }
+    out.extend_from_slice(&if nonempty {
+        [1, 0, 0, 0, 0, 0, 0, 0]
+    } else {
+        [0u8; 8]
+    });
+    out
+}
+
 /// A group's condition-header tail: a plain condition set, or raw bytes when it
 /// is not one.
 ///
@@ -626,29 +644,28 @@ enum GroupTailText {
         #[serde(with = "hash32_list")]
         conditions: Vec<u32>,
     },
+    /// `{ context = "default" pass = 0 }`: the condition set of one of the
+    /// declaration's compile jobs - the pass at `pass` in `context`, its
+    /// `layer`/`render_state`/`defines` hashed with `Murmur32`. Resolved by the
+    /// build, which holds the declaration; the reader keeps it unresolved.
+    Pass {
+        context: String,
+        pass: usize,
+    },
     /// The whole tail as bytes, when it is not a plain condition set.
     Hex(Hex),
 }
 
 impl GroupTailText {
-    /// The tail's bytes.
+    /// The tail's bytes. A `Pass` is resolved by the caller (which holds the
+    /// declaration) before the bytes are needed, so it contributes nothing on
+    /// its own - see [`GroupTailText::pass_names`].
     fn bytes(&self) -> Vec<u8> {
         match self {
             Self::Hex(hex) => hex.0.clone(),
-            Self::Conditions { conditions } => {
-                let nonempty = conditions.iter().any(|hash| *hash != 0);
-                let mut out = (conditions.len() as u32).to_le_bytes().to_vec();
-                for hash in conditions {
-                    out.extend_from_slice(&hash.to_le_bytes());
-                    out.extend_from_slice(&[0u8; 13]);
-                }
-                out.extend_from_slice(&if nonempty {
-                    [1, 0, 0, 0, 0, 0, 0, 0]
-                } else {
-                    [0u8; 8]
-                });
-                out
-            }
+            Self::Conditions { conditions } => conditions_bytes(conditions),
+            // Unresolved: the build replaces it via `resolved`.
+            Self::Pass { .. } => Vec::new(),
         }
     }
 
@@ -1052,6 +1069,12 @@ pub struct EngineData {
     /// when the program carries no container (an engine data file from before
     /// the containers were captured).
     pub program_containers: Vec<Option<usize>>,
+    /// Group tails written as a `pass = N` reference (tail slot, context, pass
+    /// index), for [`EngineData::resolve_pass_tails`].
+    pub pass_tail_refs: Vec<(usize, String, usize)>,
+    /// The tail slot each template group uses, parallel to the groups, so a
+    /// resolved pass tail can be written back to the groups that reference it.
+    pub group_tail_slots: Vec<usize>,
 }
 
 /// The UI base family's pass table: the mask byte each pixel program writes into
@@ -1202,9 +1225,10 @@ impl EngineData {
             containers,
             program_containers,
             permutations: None,
+            pass_tail_refs: Vec::new(),
+            group_tail_slots: Vec::new(),
         })
     }
-
     /// Parses the engine data from its text form.
     pub fn from_text(text: &str) -> Result<Self> {
         let text: Text =
@@ -1237,6 +1261,8 @@ impl EngineData {
             permutations: text
                 .permutations
                 .map(|plans| plans.into_iter().map(Into::into).collect()),
+            pass_tail_refs: Vec::new(),
+            group_tail_slots: Vec::new(),
         };
 
         // The preamble: the engine's config base is a toolchain constant, so a
@@ -1301,6 +1327,7 @@ impl EngineData {
                 }
                 _ => template.groups.clone(),
             };
+            let mut group_tail_slots: Vec<usize> = Vec::with_capacity(expanded.len());
             for (index, group) in expanded.iter().enumerate() {
                 // A group starts with its query id: the file's own, or the
                 // contexts' by position (they are one to one, same order), so
@@ -1348,6 +1375,7 @@ impl EngineData {
                             )
                         })?,
                 });
+                group_tail_slots.push(group.tail);
                 // An empty `materials` list means the table is derived - the
                 // declaration names it - so the caller fills `material_tables`.
                 if !template.materials.is_empty() {
@@ -1371,6 +1399,12 @@ impl EngineData {
                 engine,
             });
             engine_data.material_tables = tables;
+            engine_data.group_tail_slots = group_tail_slots.clone();
+            for (slot, tail) in template.tails.iter().enumerate() {
+                if let GroupTailText::Pass { context, pass } = tail {
+                    engine_data.pass_tail_refs.push((slot, context.clone(), *pass));
+                }
+            }
         }
 
         // The tails: a split tail's constant-buffer list and resource lists are
@@ -1905,6 +1939,55 @@ impl EngineData {
         Ok(device)
     }
 
+    /// Resolves the group tails written as a `pass = N` reference against the
+    /// declaration's compile jobs.
+    ///
+    /// A tail names a context and the pass index within it; its condition set is
+    /// that pass's `layer`/`render_state`/`defines`, hashed with `Murmur32`. The
+    /// build calls this once the declaration is compiled and before `generate`;
+    /// a file whose tails are concrete condition sets has nothing to resolve.
+    pub fn resolve_pass_tails(
+        &mut self,
+        jobs: &[crate::filetype::shader_node::CompileJob],
+    ) -> Result<()> {
+        if self.pass_tail_refs.is_empty() {
+            return Ok(());
+        }
+        // The condition bytes of each referenced tail slot: the `pass`-th job of
+        // `context`, in order.
+        let mut resolved: std::collections::HashMap<usize, Vec<u8>> =
+            std::collections::HashMap::new();
+        for (slot, context, pass) in &self.pass_tail_refs {
+            let job = jobs
+                .iter()
+                .filter(|job| &job.context == context)
+                .nth(*pass)
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!(
+                        "a tail names {context}'s pass {pass}, which the declaration \
+                         does not compile"
+                    )
+                })?;
+            resolved.insert(*slot, conditions_bytes(&job.condition_ids()));
+        }
+
+        let template = self
+            .group_template
+            .as_mut()
+            .ok_or_else(|| color_eyre::eyre::eyre!("a pass tail needs a group template"))?;
+        for (index, group) in template.groups.iter_mut().enumerate() {
+            let slot = self
+                .group_tail_slots
+                .get(index)
+                .copied()
+                .ok_or_else(|| color_eyre::eyre::eyre!("a group has no tail slot"))?;
+            if let Some(bytes) = resolved.get(&slot) {
+                group.tail = bytes.clone();
+            }
+        }
+        Ok(())
+    }
+
     /// Assembles a complete shader section from the engine data and our
     /// programs. `material` is the generating material's resource path: the
     /// section's `material_hash` word is murmur32 of it, the section's identity
@@ -1952,7 +2035,6 @@ impl EngineData {
         }
 
         let device = self.build_device(containers, resources, template.as_ref())?;
-
         let group_data = match &template {
             Some(template) => GroupData::build(template, &self.material_tables, &template.engine)?,
             None => self.group_data.clone(),
@@ -2047,6 +2129,8 @@ mod tests {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            pass_tail_refs: Vec::new(),
+            group_tail_slots: Vec::new(),
         }
     }
 
@@ -2357,6 +2441,50 @@ programs = []
     }
 
     #[test]
+    fn a_pass_tail_resolves_from_the_declaration() {
+        // A group tail may name one of the declaration's compile jobs instead of
+        // carrying hashes: `{ context = "default" pass = 0 }`. The build
+        // resolves it to that pass's layer/render_state/defines, hashed with
+        // Murmur32 - here `gui` (9FCFE126), `gui_hdr` (BC4EE226) and `SINGLE`
+        // (407AB909).
+        use crate::filetype::shader_node::{CompileJob, JobMacro};
+
+        let text = r#"
+group_template = {
+    repeat = 1
+    tails = [ { context = "default" pass = 0 } ]
+}
+contexts = ""
+preamble = { bytes = "" }
+programs = []
+"#;
+        let mut engine_data = EngineData::from_text(text).unwrap();
+        // One group referencing tail 0. The reader leaves it empty until the
+        // declaration is known.
+        assert_eq!(engine_data.group_tail_slots, vec![0]);
+        assert_eq!(engine_data.pass_tail_refs.len(), 1);
+
+        let jobs = vec![CompileJob {
+            context: "default".into(),
+            permutation: 0,
+            code_block: "b".into(),
+            layer: Some("gui".into()),
+            render_state: Some("gui_hdr".into()),
+            macros: vec![JobMacro {
+                name: "SINGLE".into(),
+                stages: Vec::new(),
+            }],
+        }];
+        engine_data.resolve_pass_tails(&jobs).unwrap();
+
+        let expected = conditions_bytes(&[0x9FCF_E126, 0xBC4E_E226, 0x407A_B909]);
+        assert_eq!(
+            engine_data.group_template.as_ref().unwrap().groups[0].tail,
+            expected
+        );
+    }
+
+    #[test]
     fn a_condition_tail_round_trips_as_its_hash_list() {
         // The UI base's tails are condition sets: `u32 n`, `n` entries of a hash
         // plus thirteen zeros, an eight-byte trailer. The text writes the hash
@@ -2382,7 +2510,7 @@ programs = []
         for bytes in [&gui_transparent, &empty] {
             match GroupTailText::from_bytes(bytes) {
                 GroupTailText::Conditions { .. } => {}
-                GroupTailText::Hex(_) => panic!("a condition set was not recognised"),
+                other => panic!("a condition set was not recognised: {other:?}"),
             }
             assert_eq!(&GroupTailText::from_bytes(bytes).bytes(), bytes);
         }

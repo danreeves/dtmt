@@ -537,6 +537,10 @@ pub struct CompileJob {
     pub permutation: usize,
     /// The code block the pass names.
     pub code_block: String,
+    /// The layer the pass draws on, when it names one.
+    pub layer: Option<String>,
+    /// The render state the pass draws with, when it names one.
+    pub render_state: Option<String>,
     /// The permutation's macros plus the pass's own, each with its stage limit.
     pub macros: Vec<JobMacro>,
 }
@@ -548,6 +552,39 @@ impl CompileJob {
             .iter()
             .filter(|macro_def| macro_def.applies_to(stage))
             .map(|macro_def| macro_def.name.as_str())
+            .collect()
+    }
+
+    /// The condition names this pass selects its group by: its layer, its
+    /// render state and its macros, de-duplicated in that order. Each is hashed
+    /// to the group tail's condition id with `Murmur32` - the same convention
+    /// every other name in a section uses. This is what a group's tail (its
+    /// condition set) is derived from.
+    pub fn conditions(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        let mut push = |name: &str| {
+            if !name.is_empty() && !names.iter().any(|other| other == name) {
+                names.push(name.to_string());
+            }
+        };
+        if let Some(layer) = &self.layer {
+            push(layer);
+        }
+        if let Some(state) = &self.render_state {
+            push(state);
+        }
+        for macro_def in &self.macros {
+            push(&macro_def.name);
+        }
+        names
+    }
+
+    /// The condition ids of this pass: [`CompileJob::conditions`] hashed with
+    /// `Murmur32`.
+    pub fn condition_ids(&self) -> Vec<u32> {
+        self.conditions()
+            .iter()
+            .map(|name| u32::from(crate::murmur::Murmur32::hash(name.as_bytes())))
             .collect()
     }
 }
@@ -835,6 +872,8 @@ impl ShaderNode {
                         context: context.name.clone(),
                         permutation: index,
                         code_block: pass.code_block.clone(),
+                        layer: pass.layer.clone(),
+                        render_state: pass.render_state.clone(),
                         macros,
                     });
                 }
@@ -2165,6 +2204,36 @@ mod tests {
         let passes = default.passes_of(&Defines::default()).expect("passes");
         assert_eq!(passes.len(), 1);
         assert_eq!(passes[0].macros(), ["DRAW_OUTLINE".to_string()]);
+    }
+
+    #[test]
+    fn a_job_carries_its_layer_render_state_and_conditions() {
+        // A pass's layer, render_state and macros are what a group's tail (its
+        // condition set) is derived from, so they must survive `compile_jobs`
+        // and hash with the engine's Murmur32. The names and ids are the ones a
+        // shipped section uses: `gui` = 9FCFE126, `gui_hdr` = BC4EE226,
+        // `transparent_mask` = 625D415E.
+        let text = r#"
+            shader_contexts = {
+                default = {
+                    passes = [
+                        { layer="gui" code_block="b" render_state="gui_hdr" defines=["SINGLE"] }
+                    ]
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let jobs = node.compile_jobs().expect("jobs");
+        assert_eq!(jobs.len(), 1);
+        let job = &jobs[0];
+        assert_eq!(job.layer.as_deref(), Some("gui"));
+        assert_eq!(job.render_state.as_deref(), Some("gui_hdr"));
+        // Layer, then render state, then macros, de-duplicated in order.
+        assert_eq!(job.conditions(), vec!["gui", "gui_hdr", "SINGLE"]);
+        assert_eq!(
+            job.condition_ids(),
+            vec![0x9FCF_E126, 0xBC4E_E226, 0x407A_B909]
+        );
     }
 
     #[test]

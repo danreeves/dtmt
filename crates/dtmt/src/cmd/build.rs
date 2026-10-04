@@ -356,6 +356,7 @@ async fn compile_declaration(
     let mut overrides = ShaderOverrides {
         permutations: permutation_plans(&jobs),
         material_records: material_records(evaluation),
+        jobs: jobs.clone(),
         ..ShaderOverrides::default()
     };
 
@@ -686,6 +687,17 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                         .max(1);
                     engine_data.material_tables = vec![overrides.material_records.clone(); groups];
                 }
+
+                // A group tail that names a `pass` derives its condition set
+                // from that pass's layer/render_state/defines.
+                engine_data
+                    .resolve_pass_tails(&overrides.jobs)
+                    .wrap_err_with(|| {
+                        format!(
+                            "Failed to resolve the pass tails of '{}'",
+                            engine_data_path.display()
+                        )
+                    })?;
 
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();

@@ -77,12 +77,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         };
         let query = permutation::key(&shader, &job.context, &tokens, "WIN32", "D3D12");
         let id = permutation::id(&query);
+        // The group tail this pass derives: its layer/render_state/defines,
+        // hashed to the condition ids a section's tail carries.
+        let conditions: Vec<String> = job
+            .condition_ids()
+            .iter()
+            .map(|id| format!("{id:08X}"))
+            .collect();
         println!(
-            "  {:14} p{} {:24} macros[{}] library={library} id={id:08X}",
+            "  {:14} p{} {:24} macros[{}] library={library} id={id:08X} layer={} state={} conditions[{}]",
             job.context,
             job.permutation,
             job.code_block,
-            tokens.join(",")
+            tokens.join(","),
+            job.layer.as_deref().unwrap_or("-"),
+            job.render_state.as_deref().unwrap_or("-"),
+            conditions.join(",")
         );
         seen.push(library);
     }
