@@ -560,7 +560,11 @@ struct PreambleText {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupTemplateText {
-    prefix: Hex,
+    /// The bytes before the first group. The common case is the group count
+    /// alone, which is derived from the group list, so it is omitted then and
+    /// written as hex only for a section with a longer prefix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prefix: Option<Hex>,
     /// The engine's table as packed records, only when it is not the
     /// toolchain's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1324,9 +1328,17 @@ impl EngineData {
                         group.material,
                         "material",
                     )?)?);
-                }            }
+                }
+            }
+            // The prefix is the group count alone in the common case; the text
+            // omits it then, and the reader writes the count its group list
+            // implies.
+            let prefix = match &template.prefix {
+                Some(prefix) => prefix.clone().into_bytes(),
+                None => (groups.len() as u32).to_le_bytes().to_vec(),
+            };
             engine_data.group_template = Some(GroupTemplate {
-                prefix: template.prefix.into_bytes(),
+                prefix,
                 groups,
                 engine,
             });
@@ -1494,8 +1506,13 @@ impl EngineData {
                 None => (None, groups),
             };
 
+            // The prefix is the group count alone in the common case, so it
+            // derives from the group list and the text omits it; a section with
+            // a longer prefix keeps it.
+            let prefix = (template.prefix != (template.groups.len() as u32).to_le_bytes())
+                .then(|| template.prefix.clone().into());
             GroupTemplateText {
-                prefix: template.prefix.clone().into(),
+                prefix,
                 engine,
                 materials,
                 heads,
@@ -2271,9 +2288,13 @@ programs = []
         let text = engine_data.to_text();
         assert!(text.contains("repeat = 3"), "the list is not collapsed:\n{text}");
         assert!(!text.contains("groups ="), "the list is still written:\n{text}");
+        // The prefix is the group count alone, so it derives from the list.
+        assert!(!text.contains("prefix ="), "the count is still written:\n{text}");
 
         let parsed = EngineData::from_text(&text).unwrap();
-        let groups = &parsed.group_template.as_ref().expect("template").groups;
+        let template = parsed.group_template.as_ref().expect("template");
+        assert_eq!(template.prefix, 6u32.to_le_bytes());
+        let groups = &template.groups;
         assert_eq!(groups.len(), 6);
         // Tail index is `index / repeat`: 0,0,0,1,1,1.
         assert_eq!(groups[0].tail, groups[2].tail);

@@ -10,11 +10,11 @@ Working notes and next steps for the `shader43` reverse engineering. See
 + `.shader_source` + `.texture` that builds a section from scratch, with no
 `shader_engine_data = "..."` side file. Progress and the exact remaining work are
 in **"The road to deleting .engine_data"** below. As of 2026-10-04 the side file
-is down to **429 bytes** - the permutation plan and `context_count` (ours), the
-group `prefix` (a count word) and the group `tail` pool (the family's six
-condition sets, now written as condition-hash lists rather than hex). Everything
-else is derived: contexts, material table, group head, `between`/`mid`, preamble,
-programs, tails, block heads, and the group list itself (`repeat`).
+is down to **406 bytes** - the permutation plan and `context_count` (ours) and
+the group `tail` pool (the family's six condition sets, now written as
+condition-hash lists rather than hex). Everything else is derived: contexts,
+material table, group head, `between`/`mid`, preamble, programs, tails, block
+heads, the group list (`repeat`) and its count word (`prefix`).
 
 **Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
 now decoded **and verified against the compiler's own output** (2026-10-03). The
@@ -151,6 +151,14 @@ empty set, so the pool is names rather than bytes. That took the mod's file from
 **649 to 429 bytes** (4,990 before the `repeat` step); the build is still
 byte-identical (`F3EE2651139FDEB0`) and `RENDER_OK`. Test:
 `a_condition_tail_round_trips_as_its_hash_list`.
+
+**The group count is derived too (2026-10-04).** The bytes before the first
+group are the group count alone - `GroupData::group_count` reads the first word,
+and the first group's node is the header's second word - so the text omits
+`prefix` whenever it equals the count its group list implies (`repeat x
+tails.len()` groups), and the reader writes that count back. A section with a
+longer prefix still carries it. The mod's file went **429 to 406 bytes**, and the
+build is still byte-identical (`F3EE2651139FDEB0`).
 
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
@@ -1609,8 +1617,8 @@ section is **byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and `RENDER_OK`.
 1. ~~`programs` / `tails` / `block_heads`~~ **done** (see above). The table is
    currently the UI base's recorded one; generating it for *any* family is the
    enumerator in "Priority order".
-2. **`group_template`'s group list and `prefix`** - one group per query (36 for
-   the shipped family; 1 for a from-scratch declaration), plus the count word.
+2. ~~**`group_template`'s group list and `prefix`**~~ **done** - the group list is
+   written as `repeat` and the count word derives from it (2026-10-04).
 3. **the group `tail` pool** - proven **load-bearing even with empty conditions**
    (zeroing it renders `RENDER_BLACK`), so it is the same source-graph decode as
    the conditions tree, not a constant. The text form writes each tail as its
