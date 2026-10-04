@@ -407,7 +407,10 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
    `3100C3D2` = `shadow_caster`, `F2760503` = `default`; a throwaway scanner,
    ~511k strings, 5 hits). The remaining condition hashes (`BDF72706`,
    `B5F45768`, `8FB860CF`, `625D415E`, `BC4EE226`, `red`, `green`, `blue`,
-   `alpha`) are not in the exe or the dictionary.
+   `alpha`) are not in the exe or the dictionary; named later from the VT2 SDK's
+   declarations, `8FB860CF` = `write_channels`, `BC4EE226` = `gui_hdr` and
+   `625D415E` = `transparent_mask` (see `Shader Section Generation Notes.md`).
+   `BDF72706` and `B5F45768` remain unnamed.
 
    **The final probe: the picked condition does not change the render.** A
    crafted default-context record with hashes [`num_skin_weights`, `default`]

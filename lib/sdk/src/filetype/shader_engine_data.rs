@@ -371,6 +371,20 @@ fn dedup_index(list: &mut Vec<Hex>, value: Vec<u8>) -> usize {
     }
 }
 
+/// The index of a tail in a deduplicated pool, adding it when new. Tails dedupe
+/// as their semantic form (a condition set when it is one), so the written pool
+/// is names rather than hex.
+fn dedup_tail(list: &mut Vec<GroupTailText>, value: Vec<u8>) -> usize {
+    let spec = GroupTailText::from_bytes(&value);
+    match list.iter().position(|other| *other == spec) {
+        Some(index) => index,
+        None => {
+            list.push(spec);
+            list.len() - 1
+        }
+    }
+}
+
 /// The engine data's text model, in the Stingray source dialect the `core/`
 /// files use: `key = value`, `{}` tables, `[]` arrays and quoted blobs.
 ///
@@ -491,6 +505,42 @@ fn serialize_quoted<S: Serializer>(value: &str, serializer: S) -> std::result::R
     serializer.serialize_bytes(out.as_bytes())
 }
 
+/// A list of 32-bit hashes, written as quoted eight-digit words the way the file
+/// writes every other name hash (a bare `0x…` token would read as neither an
+/// integer nor an identifier, and a bare decimal loses the hex the docs use).
+mod hash32_list {
+    use serde::de::Error as _;
+    use serde::ser::SerializeSeq as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::Hex;
+
+    pub fn serialize<S: Serializer>(
+        values: &[u32],
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(values.len()))?;
+        for value in values {
+            seq.serialize_element(&Hex(value.to_be_bytes().to_vec()))?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Vec<u32>, D::Error> {
+        let values = Vec::<Hex>::deserialize(deserializer)?;
+        values
+            .into_iter()
+            .map(|hex| {
+                <[u8; 4]>::try_from(hex.0.as_slice())
+                    .map(u32::from_be_bytes)
+                    .map_err(|_| D::Error::custom("a condition hash needs four bytes"))
+            })
+            .collect()
+    }
+}
+
 /// The device preamble: its head and rest around the engine's config base, or
 /// its whole bytes when it does not start with the base.
 #[derive(Debug, Serialize, Deserialize)]
@@ -525,7 +575,7 @@ struct GroupTemplateText {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mids: Vec<Hex>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    tails: Vec<Hex>,
+    tails: Vec<GroupTailText>,
     /// A repeating group list: when `groups` is empty and this is set, there is
     /// one group per query (in query order) and group `i` uses tail `i / repeat`
     /// with every other part at its zero index. The UI base writes 36 groups
@@ -534,6 +584,71 @@ struct GroupTemplateText {
     repeat: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     groups: Vec<GroupText>,
+}
+
+/// A group's condition-header tail: a plain condition set, or raw bytes when it
+/// is not one.
+///
+/// The UI base's six tails are all condition sets: `u32 n`, then `n` entries of
+/// a condition hash plus thirteen zero bytes, then an eight-byte trailer (`01`
+/// when the set is nonempty, zeros when it is empty). Written as the hash list,
+/// the fixed bytes derive, so the family's tails are names rather than hex.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+enum GroupTailText {
+    /// `{ conditions = [ "9FCFE126" "625D415E" ] }`.
+    Conditions {
+        #[serde(with = "hash32_list")]
+        conditions: Vec<u32>,
+    },
+    /// The whole tail as bytes, when it is not a plain condition set.
+    Hex(Hex),
+}
+
+impl GroupTailText {
+    /// The tail's bytes.
+    fn bytes(&self) -> Vec<u8> {
+        match self {
+            Self::Hex(hex) => hex.0.clone(),
+            Self::Conditions { conditions } => {
+                let nonempty = conditions.iter().any(|hash| *hash != 0);
+                let mut out = (conditions.len() as u32).to_le_bytes().to_vec();
+                for hash in conditions {
+                    out.extend_from_slice(&hash.to_le_bytes());
+                    out.extend_from_slice(&[0u8; 13]);
+                }
+                out.extend_from_slice(&if nonempty {
+                    [1, 0, 0, 0, 0, 0, 0, 0]
+                } else {
+                    [0u8; 8]
+                });
+                out
+            }
+        }
+    }
+
+    /// The condition set, when the bytes are exactly one.
+    fn from_bytes(bytes: &[u8]) -> Self {
+        if bytes.len() >= 4 {
+            let n = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+            let expected = 4 + n * 17 + 8;
+            if bytes.len() == expected {
+                let mut conditions = Vec::with_capacity(n);
+                let mut ok = true;
+                for index in 0..n {
+                    let at = 4 + index * 17;
+                    conditions.push(u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()));
+                    if bytes[at + 4..at + 17].iter().any(|byte| *byte != 0) {
+                        ok = false;
+                    }
+                }
+                if ok {
+                    return Self::Conditions { conditions };
+                }
+            }
+        }
+        Self::Hex(Hex(bytes.to_vec()))
+    }
 }
 
 /// One group of the template: its query id (absent when the contexts carry it -
@@ -1190,7 +1305,16 @@ impl EngineData {
                     } else {
                         part(&template.mids, group.mid, "mid")?
                     },
-                    tail: part(&template.tails, group.tail, "tail")?,
+                    tail: template
+                        .tails
+                        .get(group.tail)
+                        .map(GroupTailText::bytes)
+                        .ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "a group names a tail at #{}, which is missing",
+                                group.tail
+                            )
+                        })?,
                 });
                 // An empty `materials` list means the table is derived - the
                 // declaration names it - so the caller fills `material_tables`.
@@ -1314,7 +1438,7 @@ impl EngineData {
             let mut heads: Vec<Hex> = Vec::new();
             let mut betweens: Vec<Hex> = Vec::new();
             let mut mids: Vec<Hex> = Vec::new();
-            let mut tails: Vec<Hex> = Vec::new();
+            let mut tails: Vec<GroupTailText> = Vec::new();
             let mut groups = Vec::with_capacity(template.groups.len());
             let context_queries = context_queries(&self.contexts).unwrap_or_default();
             for (index, parts) in template.groups.iter().enumerate() {
@@ -1334,8 +1458,11 @@ impl EngineData {
                     head: dedup_index(&mut heads, parts.head.get(4..).unwrap_or_default().to_vec()),
                     between: dedup_index(&mut betweens, parts.between.clone()),
                     mid: dedup_index(&mut mids, parts.mid.clone()),
-                    tail: dedup_index(&mut tails, parts.tail.clone()),
-                    material: material_indexes[index],
+                    tail: dedup_tail(&mut tails, parts.tail.clone()),
+                    // The material table is derived when the file carries
+                    // none (a from-scratch file names it), so the index is the
+                    // zero placeholder either way.
+                    material: material_indexes.get(index).copied().unwrap_or(0),
                     material_first: parts.material_first,
                 });
             }
@@ -2155,6 +2282,76 @@ programs = []
         // Each tail is the twelve-byte run it was.
         assert_eq!(groups[0].tail, vec![0xA1; 12]);
         assert_eq!(groups[5].tail, vec![0xB2; 12]);
+    }
+
+    #[test]
+    fn a_condition_tail_round_trips_as_its_hash_list() {
+        // The UI base's tails are condition sets: `u32 n`, `n` entries of a hash
+        // plus thirteen zeros, an eight-byte trailer. The text writes the hash
+        // list, and the reader rebuilds the same bytes.
+        let tail = |hashes: &[u32], nonempty: bool| {
+            let mut bytes = (hashes.len() as u32).to_le_bytes().to_vec();
+            for hash in hashes {
+                bytes.extend_from_slice(&hash.to_le_bytes());
+                bytes.extend_from_slice(&[0u8; 13]);
+            }
+            bytes.extend_from_slice(&if nonempty {
+                [1, 0, 0, 0, 0, 0, 0, 0]
+            } else {
+                [0u8; 8]
+            });
+            bytes
+        };
+        let gui_transparent = tail(&[0x9FCF_E126, 0x625D_415E], true);
+        let empty = tail(&[0], false);
+
+        // The recognizer reads each back to its condition list and rebuilds the
+        // identical bytes.
+        for bytes in [&gui_transparent, &empty] {
+            match GroupTailText::from_bytes(bytes) {
+                GroupTailText::Conditions { .. } => {}
+                GroupTailText::Hex(_) => panic!("a condition set was not recognised"),
+            }
+            assert_eq!(&GroupTailText::from_bytes(bytes).bytes(), bytes);
+        }
+        let GroupTailText::Conditions { conditions } =
+            GroupTailText::from_bytes(&gui_transparent)
+        else {
+            panic!("expected conditions");
+        };
+        assert_eq!(conditions, vec![0x9FCF_E126, 0x625D_415E]);
+
+        // The text form writes each hash as a quoted word, the way the file
+        // writes every other name hash; a bare `0x…` token would read as
+        // neither an integer nor an identifier. The text must round trip to
+        // the same bytes.
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrap {
+            tail: GroupTailText,
+        }
+        let text = serde_sjson::to_string(&Wrap {
+            tail: GroupTailText::from_bytes(&gui_transparent),
+        })
+        .unwrap();
+        assert!(
+            text.contains("\"9FCFE126\""),
+            "unexpected tail text: {text}"
+        );
+        assert!(
+            text.contains("\"625D415E\""),
+            "unexpected tail text: {text}"
+        );
+        let back = serde_sjson::from_str::<Wrap>(&text).unwrap().tail;
+        assert_eq!(back, GroupTailText::from_bytes(&gui_transparent));
+        assert_eq!(back.bytes(), gui_transparent);
+
+        // A tail that is not a plain condition set stays bytes.
+        let odd = vec![0x03, 0x00, 0x00, 0x00, 0xFF];
+        assert!(matches!(
+            GroupTailText::from_bytes(&odd),
+            GroupTailText::Hex(_)
+        ));
+        assert_eq!(GroupTailText::from_bytes(&odd).bytes(), odd);
     }
 
     #[test]

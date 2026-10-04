@@ -9,11 +9,12 @@ Working notes and next steps for the `shader43` reverse engineering. See
 **Current goal: delete `.engine_data` entirely** - a `.material` + `.shader_node`
 + `.shader_source` + `.texture` that builds a section from scratch, with no
 `shader_engine_data = "..."` side file. Progress and the exact remaining work are
-in **"The road to deleting .engine_data"** below. As of 2026-10-03 the side file
-is down to 12,389 bytes with the contexts, material table, group head, group
-framing, preamble, programs, tails and block heads all derived - what remains is
-the permutation plan (ours), the group framing for the groups it ships, and the
-group `tail`.
+in **"The road to deleting .engine_data"** below. As of 2026-10-04 the side file
+is down to **429 bytes** - the permutation plan and `context_count` (ours), the
+group `prefix` (a count word) and the group `tail` pool (the family's six
+condition sets, now written as condition-hash lists rather than hex). Everything
+else is derived: contexts, material table, group head, `between`/`mid`, preamble,
+programs, tails, block heads, and the group list itself (`repeat`).
 
 **Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
 now decoded **and verified against the compiler's own output** (2026-10-03). The
@@ -136,6 +137,20 @@ mod's `ui_default_base.engine_data` dropped from **4,990 to 649 bytes** with the
 36-entry `groups` block replaced by `repeat = 6`, and the built section is
 **byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and **`RENDER_OK`** in the
 harness. Test: `a_repeating_group_list_round_trips_as_a_repeat`.
+
+**The group tails are written as condition sets (2026-10-04).** A tail is exactly
+its condition header: `u32 n`, then `n` entries of a condition hash plus thirteen
+zero bytes, then an eight-byte trailer (`01` when the set is nonempty, zeros when
+it is empty). The text form now writes the hash list -
+`{ conditions = [ "9FCFE126" "625D415E" ] }` - each hash a quoted word the way the
+file writes every other name hash (a bare `0x…` token reads as neither an integer
+nor an identifier, and a bare decimal loses the hex), and the reader rebuilds the
+fixed bytes. The UI base's six tails are `{gui, transparent_mask}`,
+`{gui_hdr, transparent_mask}`, `{transparent_mask}`, `{gui_hdr}`, `{gui}` and the
+empty set, so the pool is names rather than bytes. That took the mod's file from
+**649 to 429 bytes** (4,990 before the `repeat` step); the build is still
+byte-identical (`F3EE2651139FDEB0`) and `RENDER_OK`. Test:
+`a_condition_tail_round_trips_as_its_hash_list`.
 
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
@@ -1598,7 +1613,9 @@ section is **byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and `RENDER_OK`.
    the shipped family; 1 for a from-scratch declaration), plus the count word.
 3. **the group `tail` pool** - proven **load-bearing even with empty conditions**
    (zeroing it renders `RENDER_BLACK`), so it is the same source-graph decode as
-   the conditions tree, not a constant.
+   the conditions tree, not a constant. The text form writes each tail as its
+   condition-hash list (2026-10-04), so the pool is six names, but it is still
+   carried - deriving it is the conditions-tree/enumerator work.
 
 **The one hard requirement**: `ShaderTemplate::initialize` wants the *program
 list* complete - reducing it to the demanded program fails `dispatch_loadtime`
