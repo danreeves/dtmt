@@ -30,6 +30,15 @@ declaration from a shipped section, and the same enumeration would build other
 families' declarations. The tooling is `lib/sdk/examples/vt2_editor.rs` and
 `vt2_enumerate.rs`.
 
+**But the enumerator alone is not enough: the program table's block header is
+load-bearing (2026-10-04, in-game).** Making `derived_programs` emit one program
+pair per query (72 programs) crashes at `dispatch_loadtime`; keeping the shipped
+48-program list but forcing a uniform minimal 32-byte block header **also**
+crashes. So the list is the engine's compiled variant list and the 36-byte
+header's seam word is read by the engine - the per-program block-header grammar
+must be decoded before a section's programs can be generated. See
+`Shader Permutations.md`, "Deriving the program table too".
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 

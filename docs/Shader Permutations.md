@@ -369,3 +369,29 @@ that enumeration - the mask is the pass's channel set (its defines), the head an
 seam the family's, which are recorded per family. So the same widening that
 generates the tail pool generates the program table.
 
+**The program table is not the query list, and its block header is load-bearing
+(2026-10-04, in-game).** `derived_programs` was changed to emit one
+`(Vertex, Pixel)` pair per query, the pixel block a minimal 32-byte header plus
+the preamble body, so the list would come from the declaration alone. On the UI
+base this changed the section from 96 to 72 programs (421684 -> 333252 B,
+`50FF4BBFA3B56D66`) and the engine **crashed** with an access violation in
+`dispatch_loadtime` at `StateTitle` (no material-set line; the restored
+hardcoded-table build is `RENDER_OK`, `CD9854D69AC9A5B7`). A second build with
+the declaration widened to 48 queries (48 pairs, derived write-channel masks)
+also crashed at `dispatch_loadtime`. Isolating the header: keeping the shipped
+48-program list and the shipped masks but forcing every block's header to the
+minimal 32-byte `{02}` form (`BA082DE84BE11755`, 421556 B) **also crashes**. So:
+
+- the program list is the engine's **compiled variant list**, independent of the
+  query count (the working section has 36 queries but 48 program pairs);
+- the 36-byte header's **seam word is read by the engine**: a uniform minimal
+  header corrupts it, so a generated program cannot fabricate the header.
+
+Deriving the program list therefore needs the per-program **block header
+grammar**, not a count or a mask rule. The table the toolchain still walks
+(`UI_BASE_PASS_HEADS/SEAMS/MASKS`) is the shipped UI-base family's: 48 passes,
+`head` 36 for 35 of them, `seam` 2 for the first twelve 36-byte heads and 1 for
+the rest (the 32-byte ones, and the last, carry 0). What the seam selects is
+undecoded; `docs/Shader RE TODO.md`'s "block synthesis" item is the same
+grammar.
+
