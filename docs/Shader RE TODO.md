@@ -10,11 +10,12 @@ Working notes and next steps for the `shader43` reverse engineering. See
 + `.shader_source` + `.texture` that builds a section from scratch, with no
 `shader_engine_data = "..."` side file. Progress and the exact remaining work are
 in **"The road to deleting .engine_data"** below. As of 2026-10-04 the side file
-is down to **406 bytes** - the permutation plan and `context_count` (ours) and
-the group `tail` pool (the family's six condition sets, now written as
-condition-hash lists rather than hex). Everything else is derived: contexts,
-material table, group head, `between`/`mid`, preamble, programs, tails, block
-heads, the group list (`repeat`) and its count word (`prefix`).
+is down to **387 bytes** - the permutation plan (ours, derived from the
+declaration's compile jobs) and the group `tail` pool (the family's six condition
+sets, written as condition-hash lists rather than hex). Everything else is
+derived: `context_count`, contexts, material table, group head, `between`/`mid`,
+preamble, programs, tails, block heads, the group list (`repeat`) and its count
+word (`prefix`).
 
 **Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
 now decoded **and verified against the compiler's own output** (2026-10-03). The
@@ -159,6 +160,20 @@ and the first group's node is the header's second word - so the text omits
 tails.len()` groups), and the reader writes that count back. A section with a
 longer prefix still carries it. The mod's file went **429 to 406 bytes**, and the
 build is still byte-identical (`F3EE2651139FDEB0`).
+
+**`context_count` derives from the permutation plan (2026-10-04).** The header's
+context count is the number of contexts a file's `permutations` block (or its
+carried `contexts` blob) names - the section's own header word counts the
+context records, not the queries - so the text writes it only when it cannot be
+inferred, and a plans-only file omits it. With that the mod's file is **387
+bytes**: the plan alone, plus the tail pool. `dtmt build` reads the plan from
+the engine data, so what remains to derive it is the declaration-to-plan wiring
+above: the declaration's compile jobs already build these exact plans
+(`permutation_plans` in `build.rs`), including the case where the engine data
+carries none. The mod's file keeps its plans because its `shader_contexts` has
+one `default` pass while the built section is the UI-base family's 36-group
+shape, so a declaration-derived plan would be one query against six tails - the
+enumerator must widen the declaration first.
 
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
@@ -1619,11 +1634,23 @@ section is **byte-identical** (`F3EE2651139FDEB0`, 421,508 B) and `RENDER_OK`.
    enumerator in "Priority order".
 2. ~~**`group_template`'s group list and `prefix`**~~ **done** - the group list is
    written as `repeat` and the count word derives from it (2026-10-04).
-3. **the group `tail` pool** - proven **load-bearing even with empty conditions**
+3. ~~**`context_count`**~~ **done** - the count is the plans' contexts when the
+   file names them (2026-10-04).
+4. **the group `tail` pool** - proven **load-bearing even with empty conditions**
    (zeroing it renders `RENDER_BLACK`), so it is the same source-graph decode as
    the conditions tree, not a constant. The text form writes each tail as its
    condition-hash list (2026-10-04), so the pool is six names, but it is still
    carried - deriving it is the conditions-tree/enumerator work.
+
+**The permutation plan is derived, not carried (2026-10-04).** `dtmt build` reads
+the declaration's compile jobs and builds the plans (`permutation_plans`), so a
+file with no `permutations`/`contexts` and no plan-named contexts takes them from
+the declaration. The mod keeps its plan because the declaration's single
+`default` pass is narrower than the built section's UI-base family shape (six
+tails, 36 groups): a declaration-derived plan is one query and would mismatch the
+group list. Widening the declaration to the family's passes/conditions - the
+enumerator - lets the plan derive too, after which the file is the tail pool
+alone.
 
 **The one hard requirement**: `ShaderTemplate::initialize` wants the *program
 list* complete - reducing it to the demanded program fails `dispatch_loadtime`

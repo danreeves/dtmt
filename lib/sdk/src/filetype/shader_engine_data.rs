@@ -235,6 +235,23 @@ fn context_queries(contexts: &[u8]) -> Result<Vec<u32>> {
     Ok(queries)
 }
 
+/// The number of contexts a contexts region carries: the `{name, word, count}`
+/// records, walked so a variable-length record cannot be miscounted.
+fn context_count_of(contexts: &[u8]) -> usize {
+    let mut count = 0usize;
+    let mut at = 0usize;
+    while at + 12 <= contexts.len() {
+        let queries = u32::from_le_bytes(contexts[at + 8..at + 12].try_into().unwrap()) as usize;
+        let next = at + 12 + queries * 8;
+        if next > contexts.len() {
+            break;
+        }
+        count += 1;
+        at = next;
+    }
+    count
+}
+
 /// The constant-buffer list a split tail should hold, from the container's own
 /// reflection: the names in register order, with the sizes from the group data's
 /// material table (`c_per_object`) and the engine table (`global_viewport`), the
@@ -394,7 +411,11 @@ fn dedup_tail(list: &mut Vec<GroupTailText>, value: Vec<u8>) -> usize {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Text {
-    context_count: u32,
+    /// The header's context count. Derived from `permutations` or the carried
+    /// `contexts` blob when absent, so a file that names its plans does not
+    /// repeat it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_count: Option<u32>,
     /// Only written when it is not the engine's one dependency.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dependency_count: Option<u32>,
@@ -1193,7 +1214,14 @@ impl EngineData {
             // The section's identity comes from the material at `generate`
             // time, not from the file.
             material_hash: 0,
-            context_count: text.context_count,
+            // The count is the plans' contexts when the file names them, the
+            // carried blob's contexts otherwise.
+            context_count: text.context_count.unwrap_or_else(|| {
+                text.permutations
+                    .as_ref()
+                    .map(|plans| plans.len() as u32)
+                    .unwrap_or_else(|| context_count_of(&text.contexts.0) as u32)
+            }),
             dependency_count: text.dependency_count.unwrap_or(0),
             contexts: text.contexts.into_bytes(),
             conditions: text.conditions.into_bytes(),
@@ -1618,8 +1646,22 @@ impl EngineData {
             })
             .collect();
 
+        // The count is the contexts' own when they are carried, and the plans'
+        // when they are not; it is written only when it does not follow from
+        // whichever of the two the file holds.
+        let context_count = match (&self.permutations, self.contexts.is_empty()) {
+            (Some(plans), _) if plans.len() != self.context_count as usize => {
+                Some(self.context_count)
+            }
+            (Some(_), _) => None,
+            (None, false) if context_count_of(&self.contexts) != self.context_count as usize => {
+                Some(self.context_count)
+            }
+            (None, false) => None,
+            (None, true) => Some(self.context_count),
+        };
         Text {
-            context_count: self.context_count,
+            context_count,
             // The dependency is the engine's one library, so it is only written
             // when the file carries something else.
             dependency_count: (self.dependency_count != 0 && self.dependency_count != 1)
@@ -2056,7 +2098,11 @@ programs = []
         let plans = parsed.permutations.clone().expect("plans");
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].context, "default");
-        assert!(!plans[0].queries.is_empty(), "queries: {:?}", plans[0].queries);
+        assert!(
+            !plans[0].queries.is_empty(),
+            "queries: {:?}",
+            plans[0].queries
+        );
         assert_eq!(plans[0].queries.len(), 1);
         assert_eq!(
             plans[0].queries[0]
@@ -2064,14 +2110,19 @@ programs = []
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             vec!["SINGLE"],
-            "queries: {:?}", plans[0].queries
+            "queries: {:?}",
+            plans[0].queries
         );
+        // The count follows from the plans, so the file does not write it.
+        assert_eq!(parsed.context_count, 1);
         let text_out = parsed.to_text();
-        let plans_round_tripped = EngineData::from_text(&text_out)
-            .unwrap()
-            .permutations
-            .expect("plans survive the round trip");
-        assert_eq!(plans_round_tripped, plans);
+        assert!(
+            !text_out.contains("context_count"),
+            "the count is repeated: {text_out}"
+        );
+        let round_tripped = EngineData::from_text(&text_out).unwrap();
+        assert_eq!(round_tripped.context_count, 1);
+        assert_eq!(round_tripped.permutations.expect("plans survive"), plans);
     }
 
     #[test]
