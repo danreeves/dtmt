@@ -228,6 +228,42 @@ pass's `layer` and `render_state`, and `CompileJob::condition_ids()` hashes
 `9FCFE126`/`BC4EE226`/`407AB909`). The second half - declaring the family's 48
 passes in `ui_default_base.shader_node` - is what would let the six-set pool
 derive; until then the shipped pool is still used.
+
+**The UI base's six tails derive exactly (2026-10-04).** Read off the shipped
+section (`program_order`, `conditions_dump`), the six group tails are the
+condition sets `{gui, transparent_mask}`, `{gui_hdr, transparent_mask}`,
+`{transparent_mask}`, `{gui_hdr}`, `{gui}` and empty - and each is one pass's
+`(layer, render_state)` pair:
+
+| tail | pass |
+| --- | --- |
+| `{gui, transparent_mask}` | `layer="gui" render_state="transparent_mask"` |
+| `{gui_hdr, transparent_mask}` | `layer="gui_hdr" render_state="transparent_mask"` |
+| `{transparent_mask}` | `layer="transparent_mask"` |
+| `{gui_hdr}` | `layer="gui_hdr"` |
+| `{gui}` | `layer="gui"` |
+| empty | (no layer/state) |
+
+So deriving the pool needs only these six passes in the declaration, and
+`condition_ids()` reproduces the exact bytes (pinned by
+`the_ui_base_familys_six_tails_derive_from_six_passes`). No engine data is
+needed for the tail pool.
+
+**What still blocks using it (2026-10-04).** Two things, both the enumerator:
+
+1. `dtmt build`'s declaration flow refuses a declaration with more than one
+   compile job (`compile_declaration`: "must have exactly one pass for now"),
+   because the override flow names one container per stage. Six passes means six
+   `(Vertex, Pixel)` program pairs, which the single-container seam cannot carry.
+2. The 48 program slots' **channel masks** and the 48 passes' mapping to the 36
+   groups are the family's own; the mask values (`01/02/04/08/0F`) cycle in the
+   section but the program-to-group mapping is not decoded (the docs' open item).
+   A declaration can name the passes, but pairing them with the section's 48
+   program slots also needs that mapping.
+
+So the honest state: the **tail pool is decoded and generatable**; the **program
+table still needs the multi-job flow and the program-to-group mapping**. The
+288-byte file carries the tail pool because both are one step behind.
 ### Deriving the program table too
 
 The family's 48-pixel program table is the pass list crossed with the

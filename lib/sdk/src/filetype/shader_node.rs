@@ -2237,6 +2237,43 @@ mod tests {
     }
 
     #[test]
+    fn the_ui_base_familys_six_tails_derive_from_six_passes() {
+        // The UI base's six group tails are the condition sets `{gui,
+        // transparent_mask}`, `{gui_hdr, transparent_mask}`, `{transparent_mask}`,
+        // `{gui_hdr}`, `{gui}` and empty. Each is a pass's `(layer,
+        // render_state)` pair, so a declaration with these six passes derives
+        // the whole pool - no engine data needed for it.
+        let text = r#"
+            shader_contexts = {
+                default = {
+                    passes = [
+                        { layer="gui" code_block="b" render_state="transparent_mask" }
+                        { layer="gui_hdr" code_block="b" render_state="transparent_mask" }
+                        { layer="transparent_mask" code_block="b" }
+                        { layer="gui_hdr" code_block="b" }
+                        { layer="gui" code_block="b" }
+                        { code_block="b" }
+                    ]
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let jobs = node.compile_jobs().expect("jobs");
+        let sets: Vec<Vec<u32>> = jobs.iter().map(|job| job.condition_ids()).collect();
+        assert_eq!(
+            sets,
+            vec![
+                vec![0x9FCF_E126, 0x625D_415E], // {gui, transparent_mask}
+                vec![0xBC4E_E226, 0x625D_415E], // {gui_hdr, transparent_mask}
+                vec![0x625D_415E],              // {transparent_mask}
+                vec![0xBC4E_E226],              // {gui_hdr}
+                vec![0x9FCF_E126],              // {gui}
+                vec![],                         // empty
+            ]
+        );
+    }
+
+    #[test]
     fn a_pass_links_to_its_code_block() {
         let text = r#"
             code_blocks = {
