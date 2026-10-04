@@ -312,6 +312,27 @@ family exactly therefore means declaring the **pass tree** (a pass per layer/
 channel branch), which is mechanical but larger: it is generating the 48-pass
 declaration from the section, not hand-writing it. That is the last step before
 `.engine_data` can go.
+
+**The generator exists and the section parses, but does not render
+(2026-10-04).** `examples/family_declaration.rs` reads a shipped section and
+emits exactly this declaration: the distinct group condition sets become passes
+(hashes named against the engine vocabulary), and a `channels` permutation
+crossed with each pass's own define enumerates to the section's query count. On
+the shipped UI base it produces **6 passes x 6 channels = 36 jobs and 36 distinct
+query ids**, with the six condition sets. `EngineData::derive_tails` now writes
+the group count into the template prefix, so `group_template = { repeat = 6 }`
+alone generates a section with 36 queries and 36 groups - the family's shape,
+with no engine data.
+
+**In game it crashes.** The generated section (421,684 B) hits an access
+violation at the title screen - with no `ShaderTemplate` or `dispatch_loadtime`
+context, unlike the known failures - while the restored shipped-pool build is
+`RENDER_OK` (`F3EE2651139FDEB0`). So the **tails and the query count derive**, but
+the section is not yet valid: the generator synthesizes each group's **head and
+descriptor list** as zeros, and those are the family's own compiled interface
+(four descriptors, `X` offsets, `Y` usage counts). Deriving them is the next
+piece; until then the head/descriptor part is what an engine data file still has
+to carry even with the tails derived.
 ### Deriving the program table too
 
 The family's 48-pixel program table is the pass list crossed with the

@@ -2039,6 +2039,9 @@ impl EngineData {
                 tail: pool[index / repeat].clone(),
             })
             .collect();
+        // The prefix is the group count, which the reader wrote as 0 because the
+        // file carried no groups; write the real one now.
+        template.prefix = (template.groups.len() as u32).to_le_bytes().to_vec();
         Ok(())
     }
 
