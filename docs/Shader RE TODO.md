@@ -10,12 +10,13 @@ Working notes and next steps for the `shader43` reverse engineering. See
 + `.shader_source` + `.texture` that builds a section from scratch, with no
 `shader_engine_data = "..."` side file. Progress and the exact remaining work are
 in **"The road to deleting .engine_data"** below. As of 2026-10-04 the side file
-is down to **387 bytes** - the permutation plan (ours, derived from the
-declaration's compile jobs) and the group `tail` pool (the family's six condition
+is down to **288 bytes** - just the group `tail` pool (the family's six condition
 sets, written as condition-hash lists rather than hex). Everything else is
-derived: `context_count`, contexts, material table, group head, `between`/`mid`,
-preamble, programs, tails, block heads, the group list (`repeat`) and its count
-word (`prefix`).
+derived: the permutation plan and `context_count` (from the declaration's
+compile jobs), contexts, material table, group head, `between`/`mid`, preamble,
+programs, tails, block heads, the group list (`repeat`) and its count word
+(`prefix`). Removing the tail pool is step 2: the conditions-tree/source-graph
+decode.
 
 **Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
 now decoded **and verified against the compiler's own output** (2026-10-03). The
@@ -165,15 +166,19 @@ build is still byte-identical (`F3EE2651139FDEB0`).
 context count is the number of contexts a file's `permutations` block (or its
 carried `contexts` blob) names - the section's own header word counts the
 context records, not the queries - so the text writes it only when it cannot be
-inferred, and a plans-only file omits it. With that the mod's file is **387
-bytes**: the plan alone, plus the tail pool. `dtmt build` reads the plan from
-the engine data, so what remains to derive it is the declaration-to-plan wiring
-above: the declaration's compile jobs already build these exact plans
-(`permutation_plans` in `build.rs`), including the case where the engine data
-carries none. The mod's file keeps its plans because its `shader_contexts` has
-one `default` pass while the built section is the UI-base family's 36-group
-shape, so a declaration-derived plan would be one query against six tails - the
-enumerator must widen the declaration first.
+inferred, and a plans-only file omits it.
+
+**The permutation plan derives from the declaration (2026-10-04).** With the
+count derived, dropping the `permutations` block makes `dtmt build` take the plan
+from the declaration's compile jobs (`permutation_plans` in `build.rs`, which
+already handles the case where the engine data carries none). The built section
+is still byte-identical (`F3EE2651139FDEB0`) and **`RENDER_OK`** in game. The
+mod's `ui_default_base.engine_data` is now **288 bytes** - the six group tails
+and `repeat = 6`, nothing else. The declaration is one pass while the built
+section is the UI-base family's 36-group shape, so deriving still works only
+because `generate` pairs the family's tails with the group list; widening the
+declaration (the enumerator) makes it clean. But the plan itself is no longer
+carried.
 
 The rest of this section is the older, still-open worklist (group data
 constructor, conditions tree), kept for reference.
