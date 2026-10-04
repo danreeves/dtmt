@@ -264,6 +264,27 @@ needed for the tail pool.
 So the honest state: the **tail pool is decoded and generatable**; the **program
 table still needs the multi-job flow and the program-to-group mapping**. The
 288-byte file carries the tail pool because both are one step behind.
+
+**Attempted end to end (2026-10-04).** The mechanism was wired: `compile_
+declaration` now accepts a multi-pass declaration (compiling the first pass's
+container, keeping every job for the derived tables), and `EngineData::
+derive_tails` builds the group list and the six tails from the declaration's
+passes when the file carries none. With `ui_default_base.shader_node` declaring
+the six passes and the engine data reduced to `group_template = { repeat = 6 }`,
+`dtmt build` **generated a section with the exact six tails** (the group data's
+condition sets match), but the query/group structure came out **2 queries, not
+the family's 36**. The reason is the last unknown: the family's 36 queries are a
+**channel permutation** (the `red`/`green`/`blue`/`alpha` / `write_channels`
+axes the condition records test), which the declaration does not yet express as
+an `editor_options`/`permutation_sets` construct. So the tails derive, the query
+enumeration does not. The mod was restored to its shipped pool (still
+byte-identical, `F3EE2651139FDEB0`); the wiring stays in the toolchain for when
+the channel permutation is declared too.
+
+**The fix that came out of it:** a pass's macros are **not** part of its group
+condition set - they build the query key and the channel mask. `conditions()` is
+now layer + render_state only, so pass 0 (`defines=["SINGLE"]`) derives
+`{gui, transparent_mask}`, not `{gui, transparent_mask, SINGLE}`.
 ### Deriving the program table too
 
 The family's 48-pixel program table is the pass list crossed with the

@@ -340,14 +340,17 @@ async fn compile_declaration(
         .wrap_err_with(|| format!("Failed to parse '{}'", declaration.display()))?;
 
     let jobs = node.compile_jobs()?;
-    if jobs.len() != 1 {
+    if jobs.is_empty() {
         eyre::bail!(
-            "'{}' has {} compile jobs; the material flow replaces one program pair per \
-             stage, so the declaration must have exactly one pass for now",
-            declaration.display(),
-            jobs.len()
+            "'{}' has no compile jobs; a declaration needs at least one pass",
+            declaration.display()
         );
     }
+    // The section's program pair is compiled from the first job. The whole job
+    // list is kept for the derived tables (the group tails come from every
+    // pass's layer/render_state/defines), so a multi-pass declaration can still
+    // generate the section from the family's programs while its condition sets
+    // derive from the declaration.
     let job = &jobs[0];
 
     // The permutations the engine keys this declaration by: one query per
@@ -674,6 +677,19 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                         );
                     }
                 }
+                // A file that carries no tails derives the whole pool from the
+                // declaration's passes (their condition sets), building the
+                // group list too - so it runs before the material tables are
+                // replicated to the group count.
+                engine_data
+                    .derive_tails(&overrides.jobs)
+                    .wrap_err_with(|| {
+                        format!(
+                            "Failed to derive the group tails of '{}'",
+                            engine_data_path.display()
+                        )
+                    })?;
+
                 if !overrides.material_records.is_empty() {
                     // The material tables are identical across a section's
                     // groups (measured: the shipped UI base's 36 groups carry

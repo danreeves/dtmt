@@ -1075,6 +1075,9 @@ pub struct EngineData {
     /// The tail slot each template group uses, parallel to the groups, so a
     /// resolved pass tail can be written back to the groups that reference it.
     pub group_tail_slots: Vec<usize>,
+    /// The `repeat` the file wrote (groups per tail), retained so a file that
+    /// carries no tails can build its group list from the derived pool.
+    pub group_repeat: usize,
 }
 
 /// The UI base family's pass table: the mask byte each pixel program writes into
@@ -1227,6 +1230,7 @@ impl EngineData {
             permutations: None,
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
+            group_repeat: 0,
         })
     }
     /// Parses the engine data from its text form.
@@ -1263,6 +1267,7 @@ impl EngineData {
                 .map(|plans| plans.into_iter().map(Into::into).collect()),
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
+            group_repeat: 0,
         };
 
         // The preamble: the engine's config base is a toolchain constant, so a
@@ -1400,6 +1405,7 @@ impl EngineData {
             });
             engine_data.material_tables = tables;
             engine_data.group_tail_slots = group_tail_slots.clone();
+            engine_data.group_repeat = template.repeat.unwrap_or(0);
             for (slot, tail) in template.tails.iter().enumerate() {
                 if let GroupTailText::Pass { context, pass } = tail {
                     engine_data.pass_tail_refs.push((slot, context.clone(), *pass));
@@ -1988,6 +1994,54 @@ impl EngineData {
         Ok(())
     }
 
+    /// Derives the group tails from the declaration's compile jobs, when the
+    /// file carries none: each job's condition set is `conditions_bytes` of its
+    /// `condition_ids` (its `layer`/`render_state`/`defines`, hashed). The pool
+    /// is the distinct sets in job order, and the groups repeat it - group `i`
+    /// uses tail `i / (groups / pool)`, the same convention as `repeat`.
+    ///
+    /// The UI base's six tails are exactly six passes' condition sets (see
+    /// `docs/Shader Permutations.md`), so this replaces the carried pool.
+    pub fn derive_tails(
+        &mut self,
+        jobs: &[crate::filetype::shader_node::CompileJob],
+    ) -> Result<()> {
+        let Some(template) = self.group_template.as_mut() else {
+            return Ok(());
+        };
+        // Only when the file carried no tails and the declaration provides
+        // passes to build them from.
+        if jobs.is_empty() || template.groups.iter().any(|group| !group.tail.is_empty()) {
+            return Ok(());
+        }
+        // The distinct condition sets, in job order.
+        let mut pool: Vec<Vec<u8>> = Vec::new();
+        for job in jobs {
+            let bytes = conditions_bytes(&job.condition_ids());
+            if !pool.contains(&bytes) {
+                pool.push(bytes);
+            }
+        }
+        if pool.is_empty() {
+            return Ok(());
+        }
+        // The file carried no tails, so it also carries no groups beyond what
+        // `repeat` implies: build one group per (tail, repeat) - `repeat`
+        // consecutive groups share a tail, the shipping convention. Every other
+        // part is the zero placeholder the other derived parts fill.
+        let repeat = self.group_repeat.max(1);
+        template.groups = (0..repeat * pool.len())
+            .map(|index| crate::filetype::group_data::GroupParts {
+                head: 0u32.to_le_bytes().to_vec(),
+                material_first: true,
+                between: Vec::new(),
+                mid: Vec::new(),
+                tail: pool[index / repeat].clone(),
+            })
+            .collect();
+        Ok(())
+    }
+
     /// Assembles a complete shader section from the engine data and our
     /// programs. `material` is the generating material's resource path: the
     /// section's `material_hash` word is murmur32 of it, the section's identity
@@ -2131,6 +2185,7 @@ mod tests {
             program_containers: Vec::new(),
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
+            group_repeat: 0,
         }
     }
 
@@ -2477,7 +2532,7 @@ programs = []
         }];
         engine_data.resolve_pass_tails(&jobs).unwrap();
 
-        let expected = conditions_bytes(&[0x9FCF_E126, 0xBC4E_E226, 0x407A_B909]);
+        let expected = conditions_bytes(&[0x9FCF_E126, 0xBC4E_E226]);
         assert_eq!(
             engine_data.group_template.as_ref().unwrap().groups[0].tail,
             expected

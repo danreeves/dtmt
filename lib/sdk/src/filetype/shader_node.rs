@@ -555,11 +555,16 @@ impl CompileJob {
             .collect()
     }
 
-    /// The condition names this pass selects its group by: its layer, its
-    /// render state and its macros, de-duplicated in that order. Each is hashed
-    /// to the group tail's condition id with `Murmur32` - the same convention
-    /// every other name in a section uses. This is what a group's tail (its
-    /// condition set) is derived from.
+    /// The condition names this pass selects its group by: its layer and its
+    /// render state, de-duplicated in that order. Each is hashed to the group
+    /// tail's condition id with `Murmur32` - the same convention every other
+    /// name in a section uses. This is what a group's tail (its condition set)
+    /// is derived from.
+    ///
+    /// The pass's macros are **not** included: they build the query key (and the
+    /// channel mask), not the group's condition set - the shipped UI base's
+    /// `{gui, transparent_mask}` tail carries no define token even though the
+    /// pass that selects it defines one.
     pub fn conditions(&self) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
         let mut push = |name: &str| {
@@ -572,9 +577,6 @@ impl CompileJob {
         }
         if let Some(state) = &self.render_state {
             push(state);
-        }
-        for macro_def in &self.macros {
-            push(&macro_def.name);
         }
         names
     }
@@ -2228,12 +2230,9 @@ mod tests {
         let job = &jobs[0];
         assert_eq!(job.layer.as_deref(), Some("gui"));
         assert_eq!(job.render_state.as_deref(), Some("gui_hdr"));
-        // Layer, then render state, then macros, de-duplicated in order.
-        assert_eq!(job.conditions(), vec!["gui", "gui_hdr", "SINGLE"]);
-        assert_eq!(
-            job.condition_ids(),
-            vec![0x9FCF_E126, 0xBC4E_E226, 0x407A_B909]
-        );
+        // Layer then render state; macros build the query key, not the tail.
+        assert_eq!(job.conditions(), vec!["gui", "gui_hdr"]);
+        assert_eq!(job.condition_ids(), vec![0x9FCF_E126, 0xBC4E_E226]);
     }
 
     #[test]
