@@ -10,19 +10,25 @@ are engine constants).
 
 **Current goal: delete `.engine_data` entirely** - a `.material` + `.shader_node`
 + `.shader_source` + `.texture` that builds a section from scratch, with no
-`shader_engine_data = "..."` side file. Progress and the exact remaining work are
-in **"The road to deleting .engine_data"** below. As of 2026-10-04 the side file
-is down to **288 bytes** - just the group `tail` pool (the family's six condition
-sets, written as condition-hash lists rather than hex). Everything else is
-derived: the permutation plan and `context_count` (from the declaration's
-compile jobs), contexts, material table, group head, `between`/`mid`, preamble,
-programs, tails, block heads, the group list (`repeat`) and its count word
-(`prefix`). Removing the tail pool is step 2: the conditions-tree/source-graph
-decode.
+`shader_engine_data = "..."` side file. **DONE (2026-10-04):** snoopy-mod's
+shader is now exactly that tree - `ui_default_base.material` + `.shader_node` +
+`.shader_source`, no engine data - and it **`RENDER_OK`** in game (section
+`CD9854D69AC9A5B7`, 421,684 B, generated from the declaration alone). The
+section's whole shape derives from the declaration: the permutation plan and
+`context_count`, contexts, material table, group head, `between`/`mid`, preamble,
+programs, tails, block heads, the group list, and the group tail pool (six passes'
+`layer`/`render_state`). See "The group tail derives" and "The permutation plan
+derives" below, and `Shader Permutations.md` for what a key may contain.
 
-**Next step (self-contained): the permutation enumerator.** The VT2 pipeline is
-now decoded **and verified against the compiler's own output** (2026-10-03). The
-tools are `lib/sdk/examples/vt2_editor.rs` and `vt2_enumerate.rs`.
+The road, in order: 649 -> 429 (tails as condition sets) -> 406 (derived
+`prefix`) -> 387 (derived `context_count`) -> 288 (plan from the declaration) ->
+**0 bytes** (tails and template from the declaration; the file deleted).
+
+**Next step: the enumerator for *any* family.** Today the six passes are declared
+by hand for the UI-base family; `examples/family_declaration.rs` generates such a
+declaration from a shipped section, and the same enumeration would build other
+families' declarations. The tooling is `lib/sdk/examples/vt2_editor.rs` and
+`vt2_enumerate.rs`.
 
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):

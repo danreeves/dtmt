@@ -2006,12 +2006,7 @@ impl EngineData {
         &mut self,
         jobs: &[crate::filetype::shader_node::CompileJob],
     ) -> Result<()> {
-        let Some(template) = self.group_template.as_mut() else {
-            return Ok(());
-        };
-        // Only when the file carried no tails and the declaration provides
-        // passes to build them from.
-        if jobs.is_empty() || template.groups.iter().any(|group| !group.tail.is_empty()) {
+        if jobs.is_empty() {
             return Ok(());
         }
         // The distinct condition sets, in job order.
@@ -2025,12 +2020,26 @@ impl EngineData {
         if pool.is_empty() {
             return Ok(());
         }
-        // The file carried no tails, so it also carries no groups beyond what
-        // `repeat` implies: build one group per (tail, repeat) - `repeat`
-        // consecutive groups share a tail, the shipping convention. Every other
-        // part is the zero placeholder the other derived parts fill.
-        let repeat = self.group_repeat.max(1);
-        template.groups = (0..repeat * pool.len())
+        // A file that carried a template with tails keeps them.
+        if self
+            .group_template
+            .as_ref()
+            .is_some_and(|template| template.groups.iter().any(|group| !group.tail.is_empty()))
+        {
+            return Ok(());
+        }
+        // The groups per tail: the file's `repeat`, or - for a file that
+        // carried no template at all - the query count over the tail count,
+        // which is what the family's `repeat` is (36 queries / 6 tails = 6).
+        let repeat = if self.group_repeat > 0 {
+            self.group_repeat
+        } else {
+            jobs.len().div_ceil(pool.len()).max(1)
+        };
+        // Build the groups: one per (tail, repeat) - `repeat` consecutive
+        // groups share a tail - every other part a zero placeholder the other
+        // derived parts fill. The prefix is the group count.
+        let groups: Vec<crate::filetype::group_data::GroupParts> = (0..repeat * pool.len())
             .map(|index| crate::filetype::group_data::GroupParts {
                 head: 0u32.to_le_bytes().to_vec(),
                 material_first: true,
@@ -2039,9 +2048,20 @@ impl EngineData {
                 tail: pool[index / repeat].clone(),
             })
             .collect();
-        // The prefix is the group count, which the reader wrote as 0 because the
-        // file carried no groups; write the real one now.
-        template.prefix = (template.groups.len() as u32).to_le_bytes().to_vec();
+        let count = groups.len() as u32;
+        match self.group_template.as_mut() {
+            Some(template) => {
+                template.groups = groups;
+                template.prefix = count.to_le_bytes().to_vec();
+            }
+            None => {
+                self.group_template = Some(crate::filetype::group_data::GroupTemplate {
+                    prefix: count.to_le_bytes().to_vec(),
+                    groups,
+                    engine: tool_engine_table()?,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -2061,9 +2081,12 @@ impl EngineData {
     ) -> Result<Vec<u8>> {
         // The contexts: derived from the declaration when the file carries the
         // permutation plans, carried otherwise (a section rebuilt from a
-        // shipped blob still carries its original ids).
+        // shipped blob still carries its original ids). The header's
+        // `context_count` is the number of context records - not the queries.
         let (contexts, context_count) = match &self.permutations {
-            Some(plans) if !plans.is_empty() => (permutations_contexts(material, plans)?, plans.iter().map(|p| p.queries.len() as u32).sum::<u32>()),
+            Some(plans) if !plans.is_empty() => {
+                (permutations_contexts(material, plans)?, plans.len() as u32)
+            }
             _ => (self.contexts.clone(), self.context_count),
         };
         // The template first: the device's tails read its descriptor list, so

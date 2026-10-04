@@ -638,18 +638,32 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
             // `shader_data` field or the splice route).
             let mut section: Option<Vec<u8>> = None;
             let mut generated_from_engine_data = false;
+            // A material generates its section when it has an engine data file
+            // *or* a sibling declaration: a declaration-only material (no
+            // `shader_engine_data`) carries nothing game-derived, so the whole
+            // section comes from the declaration and the sources.
+            let engine_data_name = shader_engine_data_path(&sjson);
+            let has_declaration = path.with_extension("shader_node").exists();
             if file_type == BundleFileType::Material
-                && let Some(engine_data_name) = shader_engine_data_path(&sjson)
+                && (engine_data_name.is_some() || has_declaration)
             {
-                let engine_data_path =
-                    resolve_engine_data_path(&path, root.as_ref(), &engine_data_name);
-                let engine_data_text =
-                    fs::read_to_string(&engine_data_path).await.wrap_err_with(|| {
-                        format!(
-                            "Failed to read engine data '{}'",
-                            engine_data_path.display()
-                        )
-                    })?;
+                let (engine_data_text, engine_data_path) = match &engine_data_name {
+                    Some(name) => {
+                        let engine_data_path =
+                            resolve_engine_data_path(&path, root.as_ref(), name);
+                        let text = fs::read_to_string(&engine_data_path).await.wrap_err_with(
+                            || {
+                                format!(
+                                    "Failed to read engine data '{}'",
+                                    engine_data_path.display()
+                                )
+                            },
+                        )?;
+                        (text, engine_data_path)
+                    }
+                    // No engine data: an empty file, so every part derives.
+                    None => (String::new(), path.with_extension("shader_node")),
+                };
                 let mut engine_data =
                     EngineData::from_text(&engine_data_text).wrap_err_with(|| {
                         format!(

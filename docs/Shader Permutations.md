@@ -333,6 +333,33 @@ descriptor list** as zeros, and those are the family's own compiled interface
 (four descriptors, `X` offsets, `Y` usage counts). Deriving them is the next
 piece; until then the head/descriptor part is what an engine data file still has
 to carry even with the tails derived.
+
+**The crash was the header's context count - fixed, and the file is deleted
+(2026-10-04).** The section header's `context_count` is the number of context
+records, not the number of queries: `generate` wrote the query total (36) where
+the shipped section writes 2 (its two contexts). One line fixed it -
+`plans.len()` instead of the query sum - and the generated 36-query section then
+**rendered in game** (`RENDER_OK`). The group heads were fine after all;
+`derived_head` already builds the family's four descriptors.
+
+With that, the whole chain derives:
+
+- **`group_template = { repeat = 6 }` (34 bytes) built the section, and an
+  *empty* engine data file built the *same* section** (`CD9854D69AC9A5B7`);
+- `derive_tails` now also builds the template when the file carries none, taking
+  `repeat` from the **query count over the tail count** (36 / 6 = 6);
+- `dtmt build` generates from a **declaration alone**: a material with a sibling
+  `.shader_node` and no `shader_engine_data` runs the same derive + generate flow
+  on an empty engine data.
+
+**Result: `.engine_data` is deleted and the shader renders.** snoopy-mod's
+shader is now `ui_default_base.material` + `.shader_node` + `.shader_source` -
+the goal at the top of `Shader RE TODO.md`. Verified in game with the file
+absent: `RENDER_OK`, section `CD9854D69AC9A5B7`, 421,684 B, no material-set
+crash. The one thing that was never engine-derived, the truth of it: even this
+path still relies on the engine's render-state vocabulary in the *names*
+(`gui`, `gui_hdr`, `transparent_mask`) - but those are names the declaration
+writes, so the mod carries no engine data.
 ### Deriving the program table too
 
 The family's 48-pixel program table is the pass list crossed with the
