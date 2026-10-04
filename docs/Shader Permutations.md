@@ -388,10 +388,36 @@ minimal 32-byte `{02}` form (`BA082DE84BE11755`, 421556 B) **also crashes**. So:
   header corrupts it, so a generated program cannot fabricate the header.
 
 Deriving the program list therefore needs the per-program **block header
-grammar**, not a count or a mask rule. The table the toolchain still walks
-(`UI_BASE_PASS_HEADS/SEAMS/MASKS`) is the shipped UI-base family's: 48 passes,
-`head` 36 for 35 of them, `seam` 2 for the first twelve 36-byte heads and 1 for
-the rest (the 32-byte ones, and the last, carry 0). What the seam selects is
-undecoded; `docs/Shader RE TODO.md`'s "block synthesis" item is the same
-grammar.
+grammar**, not a count or a mask rule.
+
+### The block grammar, measured (`block_grammar`)
+
+A program's block (`TailLists::block`) is
+`[per-program device records] + [that program's config/channel stream]`, and the
+stream opens `{u32 config_count, u32 0x1E}`. The UI base is the degenerate case:
+
+- its device records are the eight words `{02 00 00 00}` + seven zeros (32
+  bytes), optionally followed by a four-byte `{seam 00 00 00}` word (36-byte
+  header);
+- its stream is the section's 549-byte preamble body (`{37, 30, ...}`);
+- the **only** byte the block changes from the body is the channel-write mask at
+  body offset `477` (`01 02 04 08 0F`, plus the body's default `07`); all 48
+  shipped pixel programs measured, every diff is exactly `477=<mask>`.
+
+The UI base's **seam run**, by pass index 0..47 (measured on the shipped
+`uib.material`, `block_grammar`): **`2` on the odd passes 1..21, `1` on 23..46,
+none (the 32-byte header) on the even passes 0..22 and the last**. The masks are
+`07 01 01 02 02 04 04 08 08 0F 0F 07` twice, then `01 02 04 08 0F 07` four times.
+So the per-slot datum is exactly `(head, seam, mask)` as `UI_BASE_PASS_*` has it.
+
+The header is not universal. A standard-family block (`3F08AC44`, pixel p1,
+869 B) opens `02 00 00 00  00000000 04000000 02000000 00010000 00000000 40000000
+03000000  FFFFFFFF 40000000 ...`, i.e. the same `{02}` kind word then **real
+per-program device records** (26 words before the stream), and its stream is the
+*program's own* `{42, 30, ...}` where the preamble's is `{48, 30, ...}`. So the
+UI base's tiny header is the degenerate form of a per-program record list whose
+full grammar (the VT2 dev binaries' `StateBlock` / `StateVariable` vocabulary) is
+the same as `docs/Shader RE TODO.md`'s "block synthesis" item. What the seam word
+selects is not derivable from the mask or the query; until the record list is
+decoded, a family's `(head, seam, mask)` run is read off its shipped section.
 
