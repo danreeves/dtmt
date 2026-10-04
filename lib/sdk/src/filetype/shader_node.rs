@@ -2273,6 +2273,59 @@ mod tests {
     }
 
     #[test]
+    fn the_ui_base_family_enumerates_to_its_36_queries() {
+        // The UI base's section has 36 queries across two contexts (30 in
+        // `default`, 6 in `gui_render_pass`), and they are a product of
+        // permutation axes: layer ({gui}, {gui_hdr}, neither) x `gui_mask` x a
+        // channel set. Declared as permutation sets, `compile_jobs` enumerates
+        // to exactly 36 - the family's query count - with no engine data.
+        let text = r#"
+            code_blocks = { b = {} }
+            permutation_sets = {
+                layers = [
+                    { if: "defined(GUI)" define: "LAYER_GUI" }
+                    { if: "defined(GUI_HDR)" define: "LAYER_GUI_HDR" }
+                    { }
+                ]
+                gui_mask = [
+                    { if: "defined(GUI_MASK)" define: "HAS_GUI_MASK" }
+                    { }
+                ]
+                channels = [
+                    { define: ["HAS_RED", "HAS_GREEN", "HAS_BLUE"] }
+                    { define: "HAS_RED" }
+                    { define: "HAS_GREEN" }
+                    { define: "HAS_BLUE" }
+                    { define: "HAS_ALPHA" }
+                ]
+                render_pass_channels = [
+                    { define: ["HAS_GREEN", "HAS_BLUE"] }
+                    { define: "HAS_RED" }
+                    { define: "HAS_BLUE" }
+                ]
+            }
+            shader_contexts = {
+                default = {
+                    compile_with = [ { permute_with: ["layers", "gui_mask", "channels"] } ]
+                    passes = [ { layer="gui" code_block="b" render_state="transparent_mask" } ]
+                }
+                gui_render_pass = {
+                    compile_with = [ { permute_with: ["gui_mask", "render_pass_channels"] } ]
+                    passes = [ { layer="gui" code_block="b" render_state="transparent_mask" } ]
+                }
+            }
+        "#;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let jobs = node.compile_jobs().expect("jobs");
+        let default = jobs.iter().filter(|job| job.context == "default").count();
+        let render_pass = jobs
+            .iter()
+            .filter(|job| job.context == "gui_render_pass")
+            .count();
+        assert_eq!((default, render_pass), (30, 6), "{} jobs", jobs.len());
+    }
+
+    #[test]
     fn a_pass_links_to_its_code_block() {
         let text = r#"
             code_blocks = {

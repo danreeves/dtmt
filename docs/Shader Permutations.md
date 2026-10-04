@@ -285,6 +285,33 @@ the channel permutation is declared too.
 condition set - they build the query key and the channel mask. `conditions()` is
 now layer + render_state only, so pass 0 (`defines=["SINGLE"]`) derives
 `{gui, transparent_mask}`, not `{gui, transparent_mask, SINGLE}`.
+
+**The 36 queries are a permutation product, and it enumerates (2026-10-04).**
+Reading the shipped section's contexts (`conditions_dump`), the 36 queries across
+the two contexts decompose as a product of axes:
+
+- **layer** - `{gui}`, `{gui_hdr}`, neither (3);
+- **`gui_mask`** - `BDF72706` present or not (2);
+- **channels** - `{red, green, blue}`, `{red}`, `{green}`, `{blue}`, `{alpha}` (5),
+  with `write_channels` (`8FB860CF`) marking the branch;
+
+so `default` = 3 x 2 x 5 = **30** and `gui_render_pass` = 2 x 3 = **6**. Declared
+as `permutation_sets` (`layers`, `gui_mask`, `channels`,
+`render_pass_channels`) with a `compile_with` per context, `compile_jobs`
+enumerates to exactly **36** - the family's count - with no engine data
+(`the_ui_base_family_enumerates_to_its_36_queries`). So both halves are now
+expressible: the **36 queries** (permutation sets) and the **6 tails** (pass
+layer/render_state).
+
+**The one modelling gap left:** the group tail's layer must vary *per
+permutation*, but a pass's `layer` is static and the permutation sets vary only
+macros. In VT2 the layer selection is the pass tree's job (`{ if:
+"defined(LAYER_GUI)" then: [{ layer="gui" ... }] }`), so 36 queries come from 36
+passes selected by condition - not one pass over 36 permutations. Reproducing the
+family exactly therefore means declaring the **pass tree** (a pass per layer/
+channel branch), which is mechanical but larger: it is generating the 48-pass
+declaration from the section, not hand-writing it. That is the last step before
+`.engine_data` can go.
 ### Deriving the program table too
 
 The family's 48-pixel program table is the pass list crossed with the
