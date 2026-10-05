@@ -2077,6 +2077,23 @@ impl EngineData {
         Ok(())
     }
 
+    /// Fills `material_tables` from the carried `group_data` blob when the file
+    /// has no template: the groups walk by the contexts' query ids and each
+    /// group's material table is read out. This is what a family whose groups do
+    /// not template needs, so its split tails still have a `c_per_object` size
+    /// source (`--reconstruct` writes the blob, not the template, there).
+    pub fn fill_material_tables(&mut self) -> Result<()> {
+        if !self.material_tables.is_empty() || self.group_data.is_empty() {
+            return Ok(());
+        }
+        let query_ids = context_queries(&self.contexts)?;
+        let group = crate::filetype::group_data::GroupData::new(self.group_data.clone());
+        if let Some(tables) = group.object_tables(&query_ids) {
+            self.material_tables = tables.into_iter().map(|(_, records)| records).collect();
+        }
+        Ok(())
+    }
+
     /// Derives the group tails from the declaration's compile jobs, when the
     /// file carries none: each job's condition set is `conditions_bytes` of its
     /// `condition_ids` (its `layer`/`render_state`/`defines`, hashed). The pool

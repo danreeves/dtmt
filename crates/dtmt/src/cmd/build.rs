@@ -729,6 +729,16 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                         )
                     })?;
 
+                // A file whose groups do not template carries the group data as a
+                // blob; its material tables are still readable from the groups
+                // and the split tails need their `c_per_object` size.
+                engine_data.fill_material_tables().wrap_err_with(|| {
+                    format!(
+                        "Failed to read the material tables of '{}'",
+                        engine_data_path.display()
+                    )
+                })?;
+
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();
                 let mut containers = HashMap::new();
