@@ -124,6 +124,47 @@ blend, z state), which is exactly where the `shader43` block's seam/mask words
 come from - the VT2 library stores the same pass state in a readable form the
 game then packs into `shader43`.
 
+**The channel mask maps exactly to the VT2 render state's `write_mask0`
+(2026-10-05, verified 48/48).** The writer's `render_states` (in
+`core/stingray_renderer/shader_libraries/common/common.shader_source` and
+`gui.shader_source`) declare `write_mask0` per pass, as a `|`-joined channel
+list. Packing it into one bit per channel gives exactly the `shader43` block's
+body[477] byte:
+
+| `write_mask0` | mask byte |
+| --- | --- |
+| `0x0` | `00` |
+| `red` | `01` |
+| `green` | `02` |
+| `blue` | `04` |
+| `alpha` | `08` |
+| `red\|green` | `03` |
+| `red\|green\|blue` | `07` |
+| `red\|green\|blue\|alpha` | `0F` |
+
+The UI base's 48 shipped pixel masks (`07`, then `01 01 02 02 04 04 08 08 0F 0F
+07` twice, then `01 02 04 08 0F 07` four times) are reproduced **48/48** from the
+passes' channel tokens with this rule - `07` is `red|green|blue`, the state's
+default (the preamble body's own value), and `0F` is the `gui_gradient`
+`defined_WRITE_MASK`/`ADDITIVE_BLEND` full-alpha case. So the mask is **derived,
+not a recorded table**: it is the pass's write-channel set.
+
+The `gui_gradient` state block is the source of the UI base's channels: it
+branches `defined_WRITE_MASK` -> `WRITE_MASK1` -> `write_mask0 = "green"`,
+`WRITE_MASK2` -> `"blue"`, else `"red"`, with `ADDITIVE_BLEND` controlling the
+blend. `gui.shader_source`'s `editor_options` name the tokens
+(`WRITE_MASK`, `WRITE_MASK1`, `WRITE_MASK2`, `ADDITIVE_BLEND`, `MASKED`, ...) -
+the same tokens the shader43 declaration's channel permutation uses.
+
+The **seam word** (the 36-byte head's `{seam,0,0,0}`) is the remaining field: it
+is not the mask (the mask is body[477]) and does not correlate with it. Measured
+run: `2` on passes 1..21, `1` on 23..46, absent on the 32-byte heads (0,22-even,47).
+It is the per-pass **blend/z state** the same `render_states` declare
+(`blend_enable`, `z_enable`, `z_write_enable`, `ADDITIVE_BLEND`), packed - the
+`gui_gradient` block's `ndefined_ADDITIVE_BLEND -> blend_enable=false` vs
+`defined_MASKED -> blend_enable=true/alpha blend` is the field's likely source.
+Decoding its exact packing is the last step for a fully generated program table.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 
