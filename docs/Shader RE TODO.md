@@ -78,6 +78,52 @@ follow `make_device_data`'s call graph in a disassembler. The compiler's own
 `--output-shader-pdb`/`--shader-pdb-path` flags mean a PDB can be produced for a
 compile if the PDB-writing dev toolchain is available.
 
+**The example-mod compile runs (2026-10-05), and the PDB flag is a dead end.**
+`stingray_win64_dev_x64.exe --compile-for win32 --source-dir <example_mods/
+streamable_resources> --data-dir ... --bundle-dir ... --map-source-dir core <sdk>`
+compiles the mod in ~50 s (126 items, 41 `shader_source` -> 250+ libraries) and
+writes them to `.build/data/data/<xx>/<hash>`. Adding `--output-shader-pdb
+--shader-pdb-path <path>` returns success but produces **no `.pdb`** anywhere: the
+installed toolchain does not carry the PDB-writing dev path, so the writer's
+offset info cannot be recovered this way.
+
+**The `.shader_library` header, decoded (2026-10-05, `annotate_lib`).** The
+smallest library, `gui:.shader_library` (`97072897edac0bef`, 4490 B), is one
+context, one pass, no defines - so every field can be read against a single
+`gui_gradient` pass (`hlsl_shader="gui_gradient" render_states="gui_gradient"
+layer="gui"`, from `gui.shader_source`). Its header:
+
+```
++0x00  76          config_count (matches the UI base's 37..43-family field)
++0x04  2
++0x08  4B32DF61    a per-shader hash (before the "groups")
++0x30  A17AE7B4    world_view_proj  (cbuffer)
++0x38  0x40        its size 64 B
++0x44  E67E11BC    threshold_fade   (cbuffer)
++0x48  0x40        size 64 B
++0x4C  4
++0x50  0x50
++0x54  0x20
++0x58  1
++0x5C  9FCFE126    gui  (the pass's layer)
+```
+
+So the header is `config_count`, a per-shader hash, then a **64-byte record per
+cbuffer** (`{name, 0, 0, size, ...}` - `world_view_proj` 64, `threshold_fade`
+64, the same two the shader's `RDEF` emits), then the pass's state fields with
+the **layer hash `9FCFE126` (`gui`)**. The config records from ~0x110 are
+`(index, value)` pairs over the engine's `global_viewport` index space - the same
+index space this project already decodes for `shader43` (`0x5E..0x65` the eight
+channel slots, `0x0C..0x1A` the engine variable block). `4B32DF61` is not a plain
+name hash of any token, so it is the per-library/query identity, like the
+`shader43` query id.
+
+This confirms the writer's shape directly from the source: the library's
+**state block carries per-record fields the pass declares** (`write_mask0`,
+blend, z state), which is exactly where the `shader43` block's seam/mask words
+come from - the VT2 library stores the same pass state in a readable form the
+game then packs into `shader43`.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 
