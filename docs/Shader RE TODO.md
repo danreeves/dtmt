@@ -188,9 +188,25 @@ pack it (test `the_ui_bases_masks_are_the_passes_write_masks`, 48/48).
 **The seam is not in the D3D11 header.** Probing every `gui_gradient` state
 branch (blend on/off/add/mul, z off, write-mask red/rgb) changed only the fields
 above - none is `1`/`2`-valued, and the `z` field is `1`/`0`. The SDK compiler's
-platforms are `D3D11 GL XB1 GNM` (no D3D12), so the `shader43` seam (which is
-`1`/`2`/absent) is a **D3D12-specific** per-pass field the D3D11 compile does not
-emit. It is the last unmapped field; the mask half is fully derived and tested.
+platforms are `D3D11 GL XB1 GNM` (no D3D12), so the `shader43` seam (which
+is `1`/`2`/absent) is a **D3D12-specific** per-pass field the D3D11 compile does
+not emit. It is the last unmapped field; the mask half is fully derived and
+tested (`write_mask`/`write_mask_tokens`; `derived_programs` now computes each
+program's mask from its pass's channel set, and the UI base build is unchanged,
+`CD9854D69AC9A5B7`).
+
+**The standard family's reconstruction does not yet generate (2026-10-05).** A
+scratch mod with `shader43 --reconstruct`'s `3F08AC44` output (declaration +
+source + engine data, the code block wired to the source with
+`include = ["...#3F08AC4494A4436E"]`) **compiles** its declaration - vs 20329,
+ps 10740 bytes - but `dtmt build` fails at `derived_cbuffers`: "the file has no
+material table". The reconstruction carries the group data as a `group_data`
+blob (its groups do not template), so `EngineData::from_text` has no
+`material_tables`, and the programs' tails are split (empty cbuffers) and need
+the `c_per_object` size from that table. The fix is for `--reconstruct` to carry
+the material tables (or the tails un-split) for a family whose groups do not
+walk. The scratch mod and its exact error are reproducible from
+`C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\std-mod`.
 
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
