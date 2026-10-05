@@ -1231,6 +1231,11 @@ pub struct ShaderOverrides {
     /// tails written as a `pass = N` reference (see
     /// `EngineData::resolve_pass_tails`).
     pub jobs: Vec<super::shader_node::CompileJob>,
+    /// One compiled container per job and stage, in job order (each job's vertex
+    /// then pixel), so a multi-job declaration can map a section's programs to
+    /// the container their own pass compiled. Empty for a single-job
+    /// declaration, whose `vertex`/`pixel` stand for every program.
+    pub job_containers: Vec<(super::shader::Stage, Vec<u8>)>,
 }
 
 impl ShaderOverrides {

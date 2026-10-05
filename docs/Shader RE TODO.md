@@ -274,6 +274,20 @@ from source. What is left for a from-source standard section is the build's
 section's programs (the carried `program_containers` gives the pairing) - which
 is the next step.
 
+**The multi-job mapping is in (2026-10-05).** `compile_declaration` now compiles
+**every** job per stage (`ShaderOverrides::job_containers`, one container per job
+and stage in job order) as well as the first job's `vertex`/`pixel`. `dtmt build`
+detects a multi-job declaration (`job_containers.len() > 2`) and replaces each of
+the engine data's carried containers with the compiled container whose
+**interface** matches it (`shader::interface_mismatch`), so every program gets
+the container its own pass compiled while `program_containers` still indexes the
+list. The standard base - the enumerator's 11-pass declaration, the 17-container
+source, and the carried engine data - now **generates a 151,856-byte section from
+source**, and it **round-trips identically**; its programs carry the compiled
+containers (program 23 decodes to 4704 B, the compiled pixel size; program 24 to
+7426 B, the compiled vertex size). So a variant-rich family builds from source
+end to end. The in-game render of the source-built pumpkin has not been run yet.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 

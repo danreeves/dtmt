@@ -351,7 +351,10 @@ async fn compile_declaration(
     // pass's layer/render_state/defines), so a multi-pass declaration can still
     // generate the section from the family's programs while its condition sets
     // derive from the declaration.
-    let job = &jobs[0];
+    //
+    // Every job is compiled per stage too (`job_containers`), so a declaration
+    // that enumerates a variant-rich family's passes can pair each of the
+    // section's programs with the container its own pass compiled.
 
     // The permutations the engine keys this declaration by: one query per
     // compile job, grouped by context, in declaration order. The engine data's
@@ -364,48 +367,59 @@ async fn compile_declaration(
     };
 
     let libraries = load_libraries(&cfg.dir)?;
-    for stage in STAGES {
-        let Some(profile) = profile_for(stage) else {
-            continue;
-        };
-        let Some(entry) = entry_for(profile) else {
-            continue;
-        };
-        let source = node.job_source(job, stage, &libraries, evaluation);
-        let profile_arg = profile.to_string();
-        let entry_arg = entry.to_string();
-        let container =
-            tokio::task::spawn_blocking(move || shader_compile::compile(&source, &profile_arg, &entry_arg))
-                .await
-                .wrap_err("The shader compiler task panicked")??;
+    for (job_index, job) in jobs.iter().enumerate() {
+        for stage in STAGES {
+            let Some(profile) = profile_for(stage) else {
+                continue;
+            };
+            let Some(entry) = entry_for(profile) else {
+                continue;
+            };
+            let source = node.job_source(job, stage, &libraries, evaluation);
+            let profile_arg = profile.to_string();
+            let entry_arg = entry.to_string();
+            let container = tokio::task::spawn_blocking(move || {
+                shader_compile::compile(&source, &profile_arg, &entry_arg)
+            })
+            .await
+            .wrap_err("The shader compiler task panicked")??;
 
-        // What the container binds, from its own reflection: the per-stage
-        // attribution the source text cannot give.
-        if let Some(stage) = match stage {
-            "vertex" => Some(Stage::Vertex),
-            "pixel" => Some(Stage::Pixel),
-            _ => None,
-        } {
-            match StageResources::from_container(&container) {
-                Ok(resources) => {
-                    overrides.resources.insert(stage, resources);
+            let Some(stage_kind) = (match stage {
+                "vertex" => Some(Stage::Vertex),
+                "pixel" => Some(Stage::Pixel),
+                _ => None,
+            }) else {
+                continue;
+            };
+
+            // What the container binds, from its own reflection: the per-stage
+            // attribution the source text cannot give. The first job's
+            // reflection stands for the single-job path.
+            if job_index == 0 {
+                match StageResources::from_container(&container) {
+                    Ok(resources) => {
+                        overrides.resources.insert(stage_kind, resources);
+                    }
+                    Err(err) => tracing::warn!("no reflection for the {stage:?} stage: {err}"),
                 }
-                Err(err) => tracing::warn!("no reflection for the {stage:?} stage: {err}"),
             }
-        }
 
-        tracing::info!(
-            "Compiled '{}' ({} block '{}', {profile}/{entry}, {} bytes)",
-            declaration.display(),
-            stage,
-            job.code_block,
-            container.len()
-        );
+            tracing::info!(
+                "Compiled '{}' ({} block '{}', job {job_index}, {profile}/{entry}, {} bytes)",
+                declaration.display(),
+                stage,
+                job.code_block,
+                container.len()
+            );
 
-        match stage {
-            "vertex" => overrides.vertex = Some(container),
-            "pixel" => overrides.pixel = Some(container),
-            _ => {}
+            overrides.job_containers.push((stage_kind, container.clone()));
+            if job_index == 0 {
+                match stage_kind {
+                    Stage::Vertex => overrides.vertex = Some(container),
+                    Stage::Pixel => overrides.pixel = Some(container),
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -742,11 +756,33 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();
                 let mut containers = HashMap::new();
-                if let Some(vertex) = overrides.vertex {
-                    containers.insert(Stage::Vertex, vertex);
-                }
-                if let Some(pixel) = overrides.pixel {
-                    containers.insert(Stage::Pixel, pixel);
+                if overrides.job_containers.len() > 2 {
+                    // A multi-job declaration (a family's passes enumerated): a
+                    // section's program belongs to one pass, so replace each
+                    // carried container with the compiled one whose interface
+                    // matches it. `program_containers` still indexes the carried
+                    // list, so `build_device` picks the compiled container.
+                    let mut compiled = engine_data.containers.clone();
+                    for container in compiled.iter_mut() {
+                        if let Some((_, matched)) = overrides
+                            .job_containers
+                            .iter()
+                            .find(|(_, candidate)| {
+                                sdk::filetype::shader::interface_mismatch(container, candidate)
+                                    .is_none()
+                            })
+                        {
+                            *container = matched.clone();
+                        }
+                    }
+                    engine_data.containers = compiled;
+                } else {
+                    if let Some(vertex) = overrides.vertex {
+                        containers.insert(Stage::Vertex, vertex);
+                    }
+                    if let Some(pixel) = overrides.pixel {
+                        containers.insert(Stage::Pixel, pixel);
+                    }
                 }
 
                 let generated = engine_data
