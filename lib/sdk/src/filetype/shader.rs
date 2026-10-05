@@ -502,6 +502,61 @@ pub fn interface_mismatch(original: &[u8], replacement: &[u8]) -> Option<String>
     None
 }
 
+/// The resource layout a container binds, through DXC's own reflection: the
+/// `(space, register, kind)` of every binding, sorted. This is the part of the
+/// interface [`interface_mismatch`] does not see.
+pub fn resource_layout(container: &[u8]) -> Option<Vec<(u32, u32, u32)>> {
+    let bindings = dxc::reflect(container).ok()?;
+    let mut layout: Vec<(u32, u32, u32)> = bindings
+        .iter()
+        .map(|binding| (binding.space, binding.bind_point, binding.kind))
+        .collect();
+    layout.sort_unstable();
+    Some(layout)
+}
+
+/// Checks that a replacement container binds the same resources as the
+/// original: why it does not, or `None` when it does.
+///
+/// [`interface_mismatch`] compares only the IO signatures, so a replacement
+/// that recompiles with a synthetic constant buffer or with a structured buffer
+/// as a texture passes that check but fails pipeline creation - the engine's
+/// root signature is built from the shipped resource layout. This is the second
+/// half of the oracle. A container that does not reflect is skipped (the check
+/// cannot see it), which keeps the call usable where DXC is absent.
+pub fn resource_mismatch(original: &[u8], replacement: &[u8]) -> Option<String> {
+    let (Ok(original_bindings), Ok(replacement_bindings)) =
+        (dxc::reflect(original), dxc::reflect(replacement))
+    else {
+        return None;
+    };
+
+    let key = |binding: &dxc::BoundResource| (binding.space, binding.bind_point, binding.kind);
+    let mut original_sorted: Vec<&dxc::BoundResource> = original_bindings.iter().collect();
+    let mut replacement_sorted: Vec<&dxc::BoundResource> = replacement_bindings.iter().collect();
+    original_sorted.sort_by_key(|binding| key(binding));
+    replacement_sorted.sort_by_key(|binding| key(binding));
+
+    let original_layout: Vec<_> = original_sorted.iter().map(|binding| key(binding)).collect();
+    let replacement_layout: Vec<_> = replacement_sorted.iter().map(|binding| key(binding)).collect();
+    if original_layout != replacement_layout {
+        return Some(format!(
+            "resource layout differs: original {original_layout:?}, replacement {replacement_layout:?}"
+        ));
+    }
+
+    for (original, replacement) in original_sorted.iter().zip(&replacement_sorted) {
+        if original.name != replacement.name {
+            return Some(format!(
+                "resource name differs at space {} register {}: {:?} vs {:?}",
+                original.space, original.bind_point, original.name, replacement.name
+            ));
+        }
+    }
+
+    None
+}
+
 /// Decodes a program frame into its DXBC container.
 pub fn decode_frame(frame: &[u8], decoded_length: usize) -> Result<Vec<u8>> {
     let decoded = oodle::decompress(

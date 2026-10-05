@@ -756,7 +756,7 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();
                 let mut containers = HashMap::new();
-                if overrides.job_containers.len() > 2 {
+                if overrides.job_containers.len() > 2 && !engine_data.containers.is_empty() {
                     // A multi-job declaration (a family's passes enumerated): a
                     // section's program belongs to one pass, so replace each
                     // carried container with the compiled one whose interface

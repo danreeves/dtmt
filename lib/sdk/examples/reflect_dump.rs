@@ -48,6 +48,30 @@ fn kind_name(kind: u32) -> &'static str {
 fn main() -> Result<(), Box<dyn Error>> {
     for path in std::env::args().skip(1) {
         let data = fs::read(&path)?;
+
+        // A raw DXBC container reflects on its own.
+        if data.starts_with(b"DXBC") {
+            println!("=== {path} (raw container {} bytes)", data.len());
+            match dxc::reflect(&data) {
+                Ok(bindings) => {
+                    for binding in &bindings {
+                        println!(
+                            "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {}",
+                            binding.name,
+                            binding.kind,
+                            kind_name(binding.kind),
+                            binding.bind_point,
+                            binding.bind_count,
+                            binding.flags,
+                            binding.space
+                        );
+                    }
+                }
+                Err(err) => println!("    reflection failed: {err}"),
+            }
+            continue;
+        }
+
         let bytes = section_bytes(&data).ok_or("not a section")?;
         let section = Section::parse(bytes)?;
         let programs = shader::parse_programs(section.device_data())?;

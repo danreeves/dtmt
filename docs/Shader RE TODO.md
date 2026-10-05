@@ -288,22 +288,36 @@ engine data - now **generates a 151,856-byte section from source**, and it
 23 decodes to 4704 B, the compiled pixel size; program 24 to 7426 B, the compiled
 vertex size).
 
-**But the decompiled source does not reproduce the resources (2026-10-05).** In
-game, the source-built standard **crashes** at pipeline creation:
-`HRESULT 0x80070057 = E_INVALIDARG, assert: shader '#ID[38a9b1db]'`. `reflect_dump`
-on the shipped and source-built sections shows why: the interface check compares
-only ISG1/OSG1, and the **resource bindings differ**. The shipped vertex container
-binds `global_viewport`/`c_instance_offset`/`c_per_object` as cbuffers b0/b1/b2,
-`bones`/`last_bones`/`idata` as **structured buffers** and `global_uav_buffers` as
-a `uav-rwbyteaddress`; the recompiled one binds a single generic
-`SPIRV_Cross_VertexInfo` at b3, the structured buffers as **textures** (kind 2)
-and the UAV as `uav-rwtyped`. `spirv-cross` drops the real cbuffer split and the
-structured-buffer kind, so the engine's root signature (built from the carried
-tails/group data) does not match the shader. `--reconstruct-all`'s check should
-compare the resources too, and `name_declarations` (or the decompiler) must
-reproduce the cbuffers at their registers and the structured-buffer/UAV kinds -
-the tail records name them. Until then the pumpkin runs on the **carried** shipped
-programs (which render), not the source-built ones.
+**The decompiled source did not reproduce the resources, and now does
+(2026-10-05).** In game the source-built standard **crashed** at pipeline
+creation: `HRESULT 0x80070057 = E_INVALIDARG, assert: shader '#ID[38a9b1db]'`.
+`reflect_dump` showed why: the interface check compared only ISG1/OSG1, and the
+resource bindings differed. The shipped vertex container binds
+`global_viewport`/`c_instance_offset`/`c_per_object` as cbuffers b0/b1/b2,
+`bones`/`last_bones`/`idata` as **structured buffers** (kind 5) and
+`global_uav_buffers` as a `uav-rwbyteaddress` (kind 8); `spirv-cross` recompiled
+a synthetic `SPIRV_Cross_VertexInfo` at b3, the structured buffers as typed
+`Buffer<uint4>` (kind 2) and the UAV as `RWBuffer<uint>` (kind 4).
+
+`--reconstruct-all` now rebuilds the declarations from each container's **own
+reflection** (`dxc::reflect` - the ground truth for names, kinds and registers),
+replacing the dictionary-driven `name_declarations`. For each container it drops
+the synthetic cbuffer and substitutes its members with zero (the engine draws
+with a base of zero), renames every cbuffer and resource, and rewrites the
+kinds: `StructuredBuffer` for a structured buffer, `ByteAddressBuffer`/
+`RWByteAddressBuffer` for a byte-address buffer - the interlocked intrinsics
+become the buffer's methods with a byte offset - and the `spvTextureSize`
+helper's `GetDimensions` gains the stride a structured buffer needs. The
+verification now runs `shader::resource_mismatch` beside `interface_mismatch`,
+and **all 17 containers match on both** (before: 17 interface-only).
+
+**The source-built standard now creates its pipeline (2026-10-05).** In game the
+source-built pumpkin **spawns** and the hub renders - the `E_INVALIDARG` at
+pipeline creation is gone. One difference remains: a shader assert
+`ASSERT_INSTANCE_BUFFER_OFFSET, value was: 4` fires on the spawn, where the
+carried shipped programs do not assert. So the decompiled program's logic still
+differs from the original somewhere that assert guards. Until that is closed the
+pumpkin runs on the **carried** shipped programs.
 
 The in-game flow itself works: the mod's Lua drives title -> hub with no input
 (`TitleView.on_enter` -> `_continue`, `StateMainMenu._set_selected_profile` ->

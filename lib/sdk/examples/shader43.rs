@@ -1380,7 +1380,7 @@ fn reconstruct_all(
 
     let data = fs::read(path)?;
     let bytes = shader_section(&data)?;
-    let section = Section::parse(bytes)?;
+    let _section = Section::parse(bytes)?;
     let device_offset = u32_at(bytes, 40) as usize;
     let device_size = u32_at(bytes, 44) as usize;
     let device = bytes
@@ -1406,51 +1406,9 @@ fn reconstruct_all(
         distinct.len()
     );
 
-    // The cbuffer and resource names the tails carry, per stage.
-    let mut vertex_cbuffers: HashMap<u32, String> = HashMap::new();
-    let mut pixel_cbuffers: HashMap<u32, String> = HashMap::new();
-    let mut resources: HashMap<(char, u32, u32), String> = HashMap::new();
-    for program in &programs {
-        let next = programs
-            .iter()
-            .find(|next| next.pos > program.meta_pos + 16)
-            .map(|next| next.pos)
-            .unwrap_or(device.len());
-        let Some(tail) = device.get(program.meta_pos + 16..next) else {
-            continue;
-        };
-        let Some(parsed) = shader::Tail::parse(tail) else {
-            continue;
-        };
-        let map = match program.stage {
-            shader::Stage::Vertex => &mut vertex_cbuffers,
-            shader::Stage::Pixel => &mut pixel_cbuffers,
-            _ => continue,
-        };
-        for entry in &parsed.cbuffers {
-            if let Some(name) = names.and_then(|names| names.get(&entry.name_hash())) {
-                map.entry(entry.words[3]).or_insert_with(|| name.clone());
-            }
-        }
-        if let Some(lists) = shader::TailLists::parse(&parsed.rest) {
-            for (list, records) in lists.lists.iter().enumerate() {
-                for record in records {
-                    let (letter, set, binding) = match list {
-                        3 | 4 => ('t', record[4], record[2]),
-                        5 => ('u', record[4], record[2]),
-                        6 => ('s', record[3], record[1]),
-                        8 => ('s', 2, record[1]),
-                        _ => continue,
-                    };
-                    if let Some(name) = names.and_then(|names| names.get(&record[0])) {
-                        resources
-                            .entry((letter, set, binding))
-                            .or_insert_with(|| name.clone());
-                    }
-                }
-            }
-        }
-    }
+    // The names come from each container's own reflection, so the dictionary
+    // this mode still takes is unused.
+    let _ = names;
 
     fs::create_dir_all(dir)?;
     let mut source = String::from(
@@ -1466,11 +1424,7 @@ fn reconstruct_all(
             println!("  {chunk}: decompiler not found");
             continue;
         };
-        let cbuffers = match stage {
-            shader::Stage::Pixel => &pixel_cbuffers,
-            _ => &vertex_cbuffers,
-        };
-        let named = name_declarations(&hlsl, cbuffers, &resources);
+        let named = resource_fixups(&hlsl, container);
         let (guard, profile, entry, define) = match stage {
             shader::Stage::Vertex => ("STAGE_VERTEX", "vs_6_0", "vs_main", "STAGE_VERTEX"),
             shader::Stage::Pixel => ("STAGE_FRAGMENT", "ps_6_0", "ps_main", "STAGE_FRAGMENT"),
@@ -1486,19 +1440,21 @@ fn reconstruct_all(
 
         let full = format!("#define RENDERER_D3D12 1\n#define {define} 1\n{named}");
         match dxc_compile(&full, profile, entry) {
-            Ok(compiled) => match shader::interface_mismatch(container, &compiled) {
-                None => {
+            Ok(compiled) => {
+                if let Some(reason) = shader::interface_mismatch(container, &compiled) {
+                    mismatched += 1;
+                    println!("  {chunk} ({stage:?} program {index}): interface MISMATCH: {reason}");
+                } else if let Some(reason) = shader::resource_mismatch(container, &compiled) {
+                    mismatched += 1;
+                    println!("  {chunk} ({stage:?} program {index}): resource MISMATCH: {reason}");
+                } else {
                     matched += 1;
                     println!(
-                        "  {chunk} ({stage:?} program {index}): compiled {} B, interface matches",
+                        "  {chunk} ({stage:?} program {index}): compiled {} B, interface and resources match",
                         compiled.len()
                     );
                 }
-                Some(reason) => {
-                    mismatched += 1;
-                    println!("  {chunk} ({stage:?} program {index}): interface MISMATCH: {reason}");
-                }
-            },
+            }
             Err(err) => {
                 failed += 1;
                 println!("  {chunk} ({stage:?} program {index}): COMPILE FAILED: {err}");
@@ -1534,7 +1490,7 @@ fn enumerate_family(
 
     let data = fs::read(path)?;
     let bytes = shader_section(&data)?;
-    let section = Section::parse(bytes)?;
+    let _section = Section::parse(bytes)?;
     let device_offset = u32_at(bytes, 40) as usize;
     let device_size = u32_at(bytes, 44) as usize;
     let device = bytes
@@ -1613,7 +1569,7 @@ fn enumerate_family(
 
 fn reconstruct_source(
     section: &[u8],
-    names: Option<&HashMap<u32, String>>,
+    _names: Option<&HashMap<u32, String>>,
     dxil_spirv: &Path,
     spirv_cross: &Path,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -1624,81 +1580,19 @@ fn reconstruct_source(
         .ok_or("device data is out of range")?;
     let programs = shader::parse_programs(device)?;
 
-    // The cbuffers the tails name, by register and per stage: a decompiled
-    // program writes its constant buffers anonymously
-    // (`cbuffer _10_12 : register(b0, space0)`), and naming them is what makes
-    // the source carry the interface - the engine's `global_viewport` and
-    // `c_per_object` included. The registers are per program: the vertex stage's
-    // `c_per_object` is b0 where the pixel stage's is b1.
-    let mut vertex_cbuffers: HashMap<u32, String> = HashMap::new();
-    let mut pixel_cbuffers: HashMap<u32, String> = HashMap::new();
-    let mut resources: HashMap<(char, u32, u32), String> = HashMap::new();
-    for program in &programs {
-        let next = programs
-            .iter()
-            .find(|next| next.pos > program.meta_pos + 16)
-            .map(|next| next.pos)
-            .unwrap_or(device.len());
-        let Some(tail) = device.get(program.meta_pos + 16..next) else {
-            continue;
-        };
-        let Some(parsed) = shader::Tail::parse(tail) else {
-            continue;
-        };
-        let map = match program.stage {
-            shader::Stage::Vertex => &mut vertex_cbuffers,
-            shader::Stage::Pixel => &mut pixel_cbuffers,
-            _ => continue,
-        };
-        for entry in &parsed.cbuffers {
-            if let Some(name) = names.and_then(|names| names.get(&entry.name_hash())) {
-                map.entry(entry.words[3]).or_insert_with(|| name.clone());
-            }
-        }
-
-        // The resource records, by the register letter the list implies: lists 3
-        // and 4 are textures (`t`), 5 the UAVs (`u`), 6 and 8 the samplers
-        // (`s`). The 7-word records are `{name, index, binding, flag, set, ...}`
-        // so the binding is word 2 and the set word 4; the 4-word sampler
-        // records carry (binding, set) at words 1 and 3, and the 3-word bindless
-        // sampler records are `{name, binding, 0}` at the engine's space 2.
-        if let Some(lists) = shader::TailLists::parse(&parsed.rest) {
-            for (list, records) in lists.lists.iter().enumerate() {
-                for record in records {
-                    let (letter, set, binding) = match list {
-                        3 | 4 => ('t', record[4], record[2]),
-                        5 => ('u', record[4], record[2]),
-                        6 => ('s', record[3], record[1]),
-                        8 => ('s', 2, record[1]),
-                        _ => continue,
-                    };
-                    if let Some(name) = names.and_then(|names| names.get(&record[0])) {
-                        resources
-                            .entry((letter, set, binding))
-                            .or_insert_with(|| name.clone());
-                    }
-                }
-            }
-        }
-    }
-
     let mut vertex = None;
     let mut pixel = None;
     for program in &programs {
         match program.stage {
             shader::Stage::Vertex if vertex.is_none() => {
                 match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
-                    Some(hlsl) => {
-                        vertex = Some(name_declarations(&hlsl, &vertex_cbuffers, &resources))
-                    }
+                    Some(hlsl) => vertex = Some(resource_fixups(&hlsl, &program.container)),
                     None => return Ok(None),
                 }
             }
             shader::Stage::Pixel if pixel.is_none() => {
                 match decompile_container(&program.container, program.stage, dxil_spirv, spirv_cross)? {
-                    Some(hlsl) => {
-                        pixel = Some(name_declarations(&hlsl, &pixel_cbuffers, &resources))
-                    }
+                    Some(hlsl) => pixel = Some(resource_fixups(&hlsl, &program.container)),
                     None => return Ok(None),
                 }
             }
@@ -1734,85 +1628,334 @@ fn reconstruct_source(
     Ok(Some(body))
 }
 
-/// Renames the decompiled constant buffers and resources to the names the tails
-/// carry: `cbuffer _10_12 : register(b0, space0)` becomes
-/// `cbuffer global_viewport : register(b0, space0)`, and
-/// `Texture2D<float4> _12 : register(t0, space2)` becomes
-/// `Texture2D<float4> global_texture2D : register(t0, space2)`. Unnamed
-/// declarations keep their compiler name.
-fn name_declarations(
-    hlsl: &str,
-    cbuffers: &HashMap<u32, String>,
-    resources: &HashMap<(char, u32, u32), String>,
-) -> String {
-    let register = |line: &str, prefix: &str| -> Option<(char, u32, u32)> {
-        let rest = line.split(prefix).nth(1)?;
-        let letter = rest.chars().next()?;
-        let number: String = rest[1..]
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        let space: String = line
-            .split("space")
-            .nth(1)?
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        Some((letter, space.parse().ok()?, number.parse().ok()?))
+/// Makes a decompiled program's resource declarations faithful to the
+/// container it came from, using that container's own reflection as the oracle.
+///
+/// `spirv-cross` recompiles a program with the *interface* intact but not the
+/// resources: it lowers structured buffers to typed `Buffer<T>`, byte-address
+/// UAVs to `RWBuffer<T>`, and - for a vertex stage - emits a synthetic
+/// `SPIRV_Cross_VertexInfo` cbuffer for the Vulkan base-vertex/instance
+/// builtins. The engine's root signature is built from the shipped resource
+/// layout, so a container with an extra register or a different resource kind
+/// fails pipeline creation with `E_INVALIDARG` even though its IO matches.
+///
+/// The fix has three parts: drop the synthetic cbuffer and replace its members
+/// with zero (the engine draws with a base of zero), name every cbuffer and
+/// resource after the original, and rewrite the resource kinds - structured
+/// buffers, byte-address buffers and their interlocked intrinsics.
+fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
+    let Ok(bindings) = dxc::reflect(container) else {
+        return hlsl.to_string();
     };
 
-    // Pass one: read the declarations and collect the renames.
-    let mut renames: Vec<(String, String)> = Vec::new();
-    for line in hlsl.lines() {
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("cbuffer ") {
-            let ident = rest.split_whitespace().next().unwrap_or("");
-            let number = line
-                .split("register(b")
-                .nth(1)
-                .and_then(|rest| rest.split(|c: char| !c.is_ascii_digit()).next())
-                .and_then(|number| number.parse::<u32>().ok());
-            if let Some(name) = number.and_then(|number| cbuffers.get(&number)) {
-                renames.push((ident.to_string(), name.clone()));
+    // The original's resources, keyed the way the source declares them.
+    let mut cbuffers: BTreeMap<u32, String> = BTreeMap::new();
+    let mut resources: BTreeMap<(char, u32, u32), (String, u32)> = BTreeMap::new();
+    for binding in &bindings {
+        match binding.kind {
+            0 | 1 => {
+                cbuffers.insert(binding.bind_point, binding.name.clone());
             }
-        } else if trimmed.contains("register(") && trimmed.ends_with(';') {
-            let key = register(line, "register(");
-            // The identifier, without the array brackets spirv-cross writes on
-            // bindless declarations (`_9[]`).
-            let ident = trimmed
-                .split(|c: char| c.is_whitespace() || c == ';')
-                .filter(|word| !word.is_empty())
-                .nth(1)
-                .map(|word| {
-                    word.chars()
-                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                        .collect::<String>()
-                });
-            if let (Some(key), Some(ident)) = (key, ident.as_deref()) {
-                if !ident.starts_with("register") {
-                    if let Some(name) = resources.get(&key) {
-                        renames.push((ident.to_string(), name.clone()));
-                    }
-                }
+            2 | 5 | 7 => {
+                resources.insert(
+                    ('t', binding.bind_point, binding.space),
+                    (binding.name.clone(), binding.kind),
+                );
             }
+            3 => {
+                resources.insert(
+                    ('s', binding.bind_point, binding.space),
+                    (binding.name.clone(), binding.kind),
+                );
+            }
+            4 | 6 | 8 | 9 | 10 | 11 => {
+                resources.insert(
+                    ('u', binding.bind_point, binding.space),
+                    (binding.name.clone(), binding.kind),
+                );
+            }
+            _ => {}
         }
-    }
-    if renames.is_empty() {
-        return hlsl.to_string();
     }
 
-    // Pass two: apply them everywhere, as whole words - the body refers to the
-    // same identifiers the declarations use.
+    let mut renames: Vec<(String, String)> = Vec::new();
+    let mut retypes: BTreeMap<String, String> = BTreeMap::new();
+    let mut byte_address: Vec<String> = Vec::new();
+    let mut structured = false;
     let mut out = String::with_capacity(hlsl.len());
+    let mut dropping_cbuffer = false;
+
     for line in hlsl.lines() {
-        let mut renamed = line.to_string();
-        for (old, new) in &renames {
-            renamed = replace_word(&renamed, old, new);
+        let trimmed = line.trim_start();
+
+        // A cbuffer with no register is the synthetic `SPIRV_Cross_VertexInfo`
+        // (or its fragment counterpart): drop it whole.
+        if dropping_cbuffer {
+            if trimmed.starts_with("};") {
+                dropping_cbuffer = false;
+            }
+            continue;
         }
-        out.push_str(&renamed);
+        if trimmed.starts_with("cbuffer ") && !trimmed.contains("register(") {
+            dropping_cbuffer = true;
+            continue;
+        }
+
+        // A cbuffer declaration: rename it from the original.
+        if let Some(rest) = trimmed.strip_prefix("cbuffer ") {
+            let ident = rest.split_whitespace().next().unwrap_or("");
+            if let Some((_, register, _)) = parse_register(line)
+                && let Some(name) = cbuffers.get(&register)
+                && name != ident
+            {
+                renames.push((ident.to_string(), name.clone()));
+            }
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        // A resource declaration: rename it and rewrite its kind.
+        if trimmed.ends_with(';')
+            && trimmed.contains("register(")
+            && let Some((letter, register, space)) = parse_register(line)
+            && let Some((name, kind)) = resources.get(&(letter, register, space))
+            && let Some((ty, ident)) = declaration_type_ident(line)
+        {
+            let array = if ident.ends_with("[]") { "[]" } else { "" };
+            let base = ident.trim_end_matches("[]");
+            let indent = &line[..line.len() - trimmed.len()];
+            if base != name {
+                renames.push((base.to_string(), name.clone()));
+            }
+            if matches!(kind, 7 | 8) {
+                byte_address.push(base.to_string());
+            }
+            let new_type = resource_kind(&ty, *kind);
+            if new_type != ty {
+                retypes.insert(ty.clone(), new_type.clone());
+            }
+            if *kind == 5 {
+                structured = true;
+            }
+            out.push_str(&format!(
+                "{indent}{new_type} {name}{array} : register({letter}{register}, space{space});\n"
+            ));
+            continue;
+        }
+
+        out.push_str(line);
         out.push('\n');
     }
-    out
+
+    // The synthetic cbuffer's members are the base vertex/instance.
+    let mut result = out.replace("SPIRV_Cross_BaseVertex", "0");
+    result = result.replace("SPIRV_Cross_BaseInstance", "0");
+
+    // A rewritten kind can also appear in a helper's parameter list
+    // (`spvTextureSize`), so it is applied everywhere.
+    for (old, new) in &retypes {
+        result = replace_all_words(&result, old, new);
+    }
+
+    // The size helper reads a typed buffer's element count with the
+    // one-argument `GetDimensions`; a structured buffer needs a stride.
+    if structured {
+        result = fix_structured_getdimensions(&result);
+    }
+
+    // A byte-address buffer has no `[]`, so the interlocked intrinsics on one
+    // become the buffer's methods, with a byte offset. The names here are the
+    // ones the source still uses, before the renames below.
+    if !byte_address.is_empty() {
+        result = result
+            .lines()
+            .map(|line| rewrite_byte_address_calls(line, &byte_address))
+            .collect::<Vec<_>>()
+            .join("\n");
+        result.push('\n');
+    }
+
+    for (old, new) in &renames {
+        result = replace_all_words(&result, old, new);
+    }
+
+    result
+}
+
+/// Replaces every whole-word occurrence of `old` with `new`, line by line.
+fn replace_all_words(text: &str, old: &str, new: &str) -> String {
+    let mut result: String = text
+        .lines()
+        .map(|line| replace_word(line, old, new))
+        .collect::<Vec<_>>()
+        .join("\n");
+    result.push('\n');
+    result
+}
+
+/// Gives `spirv-cross`'s size helper the stride a structured buffer needs: the
+/// generated `Tex.GetDimensions(ret.x)` becomes
+/// `Tex.GetDimensions(ret.x, _dtmt_stride)`, with the stride declared beside
+/// `ret`. A typed buffer keeps the one-argument form.
+fn fix_structured_getdimensions(text: &str) -> String {
+    text.replace(
+        "Tex.GetDimensions(ret.x);",
+        "Tex.GetDimensions(ret.x, _dtmt_stride);",
+    )
+    .replace(
+        "    uint ret;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
+        "    uint ret;\n    uint _dtmt_stride;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
+    )
+}
+
+/// The HLSL type for a resource of the original's `kind`: a structured buffer
+/// becomes `StructuredBuffer<T>`, a byte-address buffer drops its element type,
+/// and everything else keeps the type `spirv-cross` emitted.
+fn resource_kind(ty: &str, kind: u32) -> String {
+    let template = ty.find('<').map(|start| &ty[start..]).unwrap_or("");
+    match kind {
+        5 => format!("StructuredBuffer{template}"),
+        6 => format!("RWStructuredBuffer{template}"),
+        7 => "ByteAddressBuffer".to_string(),
+        8 => "RWByteAddressBuffer".to_string(),
+        _ => ty.to_string(),
+    }
+}
+
+/// The `(letter, register, space)` of a `register(<letter><number>, space<n>)`.
+fn parse_register(line: &str) -> Option<(char, u32, u32)> {
+    let rest = line.split("register(").nth(1)?;
+    let letter = rest.chars().next()?;
+    if !matches!(letter, 'b' | 't' | 'u' | 's') {
+        return None;
+    }
+    let number: String = rest[1..].chars().take_while(char::is_ascii_digit).collect();
+    let space: String = line
+        .split("space")
+        .nth(1)?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    Some((letter, number.parse().ok()?, space.parse().ok()?))
+}
+
+/// The type and identifier of a resource declaration
+/// (`Buffer<uint4> bones[] : register(...)`).
+fn declaration_type_ident(line: &str) -> Option<(String, String)> {
+    let colon = line.find(" : register(")?;
+    let mut tokens = line[..colon].trim().split_whitespace();
+    let ty = tokens.next()?.to_string();
+    let ident = tokens.next()?.to_string();
+    Some((ty, ident))
+}
+
+/// Rewrites the interlocked intrinsics whose destination is a bindless element
+/// of a byte-address buffer, `<name>[<buffer>][<index>]`, into the buffer's
+/// method form with a byte offset, `<name>[<buffer>].<Method>(<index> * 4, ...)`.
+fn rewrite_byte_address_calls(line: &str, names: &[String]) -> String {
+    const METHODS: [&str; 8] = [
+        "InterlockedCompareExchange",
+        "InterlockedExchange",
+        "InterlockedMin",
+        "InterlockedMax",
+        "InterlockedAdd",
+        "InterlockedAnd",
+        "InterlockedOr",
+        "InterlockedXor",
+    ];
+
+    let mut result = line.to_string();
+    for method in METHODS {
+        let needle = format!("{method}(");
+        let mut search = 0usize;
+        while let Some(offset) = result[search..].find(&needle) {
+            let at = search + offset;
+            let args_start = at + needle.len();
+            let Some((first, first_len)) = first_argument(&result[args_start..]) else {
+                search = args_start;
+                continue;
+            };
+            let Some((name, buffer, index)) = split_bindless_index(first, names) else {
+                search = args_start;
+                continue;
+            };
+            let replacement = format!("{name}[{buffer}].{method}(({index}) * 4u, ");
+            let mut next = String::with_capacity(result.len() + replacement.len());
+            next.push_str(&result[..at]);
+            next.push_str(&replacement);
+            next.push_str(&result[args_start + first_len + 1..]);
+            result = next;
+            search = at + replacement.len();
+        }
+    }
+    result
+}
+
+/// The first argument of a call, and its byte length up to the separating
+/// comma, tracking brackets so nested indexing is kept whole.
+fn first_argument(s: &str) -> Option<(&str, usize)> {
+    let mut depth = 0i32;
+    for (at, ch) in s.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+            }
+            ',' if depth == 0 => return Some((&s[..at], at)),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Splits `name[buffer][index]` into its three parts, when `name` is one of the
+/// byte-address buffers.
+fn split_bindless_index<'a>(
+    text: &'a str,
+    names: &[String],
+) -> Option<(&'a str, &'a str, &'a str)> {
+    let open = text.find('[')?;
+    let name = text[..open].trim();
+    if !names.iter().any(|known| known == name) {
+        return None;
+    }
+
+    let close = matching_bracket(text, open)?;
+    let buffer = text[open + 1..close].trim();
+
+    let after = &text[close + 1..];
+    if !after.starts_with('[') {
+        return None;
+    }
+    let close = matching_bracket(after, 0)?;
+    let index = after[1..close].trim();
+    if !after[close + 1..].trim().is_empty() {
+        return None;
+    }
+
+    Some((name, buffer, index))
+}
+
+/// The index of the `]` matching the `[` at `open`.
+fn matching_bracket(text: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (at, ch) in text.char_indices().skip(open) {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Replaces every whole-word occurrence of `old` with `new`.
