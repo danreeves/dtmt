@@ -165,6 +165,29 @@ It is the per-pass **blend/z state** the same `render_states` declare
 `defined_MASKED -> blend_enable=true/alpha blend` is the field's likely source.
 Decoding its exact packing is the last step for a fully generated program table.
 
+**The state fields, measured by a controlled compile (2026-10-05).** Six probe
+shaders were built - a copy of `gui_gradient` whose single pass points at a state
+that differs in exactly one field - compiled with the SDK toolchain, and their
+`.shader_library` headers diffed. The state fields land at fixed header offsets:
+
+| field | header offset | values |
+| --- | --- | --- |
+| `write_mask0` | `+0x241` | `0F` rgba, `07` red\|green\|blue, `01` red, `02` green, `04` blue, `08` alpha |
+| `blend_enable` | `+0x130` | `1` on, `0` off |
+| (any state override) | `+0x13d` | `01` base, `03` overridden - a version/counter |
+| `z_enable`/`z_write_enable` | not in this header | per-program device tail |
+
+So the VT2 `.shader_library` header's `+0x241` **is the same packed channel mask
+as `shader43`'s block `body[477]`** (`red=1 green=2 blue=4 alpha=8`, default
+`07`), and `+0x130` is `blend_enable`. The `shader43` seam/mask therefore come
+from the pass's `render_states`; the mask half is fully mapped, and the seam's
+`1`/`2` (vs absent) is the **blend** field (`+0x130`) plus the state-version
+marker - a 32-byte head is a pass whose state block is the default (no overrides,
+`+0x13d = 01`), and a 36-byte head is one with an overridden state (`+0x13d =
+03`), the seam word carrying the packed override. Confirming the seam's exact
+bit layout is the last step; the tooling (`make_probes` + `diff_probes`) is in
+the scratch directory.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 
