@@ -1748,9 +1748,16 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
         out.push('\n');
     }
 
-    // The synthetic cbuffer's members are the base vertex/instance.
+    // The synthetic cbuffer's members are the base vertex/instance. The engine
+    // may draw 0-based, in which case the base instance is the instance index
+    // itself and `gl_InstanceIndex - gl_BaseInstanceARB` is zero; the
+    // `SHADER43_BASE_INSTANCE=instance` experiment tests that.
+    let base_instance = match std::env::var("SHADER43_BASE_INSTANCE").as_deref() {
+        Ok("instance") => "gl_InstanceIndex",
+        _ => "0",
+    };
     let mut result = out.replace("SPIRV_Cross_BaseVertex", "0");
-    result = result.replace("SPIRV_Cross_BaseInstance", "0");
+    result = result.replace("SPIRV_Cross_BaseInstance", base_instance);
 
     // A rewritten kind can also appear in a helper's parameter list
     // (`spvTextureSize`), so it is applied everywhere.
