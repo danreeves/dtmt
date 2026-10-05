@@ -1080,20 +1080,61 @@ pub struct EngineData {
     pub group_repeat: usize,
 }
 
-/// The UI base family's pass table: the mask byte each pixel program writes into
-/// its tail block, in program order (48 pixel programs).
-///
-/// Read from a shipped UI-base section (`family_probe`), and the family's own
-/// data rather than anything our declaration describes: the engine's UI-base
-/// shader declares these 48 passes. The values are channel sets - `01 02 04 08`
-/// the single channel bits, `0F` all four, `07` the body's default (a tail with
-/// no patch). A different engine family has its own table (and its own tail
-/// shape - see `docs/Shader RE TODO.md`).
-const UI_BASE_PASS_MASKS: [u8; 48] = [
-    0x07, 0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x07, 0x01, 0x01,
-    0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07,
-    0x01, 0x02, 0x04, 0x08, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07, 0x01, 0x02, 0x04,
-    0x08, 0x0F, 0x07,
+/// The UI base family's per-pass channel sets, in pixel-program order: each
+/// pass's `render_states` `write_mask0`, a `|`-joined channel list. The block's
+/// mask byte is [`write_mask`] of one of these, so the mask is derived from the
+/// pass's declared channels rather than recorded as a byte. The engine's own
+/// `gui_gradient` declares these branches (`WRITE_MASK1` -> green, `WRITE_MASK2`
+/// -> blue, else red; `07`/`0F` the default and full-alpha cases).
+const UI_BASE_PASS_CHANNELS: [&str; 48] = [
+    "red|green|blue",
+    "red",
+    "red",
+    "green",
+    "green",
+    "blue",
+    "blue",
+    "alpha",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
+    "red|green|blue",
+    "red",
+    "red",
+    "green",
+    "green",
+    "blue",
+    "blue",
+    "alpha",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
+    "red",
+    "green",
+    "blue",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
+    "red",
+    "green",
+    "blue",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
+    "red",
+    "green",
+    "blue",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
+    "red",
+    "green",
+    "blue",
+    "alpha",
+    "red|green|blue|alpha",
+    "red|green|blue",
 ];
 
 /// The UI base family's head sizes, one per pixel program, in slot order: the
@@ -1822,7 +1863,7 @@ impl EngineData {
         for pass in 0..passes {
             let head = UI_BASE_PASS_HEADS[pass] as usize;
             let seam = UI_BASE_PASS_SEAMS[pass];
-            let mask = UI_BASE_PASS_MASKS[pass];
+            let mask = write_mask(&[UI_BASE_PASS_CHANNELS[pass]]);
             let last = pass == passes - 1;
             let mut pixel = split_tail.clone();
             let mut block = vec![0u8; head];
