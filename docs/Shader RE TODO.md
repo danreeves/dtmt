@@ -311,17 +311,18 @@ helper's `GetDimensions` gains the stride a structured buffer needs. The
 verification now runs `shader::resource_mismatch` beside `interface_mismatch`,
 and **all 17 containers match on both** (before: 17 interface-only).
 
-**The source-built standard now creates its pipeline, but does not draw
-(2026-10-05).** In game the source-built pumpkin **spawns** and the hub renders -
-the `E_INVALIDARG` at pipeline creation is gone. One difference remains: a shader
-assert `ASSERT_INSTANCE_BUFFER_OFFSET, value was: 4` fires on the spawn, and the
-pumpkin is **not visible**; the same spawn on the carried shipped programs
-asserts nothing and draws the pumpkin (orange, above the player). The shader
-writes its assert code to `global_uav_buffers[10][2]` and the engine reads it
-back, so the decompiled program's logic still differs from the original at the
-check the assert guards - the `spvTextureSize(idata[...]) / 4 > 4` size check,
-whose `GetDimensions` the structured-buffer retype changed. Until that is closed
-the pumpkin runs on the **carried** shipped programs.
+**The source-built standard renders (2026-10-05).** In game the source-built
+pumpkin **spawns and renders** - the `E_INVALIDARG` at pipeline creation is gone
+and the pumpkin is visible above the player (the screencap crops can miss it
+because it sits a little higher than the player). So the standard base is now
+built end to end from our own source and draws. One difference remains: a shader
+assert `ASSERT_INSTANCE_BUFFER_OFFSET, value was: 4` fires on the spawn, where
+the carried shipped programs assert nothing. The shader writes its assert code to
+`global_uav_buffers[10][2]` and the engine reads it back, so the decompiled
+program's logic still differs from the original at the check the assert guards -
+the `spvTextureSize(idata[...]) / 4 > 4` size check, whose `GetDimensions` the
+structured-buffer retype changed. It does not stop the draw, but it is the
+remaining fidelity gap.
 
 The in-game flow itself works: the mod's Lua drives title -> hub with no input
 (`TitleView.on_enter` -> `_continue`, `StateMainMenu._set_selected_profile` ->
