@@ -199,13 +199,17 @@ program's mask from its pass's channel set, and the UI base build is unchanged,
 scratch mod with `shader43 --reconstruct`'s `3F08AC44` output (declaration +
 source + engine data, the code block wired to the source with
 `include = ["...#3F08AC4494A4436E"]`) **compiles** its declaration - vs 20329,
-ps 10740 bytes - but `dtmt build` fails at `derived_cbuffers`: "the file has no
-material table". The reconstruction carries the group data as a `group_data`
-blob (its groups do not template), so `EngineData::from_text` has no
-`material_tables`, and the programs' tails are split (empty cbuffers) and need
-the `c_per_object` size from that table. The fix is for `--reconstruct` to carry
-the material tables (or the tails un-split) for a family whose groups do not
-walk. The scratch mod and its exact error are reproducible from
+ps 10740 bytes. `dtmt build` first failed at `derived_cbuffers` ("the file has no
+material table"), because the reconstruction carries the group data as a
+`group_data` blob (its groups do not template) and `EngineData::from_text` had no
+`material_tables`; `EngineData::fill_material_tables` now walks the blob by the
+contexts' query ids and fills them. The build then stops at the **known gap**:
+"the groups disagree about `c_per_object`'s size; the program-to-group mapping is
+not decoded" - `3F08AC44` is variant-rich, its groups carry different material
+tables, and the split-tail derivation needs one agreed size. Two fixes remain:
+carry the standard tails **whole** (its tails open with a phase byte and the
+material tables differ), or decode the program-to-group mapping. The scratch mod
+and its exact errors are reproducible from
 `C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\std-mod`.
 
 The compiler flattens every `.shader_source` declaration into a `.editor`
