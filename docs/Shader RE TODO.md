@@ -235,6 +235,27 @@ section**, and the UI base build is unchanged (`CD9854D69AC9A5B7`). The next ste
 for the pumpkin is to make this a base material in snoopy-mod and reparent the
 instance, then test in game.
 
+**Every distinct program decompiles (2026-10-05).** `shader43 --reconstruct-all
+<dir> [--variables <dict>] [--dxil-spirv <exe>] [--spirv-cross <exe>] <section>`
+decompiles **every distinct container** of a section (not just the first of each
+stage), writes one `hlsl_shaders` chunk per container under its stage guard, and
+compiles each chunk back to check its interface against the original. On
+`3F08AC44` - 26 programs, **17 distinct containers**, 11 distinct `(vs, ps)`
+pairs - the result is **17 matched, 0 mismatched, 0 failed**. (The earlier
+`--reconstruct` wrote only 2 chunks, one per stage; that gap is why the
+source-built standard section crashed with `shader '#ID[38a9b1db]'`
+`E_INVALIDARG` - the build compiled one container per stage and paired it with
+the family's 17 distinct shipped tails.)
+
+The fix that made 6 of the 17 match: `rebuild_struct` **sorted** a signature's
+elements by `(register, index)` before writing the struct. Two elements can share
+a register with different masks (`TEXCOORD15` float3 and `CUSTOM1` float at
+register 1), and sorting reordered them, swapping their component masks. The
+elements are already in signature (register/component) order - the order DXC
+packs them - so the sort is gone; a width check pairs a field with the element
+whose mask it matches when a register is shared. The UI base reconstruction is
+unaffected.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 

@@ -59,6 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut layout_mode = false;
     let mut plan_declaration: Option<PathBuf> = None;
     let mut reconstruct_dir: Option<PathBuf> = None;
+    let mut reconstruct_all_dir: Option<PathBuf> = None;
     let mut substitute_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
@@ -145,6 +146,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 reconstruct_dir = Some(PathBuf::from(
                     args.get(i).expect("--reconstruct needs a directory").clone(),
+                ));
+            }
+            "--reconstruct-all" => {
+                i += 1;
+                reconstruct_all_dir = Some(PathBuf::from(
+                    args.get(i).expect("--reconstruct-all needs a directory").clone(),
                 ));
             }
             "--substitute" => substitute_mode = true,
@@ -312,6 +319,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cross = decompiler(&spirv_cross, "SPIRV_CROSS", "spirv-cross");
         for path in &files {
             if let Err(err) = reconstruct(path, dir, names.as_ref(), &dxil, &cross) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(dir) = &reconstruct_all_dir {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
+        let dxil = decompiler(&dxil_spirv, "DXIL_SPIRV", "dxil-spirv");
+        let cross = decompiler(&spirv_cross, "SPIRV_CROSS", "spirv-cross");
+        for path in &files {
+            if let Err(err) = reconstruct_all(path, dir, names.as_ref(), &dxil, &cross) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -1319,6 +1341,166 @@ fn without_shader_data(sjson: &str) -> String {
 /// The decompiled programs as one `.shader_source` body: the first program of
 /// each stage, each under the engine's stage macro. `None` when a decompiler
 /// tool cannot be found or the section has no vertex or pixel program.
+/// Decompiles **every distinct program container** of a section (not just the
+/// first of each stage), writes one `hlsl_shaders` chunk per container, and
+/// compiles each decompiled source back to check its interface against the
+/// original. A variant-rich family - `3F08AC44` has 17 distinct containers
+/// across 26 programs - needs every interface's source, where `--reconstruct`
+/// writes only two.
+///
+/// ```text
+/// shader43 --reconstruct-all <dir> [--variables <dict>] \
+///     [--dxil-spirv <exe>] [--spirv-cross <exe>] <section>
+/// ```
+fn reconstruct_all(
+    path: &Path,
+    dir: &Path,
+    names: Option<&HashMap<u32, String>>,
+    dxil_spirv: &Path,
+    spirv_cross: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+    use sdk::filetype::shader_compile::compile as dxc_compile;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let section = Section::parse(bytes)?;
+    let device_offset = u32_at(bytes, 40) as usize;
+    let device_size = u32_at(bytes, 44) as usize;
+    let device = bytes
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let tag = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+
+    // The distinct containers, in first-use order.
+    let mut distinct: Vec<(&[u8], shader::Stage, usize)> = Vec::new();
+    for program in &programs {
+        if !distinct
+            .iter()
+            .any(|(container, _, _)| *container == program.container.as_slice())
+        {
+            distinct.push((&program.container, program.stage, program.index));
+        }
+    }
+    println!(
+        "=== {}: {} programs, {} distinct containers ===",
+        path.display(),
+        programs.len(),
+        distinct.len()
+    );
+
+    // The cbuffer and resource names the tails carry, per stage.
+    let mut vertex_cbuffers: HashMap<u32, String> = HashMap::new();
+    let mut pixel_cbuffers: HashMap<u32, String> = HashMap::new();
+    let mut resources: HashMap<(char, u32, u32), String> = HashMap::new();
+    for program in &programs {
+        let next = programs
+            .iter()
+            .find(|next| next.pos > program.meta_pos + 16)
+            .map(|next| next.pos)
+            .unwrap_or(device.len());
+        let Some(tail) = device.get(program.meta_pos + 16..next) else {
+            continue;
+        };
+        let Some(parsed) = shader::Tail::parse(tail) else {
+            continue;
+        };
+        let map = match program.stage {
+            shader::Stage::Vertex => &mut vertex_cbuffers,
+            shader::Stage::Pixel => &mut pixel_cbuffers,
+            _ => continue,
+        };
+        for entry in &parsed.cbuffers {
+            if let Some(name) = names.and_then(|names| names.get(&entry.name_hash())) {
+                map.entry(entry.words[3]).or_insert_with(|| name.clone());
+            }
+        }
+        if let Some(lists) = shader::TailLists::parse(&parsed.rest) {
+            for (list, records) in lists.lists.iter().enumerate() {
+                for record in records {
+                    let (letter, set, binding) = match list {
+                        3 | 4 => ('t', record[4], record[2]),
+                        5 => ('u', record[4], record[2]),
+                        6 => ('s', record[3], record[1]),
+                        8 => ('s', 2, record[1]),
+                        _ => continue,
+                    };
+                    if let Some(name) = names.and_then(|names| names.get(&record[0])) {
+                        resources
+                            .entry((letter, set, binding))
+                            .or_insert_with(|| name.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    fs::create_dir_all(dir)?;
+    let mut source = String::from(
+        "// One chunk per distinct program container of the section, each under\n\
+         // its stage guard. Compiling a chunk reproduces that program's interface.\n\n\
+         hlsl_shaders = {\n",
+    );
+    let (mut matched, mut mismatched, mut failed, mut skipped) = (0, 0, 0, 0);
+    for (n, (container, stage, index)) in distinct.iter().enumerate() {
+        let chunk = format!("{tag}_c{n}");
+        let Some(hlsl) = decompile_container(container, *stage, dxil_spirv, spirv_cross)? else {
+            skipped += 1;
+            println!("  {chunk}: decompiler not found");
+            continue;
+        };
+        let cbuffers = match stage {
+            shader::Stage::Pixel => &pixel_cbuffers,
+            _ => &vertex_cbuffers,
+        };
+        let named = name_declarations(&hlsl, cbuffers, &resources);
+        let (guard, profile, entry, define) = match stage {
+            shader::Stage::Vertex => ("STAGE_VERTEX", "vs_6_0", "vs_main", "STAGE_VERTEX"),
+            shader::Stage::Pixel => ("STAGE_FRAGMENT", "ps_6_0", "ps_main", "STAGE_FRAGMENT"),
+            _ => {
+                skipped += 1;
+                println!("  {chunk}: stage {stage:?} is not handled");
+                continue;
+            }
+        };
+        source.push_str(&format!(
+            "\t{chunk} = {{\n\t\tcode = \"\"\"\n#if defined({guard})\n{named}\n#endif\n\t\t\"\"\"\n\t}}\n"
+        ));
+
+        let full = format!("#define RENDERER_D3D12 1\n#define {define} 1\n{named}");
+        match dxc_compile(&full, profile, entry) {
+            Ok(compiled) => match shader::interface_mismatch(container, &compiled) {
+                None => {
+                    matched += 1;
+                    println!(
+                        "  {chunk} ({stage:?} program {index}): compiled {} B, interface matches",
+                        compiled.len()
+                    );
+                }
+                Some(reason) => {
+                    mismatched += 1;
+                    println!("  {chunk} ({stage:?} program {index}): interface MISMATCH: {reason}");
+                }
+            },
+            Err(err) => {
+                failed += 1;
+                println!("  {chunk} ({stage:?} program {index}): COMPILE FAILED: {err}");
+            }
+        }
+    }
+    source.push_str("}\n");
+    let source_path = dir.join(format!("{tag}.all.shader_source"));
+    fs::write(&source_path, source)?;
+    println!(
+        "  {} containers: {matched} matched, {mismatched} mismatched, {failed} failed, \
+         {skipped} skipped -> {}",
+        distinct.len(),
+        source_path.display()
+    );
+    Ok(())
+}
+
 fn reconstruct_source(
     section: &[u8],
     names: Option<&HashMap<u32, String>>,
@@ -3176,8 +3358,10 @@ fn rebuild_struct(body: &[String], elements: &[shader::SignatureElement]) -> Vec
     let mut used = vec![false; body.len()];
     let mut rebuilt = Vec::with_capacity(body.len());
 
-    let mut elements: Vec<&shader::SignatureElement> = elements.iter().collect();
-    elements.sort_by_key(|element| (element.register, element.index));
+    // The elements are already in signature (register/component) order, which is
+    // the order DXC packs them; sorting by `index` would reorder two elements
+    // that share a register and change their masks.
+    let elements: Vec<&shader::SignatureElement> = elements.iter().collect();
 
     for element in elements {
         let semantic = semantic_name(element);
@@ -3196,9 +3380,22 @@ fn rebuild_struct(body: &[String], elements: &[shader::SignatureElement]) -> Vec
                         })
             })
             .or_else(|| {
-                body.iter().enumerate().position(|(index, _)| {
-                    !used[index] && registers[index] == Some(element.register)
-                })
+                // Two elements can share a register with different masks
+                // (`TEXCOORD15` float3 and `CUSTOM1` float1 at register 1), so
+                // prefer the field whose width matches the element's mask.
+                let width = element.mask.count_ones();
+                body.iter()
+                    .enumerate()
+                    .position(|(index, line)| {
+                        !used[index]
+                            && registers[index] == Some(element.register)
+                            && field_width(line) == Some(width)
+                    })
+                    .or_else(|| {
+                        body.iter().enumerate().position(|(index, _)| {
+                            !used[index] && registers[index] == Some(element.register)
+                        })
+                    })
             });
 
         if let Some(index) = found {
@@ -3225,6 +3422,19 @@ fn rebuild_struct(body: &[String], elements: &[shader::SignatureElement]) -> Vec
     }
 
     rebuilt
+}
+
+/// The width (component count) of a generated struct field's type:
+/// `float` 1, `float2` 2, `float3` 3, `float4` 4.
+fn field_width(line: &str) -> Option<u32> {
+    let first = line.split_whitespace().next()?;
+    Some(match first {
+        "float" => 1,
+        "float2" => 2,
+        "float3" => 3,
+        "float4" => 4,
+        _ => return None,
+    })
 }
 
 /// Register a generated struct field is bound to (`: TEXCOORD<register>`).
