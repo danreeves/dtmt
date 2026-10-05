@@ -277,16 +277,38 @@ is the next step.
 **The multi-job mapping is in (2026-10-05).** `compile_declaration` now compiles
 **every** job per stage (`ShaderOverrides::job_containers`, one container per job
 and stage in job order) as well as the first job's `vertex`/`pixel`. `dtmt build`
-detects a multi-job declaration (`job_containers.len() > 2`) and replaces each of
-the engine data's carried containers with the compiled container whose
-**interface** matches it (`shader::interface_mismatch`), so every program gets
-the container its own pass compiled while `program_containers` still indexes the
-list. The standard base - the enumerator's 11-pass declaration, the 17-container
-source, and the carried engine data - now **generates a 151,856-byte section from
-source**, and it **round-trips identically**; its programs carry the compiled
-containers (program 23 decodes to 4704 B, the compiled pixel size; program 24 to
-7426 B, the compiled vertex size). So a variant-rich family builds from source
-end to end. The in-game render of the source-built pumpkin has not been run yet.
+detects a multi-job declaration (`job_containers.len() > 2` **and** a carried
+container list) and replaces each of the engine data's carried containers with
+the compiled container whose **interface** matches it
+(`shader::interface_mismatch`), so every program gets the container its own pass
+compiled while `program_containers` still indexes the list. The standard base -
+the enumerator's 11-pass declaration, the 17-container source, and the carried
+engine data - now **generates a 151,856-byte section from source**, and it
+**round-trips identically**; its programs carry the compiled containers (program
+23 decodes to 4704 B, the compiled pixel size; program 24 to 7426 B, the compiled
+vertex size).
+
+**But the decompiled source does not reproduce the resources (2026-10-05).** In
+game, the source-built standard **crashes** at pipeline creation:
+`HRESULT 0x80070057 = E_INVALIDARG, assert: shader '#ID[38a9b1db]'`. `reflect_dump`
+on the shipped and source-built sections shows why: the interface check compares
+only ISG1/OSG1, and the **resource bindings differ**. The shipped vertex container
+binds `global_viewport`/`c_instance_offset`/`c_per_object` as cbuffers b0/b1/b2,
+`bones`/`last_bones`/`idata` as **structured buffers** and `global_uav_buffers` as
+a `uav-rwbyteaddress`; the recompiled one binds a single generic
+`SPIRV_Cross_VertexInfo` at b3, the structured buffers as **textures** (kind 2)
+and the UAV as `uav-rwtyped`. `spirv-cross` drops the real cbuffer split and the
+structured-buffer kind, so the engine's root signature (built from the carried
+tails/group data) does not match the shader. `--reconstruct-all`'s check should
+compare the resources too, and `name_declarations` (or the decompiler) must
+reproduce the cbuffers at their registers and the structured-buffer/UAV kinds -
+the tail records name them. Until then the pumpkin runs on the **carried** shipped
+programs (which render), not the source-built ones.
+
+The in-game flow itself works: the mod's Lua drives title -> hub with no input
+(`TitleView.on_enter` -> `_continue`, `StateMainMenu._set_selected_profile` ->
+`event_state_main_menu_continue`), and a timer after `StateGameplay.on_enter`
+loads the package and spawns the pumpkin (`Application.quit()` after a delay).
 
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
