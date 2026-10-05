@@ -256,6 +256,24 @@ packs them - so the sort is gone; a width check pairs a field with the element
 whose mask it matches when a register is shared. The UI base reconstruction is
 unaffected.
 
+**The enumerator emits the family's passes (2026-10-05).** `shader43 --enumerate
+<dir> <section>` writes a `.shader_node` with **one code block per distinct
+`(vertex, pixel)` program pair**, each including that pair's two
+`--reconstruct-all` chunks, and **one pass per block**. On `3F08AC44`: 26
+programs, 17 distinct containers, 13 pairs, **11 distinct `(vs, ps)` pairs** - so
+the declaration has 11 passes (the pairs share containers: `pair_0` and `pair_4`
+both use `c1` as their pixel chunk, etc.). `shader43 --compile` on that
+declaration compiles **all 22 containers** (11 vs + 11 ps) with the expected
+sizes. The chunk include resolves by name (`find_chunk`), and each chunk's
+`#if defined(STAGE_VERTEX)`/`STAGE_PIXEL` guard makes `job_source` take the right
+one per stage.
+
+That is the enumerator: the family's declaration now enumerates its interfaces
+from source. What is left for a from-source standard section is the build's
+**multi-job mapping** - compiling each pass's container and pairing it with the
+section's programs (the carried `program_containers` gives the pairing) - which
+is the next step.
+
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):
 

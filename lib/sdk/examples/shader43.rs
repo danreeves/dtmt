@@ -60,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut plan_declaration: Option<PathBuf> = None;
     let mut reconstruct_dir: Option<PathBuf> = None;
     let mut reconstruct_all_dir: Option<PathBuf> = None;
+    let mut enumerate_dir: Option<PathBuf> = None;
     let mut substitute_mode = false;
     let mut records_mode = false;
     let mut registry_mode = false;
@@ -152,6 +153,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
                 reconstruct_all_dir = Some(PathBuf::from(
                     args.get(i).expect("--reconstruct-all needs a directory").clone(),
+                ));
+            }
+            "--enumerate" => {
+                i += 1;
+                enumerate_dir = Some(PathBuf::from(
+                    args.get(i).expect("--enumerate needs a directory").clone(),
                 ));
             }
             "--substitute" => substitute_mode = true,
@@ -334,6 +341,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cross = decompiler(&spirv_cross, "SPIRV_CROSS", "spirv-cross");
         for path in &files {
             if let Err(err) = reconstruct_all(path, dir, names.as_ref(), &dxil, &cross) {
+                eprintln!("{}: {err}", path.display());
+            }
+        }
+        return Ok(());
+    }
+
+    if let Some(dir) = &enumerate_dir {
+        for path in &files {
+            if let Err(err) = enumerate_family(path, dir) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -1501,6 +1517,100 @@ fn reconstruct_all(
     Ok(())
 }
 
+/// Emits a `.shader_node` for a section's family: one code block per distinct
+/// `(vertex, pixel)` program pair, each including that pair's two
+/// `--reconstruct-all` chunks, and one pass per block. This is the enumerator
+/// that lets a variant-rich family compile from source - `3F08AC44`'s 13 pairs
+/// are 11 distinct `(vs, ps)` interfaces.
+///
+/// ```text
+/// shader43 --enumerate <dir> <section>
+/// ```
+fn enumerate_family(
+    path: &Path,
+    dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::shader::Section;
+
+    let data = fs::read(path)?;
+    let bytes = shader_section(&data)?;
+    let section = Section::parse(bytes)?;
+    let device_offset = u32_at(bytes, 40) as usize;
+    let device_size = u32_at(bytes, 44) as usize;
+    let device = bytes
+        .get(device_offset..device_offset + device_size)
+        .ok_or("device data is out of range")?;
+    let programs = shader::parse_programs(device)?;
+    let tag = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+
+    // The distinct containers, in first-use order, are the chunk indices
+    // `--reconstruct-all` writes (`<tag>_c<n>`).
+    let mut containers: Vec<&[u8]> = Vec::new();
+    let chunk_of = |container: &[u8], containers: &Vec<&[u8]>| {
+        containers
+            .iter()
+            .position(|other| *other == container)
+    };
+    for program in &programs {
+        if chunk_of(&program.container, &containers).is_none() {
+            containers.push(&program.container);
+        }
+    }
+
+    // The `(vs, ps)` chunk index of each program pair, deduplicated in order.
+    let mut pairs: Vec<(usize, Option<usize>)> = Vec::new();
+    for i in (0..programs.len()).step_by(2) {
+        let vs = chunk_of(&programs[i].container, &containers).unwrap();
+        let ps = programs
+            .get(i + 1)
+            .and_then(|program| chunk_of(&program.container, &containers));
+        pairs.push((vs, ps));
+    }
+    let mut distinct: Vec<(usize, Option<usize>)> = Vec::new();
+    for pair in &pairs {
+        if !distinct.contains(pair) {
+            distinct.push(*pair);
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(
+        "// Enumerated from a shipped section: one pass per distinct (vertex, pixel)\n\
+         // program pair, each including that pair's two `--reconstruct-all` chunks.\n\n",
+    );
+    out.push_str("code_blocks = {\n");
+    for (n, (vs, ps)) in distinct.iter().enumerate() {
+        let mut includes = vec![format!("\"{tag}_c{vs}\"")];
+        if let Some(ps) = ps {
+            includes.push(format!("\"{tag}_c{ps}\""));
+        }
+        out.push_str(&format!(
+            "    pair_{n} = {{ include = [ {} ] }}\n",
+            includes.join(" ")
+        ));
+    }
+    out.push_str("}\n\nshader_contexts = {\n    default = {\n        passes = [\n");
+    for n in 0..distinct.len() {
+        out.push_str(&format!(
+            "            {{ layer=\"default\" code_block=\"pair_{n}\" render_state=\"default\" }}\n"
+        ));
+    }
+    out.push_str("        ]\n    }\n}\n");
+
+    fs::create_dir_all(dir)?;
+    let out_path = dir.join(format!("{tag}.all.shader_node"));
+    fs::write(&out_path, &out)?;
+    println!(
+        "{} programs, {} distinct containers, {} program pairs, {} distinct (vs, ps) pairs -> {}",
+        programs.len(),
+        containers.len(),
+        pairs.len(),
+        distinct.len(),
+        out_path.display()
+    );
+    Ok(())
+}
+
 fn reconstruct_source(
     section: &[u8],
     names: Option<&HashMap<u32, String>>,
@@ -2012,9 +2122,10 @@ fn compile(
             match dxc_compile(&source, profile, entry) {
                 Ok(container) => {
                     let name = format!(
-                        "{}_p{}_{}.dxbc",
+                        "{}_p{}_{}_{}.dxbc",
                         sanitize(&job.context),
                         job.permutation,
+                        sanitize(&job.code_block),
                         profile
                     );
                     fs::write(out_dir.join(&name), &container)?;
@@ -2054,9 +2165,10 @@ fn compile(
                     // Keep the source that failed, so a compile error can be read
                     // against the generated scaffolding and the block's own code.
                     let name = format!(
-                        "{}_p{}_{}.failed.hlsl",
+                        "{}_p{}_{}_{}.failed.hlsl",
                         sanitize(&job.context),
                         job.permutation,
+                        sanitize(&job.code_block),
                         profile
                     );
                     let _ = fs::write(out_dir.join(&name), &source);
