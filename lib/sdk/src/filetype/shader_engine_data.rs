@@ -1114,6 +1114,48 @@ const UI_BASE_PASS_SEAMS: [u8; 48] = [
     0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00,
 ];
 
+/// Packs a pass's channel set into the block's channel-write mask byte.
+///
+/// The mask is the engine's `render_states` `write_mask0`, a `|`-joined channel
+/// list; one bit per channel (`red` 1, `green` 2, `blue` 4, `alpha` 8). A pass
+/// that names no channel keeps the preamble body's default `07`
+/// (`red|green|blue`). Measured 48/48 against the shipped UI base: the 48
+/// per-pass masks are exactly their `write_mask0` (see `Shader RE TODO.md`).
+pub fn write_mask(channels: &[&str]) -> u8 {
+    let mut mask = 0u8;
+    let mut named = false;
+    for channel in channels {
+        let channel = channel.trim().to_ascii_lowercase();
+        if channel.is_empty() || channel == "none" {
+            named = true;
+            continue;
+        }
+        for part in channel.split('|') {
+            let bit = match part.trim() {
+                "red" => 0x01,
+                "green" => 0x02,
+                "blue" => 0x04,
+                "alpha" => 0x08,
+                _ => continue,
+            };
+            mask |= bit;
+            named = true;
+        }
+    }
+    if named { mask } else { 0x07 }
+}
+
+/// Packs a query's macro tokens into the channel-write mask: a token is read by
+/// its last `_`-separated word, so `CHANNEL_RED` names red. A query whose tokens
+/// name no channel keeps the body's default `07`.
+pub fn write_mask_tokens(tokens: &[String]) -> u8 {
+    let names: Vec<&str> = tokens
+        .iter()
+        .filter_map(|token| token.rsplit('_').next())
+        .collect();
+    write_mask(&names)
+}
+
 impl EngineData {
     /// Extracts the wrapper of a raw material data file's shader section.
     pub fn from_material(data: &[u8]) -> Result<Self> {
@@ -2563,6 +2605,37 @@ programs = []
             engine_data.group_template.as_ref().unwrap().groups[0].tail,
             expected
         );
+    }
+
+    #[test]
+    fn the_ui_bases_masks_are_the_passes_write_masks() {
+        // The UI base's 48 shipped pixel masks are exactly each pass's
+        // `write_mask0` channel set, packed one bit per channel (`red` 1,
+        // `green` 2, `blue` 4, `alpha` 8). Measured 48/48 in `Shader RE TODO.md`.
+        let masks: [u8; 48] = [
+            0x07, 0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x07, 0x01,
+            0x01, 0x02, 0x02, 0x04, 0x04, 0x08, 0x08, 0x0F, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08,
+            0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07, 0x01, 0x02, 0x04, 0x08, 0x0F, 0x07,
+            0x01, 0x02, 0x04, 0x08, 0x0F, 0x07,
+        ];
+        let channels = [
+            "red|green|blue", "red", "red", "green", "green", "blue", "blue", "alpha", "alpha",
+            "red|green|blue|alpha", "red|green|blue|alpha", "red|green|blue",
+            "red|green|blue", "red", "red", "green", "green", "blue", "blue", "alpha", "alpha",
+            "red|green|blue|alpha", "red|green|blue|alpha", "red|green|blue",
+            "red", "green", "blue", "alpha", "red|green|blue|alpha", "red|green|blue",
+            "red", "green", "blue", "alpha", "red|green|blue|alpha", "red|green|blue",
+            "red", "green", "blue", "alpha", "red|green|blue|alpha", "red|green|blue",
+            "red", "green", "blue", "alpha", "red|green|blue|alpha", "red|green|blue",
+        ];
+        assert_eq!(channels.len(), 48);
+        for (pass, mask) in masks.iter().enumerate() {
+            assert_eq!(write_mask(&[channels[pass]]), *mask, "pass {pass}");
+        }
+        // A pass naming no channel keeps the body's default.
+        assert_eq!(write_mask(&[]), 0x07);
+        // A token is read by its last word, so `CHANNEL_RED` names red.
+        assert_eq!(write_mask_tokens(&["TAIL_0".into(), "CHANNEL_RED".into()]), 0x01);
     }
 
     #[test]
