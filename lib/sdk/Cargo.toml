@@ -22,6 +22,7 @@ num-traits = { workspace = true }
 oodle = { workspace = true }
 path-slash = { workspace = true }
 pin-project-lite = { workspace = true }
+regex = "1.7.1"
 serde = { workspace = true }
 serde_sjson = { workspace = true }
 tokio = { workspace = true }

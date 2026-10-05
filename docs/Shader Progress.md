@@ -338,6 +338,22 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   material and its foreign programs are in effect. `lib/dxc`'s validator runs
   as usual for compiled sources; carried containers are the shipped, signed
   ones.]
+- **A reconstructed structured buffer's load index is an element index, not the
+  buffer image's dword coordinate** (2026-10-05): a bindless `StructuredBuffer`
+  reaches `spirv-cross` as a SPIR-V buffer image, so it emits a vector read as N
+  consecutive **dword** loads
+  (`asfloat(uint4(idata[d].Load(X).x, idata[d].Load(X + 1u).x, ...))`). The
+  reflected kind is structured with `StructureByteStride` 16, so `.Load` takes
+  an **element** index and the read landed four times too far: the standard
+  material's instance transform came out huge, geometry clipping into the
+  camera. `resource_fixups` now collapses the vector read to one element load,
+  `idata[d].Load(X / 4u)`. Verified against the shipped DXIL: the recompiled
+  vertex program's `bufferLoad` index is `instance * 8 + 4`, exactly the shipped
+  program's, and the pumpkin renders at its proper size in the Mourningstar (the
+  `ASSERT_INSTANCE_BUFFER_OFFSET` still fires - the `spvTextureSize` check
+  divides by four a second time). A 64-byte bone matrix (stride 64, read with
+  `wot` 16/32/48 at one index) is a separate case the `/4` collapse does not
+  cover. [DXIL diff on `3F08AC4494A4436E` program 0 + one in-game run]
 
 ## Open, in the order to attack
 

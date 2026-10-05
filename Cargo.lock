@@ -3342,6 +3342,7 @@ dependencies = [
  "oodle",
  "path-slash",
  "pin-project-lite",
+ "regex",
  "serde",
  "serde_sjson",
  "tokio",

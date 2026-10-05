@@ -24,6 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use regex::Regex;
 use sdk::filetype::condition_tree::ConditionTree;
 use sdk::filetype::condition::Defines;
 use sdk::filetype::group_data::GroupData;
@@ -1765,6 +1766,12 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
         result = replace_all_words(&result, old, new);
     }
 
+    // A structured buffer comes back as a typed buffer read with the buffer
+    // image's dword coordinate; convert the vector reads to element loads.
+    if structured {
+        result = collapse_structured_vector_loads(&result);
+    }
+
     // The size helper reads a typed buffer's element count with the
     // one-argument `GetDimensions`; a structured buffer needs a stride.
     if structured {
@@ -1814,6 +1821,67 @@ fn fix_structured_getdimensions(text: &str) -> String {
         "    uint ret;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
         "    uint ret;\n    uint _dtmt_stride;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
     )
+}
+
+/// Rewrites `spirv-cross`'s bindless structured-buffer reads from the buffer
+/// image's **dword** coordinate to a `StructuredBuffer` **element** load.
+///
+/// A bindless structured buffer comes back from `dxil-spirv` as a SPIR-V buffer
+/// image, so `spirv-cross` emits a vector read as N consecutive dword loads:
+///
+/// ```hlsl
+/// asfloat(uint4(idata[d].Load(X).x, idata[d].Load(X + 1u).x,
+///               idata[d].Load(X + 2u).x, idata[d].Load(X + 3u).x))
+/// ```
+///
+/// `X` is a dword index, but the reflected kind is a structured buffer whose
+/// `StructureByteStride` is 16, so `.Load` takes an element index and the read
+/// lands four times too far - the instance transform comes out scrambled. The
+/// N dwords `X..X+N` are the components of the element at `X / 4`, so the whole
+/// vector collapses to one load. This covers the 16-byte-element case (the
+/// instance data); a 64-byte bone matrix needs its own treatment.
+fn collapse_structured_vector_loads(text: &str) -> String {
+    let re = Regex::new(r"as(float|uint)\(uint([234])\((.+?)\)\)")
+        .expect("the structured-load pattern is valid");
+    re.replace_all(text, |caps: &regex::Captures| {
+        let conv = &caps[1];
+        let count: usize = caps[2].parse().expect("a digit was matched");
+        match parse_vector_load(&caps[3], count) {
+            Some((buffer, coord)) => format!("as{conv}({buffer}.Load(({coord}) / 4u))"),
+            None => caps[0].to_string(),
+        }
+    })
+    .into_owned()
+}
+
+/// Splits a `BUF.Load(X).x, BUF.Load(X + 1u).x, ...` argument list into the
+/// buffer access and its base dword coordinate, when every part agrees on the
+/// buffer and the coordinates run `X, X + 1u, ...`.
+fn parse_vector_load(inner: &str, count: usize) -> Option<(String, String)> {
+    let parts: Vec<&str> = inner.split(", ").collect();
+    if parts.len() != count {
+        return None;
+    }
+
+    let (buffer, coord) = parse_load_part(parts[0])?;
+    for (index, part) in parts.iter().enumerate().skip(1) {
+        let (other, other_coord) = parse_load_part(part)?;
+        if other != buffer || other_coord != format!("{coord} + {index}u") {
+            return None;
+        }
+    }
+
+    Some((buffer, coord))
+}
+
+/// Parses `BUF.Load(COORD).x` into its buffer access and coordinate.
+fn parse_load_part(part: &str) -> Option<(String, String)> {
+    let part = part.trim();
+    let dot = part.find(".Load(")?;
+    let buffer = part[..dot].to_string();
+    let rest = &part[dot + ".Load(".len()..];
+    let close = rest.find(").x")?;
+    Some((buffer, rest[..close].to_string()))
 }
 
 /// The HLSL type for a resource of the original's `kind`: a structured buffer
