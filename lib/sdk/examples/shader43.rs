@@ -1735,7 +1735,7 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
             if new_type != ty {
                 retypes.insert(ty.clone(), new_type.clone());
             }
-            if *kind == 5 {
+            if *kind == 5 && std::env::var_os("SHADER43_BYTE_ADDRESS_STRUCTURED").is_none() {
                 structured = true;
             }
             out.push_str(&format!(
@@ -1814,9 +1814,17 @@ fn fix_structured_getdimensions(text: &str) -> String {
 /// and everything else keeps the type `spirv-cross` emitted.
 fn resource_kind(ty: &str, kind: u32) -> String {
     let template = ty.find('<').map(|start| &ty[start..]).unwrap_or("");
+    // The structured retype is what the assert experiment toggles off; a
+    // byte-address buffer keeps its retype either way.
+    let structured = std::env::var_os("SHADER43_NO_STRUCTURED_RETYPE").is_none();
+    // `spirv-cross` writes byte-offset loads (`Load(_138 * 32 + 16)`) even for a
+    // buffer the reflection calls structured; a byte-address buffer is the HLSL
+    // type whose `Load` takes a byte offset, so this is the experiment.
+    let byte_address = std::env::var_os("SHADER43_BYTE_ADDRESS_STRUCTURED").is_some();
     match kind {
-        5 => format!("StructuredBuffer{template}"),
-        6 => format!("RWStructuredBuffer{template}"),
+        5 if byte_address => "ByteAddressBuffer".to_string(),
+        5 if structured => format!("StructuredBuffer{template}"),
+        6 if structured => format!("RWStructuredBuffer{template}"),
         7 => "ByteAddressBuffer".to_string(),
         8 => "RWByteAddressBuffer".to_string(),
         _ => ty.to_string(),
