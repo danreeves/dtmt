@@ -1069,6 +1069,13 @@ pub struct EngineData {
     /// when the program carries no container (an engine data file from before
     /// the containers were captured).
     pub program_containers: Vec<Option<usize>>,
+    /// Whether each program's tail is a **split** tail - an empty constant
+    /// buffer list and empty resource lists that the build fills from the
+    /// container's reflection - parallel to `programs`. A carried tail, even one
+    /// with no constant buffers, is not split; an empty vector (a from-scratch
+    /// file whose programs come from the declaration) means every program is
+    /// split.
+    pub program_split: Vec<bool>,
     /// Group tails written as a `pass = N` reference (tail slot, context, pass
     /// index), for [`EngineData::resolve_pass_tails`].
     pub pass_tail_refs: Vec<(usize, String, usize)>,
@@ -1306,6 +1313,7 @@ impl EngineData {
             group_template,
             material_tables,
             device_preamble,
+            program_split: vec![false; programs.len()],
             programs,
             tails: Vec::new(),
             containers,
@@ -1345,6 +1353,7 @@ impl EngineData {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            program_split: Vec::new(),
             permutations: text
                 .permutations
                 .map(|plans| plans.into_iter().map(Into::into).collect()),
@@ -1498,7 +1507,10 @@ impl EngineData {
 
         // The tails: a split tail's constant-buffer list and resource lists are
         // derived at build time, so the reader writes an empty prefix and empty
-        // lists for it to fill; a carried tail is the whole tail.
+        // lists for it to fill; a carried tail is the whole tail. A tail written
+        // with `lists` (even an all-zero one) is carried whole, and its program
+        // must not be derived.
+        let split_flags: Vec<bool> = text.tails.iter().map(|tail| tail.lists.is_none()).collect();
         for tail in text.tails {
             let mut bytes = match &tail.lists {
                 Some(ListsText::Roles(roles)) => lists_bytes(roles)?,
@@ -1540,6 +1552,9 @@ impl EngineData {
             }
             engine_data.programs.push((stage, tail));
             engine_data.program_containers.push(program.container);
+            engine_data
+                .program_split
+                .push(split_flags.get(program.tail).copied().unwrap_or(false));
         }
 
         Ok(engine_data)
@@ -1961,9 +1976,18 @@ impl EngineData {
 
             // A split tail (the reader wrote it an empty prefix) derives its
             // constant-buffer list and its resource lists from the container's
-            // own reflection; a carried tail is left alone.
+            // own reflection; a carried tail is left alone. A carried tail can
+            // itself have no constant buffers (a vertex program's, or a family's
+            // phase-prefixed tail), so the split form is the one with **empty
+            // lists** too.
             let derived = match shader::Tail::parse(tail) {
-                Some(parsed) if parsed.cbuffers.is_empty() => {
+                Some(parsed)
+                    if self.program_split.get(index).copied().unwrap_or(true)
+                        && parsed.cbuffers.is_empty()
+                        && shader::TailLists::parse(&parsed.rest).is_some_and(|lists| {
+                            lists.lists.iter().all(|records| records.is_empty())
+                        }) =>
+                {
                     let resources = resources.get(stage).ok_or_else(|| {
                         color_eyre::eyre::eyre!(
                             "no reflection for program {index} ({stage:?}): its constant buffers \
@@ -2107,6 +2131,11 @@ impl EngineData {
         jobs: &[crate::filetype::shader_node::CompileJob],
     ) -> Result<()> {
         if jobs.is_empty() {
+            return Ok(());
+        }
+        // A file that carries its own group data (a blob, not a template) keeps
+        // it: its groups are the family's own, not the declaration's single pass.
+        if !self.group_data.is_empty() {
             return Ok(());
         }
         // The distinct condition sets, in job order.
@@ -2309,6 +2338,7 @@ mod tests {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            program_split: Vec::new(),
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
             group_repeat: 0,

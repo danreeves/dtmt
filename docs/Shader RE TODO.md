@@ -195,22 +195,45 @@ tested (`write_mask`/`write_mask_tokens`; `derived_programs` now computes each
 program's mask from its pass's channel set, and the UI base build is unchanged,
 `CD9854D69AC9A5B7`).
 
-**The standard family's reconstruction does not yet generate (2026-10-05).** A
-scratch mod with `shader43 --reconstruct`'s `3F08AC44` output (declaration +
-source + engine data, the code block wired to the source with
-`include = ["...#3F08AC4494A4436E"]`) **compiles** its declaration - vs 20329,
-ps 10740 bytes. `dtmt build` first failed at `derived_cbuffers` ("the file has no
-material table"), because the reconstruction carries the group data as a
-`group_data` blob (its groups do not template) and `EngineData::from_text` had no
-`material_tables`; `EngineData::fill_material_tables` now walks the blob by the
-contexts' query ids and fills them. The build then stops at the **known gap**:
-"the groups disagree about `c_per_object`'s size; the program-to-group mapping is
-not decoded" - `3F08AC44` is variant-rich, its groups carry different material
-tables, and the split-tail derivation needs one agreed size. Two fixes remain:
-carry the standard tails **whole** (its tails open with a phase byte and the
-material tables differ), or decode the program-to-group mapping. The scratch mod
-and its exact errors are reproducible from
-`C:\Users\Dan\AppData\Local\Temp\opencode\dtmt-mat\std-mod`.
+**The program-to-group mapping is decoded: `2 × n` programs per group, in group
+order (2026-10-05, 5/6 families).** The program list is grouped by group, each
+group owning **`2 × n`** programs where `n` is its condition-header entry count
+(the group tail's condition-set size), and the groups run in order. Measured with
+`examples/program_groups.rs`:
+
+| family | groups (n) | programs | 2 x sum(n) |
+| --- | --- | --- | --- |
+| `004F18EA` | 3,3,1 | 14 | 14 |
+| `17A3DC01` | 5,1,1 | 14 | 14 |
+| `38ECBAD1` | 2 | 4 | 4 |
+| `3F08AC44` | 5,5,1,1,1 | 26 | 26 |
+| `427B5E6E` | 5,1,1 | 14 | 14 |
+| UI base (`007bf44b`) | 2,2,1,1,1,1 x6 | 96 | 96 |
+
+The resource-record matching confirms it: the standard family's programs land on
+groups **g0 0-9, g1 10-19, g2 20-21, g3 22-23, g4 24-25** (7/7/1/2/2 of them
+carry 7-word records). `2A04418E` is the exception (its condition headers do not
+read), as `docs` already notes. So a program's group is
+`first g with 2*sum(n_0..n_g) > index`, and the group's material table is the one
+its split tails should use.
+
+**The standard family now generates (2026-10-05).** Three fixes made the
+reconstruction build end to end:
+
+1. `EngineData::fill_material_tables` reads the material tables from a carried
+   `group_data` blob (`GroupData::object_tables`), so a family whose groups do not
+   template still has them.
+2. `EngineData::program_split` records, per program, whether its tail is a **split**
+   tail (empty cbuffers *and* empty lists) from the text form; `build_device` only
+   derives such a tail. A carried tail with no constant buffers - a vertex tail, or
+   a family's phase-prefixed tail - is no longer mistaken for split.
+3. `derive_tails` no longer builds a one-group template for a file that carries its
+   own `group_data` blob.
+
+With those, the scratch mod's `3F08AC44` reconstruction **generates a 274,800-byte
+section**, and the UI base build is unchanged (`CD9854D69AC9A5B7`). The next step
+for the pumpkin is to make this a base material in snoopy-mod and reparent the
+instance, then test in game.
 
 The compiler flattens every `.shader_source` declaration into a `.editor`
 registry (one entry per compiled `.shader_library`):

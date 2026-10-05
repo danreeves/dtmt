@@ -194,6 +194,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         tails: Vec::new(),
         containers: Vec::new(),
         program_containers: vec![None; 2],
+        program_split: vec![false; 2],
         pass_tail_refs: Vec::new(),
         group_tail_slots: Vec::new(),
         group_repeat: 0,
