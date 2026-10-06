@@ -42,7 +42,7 @@
 use color_eyre::eyre::{Context as _, Result, bail, eyre};
 use oodle::{OodleLZ_CheckCRC, OodleLZ_FuzzSafe};
 
-use crate::filetype::group_data::{DEPENDENCY_LEN, Dependency};
+use crate::filetype::group_data::{DEPENDENCY_LEN, Dependency, Descriptor};
 use crate::murmur;
 
 /// Shader section version used by Darktide.
@@ -656,6 +656,67 @@ pub fn parse_programs(device: &[u8]) -> Result<Vec<Program>> {
     }
 
     Ok(programs)
+}
+
+/// The descriptor indices and name hashes a program's tail's resource records
+/// name: the 7-word records of lists 2, 3, 4 and 5, as `(descriptor index,
+/// name hash)`. A 7-word record's word 1 is the resource's index in the
+/// descriptor list of the group the program belongs to, and word 0 is its name
+/// hash.
+pub fn tail_resource_records(tail: &[u8]) -> Vec<(u32, u32)> {
+    let Some(parsed) = Tail::parse(tail) else {
+        return Vec::new();
+    };
+    let Some(lists) = TailLists::parse(&parsed.rest) else {
+        return Vec::new();
+    };
+    let mut records = Vec::new();
+    for index in [2usize, 3, 4, 5] {
+        for record in lists.list(index) {
+            if let [name, descriptor, ..] = record[..] {
+                records.push((descriptor, name));
+            }
+        }
+    }
+    records
+}
+
+/// The group each program belongs to, by the descriptor index its resource
+/// records name.
+///
+/// A record matches a group when its name hash sits at the record's descriptor
+/// index in that group's list. The group matching the most records wins (the
+/// first on a tie, since groups with identical lists cannot be told apart), and
+/// only a group that matches every record is used. `None` for a program whose
+/// tail does not parse, whose records are empty, or that no group fully
+/// matches.
+pub fn program_groups(tails: &[Vec<u8>], groups: &[Vec<Descriptor>]) -> Vec<Option<usize>> {
+    tails
+        .iter()
+        .map(|tail| {
+            let records = tail_resource_records(tail);
+            if records.is_empty() {
+                return None;
+            }
+            let mut best: Option<(usize, usize)> = None;
+            for (index, entries) in groups.iter().enumerate() {
+                let good = records
+                    .iter()
+                    .filter(|(descriptor, name)| {
+                        entries.iter().position(|entry| entry.name == *name)
+                            == Some(*descriptor as usize)
+                    })
+                    .count();
+                if best.is_none_or(|(_, best_good)| good > best_good) {
+                    best = Some((index, good));
+                }
+            }
+            match best {
+                Some((index, good)) if good == records.len() => Some(index),
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 /// Rebuilds a shader43 section.

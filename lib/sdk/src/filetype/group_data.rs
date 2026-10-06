@@ -567,6 +567,33 @@ impl GroupData {
         })
     }
 
+    /// Each group's full descriptor list: the `count` 16-byte entries after the
+    /// group's 12-byte prefix (`{query_id, word, count}`), as `{name, flags, X,
+    /// Y}`. A program's resource records index into the list of the group it
+    /// belongs to (a 7-word record's word 1 is the index, word 0 the name hash).
+    pub fn descriptor_lists(&self, query_ids: &[u32]) -> Option<Vec<Vec<Descriptor>>> {
+        let starts = self.group_starts(query_ids)?;
+        let mut lists = Vec::with_capacity(starts.len());
+        for start in starts {
+            let count = self.word(start + 8)? as usize;
+            if count > 256 {
+                return None;
+            }
+            let mut entries = Vec::with_capacity(count);
+            for index in 0..count {
+                let at = start + 12 + index * 16;
+                entries.push(Descriptor {
+                    name: self.word(at)?,
+                    flags: self.word(at + 4)?,
+                    x: self.word(at + 8)?,
+                    y: self.word(at + 12)?,
+                });
+            }
+            lists.push(entries);
+        }
+        Some(lists)
+    }
+
     /// Every run of two or more canonical records, in the order it appears.
     pub fn runs(&self) -> Vec<Vec<Record>> {
         let mut runs = Vec::new();

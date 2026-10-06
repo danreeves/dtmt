@@ -349,8 +349,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(dir) = &enumerate_dir {
+        let names = match &variables_dict {
+            Some(path) => Some(load_dictionary(path)?),
+            None => None,
+        };
         for path in &files {
-            if let Err(err) = enumerate_family(path, dir) {
+            if let Err(err) = enumerate_family(path, dir, names.as_ref()) {
                 eprintln!("{}: {err}", path.display());
             }
         }
@@ -1486,12 +1490,14 @@ fn reconstruct_all(
 fn enumerate_family(
     path: &Path,
     dir: &Path,
+    names: Option<&HashMap<u32, String>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use sdk::filetype::group_data::GroupData;
     use sdk::filetype::shader::Section;
 
     let data = fs::read(path)?;
     let bytes = shader_section(&data)?;
-    let _section = Section::parse(bytes)?;
+    let section = Section::parse(bytes)?;
     let device_offset = u32_at(bytes, 40) as usize;
     let device_size = u32_at(bytes, 44) as usize;
     let device = bytes
@@ -1530,12 +1536,87 @@ fn enumerate_family(
         }
     }
 
+    // The group each program belongs to, and the condition set each group
+    // carries, so a pass writes the real set rather than `default`. The ids are
+    // `#<hex>`: a Darktide family's conditions have no names.
+    let query_ids: Vec<u32> = section
+        .contexts()
+        .iter()
+        .flat_map(|context| context.queries.iter().map(|query| query.id))
+        .collect();
+    let group = GroupData::new(section.group_data().to_vec());
+    let tails: Vec<Vec<u8>> = programs
+        .iter()
+        .enumerate()
+        .map(|(index, program)| {
+            let next = programs
+                .get(index + 1)
+                .map(|next| next.pos)
+                .unwrap_or(device.len());
+            device[program.meta_pos + 16..next].to_vec()
+        })
+        .collect();
+    let program_group = group
+        .descriptor_lists(&query_ids)
+        .map(|lists| shader::program_groups(&tails, &lists))
+        .unwrap_or_default();
+    let condition_sets: Vec<Vec<String>> = group
+        .condition_headers(&query_ids)
+        .map(|headers| {
+            headers
+                .iter()
+                .map(|header| {
+                    header
+                        .entries
+                        .iter()
+                        .map(|entry| format!("#{:08X}", entry.hash))
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // The group of a program pair: the vertex's, else the pixel's.
+    let pair_group = |pair: usize| -> Option<usize> {
+        program_group
+            .get(pair * 2)
+            .copied()
+            .flatten()
+            .or_else(|| program_group.get(pair * 2 + 1).copied().flatten())
+    };
+    let distinct_groups: Vec<Option<usize>> = distinct
+        .iter()
+        .map(|pair| {
+            pairs
+                .iter()
+                .position(|other| other == pair)
+                .and_then(pair_group)
+        })
+        .collect();
+
     let mut out = String::new();
     out.push_str(
         "// Enumerated from a shipped section: one pass per distinct (vertex, pixel)\n\
-         // program pair, each including that pair's two `--reconstruct-all` chunks.\n\n",
+         // program pair, each including that pair's two `--reconstruct-all` chunks.\n\
+         // A pass writes its group's condition set as `#<hex>` ids.\n\n",
     );
-    out.push_str("code_blocks = {\n");
+
+    // The material's inputs: the first group's object table, named where the
+    // dictionary can.
+    out.push_str("inputs = {\n");
+    if let Some((_, records)) = group
+        .object_tables(&query_ids)
+        .and_then(|tables| tables.into_iter().next())
+    {
+        for record in records {
+            if let Some(name) = names.and_then(|names| names.get(&record.hash)) {
+                out.push_str(&format!(
+                    "    {name} = {{ name = \"{name}\" type = \"{}\" }}\n",
+                    variable_type(record.kind)
+                ));
+            }
+        }
+    }
+    out.push_str("}\n\ncode_blocks = {\n");
     for (n, (vs, ps)) in distinct.iter().enumerate() {
         let mut includes = vec![format!("\"{tag}_c{vs}\"")];
         if let Some(ps) = ps {
@@ -1547,10 +1628,16 @@ fn enumerate_family(
         ));
     }
     out.push_str("}\n\nshader_contexts = {\n    default = {\n        passes = [\n");
-    for n in 0..distinct.len() {
-        out.push_str(&format!(
-            "            {{ layer=\"default\" code_block=\"pair_{n}\" render_state=\"default\" }}\n"
-        ));
+    for (n, group_index) in distinct_groups.iter().enumerate() {
+        let set = group_index
+            .and_then(|index| condition_sets.get(index))
+            .filter(|set| !set.is_empty())
+            .map(|set| {
+                let words: Vec<String> = set.iter().map(|hash| format!("\"{hash}\"")).collect();
+                format!(" conditions=[{}]", words.join(" "))
+            })
+            .unwrap_or_default();
+        out.push_str(&format!("            {{ code_block=\"pair_{n}\"{set} }}\n"));
     }
     out.push_str("        ]\n    }\n}\n");
 
@@ -1566,6 +1653,19 @@ fn enumerate_family(
         out_path.display()
     );
     Ok(())
+}
+
+/// The declaration type of a material record kind: the group data's own codes.
+fn variable_type(kind: u32) -> &'static str {
+    match kind {
+        0 => "scalar",
+        1 => "vector2",
+        2 => "vector3",
+        3 => "vector4",
+        4 => "matrix",
+        5 => "texture",
+        _ => "scalar",
+    }
 }
 
 fn reconstruct_source(
