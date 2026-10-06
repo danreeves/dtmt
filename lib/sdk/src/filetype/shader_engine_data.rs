@@ -2681,6 +2681,10 @@ programs = []
             code_block: "b".into(),
             layer: Some("gui".into()),
             render_state: Some("gui_hdr".into()),
+            condition_terms: vec![
+                crate::filetype::shader_node::ConditionTerm::Name("gui".into()),
+                crate::filetype::shader_node::ConditionTerm::Name("gui_hdr".into()),
+            ],
             macros: vec![JobMacro {
                 name: "SINGLE".into(),
                 stages: Vec::new(),

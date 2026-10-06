@@ -525,6 +525,49 @@ impl JobMacro {
     }
 }
 
+/// One term of a pass's condition set: a name the engine hashes, or a raw
+/// condition id written `#<hex>` when the name is not known.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConditionTerm {
+    /// A layer or render-state name, hashed with `Murmur32`.
+    Name(String),
+    /// A raw condition id, written `#<hex>` - for a condition the shipped
+    /// vocabulary does not name (a Darktide family carries several).
+    Hash(u32),
+}
+
+impl ConditionTerm {
+    /// Parses a written term: `#<hex>` is a raw id, anything else a name.
+    pub fn parse(text: &str) -> Self {
+        let trimmed = text.trim();
+        if let Some(hex) = trimmed.strip_prefix('#')
+            && let Ok(value) = u32::from_str_radix(hex, 16)
+        {
+            return Self::Hash(value);
+        }
+        Self::Name(trimmed.to_string())
+    }
+
+    /// The id the engine keys the condition by.
+    pub fn id(&self) -> u32 {
+        match self {
+            Self::Name(name) => u32::from(crate::murmur::Murmur32::hash(name.as_bytes())),
+            Self::Hash(value) => *value,
+        }
+    }
+
+    /// The term as it is written back out.
+    pub fn text(&self) -> String {
+        match self {
+            Self::Name(name) => name.clone(),
+            Self::Hash(value) => format!("#{value:08X}"),
+        }
+    }
+}
+
+/// The condition set a pass selects its group by: the terms in order.
+pub type ConditionSet = Vec<ConditionTerm>;
+
 /// One program the declaration asks to compile: a context, a permutation, and
 /// the pass's code block with the macros it compiles under. The HLSL is
 /// assembled per stage, because a macro limited to one stage must not be
@@ -541,6 +584,9 @@ pub struct CompileJob {
     pub layer: Option<String>,
     /// The render state the pass draws with, when it names one.
     pub render_state: Option<String>,
+    /// The pass's condition set, in order. Derived from `layer`/`render_state`
+    /// unless the pass wrote a raw `conditions` list.
+    pub condition_terms: ConditionSet,
     /// The permutation's macros plus the pass's own, each with its stage limit.
     pub macros: Vec<JobMacro>,
 }
@@ -556,38 +602,23 @@ impl CompileJob {
     }
 
     /// The condition names this pass selects its group by: its layer and its
-    /// render state, de-duplicated in that order. Each is hashed to the group
-    /// tail's condition id with `Murmur32` - the same convention every other
-    /// name in a section uses. This is what a group's tail (its condition set)
-    /// is derived from.
+    /// render state, de-duplicated in that order - or the raw `conditions` list
+    /// the pass wrote, verbatim. Each name is hashed to the group tail's
+    /// condition id with `Murmur32`; a `#<hex>` term is the id itself. This is
+    /// what a group's tail (its condition set) is derived from.
     ///
     /// The pass's macros are **not** included: they build the query key (and the
     /// channel mask), not the group's condition set - the shipped UI base's
     /// `{gui, transparent_mask}` tail carries no define token even though the
     /// pass that selects it defines one.
     pub fn conditions(&self) -> Vec<String> {
-        let mut names: Vec<String> = Vec::new();
-        let mut push = |name: &str| {
-            if !name.is_empty() && !names.iter().any(|other| other == name) {
-                names.push(name.to_string());
-            }
-        };
-        if let Some(layer) = &self.layer {
-            push(layer);
-        }
-        if let Some(state) = &self.render_state {
-            push(state);
-        }
-        names
+        self.condition_terms.iter().map(ConditionTerm::text).collect()
     }
 
     /// The condition ids of this pass: [`CompileJob::conditions`] hashed with
-    /// `Murmur32`.
+    /// `Murmur32`, with raw `#<hex>` terms passed through.
     pub fn condition_ids(&self) -> Vec<u32> {
-        self.conditions()
-            .iter()
-            .map(|name| u32::from(crate::murmur::Murmur32::hash(name.as_bytes())))
-            .collect()
+        self.condition_terms.iter().map(ConditionTerm::id).collect()
     }
 }
 
@@ -706,6 +737,11 @@ pub struct PassValue {
     /// The render state the pass draws with.
     #[serde(default)]
     pub render_state: Option<String>,
+    /// The pass's condition set written raw: a list of names or `#<hex>` ids.
+    /// When present it replaces the derived `layer`/`render_state` set, so a
+    /// family whose condition ids have no names still round-trips.
+    #[serde(default)]
+    pub conditions: Option<Vec<String>>,
     /// The key the engine sorts variants by.
     #[serde(default)]
     pub branch_key: Option<String>,
@@ -870,12 +906,26 @@ impl ShaderNode {
                             }),
                         }
                     }
+                    let condition_terms: ConditionSet = match &pass.conditions {
+                        Some(raw) => raw.iter().map(|term| ConditionTerm::parse(term)).collect(),
+                        None => {
+                            let mut terms: ConditionSet = Vec::new();
+                            for name in [&pass.layer, &pass.render_state].into_iter().flatten() {
+                                if !name.is_empty() && !terms.iter().any(|term| term.text() == *name)
+                                {
+                                    terms.push(ConditionTerm::Name(name.clone()));
+                                }
+                            }
+                            terms
+                        }
+                    };
                     jobs.push(CompileJob {
                         context: context.name.clone(),
                         permutation: index,
                         code_block: pass.code_block.clone(),
                         layer: pass.layer.clone(),
                         render_state: pass.render_state.clone(),
+                        condition_terms,
                         macros,
                     });
                 }
@@ -991,6 +1041,7 @@ fn walk_pass_entry(entry: &PassEntryValue) -> Result<PassEntry> {
             code_block: pass.code_block.clone(),
             defines: pass.defines.clone().into(),
             render_state: pass.render_state.clone(),
+            conditions: pass.conditions.clone(),
             branch_key: pass.branch_key.clone(),
         }),
     })
@@ -2233,6 +2284,24 @@ mod tests {
         // Layer then render state; macros build the query key, not the tail.
         assert_eq!(job.conditions(), vec!["gui", "gui_hdr"]);
         assert_eq!(job.condition_ids(), vec![0x9FCF_E126, 0xBC4E_E226]);
+    }
+
+    #[test]
+    fn a_pass_can_write_its_condition_set_raw() {
+        // A Darktide family's condition ids have no names; a pass writes them
+        // `#<hex>` and they pass through unhashed.
+        let node = ShaderNode::from_sjson(
+            "code_blocks = { b = { } }\n\
+             shader_contexts = { default = { passes = [ \
+                 { code_block=\"b\" conditions=[\"#89EC7545\" \"wireframe\" \"#44EE1E36\"] } \
+             ] } }\n",
+        )
+        .expect("node");
+        let jobs = node.compile_jobs().expect("jobs");
+        assert_eq!(jobs.len(), 1);
+        let job = &jobs[0];
+        assert_eq!(job.conditions(), vec!["#89EC7545", "wireframe", "#44EE1E36"]);
+        assert_eq!(job.condition_ids(), vec![0x89EC_7545, 0x6BBD_F5FD, 0x44EE_1E36]);
     }
 
     #[test]

@@ -302,6 +302,9 @@ pub struct Pass {
     pub defines: Define,
     /// The render state the pass draws with.
     pub render_state: Option<String>,
+    /// The pass's condition set written raw (names or `#<hex>` ids), when the
+    /// declaration names one instead of deriving it from `layer`/`render_state`.
+    pub conditions: Option<Vec<String>>,
     /// The key the engine sorts variants by, when the pass names one.
     pub branch_key: Option<String>,
 }
