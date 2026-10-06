@@ -1679,6 +1679,22 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
         }
     }
 
+    // The structured buffers' element strides, keyed by the name the source
+    // will use. The D3D12 reflection has no stride, so read the DXIL
+    // metadata's `!dx.resources` from a disassembly.
+    let strides: BTreeMap<String, u32> = dxc::disassemble(container)
+        .map(|text| {
+            let by_space = structured_strides(&text);
+            resources
+                .iter()
+                .filter(|(_, (_, kind))| *kind == 5)
+                .filter_map(|((_, _, space), (name, _))| {
+                    Some((name.clone(), *by_space.get(space)?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut renames: Vec<(String, String)> = Vec::new();
     let mut retypes: BTreeMap<String, String> = BTreeMap::new();
     let mut byte_address: Vec<String> = Vec::new();
@@ -1732,7 +1748,7 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
             if matches!(kind, 7 | 8) {
                 byte_address.push(base.to_string());
             }
-            let new_type = resource_kind(&ty, *kind);
+            let new_type = resource_kind(&ty, *kind, strides.get(name).copied());
             if new_type != ty {
                 retypes.insert(ty.clone(), new_type.clone());
             }
@@ -1766,12 +1782,6 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
         result = replace_all_words(&result, old, new);
     }
 
-    // A structured buffer comes back as a typed buffer read with the buffer
-    // image's dword coordinate; convert the vector reads to element loads.
-    if structured {
-        result = collapse_structured_vector_loads(&result);
-    }
-
     // The size helper reads a typed buffer's element count with the
     // one-argument `GetDimensions`; a structured buffer needs a stride.
     if structured {
@@ -1792,6 +1802,12 @@ fn resource_fixups(hlsl: &str, container: &[u8]) -> String {
 
     for (old, new) in &renames {
         result = replace_all_words(&result, old, new);
+    }
+
+    // A structured buffer comes back as a typed buffer read with the buffer
+    // image's dword coordinate; convert the vector reads to element loads.
+    if structured {
+        result = collapse_structured_vector_loads(&result, &strides);
     }
 
     result
@@ -1821,6 +1837,15 @@ fn fix_structured_getdimensions(text: &str) -> String {
         "    uint ret;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
         "    uint ret;\n    uint _dtmt_stride;\n    Tex.GetDimensions(ret.x, _dtmt_stride);",
     )
+    // `GetDimensions` counts elements, but the buffer image's
+    // `OpImageQuerySize` counted texels (dwords), so the helper scales back up
+    // for the callers that divide by the element width. Without this the size
+    // check is a quarter of the original and `ASSERT_INSTANCE_BUFFER_OFFSET`
+    // fires on buffers the shipped program accepts.
+    .replace(
+        "    Param = 0u;\n    return ret;\n}",
+        "    Param = 0u;\n    return ret * (_dtmt_stride / 4u);\n}",
+    )
 }
 
 /// Rewrites `spirv-cross`'s bindless structured-buffer reads from the buffer
@@ -1834,20 +1859,38 @@ fn fix_structured_getdimensions(text: &str) -> String {
 ///               idata[d].Load(X + 2u).x, idata[d].Load(X + 3u).x))
 /// ```
 ///
-/// `X` is a dword index, but the reflected kind is a structured buffer whose
-/// `StructureByteStride` is 16, so `.Load` takes an element index and the read
-/// lands four times too far - the instance transform comes out scrambled. The
-/// N dwords `X..X+N` are the components of the element at `X / 4`, so the whole
-/// vector collapses to one load. This covers the 16-byte-element case (the
-/// instance data); a 64-byte bone matrix needs its own treatment.
-fn collapse_structured_vector_loads(text: &str) -> String {
+/// `X` is a dword index, but `.Load` takes an element index, so the read lands
+/// `element_words` times too far and the transform comes out scrambled. The N
+/// dwords `X..X+N` are the components of one element (or of one row of a
+/// larger element), so the vector collapses to a single element load, with a
+/// row index when the element is wider than the read:
+///
+/// - a 16-byte element (`uint4`): `Load(X / 4u)`;
+/// - a 64-byte element (`uint4x4`, a bone matrix):
+///   `Load(X / 16u)[(X % 16u) / 4u]`.
+///
+/// The stride comes from the DXIL metadata; an unknown one falls back to the
+/// 16-byte element.
+fn collapse_structured_vector_loads(text: &str, strides: &BTreeMap<String, u32>) -> String {
     let re = Regex::new(r"as(float|uint)\(uint([234])\((.+?)\)\)")
         .expect("the structured-load pattern is valid");
     re.replace_all(text, |caps: &regex::Captures| {
         let conv = &caps[1];
         let count: usize = caps[2].parse().expect("a digit was matched");
         match parse_vector_load(&caps[3], count) {
-            Some((buffer, coord)) => format!("as{conv}({buffer}.Load(({coord}) / 4u))"),
+            Some((buffer, name, coord)) => {
+                let words = strides.get(&name).map_or(4, |s| (s / 4).max(1)) as usize;
+                if words < count {
+                    return caps[0].to_string();
+                }
+                let load = format!("{buffer}.Load(({coord}) / {words}u)");
+                let load = if words == count {
+                    load
+                } else {
+                    format!("{load}[(({coord}) % {words}u) / {count}u]")
+                };
+                format!("as{conv}({load})")
+            }
             None => caps[0].to_string(),
         }
     })
@@ -1855,15 +1898,16 @@ fn collapse_structured_vector_loads(text: &str) -> String {
 }
 
 /// Splits a `BUF.Load(X).x, BUF.Load(X + 1u).x, ...` argument list into the
-/// buffer access and its base dword coordinate, when every part agrees on the
-/// buffer and the coordinates run `X, X + 1u, ...`.
-fn parse_vector_load(inner: &str, count: usize) -> Option<(String, String)> {
+/// buffer access, its name and its base dword coordinate, when every part
+/// agrees on the buffer and the coordinates run `X, X + 1u, ...`.
+fn parse_vector_load(inner: &str, count: usize) -> Option<(String, String, String)> {
     let parts: Vec<&str> = inner.split(", ").collect();
     if parts.len() != count {
         return None;
     }
 
     let (buffer, coord) = parse_load_part(parts[0])?;
+    let name = buffer.split('[').next().unwrap_or(&buffer).to_string();
     for (index, part) in parts.iter().enumerate().skip(1) {
         let (other, other_coord) = parse_load_part(part)?;
         if other != buffer || other_coord != format!("{coord} + {index}u") {
@@ -1871,7 +1915,7 @@ fn parse_vector_load(inner: &str, count: usize) -> Option<(String, String)> {
         }
     }
 
-    Some((buffer, coord))
+    Some((buffer, name, coord))
 }
 
 /// Parses `BUF.Load(COORD).x` into its buffer access and coordinate.
@@ -1884,25 +1928,80 @@ fn parse_load_part(part: &str) -> Option<(String, String)> {
     Some((buffer, rest[..close].to_string()))
 }
 
+/// The structure strides of a container's structured-buffer SRVs, keyed by
+/// register space, read from a DXIL disassembly's `!dx.resources` metadata.
+///
+/// A resource record references a tag node, `!N = !{i32 1, i32 <stride>}`,
+/// which marks a structured buffer and gives its `StructureByteStride`. The
+/// D3D12 reflection does not expose it, and the stride is what decides whether
+/// `.Load` indexes a 16-byte element or a 64-byte one.
+fn structured_strides(disassembly: &str) -> BTreeMap<u32, u32> {
+    // The disassembler wraps long metadata records across lines, so collapse
+    // the whitespace before matching.
+    let joined = disassembly.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let tag = Regex::new(r"!(\d+) = !\{i32 1, i32 (\d+)\}").expect("a valid tag pattern");
+    let tags: BTreeMap<u32, u32> = tag
+        .captures_iter(&joined)
+        .filter_map(|c| Some((c[1].parse().ok()?, c[2].parse().ok()?)))
+        .collect();
+
+    let resource = Regex::new(
+        r#"!(\d+) = !\{i32 \d+, \[0 x %"[^"]*StructuredBuffer<[^"]*"\]\* undef, !"", i32 (\d+)(?:, i32 -?\d+)*, !(\d+)\}"#,
+    )
+    .expect("a valid resource pattern");
+
+    resource
+        .captures_iter(&joined)
+        .filter_map(|c| {
+            let space: u32 = c[2].parse().ok()?;
+            let tag: u32 = c[3].parse().ok()?;
+            Some((space, *tags.get(&tag)?))
+        })
+        .collect()
+}
+
 /// The HLSL type for a resource of the original's `kind`: a structured buffer
 /// becomes `StructuredBuffer<T>`, a byte-address buffer drops its element type,
 /// and everything else keeps the type `spirv-cross` emitted.
-fn resource_kind(ty: &str, kind: u32) -> String {
+fn resource_kind(ty: &str, kind: u32, stride: Option<u32>) -> String {
     let template = ty.find('<').map(|start| &ty[start..]).unwrap_or("");
     // The structured retype is what the assert experiment toggles off; a
     // byte-address buffer keeps its retype either way.
     let structured = std::env::var_os("SHADER43_NO_STRUCTURED_RETYPE").is_none();
-    // `spirv-cross` writes byte-offset loads (`Load(_138 * 32 + 16)`) even for a
-    // buffer the reflection calls structured; a byte-address buffer is the HLSL
-    // type whose `Load` takes a byte offset, so this is the experiment.
+    // `spirv-cross` writes dword-offset loads even for a buffer the reflection
+    // calls structured; a byte-address buffer is the HLSL type whose `Load`
+    // takes a byte offset, so this is the experiment.
     let byte_address = std::env::var_os("SHADER43_BYTE_ADDRESS_STRUCTURED").is_some();
     match kind {
         5 if byte_address => "ByteAddressBuffer".to_string(),
-        5 if structured => format!("StructuredBuffer{template}"),
+        5 if structured => format!(
+            "StructuredBuffer<{}>",
+            structured_element(template, stride)
+        ),
         6 if structured => format!("RWStructuredBuffer{template}"),
         7 => "ByteAddressBuffer".to_string(),
         8 => "RWByteAddressBuffer".to_string(),
         _ => ty.to_string(),
+    }
+}
+
+/// The `uint` element a structured buffer's `.Load` indexes. The stride comes
+/// from the DXIL metadata: a 16-byte element is `uint4` (the instance data), a
+/// 64-byte one `uint4x4` (a bone matrix). Anything else keeps the type
+/// `spirv-cross` emitted, so an unread stride cannot make the source worse.
+fn structured_element(template: &str, stride: Option<u32>) -> String {
+    match stride {
+        Some(64) => "uint4x4".to_string(),
+        Some(16) => "uint4".to_string(),
+        _ => {
+            let inner = template.trim_start_matches('<').trim_end_matches('>');
+            if inner.is_empty() {
+                "uint4".to_string()
+            } else {
+                inner.to_string()
+            }
+        }
     }
 }
 

@@ -137,6 +137,10 @@ const IID_ID3D12_SHADER_REFLECTION: Guid = Guid {
 
 /// `DXC_OUT_OBJECT`: the compiled shader or library object.
 const DXC_OUT_OBJECT: u32 = 1;
+/// `DXC_OUT_DISASSEMBLY`: the disassembly `IDxcCompiler3::Disassemble` produces.
+const DXC_OUT_DISASSEMBLY: u32 = 5;
+/// `DXC_OUT_TEXT`: a plain text output.
+const DXC_OUT_TEXT: u32 = 7;
 /// `DXC_CP_UTF8`: the source is UTF-8.
 const DXC_CP_UTF8: u32 = 65001;
 /// `DxcValidatorFlags_InPlaceEdit`: the validator edits the input blob in place.
@@ -447,6 +451,22 @@ pub fn reflect(container: &[u8]) -> Result<Vec<BoundResource>> {
     }
 }
 
+/// Disassembles a compiled container to DXIL assembly with the shared compiler,
+/// loading the library on first use. The text carries the DXIL metadata, which
+/// names each structured buffer's element type and its structure stride -
+/// neither is in the D3D12 reflection.
+pub fn disassemble(container: &[u8]) -> Result<String> {
+    let compiler = COMPILER.get_or_init(|| {
+        find_library(LIBRARY_PATH.get().map(PathBuf::as_path))
+            .and_then(|path| Compiler::load(&path))
+            .map_err(|err| err.to_string())
+    });
+    match compiler {
+        Ok(compiler) => compiler.disassemble(container),
+        Err(err) => bail!("{err}"),
+    }
+}
+
 /// A loaded DXC library.
 pub struct Compiler {
     /// Held so the library stays loaded for the compiler's lifetime.
@@ -576,6 +596,81 @@ impl Compiler {
 
         unsafe { ((*vtable).base.release)(reflection as *mut c_void) };
         Ok(bindings)
+    }
+
+    /// Disassembles a compiled container to DXIL assembly text through the
+    /// compiler's own `IDxcCompiler3::Disassemble`. The text carries the DXIL
+    /// metadata (`!dx.resources`), which is the only place a structured
+    /// buffer's element type and structure stride are recorded.
+    pub fn disassemble(&self, container: &[u8]) -> Result<String> {
+        let mut compiler: *mut c_void = ptr::null_mut();
+        let hr = unsafe {
+            (self.create_instance)(&CLSID_DXC_COMPILER, &IID_IDXC_COMPILER3, &mut compiler)
+        };
+        if hr < 0 || compiler.is_null() {
+            bail!("DxcCreateInstance(IDxcCompiler3) failed ({hr:#010x})");
+        }
+        let compiler = compiler as *mut IDxcCompiler3;
+
+        let buffer = DxcBuffer {
+            ptr: container.as_ptr() as *const c_void,
+            size: container.len(),
+            encoding: 0,
+        };
+        let mut result: *mut c_void = ptr::null_mut();
+        let hr = unsafe {
+            ((*(*compiler).vtable).disassemble)(
+                compiler as *mut c_void,
+                &buffer,
+                &IID_IDXC_RESULT,
+                &mut result,
+            )
+        };
+        unsafe { ((*(*compiler).vtable).base.release)(compiler as *mut c_void) };
+        if hr < 0 || result.is_null() {
+            bail!("IDxcCompiler3::Disassemble failed ({hr:#010x})");
+        }
+        let result = result as *mut IDxcResult;
+        let vtable = unsafe { (*result).vtable };
+
+        let mut status: Hresult = 0;
+        unsafe { ((*vtable).get_status)(result as *mut c_void, &mut status) };
+        if status < 0 {
+            let text = unsafe { error_text(result, vtable) };
+            unsafe { ((*vtable).base.release)(result as *mut c_void) };
+            bail!("dxcompiler disassembly failed:\n{text}");
+        }
+
+        let mut blob: *mut c_void = ptr::null_mut();
+        // The disassembly is `DXC_OUT_DISASSEMBLY` in current DXC builds and
+        // `DXC_OUT_OBJECT` in older ones; ask for both.
+        let mut hr = -1;
+        for kind in [DXC_OUT_DISASSEMBLY, DXC_OUT_OBJECT, DXC_OUT_TEXT] {
+            hr = unsafe {
+                ((*vtable).get_output)(
+                    result as *mut c_void,
+                    kind,
+                    &IID_IDXC_BLOB,
+                    &mut blob,
+                    ptr::null_mut(),
+                )
+            };
+            if hr >= 0 && !blob.is_null() {
+                break;
+            }
+            blob = ptr::null_mut();
+        }
+        if hr < 0 || blob.is_null() {
+            unsafe { ((*vtable).base.release)(result as *mut c_void) };
+            bail!("dxcompiler disassembly returned no output ({hr:#010x})");
+        }
+        let blob = blob as *mut IDxcBlob;
+        let bytes = unsafe { read_blob(blob) };
+        unsafe {
+            (((*(*blob).vtable).base).release)(blob as *mut c_void);
+            ((*vtable).base.release)(result as *mut c_void);
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
     unsafe fn compile_with(

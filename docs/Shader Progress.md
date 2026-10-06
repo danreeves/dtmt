@@ -342,18 +342,26 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   buffer image's dword coordinate** (2026-10-05): a bindless `StructuredBuffer`
   reaches `spirv-cross` as a SPIR-V buffer image, so it emits a vector read as N
   consecutive **dword** loads
-  (`asfloat(uint4(idata[d].Load(X).x, idata[d].Load(X + 1u).x, ...))`). The
-  reflected kind is structured with `StructureByteStride` 16, so `.Load` takes
-  an **element** index and the read landed four times too far: the standard
-  material's instance transform came out huge, geometry clipping into the
-  camera. `resource_fixups` now collapses the vector read to one element load,
-  `idata[d].Load(X / 4u)`. Verified against the shipped DXIL: the recompiled
-  vertex program's `bufferLoad` index is `instance * 8 + 4`, exactly the shipped
-  program's, and the pumpkin renders at its proper size in the Mourningstar (the
-  `ASSERT_INSTANCE_BUFFER_OFFSET` still fires - the `spvTextureSize` check
-  divides by four a second time). A 64-byte bone matrix (stride 64, read with
-  `wot` 16/32/48 at one index) is a separate case the `/4` collapse does not
-  cover. [DXIL diff on `3F08AC4494A4436E` program 0 + one in-game run]
+  (`asfloat(uint4(idata[d].Load(X).x, idata[d].Load(X + 1u).x, ...))`). `.Load`
+  takes an **element** index, so the read landed `element_words` times too far:
+  the standard material's instance transform came out huge, geometry clipping
+  into the camera. `resource_fixups` reads each structured SRV's
+  `StructureByteStride` from the DXIL metadata (`dxc::disassemble` +
+  `!dx.resources`) - the D3D12 reflection does not expose it - and collapses the
+  vector read to one element load: a 16-byte element (`uint4`, the instance
+  data) is `idata[d].Load(X / 4u)`, a 64-byte one (`uint4x4`, a bone matrix)
+  `bones[d].Load(X / 16u)[(X % 16u) / 4u]`. Verified against the shipped DXIL:
+  the recompiled vertex program's instance index is `instance * 8 + 4` and its
+  `bufferLoad` word offsets are the shipped's exact 17x0 / 9x16 / 9x32, and the
+  pumpkin renders at its proper size in the Mourningstar. [DXIL diff on
+  `3F08AC4494A4436E` program 0 + one in-game run]
+- **The `spvTextureSize` check counted elements where the original counted
+  texels** (2026-10-05): `spirv-cross`'s helper returns `GetDimensions`' element
+  count, but the buffer image's `OpImageQuerySize` returned dwords, so the
+  caller's `/ 4u` divided a second time and `ASSERT_INSTANCE_BUFFER_OFFSET` fired
+  on buffers the shipped program accepts. The helper now scales back up
+  (`ret * (_dtmt_stride / 4u)`), matching the shipped program's
+  `getDimensions > 4`; the assert no longer appears in the run. [same run]
 
 ## Open, in the order to attack
 
