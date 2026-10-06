@@ -281,14 +281,58 @@ struct ShaderInputBindDesc {
     id: u32,
 }
 
+/// `D3D12_SHADER_BUFFER_DESC`, as `d3d12shader.h` lays it out.
+#[repr(C)]
+#[derive(Default)]
+struct ShaderBufferDesc {
+    name: *const u8,
+    kind: u32,
+    variables: u32,
+    size: u32,
+    flags: u32,
+}
+
+/// `D3D12_SHADER_DESC`'s storage: the struct is large and ABI-sized, so it is
+/// read into a byte buffer and `ConstantBuffers` is taken at its measured
+/// offset (Version, then the `Creator` pointer, then `Flags`, then the count).
+#[repr(C)]
+struct ShaderDesc {
+    bytes: [u8; 512],
+}
+
+impl Default for ShaderDesc {
+    fn default() -> Self {
+        Self { bytes: [0; 512] }
+    }
+}
+
+impl ShaderDesc {
+    /// The constant-buffer count: `D3D12_SHADER_DESC.ConstantBuffers` at +20.
+    fn constant_buffers(&self) -> u32 {
+        u32::from_le_bytes(self.bytes[20..24].try_into().unwrap())
+    }
+}
+
+/// `ID3D12ShaderReflectionConstantBuffer`: `GetDesc` first. The interface does
+/// not inherit `IUnknown`, so it is borrowed and must not be released.
+#[repr(C)]
+struct ID3D12ShaderReflectionConstantBufferVtbl {
+    get_desc: unsafe extern "system" fn(*mut c_void, *mut ShaderBufferDesc) -> Hresult,
+}
+
+#[repr(C)]
+struct ID3D12ShaderReflectionConstantBuffer {
+    vtable: *const ID3D12ShaderReflectionConstantBufferVtbl,
+}
+
 /// The `ID3D12ShaderReflection` methods this crate calls, in the header's
-/// order: `GetDesc` then the two constant-buffer getters (never called, kept
-/// for the offsets) then `GetResourceBindingDesc`.
+/// order: `GetDesc` then the two constant-buffer getters then
+/// `GetResourceBindingDesc`.
 #[repr(C)]
 struct ID3D12ShaderReflectionVtbl {
     base: IUnknownVtbl,
-    get_desc: *const c_void,
-    get_constant_buffer_by_index: *const c_void,
+    get_desc: unsafe extern "system" fn(*mut c_void, *mut ShaderDesc) -> Hresult,
+    get_constant_buffer_by_index: unsafe extern "system" fn(*mut c_void, u32) -> *mut c_void,
     get_constant_buffer_by_name: *const c_void,
     get_resource_binding_desc: unsafe extern "system" fn(
         *mut c_void,
@@ -317,6 +361,8 @@ pub struct BoundResource {
     pub flags: u32,
     /// The register space.
     pub space: u32,
+    /// A constant buffer's byte size; 0 for every other kind.
+    pub size: u32,
 }
 
 /// The `DxcCreateInstance` export's signature.
@@ -566,6 +612,41 @@ impl Compiler {
         let reflection = reflection as *mut ID3D12ShaderReflection;
         let vtable = unsafe { (*reflection).vtable };
 
+        let mut shader_desc = ShaderDesc::default();
+        let hr = unsafe { ((*vtable).get_desc)(reflection as *mut c_void, &mut shader_desc) };
+        let constant_buffers = if hr >= 0 {
+            shader_desc.constant_buffers()
+        } else {
+            0
+        };
+
+        // The constant buffers' sizes, which the binding description does not
+        // carry: `D3D12_SHADER_BUFFER_DESC.Size`, by name.
+        let mut cbuffer_sizes: std::collections::BTreeMap<String, u32> =
+            std::collections::BTreeMap::new();
+        for index in 0..constant_buffers {
+            let buffer = unsafe {
+                ((*vtable).get_constant_buffer_by_index)(reflection as *mut c_void, index)
+            };
+            if buffer.is_null() {
+                break;
+            }
+            let buffer = buffer as *mut ID3D12ShaderReflectionConstantBuffer;
+            let mut desc = ShaderBufferDesc::default();
+            let hr = unsafe { ((*(*buffer).vtable).get_desc)(buffer as *mut c_void, &mut desc) };
+            if hr < 0 {
+                continue;
+            }
+            let name = if desc.name.is_null() {
+                String::new()
+            } else {
+                unsafe { std::ffi::CStr::from_ptr(desc.name as *const i8) }
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            cbuffer_sizes.insert(name, desc.size);
+        }
+
         // The count lives in `D3D12_SHADER_DESC`, whose layout is ABI-sized;
         // asking until the call fails avoids depending on it.
         let mut bindings = Vec::new();
@@ -584,6 +665,7 @@ impl Compiler {
                     .to_string_lossy()
                     .into_owned()
             };
+            let size = cbuffer_sizes.get(&name).copied().unwrap_or(0);
             bindings.push(BoundResource {
                 name,
                 kind: desc.kind,
@@ -591,6 +673,7 @@ impl Compiler {
                 bind_count: desc.bind_count,
                 flags: desc.flags,
                 space: desc.space,
+                size,
             });
         }
 

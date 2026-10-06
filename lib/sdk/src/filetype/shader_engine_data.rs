@@ -84,6 +84,21 @@ const GLOBAL_TEXTURE2D: u32 = 0x3AFC_636C;
 /// murmur32 of `global_feedback_buffers`: the engine's feedback UAV.
 const GLOBAL_FEEDBACK_BUFFERS: u32 = 0x41B1_CFF8;
 
+/// murmur32 of `c_instance_offset`: the engine's per-draw instance-buffer offset.
+const C_INSTANCE_OFFSET: u32 = 0xE7DF_A2E1;
+
+/// murmur32 of `bones`: the engine's skinning matrices.
+const BONES: u32 = 0x18DE_AD01;
+
+/// murmur32 of `last_bones`: the previous frame's skinning matrices.
+const LAST_BONES: u32 = 0xF954_1801;
+
+/// murmur32 of `idata`: the engine's per-instance data.
+const IDATA: u32 = 0xF2DE_3925;
+
+/// murmur32 of `global_uav_buffers`: the engine's raw UAV array.
+const GLOBAL_UAV_BUFFERS: u32 = 0xA306_B24F;
+
 /// The group's descriptor list (`name -> index`). Every group must agree,
 /// because the program-to-group mapping is not decoded.
 fn descriptors(template: &GroupTemplate) -> Result<BTreeMap<u32, u32>> {
@@ -276,20 +291,44 @@ fn derived_cbuffers(
         })?;
         let size = match hash {
             C_PER_OBJECT => {
-                let mut sizes = material_tables.iter().map(|table| table_size(table));
-                let first = sizes
-                    .next()
-                    .ok_or_else(|| color_eyre::eyre::eyre!("the file has no material table"))?;
-                if sizes.any(|size| size != first) {
-                    bail!(
-                        "the groups disagree about c_per_object's size; the program-to-group \
-                         mapping is not decoded"
-                    );
+                let compiled = resources
+                    .cbuffer_sizes
+                    .get(name)
+                    .copied()
+                    .filter(|size| *size > 0)
+                    .map(|size| size.div_ceil(16) * 16);
+                if material_tables.is_empty() {
+                    // A declaration without a graph carries no material table,
+                    // so the compiled container's own size stands in.
+                    compiled.ok_or_else(|| {
+                        color_eyre::eyre::eyre!("the cbuffer {hash:08X} ({name}) has no size")
+                    })?
+                } else {
+                    let mut sizes = material_tables.iter().map(|table| table_size(table));
+                    let first = sizes
+                        .next()
+                        .ok_or_else(|| color_eyre::eyre::eyre!("the file has no material table"))?;
+                    if sizes.any(|size| size != first) {
+                        bail!(
+                            "the groups disagree about c_per_object's size; the program-to-group \
+                             mapping is not decoded"
+                        );
+                    }
+                    first
                 }
-                first
             }
             GLOBAL_VIEWPORT => table_size(&template.engine),
-            other => bail!("the cbuffer {other:08X} ({name}) has no size source"),
+            // The engine's other cbuffers take the compiled container's own
+            // size, rounded to the 16-byte granularity the tail records use.
+            _ => resources
+                .cbuffer_sizes
+                .get(name)
+                .copied()
+                .filter(|size| *size > 0)
+                .map(|size| size.div_ceil(16) * 16)
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!("the cbuffer {hash:08X} ({name}) has no size source")
+                })?,
         };
         for word in [hash, index, size, register as u32, 1, 0] {
             out.extend_from_slice(&word.to_le_bytes());
@@ -818,18 +857,47 @@ fn permutations_contexts(
 const PACKED_CBUFFER: u32 = 0xB563_9618;
 
 /// The engine's group head after the query: the header word, the descriptor
-/// list and the two trailing words. The descriptors are the section's own
-/// resources under the engine's names and flags; `X` is the per-draw byte offset
-/// (24 per constant buffer, 8 per other) and `Y` the engine's packed usage
-/// counts (measured: `{0, 0, 5, 10}` for a texture and a feedback buffer; only a
-/// zero `Y` breaks the render).
+/// list and the two trailing words. The descriptors are the engine's own
+/// resources (their flags mined from the shipped groups) and the stage's own
+/// cbuffers and structured buffers, taken from the container's reflection.
+/// `X` is the per-draw byte offset (24 per constant buffer, 8 per other) and
+/// `Y` the engine's packed usage counts (measured: `{0, 0, 5, 10}` for a
+/// texture and a feedback buffer; only a zero `Y` breaks the render).
 fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
     let samples = resources.values().any(StageResources::samples);
-    let mut descriptors: Vec<(u32, u32, u32)> = vec![(C_PER_OBJECT, 0x0000, 0), (GLOBAL_VIEWPORT, 0x0101, 0)];
-    if samples {
-        descriptors.push((GLOBAL_TEXTURE2D, 0x0103, 5));
-        descriptors.push((GLOBAL_FEEDBACK_BUFFERS, 0x0105, 10));
+
+    let mut descriptors: Vec<(u32, u32, u32)> = Vec::new();
+    let mut seen: Vec<u32> = Vec::new();
+    let mut push = |name: u32, flags: u32, y: u32| {
+        if !seen.contains(&name) {
+            seen.push(name);
+            descriptors.push((name, flags, y));
+        }
+    };
+
+    // The engine's own descriptors first, then the stages' resources. The
+    // engine's cbuffers and buffers are the shader's own binding order, so the
+    // reflection supplies them; an unknown name falls back to its kind.
+    push(C_PER_OBJECT, 0x0000, 0);
+    push(GLOBAL_VIEWPORT, 0x0101, 0);
+    for stage in [Stage::Vertex, Stage::Pixel] {
+        let Some(stage_resources) = resources.get(&stage) else {
+            continue;
+        };
+        for name in &stage_resources.cbuffers {
+            let hash = u32::from(murmur::Murmur32::hash(name.as_bytes()));
+            push(hash, engine_descriptor_flags(hash), 0);
+        }
+        for decl in &stage_resources.buffers {
+            let hash = u32::from(murmur::Murmur32::hash(decl.name.as_bytes()));
+            push(hash, engine_descriptor_flags(hash), 0);
+        }
     }
+    if samples {
+        push(GLOBAL_TEXTURE2D, 0x0103, 5);
+        push(GLOBAL_FEEDBACK_BUFFERS, 0x0105, 10);
+    }
+
     let mut out = Vec::new();
     out.extend_from_slice(&0x130u32.to_le_bytes());
     out.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
@@ -844,6 +912,24 @@ fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
     // The material table's count, which `GroupData::build` rewrites.
     out.extend_from_slice(&0u32.to_le_bytes());
     out
+}
+
+/// The descriptor flags of the engine's own resources, mined from the shipped
+/// groups (`descriptor-table.ps1`). The low three bits are the kind (0 material
+/// cbuffer, 1 engine cbuffer, 3 texture, 4 structured SRV, 5 UAV, 7 raw UAV);
+/// the high bits are per-resource and are not in the DXIL reflection, so an
+/// unknown name takes only its kind's low bits.
+fn engine_descriptor_flags(name: u32) -> u32 {
+    match name {
+        GLOBAL_VIEWPORT => 0x0000_0101,
+        C_INSTANCE_OFFSET | C_PER_OBJECT => 0x0000_0000,
+        BONES | LAST_BONES => 0x0040_0004,
+        IDATA => 0x0010_0004,
+        GLOBAL_UAV_BUFFERS => 0x0000_0107,
+        GLOBAL_TEXTURE2D => 0x0000_0103,
+        GLOBAL_FEEDBACK_BUFFERS => 0x0000_0105,
+        _ => 0x0000_0000,
+    }
 }
 
 /// The engine's `between` bytes: two constants then the engine table's count
@@ -2904,6 +2990,7 @@ programs = []
                 bind_count: 1,
                 flags: 1,
                 space: 0,
+                size: 0,
             },
             dxc::BoundResource {
                 name: "c_per_object".into(),
@@ -2912,6 +2999,7 @@ programs = []
                 bind_count: 1,
                 flags: 1,
                 space: 0,
+                size: 0,
             },
             dxc::BoundResource {
                 name: "g_material_samplers".into(),
@@ -2920,6 +3008,7 @@ programs = []
                 bind_count: 0,
                 flags: 0,
                 space: 2,
+                size: 0,
             },
             dxc::BoundResource {
                 name: "g_material_textures".into(),
@@ -2928,6 +3017,7 @@ programs = []
                 bind_count: 0,
                 flags: 0xC,
                 space: 2,
+                size: 0,
             },
         ];
         let resources = StageResources::from_bindings(&bindings);

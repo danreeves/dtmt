@@ -61,6 +61,8 @@ pub struct ResourceDecl {
 pub struct StageResources {
     /// The constant buffers the stage binds, in register order.
     pub cbuffers: Vec<String>,
+    /// The byte size of each constant buffer, by name, from the reflection.
+    pub cbuffer_sizes: std::collections::BTreeMap<String, u32>,
     /// Bounded texture bindings.
     pub textures: Vec<ResourceDecl>,
     /// Unbounded texture arrays.
@@ -69,6 +71,8 @@ pub struct StageResources {
     pub samplers: Vec<ResourceDecl>,
     /// Unbounded sampler arrays.
     pub sampler_arrays: Vec<ResourceDecl>,
+    /// Structured-buffer SRVs (kind 5), in binding order.
+    pub buffers: Vec<ResourceDecl>,
     /// UAV bindings (kinds 4 and up).
     pub uavs: Vec<ResourceDecl>,
 }
@@ -85,11 +89,17 @@ impl StageResources {
         };
         for binding in bindings {
             match binding.kind {
-                0 => resources.cbuffers.push(binding.name.clone()),
+                0 => {
+                    resources.cbuffers.push(binding.name.clone());
+                    resources
+                        .cbuffer_sizes
+                        .insert(binding.name.clone(), binding.size);
+                }
                 2 if binding.bind_count == 0 => resources.texture_arrays.push(decl(binding)),
                 2 => resources.textures.push(decl(binding)),
                 3 if binding.bind_count == 0 => resources.sampler_arrays.push(decl(binding)),
                 3 => resources.samplers.push(decl(binding)),
+                5 => resources.buffers.push(decl(binding)),
                 // 1 tbuffer, 4+ UAV kinds.
                 _ => resources.uavs.push(decl(binding)),
             }
