@@ -1,14 +1,64 @@
+# File Type: Material
+
 Contains the layout of `stingray::MaterialResource` as used by Darktide, as
 well as the SJSON format DTMT compiles from and decompiles to.
 
-## Binary format
+Every field and rule is tagged:
 
-A material's bundle entry is a small resource header whose payload lives in an
-external `data/<xx>/<hash>` file (property `DATA`), exactly like streamed
-textures. The payload is the material stream:
+| Tag | Meaning |
+|-----|---------|
+| **Verified** | Confirmed against shipped Darktide bundles (and, where noted, reproduced in game). |
+| **Verified in code** | Confirmed against the reader/tests only; no shipped data exercises it. |
+| **Observed** | Present in the sampled game data, but a wider sample could reveal more cases. |
+| **Guess** | Our inference. Plausible, but not verified. |
+| **Unknown** | No reliable information. |
+
+The claims below were checked against a shipped bundle of 10 materials (4 base,
+6 instance, all version 62).
+
+## 0. At a glance
 
 ```
-u32 version                 // 60 or 61
+ bundle entry, type hash EAC0B497876ADEDF ("material"), property DATA
+ │
+ └─ data/xx/<16 hex>          the material stream
+     ├─ header (28 bytes): version, offsets/sizes for the template + shader + trailer
+     ├─ MaterialTemplate: name, material1/2, channels, textures, contexts,
+     │                    variables (reflection + variable_data), unk2, unk3
+     ├─ [embedded compiled shader section]   when shader_size > 0  ("base material")
+     └─ [opaque unk2_data trailer]           when unk2_size > 0
+
+ source project
+ ├─ foo.material          the definition (SJSON)
+ ├─ foo.shader_node       shader declaration   (optional, build-time)
+ ├─ foo.shader_source     HLSL chunks          (optional, build-time)
+ ├─ foo.engine_data       engine wrapper       (optional, build-time)
+ └─ foo.hlsl              fallback shader source, or foo.vs.hlsl / foo.ps.hlsl
+```
+
+A material is either:
+
+* a **base material** — carries an embedded compiled shader (`shader_size > 0`), or
+* an **instance material** — inherits its shader from `material1`/`material2`.
+
+## 1. Binary layout
+
+A material's bundle entry has no inline data: its payload lives in an external
+`data/<xx>/<hash>` file, marked with the `DATA` property — the same storage the
+non-streamed textures use.
+
+| Bundle entry field | Value | Status |
+|---|---|---|
+| type hash | `EAC0B497876ADEDF` (`material`) | **Verified** |
+| FileMeta `flags` | `0x4` (`DATA`) | **Verified** |
+| variant `is_data_file` | `1` | **Verified** |
+| variant `size` | `30` (the data file name slot) | **Observed** |
+| data chunk | the `data/xx/<hash>` file name | **Verified** |
+
+The payload is the **material stream**:
+
+```
+u32 version                 // 60, 61 or 62 (62 observed)
 u32 material_offset         // always 28
 u32 material_size
 u32 shader_offset           // u32::MAX if the material has no embedded shader
@@ -22,33 +72,46 @@ MaterialTemplate...
 // at unk2_offset (if present): raw blob
 ```
 
+Header fields:
+
+| Field | Status | Notes |
+|-------|--------|-------|
+| `version` | **Observed** | 60, 61 or 62. DTMT accepts all three and writes 62. |
+| `material_offset` | **Verified** | Always `28`. |
+| `material_size` | **Verified** | Byte length of the template (from `material_offset`). |
+| `shader_offset` / `shader_size` | **Verified** | `0xFFFFFFFF` / `0` when there is no shader; otherwise the blob follows the template at `material_offset + material_size`. |
+| `unk2_offset` / `unk2_size` | **Verified** | `0xFFFFFFFF` / `0` when absent. The blob is opaque; meaning **Unknown**. |
+
 `MaterialTemplate` uses the regular Stingray (little-endian) serialization:
 
-| Type | Field | Meaning |
-|------|-------|---------|
-| `u64` | `material1` | primary parent material |
-| `u64` | `material2` | secondary parent material |
-| `IdString32[]` | `channels` | the base material's channel list: its textures' keys plus the shader's active unbound channels (empty on instance materials) |
-| `(IdString32, u64)[]` | `textures` | channel → texture resource |
-| `(IdString32, IdString32)[]` | `material_contexts` | context → context material |
-| `ShaderVariableReflection[]` | variables | `(u32 class, u32 elements, IdString32 name, u32 offset, u32 stride)` |
-| `u8[]` | `variable_data` | packed variable values, indexed by `offset` |
-| `(IdString32, bool)[]` | `unk2` | |
-| `(u32, u32)[]` | `unk3` | |
+| Type | Field | Meaning | Status |
+|------|-------|---------|--------|
+| `u32` | `name` | the material's own name; `0` in every sample | **Observed** |
+| `u64` | `material1` | primary parent material | **Verified** |
+| `u64` | `material2` | secondary parent material | **Verified** |
+| `IdString32[]` | `channels` | the base material's channel list: its textures' keys plus the shader's active unbound channels (empty on instance materials) | **Observed** |
+| `(IdString32, u64)[]` | `textures` | channel → texture resource | **Verified** |
+| `(IdString32, IdString32)[]` | `material_contexts` | context → context material | **Verified** |
+| `ShaderVariableReflection[]` | `variables` | `(u32 class, u32 elements, IdString32 name, u32 offset, u32 stride)` | **Verified** |
+| `u8[]` | `variable_data` | packed variable values, indexed by `offset` | **Verified** |
+| `(IdString32, bool)[]` | `unk2` | empty in every material observed | **Observed** |
+| `(u32, u32)[]` | `unk3` | only base materials carry it | **Observed** |
+
+Every list is a `u32` count followed by its entries.
 
 `ShaderVariableReflection::class` is `0` scalar, `1` vector2, `2` vector3,
 `3` vector4 and `12` for arbitrary data (where `elements * stride` gives the
-byte size).
+byte size). Status: **Verified** from shipped data.
 
 A material whose `shader_size > 0` ("base material") carries its own compiled
-shader. Every other material is an *instance* that inherits the shader through
-`material1`/`material2`. DTMT can compile instance materials only; shaders are
-compiled DXBC blobs. Decompiling a base material emits its `shader_size` but
-compiling it again is rejected.
+shader section. Every other material is an *instance* that inherits its shader
+through `material1`/`material2`. DTMT compiles instance materials directly; a
+base material's shader is carried through `shader_data`, and the build can
+generate or splice its shader section (see §2.2).
 
 `variable_data` may contain floats that are not described by any reflection
-entry. They are preserved through the `extra_data` field so that
-decompile → compile round trips stay byte-exact.
+entry. They are preserved through the `extra_data` field so that no byte is
+lost.
 
 ### Material contexts
 
@@ -59,7 +122,9 @@ context material name, both of which are 32-bit names. Darktide's
 Vermintide 2 source dump shows the same field with values such as `metal`,
 `snow` or `flesh`.
 
-## SJSON format
+## 2. Source files
+
+### 2.1 `.material` (SJSON)
 
 The SJSON format follows the Stingray source format (the same one used by
 Vermintide 2's `.material` files). Values are resource paths; DTMT hashes them
@@ -85,19 +150,27 @@ variables = {
 
 Fields:
 
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `name` | string | no | material name (`IdString32`), usually omitted |
-| `parent_material` | string | no | `material1` |
-| `parent_material_2` | string | no | `material2` |
-| `material_contexts` | map | no | context name → context material name |
-| `textures` | map | no | channel name → texture resource path |
-| `variables` | map | no | variable name → `{ type, value, offset?, elements?, stride? }` |
-| `channels` | string[] | no | the base material's derived channel list; an instance material carries none and expresses its channels through `textures` keys. The device stream is this list intersected with the shader's channels plus the shader's engine resources. The name follows the SDK's own vocabulary (`channels` in the `.shader_node` declarations, `has_visualizer_channels` in the sources); an authoring material carries no channel field, so the toolchain derives the list |
-| `shader_size` | integer | no | set when decompiling a base material |
-| `extra_data` | string | no | hex of `variable_data` bytes not covered by variables |
-| `unk2` | map | no | unnamed `(name, bool)` pairs |
-| `unk3` | array | no | `(a, b)` pairs |
+| Field | Type | Required | Meaning | Status |
+|-------|------|----------|---------|--------|
+| `name` | string | no | material name (`IdString32`), usually omitted | **Observed** |
+| `parent_material` | string | no | `material1` | **Verified** |
+| `parent_material_2` | string | no | `material2` | **Verified** |
+| `material_contexts` | map | no | context name → context material name | **Verified** |
+| `textures` | map | no | channel name → texture resource path | **Verified** |
+| `variables` | map | no | variable name → `{ type, value, offset?, elements?, stride? }` | **Verified** |
+| `channels` | string[] | no | the base material's derived channel list; an instance material carries none and expresses its channels through `textures` keys. The device stream is this list intersected with the shader's channels plus the shader's engine resources | **Observed** |
+| `shader_size` | integer | no | the embedded shader blob length; set when decompiling a base material | **Verified** |
+| `shader_data` | string | no | hex of the embedded compiled shader blob; lets a mod ship its own copy of a base material | **Verified** |
+| `extra_data` | string | no | hex of `variable_data` bytes not covered by variables | **Verified** |
+| `unk2` | map | no | unnamed `(name, bool)` pairs | **Observed** |
+| `unk2_data` | string | no | hex of the opaque `unk2` trailer | **Observed** |
+| `unk3` | array | no | `(a, b)` pairs | **Observed** |
+| `shader_engine_data` | string | no | build-only: path to the engine-data text file | **Verified in code** |
+| `shader` | table | no | build-only: the shader graph (`nodes` + `connections`) | **Verified in code** |
+
+The `shader_engine_data` and `shader` fields are read by `dtmt build`, not by the
+material parser, and are not part of the compiled stream. Everything else maps
+to a template field (see §3).
 
 Variable values are always arrays, even for `type = "scalar"`. The SJSON number
 grammar parses a bare float like `0.5` as the integer `0` followed by `.5`, so
@@ -160,11 +233,27 @@ Instance materials inherit their shader from a parent material. Referencing a
 game material directly can stop the engine from unloading the mod package
 cleanly, because the base material is shared with the game. A mod can instead
 ship its own copy of a base material: decompiling one emits its compiled shader
-as `shader_data`, and compiling that again reproduces the original blob
-byte-for-byte. Pointing the new instance material at the mod's own base material
-keeps the whole material graph owned by the mod.
+as `shader_data`, which can be compiled back into a base material. Pointing the
+new instance material at the mod's own base material keeps the whole material
+graph owned by the mod.
 
-### Custom shaders
+### 2.2 Build-time shader inputs
+
+A material's shader section is generated at build time from optional sibling
+files next to the material:
+
+* `foo.shader_node` — a Stingray shader declaration; see
+  [File Type - Shader Node](./File%20Type%20-%20Shader%20Node.-.md).
+* `foo.shader_source` (and `core/.../*.shader_source` libraries) — named HLSL
+  chunks; see [File Type - Shader Source](./File%20Type%20-%20Shader%20Source.-.md).
+* `foo.engine_data` — DTMT's own text file holding the engine-side binary layout
+  the generator cannot derive. It is a build input, not a game format.
+* `foo.hlsl`, or `foo.vs.hlsl` / `foo.ps.hlsl` — fallback shader sources.
+* the material's own `shader = { nodes, connections }` graph.
+
+None of these are shipped in the bundle; only the generated `shader_data` is.
+The declaration/source formats are documented on their own pages; the rest of
+this section describes how the generation uses them.
 
 A base material's `shader_data` is a `shader43` section containing framed DXBC
 programs (Oodle-compressed containers with a per-program frame key). Shader
@@ -196,11 +285,13 @@ A material can also declare **engine data** and carry no `shader_data` at all:
 shader_engine_data = "ui_default_base.engine_data"
 ```
 
-`ui_default_base.engine_data` is a text file next to the material (or relative to
-the mod root) that holds the engine-side wrapper the generator cannot currently
-derive: contexts, conditions, dependencies, the group data's template (its
-tables are generated from the material), the packed device preamble and one
-metadata tail per program. When the declaration is present,
+`ui_default_base.engine_data` is DTMT's own text file next to the material (or
+relative to the mod root). It holds the engine-side binary layout the generator
+cannot currently derive — contexts, conditions, dependencies, the group data's
+template (its tables are generated from the material), the packed device
+preamble and one metadata tail per program — as hex blobs. It is a build input,
+not a game format; the binary layout it encodes is covered by the shader
+section notes. When the declaration is present,
 `dtmt build` compiles the sibling `.shader_node` + `.shader_source` and
 generates the whole section from them and the engine data, so the material
 source stays a few hundred bytes and no shipped shader blob is needed. The
@@ -280,13 +371,124 @@ What the removed lines established, kept for the record:
   program tails must mention the size, and the group data must place the member
   inside the buffer. That is the shape of the declaration-driven generation.
 
-## Status and open questions
+## 3. Mapping
+
+### 3.1 Names and hashes
+
+* 64-bit names (`material1`, `material2`, `textures` values, `shader` resources)
+  are `MurmurHash64` of the resource path.
+* 32-bit names (channels, contexts, variables, `unk2`) are the **top 32 bits** of
+  the same 64-bit hash. On the command line this is `dtmt murmur hash <name>
+  --half`.
+* Decompilation writes a name when the dictionary knows the hash and `#<hex>`
+  otherwise (8 digits for 32-bit names, 16 for 64-bit ones). Compilation reverses
+  it: a value beginning with `#` is read as a raw hash, anything else is hashed.
+
+Status: **Verified** (`surface_material` → `0254A04B`, `murmur64` →
+`0254A04BB8006EEA`).
+
+### 3.2 Decompile (game → source)
+
+1. Read the external `data/xx/<hash>` file.
+2. Parse the header and the `MaterialTemplate`.
+3. Emit `.material`:
+   * `parent_material` / `parent_material_2` from `material1` / `material2` (omitted when 0),
+   * `channels`, `textures`, `material_contexts` in the order they are stored,
+   * `variables` from the reflection, each with its `offset`,
+   * `extra_data` when `variable_data` holds bytes no reflection entry covers,
+   * `unk2`, `unk2_data`, `unk3`,
+   * for a base material, `shader_size` and `shader_data` (hex).
+4. Resolve names through the dictionary; write unknown hashes as `#<hex>`.
+
+### 3.3 Compile (source → game)
+
+1. Parse the SJSON.
+2. Build the reflection list and pack every variable value into `variable_data`
+   at its `offset`, or after the previous variable when the offset is omitted.
+3. Serialize the template, then the shader blob (`shader_data`, or one generated
+   by the build), then `unk2_data`.
+4. Wrap it in a bundle entry marked `DATA`, writing `version = 62`.
+
+| Source | Game |
+|--------|------|
+| `name` | template `name` (default 0) |
+| `parent_material` / `parent_material_2` | `material1` / `material2` |
+| `channels` | `channels` |
+| `textures` | `textures` |
+| `material_contexts` | `material_contexts` |
+| `variables` | reflection entries + `variable_data` |
+| `extra_data` | the leading bytes of `variable_data`, pre-populated |
+| `shader_size` / `shader_data` | `shader_size` and the blob at `shader_offset` |
+| `unk2` / `unk2_data` / `unk3` | `unk2`, `unk2_size` blob, `unk3` |
+| `shader_engine_data` / `shader` | build-only; they generate `shader_data` |
+
+Status: **Verified** against the implementation; the stream layout matches
+shipped data.
+
+### 3.4 Worked example (shipped data)
+
+An instance material from a shipped bundle. Its external file is 216 bytes:
+
+| Header | Value |
+|--------|-------|
+| `version` | `62` |
+| `material_offset` | `28` |
+| `material_size` | `188` |
+| `shader_offset` / `shader_size` | `0xFFFFFFFF` / `0` |
+| `unk2_offset` / `unk2_size` | `0xFFFFFFFF` / `0` |
+
+Template: `material1 = 6E4124FDFDEC8657` (its base material), `material2 = 0`,
+no channels, one texture, one context, five scalar variables.
+
+The decompiled source (with the dictionary loaded) is:
+
+```sjson
+parent_material = "#6E4124FDFDEC8657"
+textures = {
+  texture_map_cb37d126 = "#0590E9CE56A76D28"
+}
+material_contexts = {
+  surface_material = "cloth"
+}
+variables = {
+  lighting_far_range = {
+    type = scalar
+    value = [ 1000 ]
+    offset = 0
+  }
+  particle_max_size = {
+    type = scalar
+    value = [ 1 ]
+    offset = 4
+  }
+  particle_min_size = {
+    type = scalar
+    value = [ 5 ]
+    offset = 8
+  }
+  material_variable_76952f42 = {
+    type = scalar
+    value = [ 0 ]
+    offset = 12
+  }
+  material_variable_76b100e5 = {
+    type = scalar
+    value = [ 1 ]
+    offset = 16
+  }
+}
+```
+
+(The tool emits one value per line; it is collapsed here.) A base material
+instead carries `shader_size` and a long `shader_data` hex string.
+
+## 4. Status and open questions
 
 ### Implemented
 
-- Material streams (version 60/61) parse, decompile to SJSON and compile back.
+- Material streams (version 60/61/62) parse, decompile to SJSON and compile back.
   Instance materials and base materials (including their embedded `shader_data`)
-  round trip byte-for-byte.
+  both work.
 - Base materials can be built as long as they carry a `shader_data` blob; the
   shader section is preserved, or rebuilt when a shader override is applied.
 - Custom shader sources next to a material are compiled with `dxc` and spliced

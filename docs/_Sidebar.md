@@ -29,6 +29,8 @@
 [Bundle Database](File+Type+-+Bundle+Database.-)<br>
 [Texture](File+Type+-+Texture.-)<br>
 [Material](File+Type+-+Material.-)<br>
+[Shader Node](File+Type+-+Shader+Node.-)<br>
+[Shader Source](File+Type+-+Shader+Source.-)<br>
 [Strings](File+Type+-+Strings.-)<br>
 [Package](File+Type+-+Package.-)<br>
 [Wwise Event](File+Type+-+Wwise+Event.-)<br>
