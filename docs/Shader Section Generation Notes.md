@@ -3,7 +3,8 @@
 This is the working plan for emitting a complete `shader43` section from our own
 data instead of splicing a shipped one. It collects what each section needs and
 marks what is still unknown. See `File Type - Material.-.md` for the field-level
-notes.
+notes, and `File Type - Shader Node.-.md` / `File Type - Shader Source.-.md` for
+the two authoring source formats the plan builds from.
 
 ## Target
 

@@ -2,9 +2,19 @@
 
 Working notes and next steps for the `shader43` reverse engineering. See
 `File Type - Material.-.md` (field-level findings),
+`File Type - Shader Node.-.md` and `File Type - Shader Source.-.md` (the two
+authoring source formats),
 `Shader Section Generation Notes.md` (the target and what each section needs) and
 `Shader Permutations.md` (what a permutation key may contain, and which tokens
-are engine constants).
+are engine constants). `TODO.md` is the project-wide umbrella.
+
+**Community reference.** `C:\dev\Darktide-Asset-Compiler`
+(<https://github.com/fviuff/Darktide-Asset-Compiler>) writes the same formats
+and is updated often. Its `material/shader_section.*` decodes/encodes a shipped
+shader section exactly (version `0x2b`) and `material/shader_compiler.*`
+documents the group **root table** - the order a group's distinct
+cbuffer/resource names are first bound across its passes and stages - which is
+the numbering a tail's resource records index. Re-check it as we take each list.
 
 ## Priority order
 
@@ -24,11 +34,94 @@ The road, in order: 649 -> 429 (tails as condition sets) -> 406 (derived
 `prefix`) -> 387 (derived `context_count`) -> 288 (plan from the declaration) ->
 **0 bytes** (tails and template from the declaration; the file deleted).
 
+**The standard family's tails derive too (2026-10-12).** Its engine data is the
+last one that carried resource lists; the split derivation now reproduces them
+(see "The tail's rest is nine counted lists"), so `examples/split_tails.rs`
+dropped every program's lists and the file went **46,075 -> 42,091 bytes** with
+the built section **byte-identical** (`578c983197da6b91`). The file now carries
+only the per-program device blocks. The UI-base family already shipped with no
+engine data.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
 families' declarations. The tooling is `lib/sdk/examples/vt2_editor.rs` and
 `vt2_enumerate.rs`.
+
+**The material table derives from the declaration's inputs, and the group→tail
+assignment is carried (2026-10-07).** The last two carried pieces of a
+declaration-only build have a text path:
+
+- **`#hash` inputs.** A declaration's `inputs` may be keyed by a raw `#<hex>`
+  hash (`"#78E25D0F" = { type = "vector4" }`), the spelling a pass's raw
+  `conditions` already uses, so a `c_per_object` record the dictionary cannot
+  name still round-trips. `shader_node::name_id` hashes a plain name with
+  `Murmur32` and reads a `#<hex>` name as the id itself; `--enumerate` and
+  `--reconstruct` now write every object-table record (named where the
+  dictionary can, `#<hex>` otherwise) instead of dropping the unnamed ones.
+- **The material table from the inputs.** `material_records` no longer needs a
+  graph: for a plain declaration it lays out the engine's three matrices, the
+  code block's texture slots (the `samplers` triple) and the declaration's
+  `inputs` in a running constant-buffer layout (`pack`: an element takes the
+  next offset that does not straddle a 16-byte row, HLSL's own `c_per_object`
+  packing). The compiled `c_per_object` cbuffer's size is the check - a derived
+  table wider than it warns. The graph path is unchanged (the UI base's table
+  is still the shipped 7 rows).
+- **The group→tail assignment.** A pass may carry `group = <n>`, written by
+  `--enumerate` from the program→group mapping. `EngineData::derive_tails` then
+  builds **one group per distinct index**, in first-appearance order, with that
+  group's condition set as its tail, instead of a uniform `repeat` - which is
+  what a family whose passes outnumber its groups needs (the standard family's
+  11 passes over 5 groups). A declaration that names no group keeps the
+  repeating model, so the UI base's shape is unchanged.
+
+**Caveat, not yet in game.** The offsets are *our* packing, not a read of the
+compiled `c_per_object` (a reconstructed source's cbuffer is a flat array, so
+its reflection gives only the total). It matches the shipped UI base's 7 rows,
+but a family's own table can be wider than the derived one - the standard
+declaration derives **192 bytes** against its compiled **416** - so the values
+may land at the wrong slots until the layout is checked in game. The goal is a
+build derived from the text sources, not a byte-exact one.
+
+**In game (2026-10-07).** The title harness reports `RENDER_OK` on the unchanged
+UI-base section (`CD9854D69AC9A5B7`), and `docs/scripts/pumpkin-render-test.ps1`
+reports `PUMPKIN_OK` for the standard material: snoopy-mod's `init.lua` reaches
+the hub, spawns the pumpkin and quits with `confirmed=true`; the only `<<Crash>>`
+is the benign `refcount == 0` unload. Two things were fixed after the first run:
+the pumpkin's off-screen placement was `init.lua`'s spawn offset (the
+`Vector3(0,0,2.5)` moved it along the wrong axis; it now spawns at
+`position + Quaternion.up(rotation) * 1.0`), not the shader - and the recompiled
+standard programs' resources match the true shipped `dump-cmp/shipped` containers
+exactly. A clean pre-change vs post-change `dtmt build` differs only in
+`files.sjson` (the reordering listing).
+
+**The standard family's `containers` are dropped (2026-10-07).** A program may
+name the declaration's compile job (`job = <n>`) instead of a carried container
+(`container = <n>`); `build.rs` compiles the job and frames the program with the
+job's `(vertex, pixel)` container (the `ShaderOverrides::job_containers` list).
+`lib/sdk/examples/container_jobs.rs` migrates a captured file: it compiles the
+declaration's jobs against the `.shader_source` libraries, matches each program's
+carried container by interface (26/26), and writes the `job` form with no
+`containers` hex. snoopy-mod's `standard_base.engine_data` went **375,410 ->
+51,936 bytes** (the containers were 86% of the file), the built section is
+**byte-identical** (`578c983197da6b91`, `4cc21b79457af061`), and the pumpkin
+renders in game (`PUMPKIN_OK`).
+
+**The `tails` now derive too (2026-10-12).** The carried tails used to index
+their group's descriptor list, which the standard's groups disagree on, and the
+reflection-derived lists used the raw HLSL names and the wrong record layout, so
+a split section crashed. Both are fixed: `set_derived_lists` follows the
+engine's name rule (`__tex_`/`__samp_` stripped) and record shapes,
+`derived_cbuffers` takes `c_per_object`'s size from the compiled container (the
+group's material table is narrower), and `derive_program_groups` fills the
+program-to-group mapping from the engine's `2 x n` rule when the file carries no
+`group` tag. The env-gated test `the_derived_lists_match_a_built_section`
+reports **0 mismatches** for all 26 programs' constant-buffer prefixes and
+resource lists. `examples/split_tails.rs` rewrites the file (`from_text` ->
+`to_text`), dropping each derivable tail to its block; snoopy-mod's
+`standard_base.engine_data` went **46,075 -> 42,091 bytes** and the built section
+is **byte-identical** (`578c983197da6b91`, 145,604 B). So the file now carries
+only the per-program device blocks, no resource lists at all.
 
 **But the enumerator alone is not enough: the program table's block header is
 load-bearing (2026-10-04, in-game).** Making `derived_programs` emit one program
@@ -635,23 +728,106 @@ many fixed-size records - followed by the byte-packed device preamble (the same
 bytes the engine-data text calls `device_preamble`; that is why only pixel tails
 carry the real stream and vertex tails end in a small zero placeholder).
 
-| list | record | content in the samples |
+| list | record | content |
 |---|---|---|
-| 2 | 7 words | engine records: render-set textures (`linear_depth`, `temp_gbuffer1`) and engine cbuffer variables (`bones`, `idata`) |
-| 3 | 7 words | the bindless texture array (`global_texture2D`) |
-| 4 | 7 words | no record in any sample |
-| 5 | 7 words | the bindless buffer array (`global_feedback_buffers`) |
+| 0 | - | the codec's unused second constant-buffer list (empty in every sample) |
+| 1 | - | the codec's unused `resources[0]` (empty in every sample) |
+| 2 | 7 words | SRVs: bounded textures (`linear_depth`, the material `_mi_*` textures) and bounded structured buffers |
+| 3 | 7 words | bindless SRV arrays: the unbounded texture array (`global_texture2D`) and unbounded structured buffers (`bones`, `idata`) |
+| 4 | 7 words | UAVs: bounded UAVs (no record in any sample) |
+| 5 | 7 words | bindless UAV arrays: `global_feedback_buffers`, `global_uav_buffers` |
 | 6 | 4 words | static samplers (`static_minlod_sampler`, space 31) |
 | 7 | 3 words | the stage's inputs, system values included (`{murmur32(name), semantic index, register}`) |
-| 8 | 3 words | the bindless sampler array (`global_samplers`) |
+| 8 | 3 words | the bindless sampler array (`global_samplers`; the codec reads a fourth `space` word, but writing it hangs the game - see below) |
 
-Lists 0 and 1 are empty in every sample, so their record size is unknown. The
-observed field layouts are `{name, index, binding, flag, set, FFFFFFFF, 0}` for
-resources (`flag` is `1` for a single texture, `FFFFFFFF` for an array),
-`{name, index, binding, flag, set, size, 0}` for buffer records (`bones`,
-`idata`), `{name, binding, 1, set}` for samplers and
-`{name, semantic index, register}` for inputs. The binding and set fields are
-confirmed against the compiled containers' reflection (see below).
+The framing was confirmed against the Darktide-Asset-Compiler's shader-section
+codec (`material/shader_section.{h,cpp}`), which reads the same bytes as
+`constant_buffers[2]`, `resources[5]`, `static_samplers`, `inputs` and
+`sampler_arrays`; the four resource lists here are its `resources[1..4]`, split
+by (UAV?, unbounded?), and lists 0/1 are the two lists it never fills. Its
+`material/shader_compiler.cpp` gives the record shapes and the name rule.
+
+A resource record is `{name, index, register, count, space, stride, 0}`:
+`index` is the resource's index in the group's descriptor list, `count` is
+`0xFFFFFFFF` for an unbounded array and the bind count (normally 1) otherwise,
+and `stride` is 0 for a raw (byte-address) buffer, the element stride for a
+structured buffer (DXC reports it in the reflection's `NumSamples`), and
+`0xFFFFFFFF` for a texture. A sampler is `{name, register, count, space}` and a
+sampler array `{name, register, 0, space}`.
+
+**The engine's own names.** A record's `name` is the engine's spelling, not the
+HLSL one: DXC names a texture / sampler pair from a combined sampler object
+`__tex_<name>` / `__samp_<name>`, and the engine strips that prefix
+(`__tex__mi_texcoord0` -> `_mi_texcoord0`, `__samp__mi_coords` -> `_mi_coords`).
+That is why the tail names did not match the raw reflection. The engine's own
+resources (`static_minlod_sampler`, `global_feedback_buffers`,
+`global_texture2D`, `global_samplers`) are in the container's reflection too, so
+they are written once, from it, with no extra engine records.
+
+`set_derived_lists` implements this (tests
+`the_resource_lists_come_from_the_container_reflection` and, env-gated,
+`the_derived_lists_match_a_built_section`). A bindless texture array is the
+engine's `global_texture2D` whatever the declaration names it (a from-scratch
+source calls it `g_material_textures`), and a bindless sampler array is
+`global_samplers`.
+
+`the_derived_lists_match_a_built_section` is the check that matters: pointed at
+snoopy-mod's engine data and its built material
+(`DTMT_ENGINE_DATA` / `DTMT_MATERIAL`), it derives every program's lists from its
+own container's reflection and the group's descriptor list and diffs them
+against the carried tail. With the rules below it reports **0 mismatches** for
+the standard family (26 programs), so the split derivation reproduces the
+shipped tails.
+
+**The engine's sampler-side records are injected, not read.** A stage that binds
+the bindless sampler array always carries `static_minlod_sampler` and
+`global_feedback_buffers`, whether or not its declaration names them (the UI
+base's from-scratch source does not). A **reconstructed** container's reflection
+already has them, so the injection dedupes. The gate is the sampler array, not
+"the stage samples a texture": `linear_depth`'s program (p9) reads a texture
+with no sampler, and its shipped tail has neither record. The feedback record is
+injected only when the group's descriptor list carries `global_feedback_buffers`
+- a program whose group does not would otherwise fail to index it.
+
+**The bindless sampler array is 3 words, not 4.** The Darktide-Asset-Compiler's
+codec reads `{name, register, 0, space}`, but writing that fourth word breaks the
+game: the UI base derived that way (421,876 B) hangs at D3D / window init - two
+fresh launches produced `NO_LOAD` with no Lua boot at all. The engine's runtime
+reads the sampler-array record as 3 words (`{name, register, 0}`), which is what
+this reader does (`TailLists::SIZES[8] = 3`) and what the derived record now
+writes, leaving whatever follows in the block. Reverting to the 3-word form
+restores the known-good UI base (`4cc21b79457af061`, 421,684 B, file hash
+`CD9854D69AC9A5B7`). So for this one record the derivation follows the engine,
+not the codec. The standard family's tails are unaffected - they are **carried**
+in the engine-data text (not split), so the derivation never runs for it.
+
+**The split is enabled for the standard (2026-10-12).** Both pieces landed:
+`examples/split_tails.rs` rewrites the file (dropping every derivable tail to
+its block), and `derive_program_groups` fills the program-to-group mapping from
+the engine's `2 x n` rule (a group owns `2 x n` consecutive programs, `n` its
+tail's condition count, in group order) when the file carries no `group` tag, so
+the split gate accepts it in place of "every group agrees". The migrated
+`standard_base.engine_data` is **42,091 bytes** and the built section is
+**byte-identical** (`578c983197da6b91`), **`PUMPKIN_OK`** in game. Run
+`split_tails` to a fixed point (the first pass off a carried file writes a
+slightly larger intermediate; a second pass stabilises at 42,091). The `2 x n`
+measurement is above (`examples/program_groups.rs`).
+
+**What the file still carries** (42,091 B): the per-program device **blocks**
+(~23 KB, 55%) - the block grammar is the open item; the **group template**
+(~15.6 KB, 37%) - the descriptors, material table, condition tails and group
+list, derivable from the declaration like the UI base's; the preamble (~1 KB),
+contexts + conditions (~0.3 KB) and the program list (~1.8 KB). So the two
+milestones left are the per-program block grammar and deriving the standard
+family's group data (the enumerator).
+
+`group_probe` on the migrated file shows why the group template is not just the
+`derived_head` path: the five groups' heads are **212/180/180/116/100 bytes**
+and their `mid`s 2140/2140/240/288/288 - each group has its own descriptor list
+and material table. Deriving it needs a **per-group** head (the union of that
+group's programs' resources in root order, which `derive_program_groups` can now
+select) rather than the single `derived_head(resources)`, plus the per-group
+`between`/`mid`. Runs: `group_probe <engine_data>` (rebuilt group data 10,725 B).
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
@@ -666,9 +842,11 @@ in `build_device`), so a mod shader with different IO gets a tail that matches
 its programs; rebuilding the UI base material leaves its data file byte for byte
 identical (SHA256 D8354426...).
 
-Cbuffer entries are `{murmur32(name), ?, size, register, 1, 0}`: the size at
-`+8` and the register at `+12` are confirmed across five families; the word at
-`+4` is small (0/1/2/7) and still unread.
+Cbuffer entries are `{murmur32(name), index, size, register, 1, 0}`: the size at
+`+8` and the register at `+12` are confirmed across five families, and the word
+at `+4` (small: 0/1/2/7) is the resource's **index in the group's descriptor
+list** - `derived_cbuffers` writes it there and the standard family's split
+cbuffer prefixes come back byte-identical.
 
 ### The tail block is the program's device-table stream
 
@@ -2617,7 +2795,10 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    8 are empty in every shader. One shader's list 7 carries four records, so the
    7-word record shape is not universal - the record size may depend on the
    resource kind. Which lists exist by index and the pixel tail's trailing
-   `{DA560F03, 0, 0}` run are still open. The trailing run is **shader-independent**
+   `{DA560F03, 0, 0}` run are still open. **Superseded (2026-10-12):** the list
+   indices in this older note are off by one and `linear_depth` is in list 2, not
+   list 3; see "The tail's rest is nine counted lists" for the corrected map and
+   record shapes. The trailing run is **shader-independent**
    (identical in the UI base and the 4-program shader), and the 4-program
    shader's pixel tail confirms the run shapes: `{SV_POSITION, 0, 0}` then four
    `{CUSTOM, i, i}` records, the counted `{DA560F03, 0, 0}` run and a final `2`.

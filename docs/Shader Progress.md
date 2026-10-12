@@ -362,6 +362,142 @@ shader43 --compile <dir> <declaration.shader_node> <library.shader_source | dir>
   on buffers the shipped program accepts. The helper now scales back up
   (`ret * (_dtmt_stride / 4u)`), matching the shipped program's
   `getDimensions > 4`; the assert no longer appears in the run. [same run]
+- **The material table and the group→tail assignment derive from the
+  declaration** (2026-10-07): `inputs` may be keyed by a raw `#<hex>` hash, so a
+  `c_per_object` record the dictionary cannot name survives;
+  `material_records` builds the table from the declaration's inputs with a
+  running HLSL constant-buffer layout (the compiled `c_per_object` size is the
+  check, not the source of the offsets); and a pass's `group = <n>` tag carries
+  the group→tail assignment so `derive_tails` builds one group per distinct
+  index instead of a uniform `repeat`. `--enumerate`/`--reconstruct` write both
+  a `group` tag and `#<hex>` inputs. The UI base's build is unchanged. The
+  offsets are our packing and can be narrower than a family's compiled
+  `c_per_object` (the standard declaration warns 192 vs 416), so an in-game
+  check is the next evidence. See `docs/Shader RE TODO.md`.
+
+  **In game (2026-10-07):** `shader-render-test.ps1` with the change deployed
+  reports **`RENDER_OK`** (mean 56.73, max 255, 9% black) and the section is
+  `CD9854D69AC9A5B7` (421,684 B) - the documented known-good derived UI-base
+  build, unchanged. The automated pumpkin flow (a new
+  `docs/scripts/pumpkin-render-test.ps1` waits for snoopy-mod's `init.lua` to
+  reach the hub, spawn the pumpkin and quit itself) reports **`PUMPKIN_OK`**:
+  `auto-spawned the pumpkin`, `world scan: 12 pumpkin unit(s)`,
+  `quitting for the test (confirmed=true)`, no render crash - the only
+  `<<Crash>>` is the known benign `refcount == 0` unload at shutdown. So the
+  built data is unaffected: a clean pre-change vs post-change `dtmt build`
+  differs only in `files.sjson` (the reordering listing), all nine data files
+  byte-identical.
+
+  **Open observation:** the spawned pumpkin renders at the top-left of the
+  frame, not in front of the player, though the Lua reports its world position
+  (`-0.96, -85.0, 102.62`) as the player-relative spawn point. It is not this
+  change (the standard section is byte-identical pre/post); it points at the
+  recompiled standard vertex program's instance-data transform, the same
+  `resource_fixups`/stride area the 2026-10-05 notes cover.
+
+  **Traced to the recompiled source, not the material table (2026-10-07).**
+  The comparison must use the **true shipped** containers, not `std-mod/dump/`
+  (itself a mod build - `reflect_dump` shows its `SPIRV_Cross_VertexInfo`
+  cbuffer). The shipped `dump-cmp/shipped/3F08AC4494A4436E_p00.dxbc` reflects
+  `global_viewport`/`c_instance_offset`/`c_per_object`, `bones`/`last_bones`/
+  `idata` **structured** (kind 5) and `global_uav_buffers` a **byte-address UAV**
+  (kind 8), and reads the buffers as `bufferLoad.f32(index, wot=0)`
+  (dword-scalar). The deployed **fixed-up** source's built container reflects
+  **the same names, kinds and layout** (so resource fidelity is right and the
+  pipeline accepts it - this is why it renders at all), but its code differs:
+  it reads `bufferLoad.i32(index, wot=0)`/uint4 collapse instead of the shipped's
+  per-dword f32 loads; p00 differs from the shipped by ~2400 lines. The **raw**
+  source is code-closer but reflects typed `Buffer<uint4>`/`RWBuffer` (kind 2/4)
+  and the pipeline rejects it. So the misplacement is the spirv-cross
+  recompilation's instance/bone load form, not the material table and not the
+  resource kinds.
+
+  **In game:** the **raw** source is rejected at pipeline creation
+  (`E_INVALIDARG` right after the pumpkin spawn); the **fixed-up** source
+  renders but misplaced. The raw source is backed up in snoopy-mod as
+  `standard_base.shader_source.fixedup.bak` (outside the repo).
+
+  **The shader is not the cause (2026-10-07, corrected).** The shipped p00's
+  `!dx.resources` metadata gives `idata` stride **16** and `bones` stride **64**,
+  so the collapse to one element load (`Load(X/4u)` / `Load(X/16u)[...]`) is the
+  semantically right form; the raw per-dword reads index *consecutive elements*
+  (`Load(X)`, `Load(X+1u)`, ...), which is wrong for a stride-16/64 buffer. And
+  the instance-index computation is identical in both: `%22 = shl i32 %4, 3`
+  (`instance * 8`) from `SV_InstanceID`. The fixed container's resources match
+  the shipped exactly and the transform arithmetic matches, so the pumpkin's
+  off-screen placement was the **unit/spawn**, not the recompiled standard
+  shader or the material table.
+
+  **Fixed in game (2026-10-07).** `init.lua`'s spawn offset was
+  `position + forward * 1.5 + Vector3(0, 0, 2.5)` - the `Vector3(0,0,2.5)` is
+  the wrong axis and pushed the pumpkin off-screen. It now spawns at the
+  player's own position plus one unit along the player's world-up
+  (`position + Quaternion.up(rotation) * 1.0`), and `pumpkin-render-test.ps1`
+  reports **`PUMPKIN_OK`**: one pumpkin at `(1.0, -88.9, 101.0)`, rendering
+  correctly at head height beside the player (the screenshot shows the textured
+  orange pumpkin). So the source-built standard material renders via the
+  recompiled programs; the placement was never the shader.
+
+- **The standard family's `containers` are dropped** (2026-10-07): a program may
+  name the declaration's compile job (`job = <n>`) instead of a carried
+  container (`container = <n>`), and `build.rs` frames it with the job's
+  `(vertex, pixel)` container. A new
+  `lib/sdk/examples/container_jobs.rs` migrates a captured file: it compiles the
+  declaration's jobs against the `.shader_source` libraries, matches each
+  program's carried container by interface (26/26), and writes the `job` form.
+  snoopy-mod's `standard_base.engine_data` went **375,410 -> 51,936 bytes**
+  (the `containers` hex was 86% of it), the built section is **byte-identical**
+  (`578c983197da6b91` / `4cc21b79457af061`), and `pumpkin-render-test.ps1`
+  reports **`PUMPKIN_OK`**.
+
+  **The standard's `group_data` blob now templates losslessly (2026-10-07).**
+  `groups 3-4` carry no engine table, so a per-group `has_engine` flag was added
+  (`GroupParts`/`GroupTemplate`/`GroupText`); `GroupData::template` then succeeds
+  and rebuilds the blob byte for byte (`group_probe` confirms 10725 == 10725).
+  Two more fixes made `generate` reproduce it: `derived_template` no longer
+  fills an empty `between` on a no-engine group, and `build.rs` only overwrites
+  `material_tables` from the declaration when the file carries none (the
+  standard's tables differ per group, so the derived single table had changed
+  the section). With those, `from_text` converts a walkable blob to its template
+  when it rebuilds byte-identically, and snoopy-mod's file went **51,936 ->
+  46,075 bytes**, the section **byte-identical** (`578c983197da6b91` /
+  `4cc21b79457af061`) and **`PUMPKIN_OK`** in game.
+
+  **What is left is `tails` (27.8 KB, 60% of the 46 KB).** They cannot split: a
+  split tail's derived lists index its group's descriptor list, which
+  `derived_cbuffers` reads once for all groups - and the standard's groups
+  disagree. Splitting them needs the per-program group (the docs' decoded
+  `2 x n` mapping) carried or derived, so each program's tail derives against
+  *its own* group's descriptors.
+
+  **Attempted, and it crashes (2026-10-07).** The per-program group was plumbed
+  (`EngineData::program_groups`, `ProgramText.group`, `descriptors_for_group`,
+  a per-group `c_per_object` size in `derived_cbuffers`), and
+  `shader::program_groups` tags each program from the blob's descriptor lists.
+  Two real bugs were fixed on the way: a split tail was derived from the
+  **first job's** per-stage reflection rather than the program's own container
+  (a multi-job family binds different resources per pass), so `build_device` now
+  reflects each program's own container; and `container_jobs` now matches a
+  carried container to a compiled job by **interface and resources**, tie-broken
+  by size then DXIL (an interface-only match mispaired every ambiguous pass -
+  each standard pixel program had two candidates). With the mapping fixed, the
+  split build stops at the real gap: `set_derived_lists` bails on a **bounded
+  render-set texture** (`linear_depth`) with "no measured record shape yet". So
+  the split file (42,674 B) cannot build, and the standard keeps its carried
+  tails. The next piece is that record shape - a bounded texture's 7-word
+  `{name_hash, index, binding, flag, space, FFFFFFFF, 0}` with the flag/space
+  from its descriptor (which the current map does not carry).
+
+  **What is left in the 52 KB** is `tails` (27.8 KB) and `group_data` (21.5 KB).
+  Both are gated on the standard family's group data templating: `from_text` now
+  converts a walkable `group_data` blob to the deduplicated `group_template` on
+  read, but `GroupData::template` returns `None` for `3F08AC44` (its groups do
+  not walk - no engine run or unreadable condition header, the docs' known gap),
+  so the blob stays and the tails cannot split (the split gate needs a
+  template). Driving those two down is the group-framing decode, not a
+  derivation the reader can already do. The removed-container file is verified
+  in game; the pre-migration file is kept as
+  `standard_base.engine_data.old` in snoopy-mod.
 
 ## Open, in the order to attack
 
@@ -618,6 +754,15 @@ checkout, deployed through DTMM, not the legacy `mods/` folder: build it
 experiment that needs this: a generated shader whose groups render
 distinguishable colours and whose crafted conditions tree maps channel sets to
 them, then drive the material from Lua and read which colour appears.
+
+`pumpkin-render-test.ps1` is the sibling for the `standard_base` material: it
+launches the game, lets snoopy-mod's `init.lua` continue the title, enter the
+hub, spawn the pumpkin and quit itself, captures frames along the way with
+`PrintWindow`, then reads the flushed log for `auto-spawned the pumpkin`,
+`world scan: N pumpkin unit(s)` and `quitting for the test (confirmed=...)`.
+Verdicts `PUMPKIN_OK` / `RENDER_FAIL` / `NO_PUMPKIN` / `NO_LOAD`. (It waits for
+the self-quit rather than killing early - the title harness's fixed kill is
+before the hub.)
 
 ## Authoring format decision
 
