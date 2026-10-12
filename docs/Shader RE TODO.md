@@ -108,6 +108,11 @@ slice is a small `block_bodies` pool (`BodyText { start, len }`) the blocks inde
 the whole body is still the default (no index). Took the file from
 **12,546 -> 12,266 bytes**, byte-identical.
 
+**Zero-valued indices are omitted (2026-10-12).** The group template's groups and
+the program list wrote every index even when it was the default `0` (`head = 0`,
+`tail = 0`, ...); they now skip it. Took the file from **12,266 -> 11,870 bytes**,
+byte-identical.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other

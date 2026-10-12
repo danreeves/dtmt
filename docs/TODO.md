@@ -27,20 +27,21 @@ as of 2026-10-12:
 - **`ui_default_base` (GUI / title): done.** No engine data - it builds from the
   declaration alone (section `CD9854D69AC9A5B7`), verified in game.
 - **`standard_base`: the `mid` derives and the blocks share their body and tail.**
-  `standard_base.engine_data` is now **12,266 B** - down from 375,410 when the
-  section was captured, and from 42,091 - a **71% cut**. The programs' cbuffer and
+  `standard_base.engine_data` is now **11,870 B** - down from 375,410 when the
+  section was captured, and from 42,091 - a **72% cut**. The programs' cbuffer and
   resource lists derive; the group **`mid`** does too (the file carries each
   group's **channel list**); a program's **group** is derived from the group
   tails' condition counts; the device **blocks** reference the slice of the
   preamble body they carry verbatim and pool their **body slice**, head and
-  trailing bytes (shared fronts and backs); and the engine table is carried as the
-  count of records it drops from the toolchain's captured table (4), not the whole
-  2.7 KB. Every step is confirmed by the built section being **byte-identical** and
-  rendering in game. Still carried: the group template's
-  heads/`between`/materials, the **contexts/conditions/preamble**, the per-program
-  **block head and the distinct trailings** and the **program list**
-  (`stage`/`tail`/`job`). The remaining decode is the per-program block head/tail,
-  plus the enumerator and a lossless reconstruction.
+  trailing bytes (shared fronts and backs); zero-valued group indices and program
+  tails are omitted; and the engine table is carried as the count of records it
+  drops from the toolchain's captured table (4), not the whole 2.7 KB. Every step
+  is confirmed by the built section being **byte-identical** and rendering in game.
+  Still carried: the group template's heads/`between`/materials, the
+  **contexts/conditions/preamble**, the per-program **block head and the distinct
+  trailings** and the **program list** (`stage`/`tail`/`job`). The remaining decode
+  is the per-program block head/tail, plus the enumerator and a lossless
+  reconstruction.
 - **Particle shaders: not started.** The `particles` file type decodes the
   particle **effect resource** (`filetype/particles.rs`), *not* a shader; no
   particle `.shader_node`/`.shader_source` work exists.
