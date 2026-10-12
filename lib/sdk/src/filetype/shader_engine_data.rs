@@ -2359,6 +2359,31 @@ impl EngineData {
             }
         }
 
+        // A program's group is derivable - `derive_program_groups` fills it on
+        // read from the group tails' condition counts - so it is omitted when it
+        // matches what the derivation would produce.
+        let derived_groups: Vec<usize> = self
+            .group_template
+            .as_ref()
+            .map(|template| {
+                let mut groups = Vec::new();
+                for (group, parts) in template.groups.iter().enumerate() {
+                    let count = match GroupTailText::from_bytes(&parts.tail) {
+                        GroupTailText::Conditions { conditions } => conditions.len(),
+                        GroupTailText::Hex(hex) => condition_count(&hex.0).unwrap_or(0),
+                        _ => 0,
+                    };
+                    groups.extend(std::iter::repeat_n(group, count * 2));
+                }
+                groups
+            })
+            .unwrap_or_default();
+        let groups_derive = !derived_groups.is_empty()
+            && derived_groups.len() == self.programs.len()
+            && self.program_groups.iter().enumerate().all(|(index, group)| {
+                group.map_or(true, |group| Some(group) == derived_groups.get(index).copied())
+            });
+
         let programs = self
             .programs
             .iter()
@@ -2376,7 +2401,9 @@ impl EngineData {
                 tail: tail_indexes[index],
                 container: container_indexes[index],
                 job: self.program_jobs.get(index).copied().flatten(),
-                group: self.program_groups.get(index).copied().flatten(),
+                group: (!groups_derive)
+                    .then(|| self.program_groups.get(index).copied().flatten())
+                    .flatten(),
             })
             .collect();
 
