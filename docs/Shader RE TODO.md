@@ -142,6 +142,17 @@ matches the shipped one except **two pre-existing bytes** (at group-data offsets
 10732 and 10924: a material record's `80`/`96` where we write `72`/`88`) - those
 were there before the heads derived and are a separate, still-open fidelity gap.
 
+**The `between` derives from the engine table (2026-10-12).** The docs called
+`between` "two constants then the count word"; the first word is actually the
+engine table's **byte size** (`table_size`, e.g. `0x6F0` = 1776 for the
+standard's 69 records) and the second is zero - the toolchain's `derived_between`
+(`{0xF0, 0x40, 0}`) was wrong, so the standard carried its betweens. Deriving
+`{table_size(engine), 0, 0}` and letting `GroupData::build` rewrite the count
+reproduces the shipped bytes exactly, so `to_text` omits an all-empty `between`
+pool and `mid_migrate` clears each group's between. Took the file from
+**9,905 -> 9,763 bytes**. (`GroupData::build` rewriting the count still needs
+checking against a family whose count differs.)
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
