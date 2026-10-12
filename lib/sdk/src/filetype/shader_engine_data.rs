@@ -643,21 +643,6 @@ impl<'de> Deserialize<'de> for Hex {
     }
 }
 
-/// A string written quoted, the way the source files write names and kinds.
-fn serialize_quoted<S: Serializer>(value: &str, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    serializer.serialize_bytes(out.as_bytes())
-}
-
 /// A list of 32-bit hashes, written as quoted eight-digit words the way the file
 /// writes every other name hash (a bare `0x…` token would read as neither an
 /// integer nor an identifier, and a bare decimal loses the hex the docs use).
@@ -1461,7 +1446,7 @@ struct BodyText {
 
 /// The shortest shared run worth writing as a reference: below this the bytes
 /// the reference saves are fewer than the fields it adds.
-const MIN_SHARED: usize = 24;
+const MIN_SHARED: usize = 12;
 
 /// A shared bytes pool while a file is written: the entries, and the bytes each
 /// one stands for (so a new value can find the longest front and back to
@@ -1581,7 +1566,6 @@ struct PatchText {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProgramText {
-    #[serde(serialize_with = "serialize_quoted")]
     stage: String,
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     tail: usize,
@@ -3539,9 +3523,9 @@ programs = []
         let text = engine_data.to_text();
         assert!(text.contains("lists = \"01020304\""), "{text}");
         assert!(text.contains("lists = \"05060708\""), "{text}");
-        assert!(text.contains("stage = \"Vertex\""), "{text}");
-        assert!(text.contains("stage = \"Pixel\""), "{text}");
-        assert_eq!(text.matches("stage = \"Vertex\"").count(), 2);
+        assert!(text.contains("stage = Vertex"), "{text}");
+        assert!(text.contains("stage = Pixel"), "{text}");
+        assert_eq!(text.matches("stage = Vertex").count(), 2);
 
         let parsed = EngineData::from_text(&text).unwrap();
         assert_eq!(parsed.programs.len(), 3);
