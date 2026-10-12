@@ -215,6 +215,14 @@ program's own cbuffer list (program 1 declares three cbuffers, program 3 none) n
 cleanly the group's five, and the records' words match neither the descriptor `x`s
 nor the cbuffer sizes, so the field order is still open.
 
+**The Darktide binaries are RTTI-stripped (2026-10-12).** `Darktide.exe` (19.9 MB)
+carries none of the device-data names (`D3DShaderPassData`, `BindInfo`,
+`make_device_data`) - only unrelated shader strings (`shader_pass_flags`,
+`CreateRootSignature failed`) - so the Darktide D3D12 writer's field order cannot be
+read off the shipped binary the way the VT2 compiler's could. It needs a
+disassembly guided by the 20-byte stride, or a larger empirical correlation of the
+block bytes against the programs' reflections (`block_match` is the tool).
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
