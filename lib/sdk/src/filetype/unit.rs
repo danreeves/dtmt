@@ -279,6 +279,7 @@ fn f16(value: f32) -> u16 {
     let sign = ((bits >> 16) & 0x8000) as u16;
     let exponent = ((bits >> 23) & 0xff) as i32 - 127 + 15;
     let mantissa = bits & 0x7f_ffff;
+
     if exponent >= 0x1f {
         return sign | 0x7c00;
     }
@@ -286,10 +287,36 @@ fn f16(value: f32) -> u16 {
         if exponent < -10 {
             return sign;
         }
-        let mantissa = (mantissa | 0x80_0000) >> (1 - exponent);
-        return sign | (mantissa >> 13) as u16;
+        let mantissa = mantissa | 0x80_0000;
+        let shift = (1 - exponent) as u32;
+        let value = mantissa >> shift;
+        let remainder = mantissa & ((1u32 << shift) - 1);
+        let half = 1u32 << (shift - 1);
+        let rounded = if remainder > half || (remainder == half && (value & 1) == 1) {
+            value + 1
+        } else {
+            value
+        };
+        return sign | (rounded >> 13) as u16;
     }
-    sign | ((exponent as u16) << 10) | (mantissa >> 13) as u16
+
+    // Round the thirteen dropped mantissa bits to nearest, ties to even - the
+    // same rule the engine's `f32` -> half conversion uses. Truncating here put
+    // one ULP between a rebuilt stream and the shipped one.
+    let mut result = mantissa >> 13;
+    let remainder = mantissa & 0x1fff;
+    if remainder > 0x1000 || (remainder == 0x1000 && (result & 1) == 1) {
+        result += 1;
+    }
+    let mut exponent = exponent as u32;
+    if result == 0x400 {
+        result = 0;
+        exponent += 1;
+        if exponent >= 0x1f {
+            return sign | 0x7c00;
+        }
+    }
+    sign | ((exponent as u16) << 10) | result as u16
 }
 
 /// Octahedral normal encoding, stored as a half2 in `[0, 1]`.
