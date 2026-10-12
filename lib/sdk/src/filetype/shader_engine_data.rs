@@ -1022,7 +1022,7 @@ pub fn head_descriptors(programs: &[Vec<dxc::BoundResource>]) -> Vec<(u32, u32, 
             if binding.kind == 3 {
                 continue;
             }
-            let hash = u32::from(murmur::Murmur32::hash(binding.name.as_bytes()));
+            let hash = u32::from(murmur::Murmur32::hash(engine_name(&binding.name).as_bytes()));
             let slot = match out.iter().position(|(name, ..)| *name == hash) {
                 Some(slot) => slot,
                 None => {
@@ -2459,6 +2459,12 @@ impl EngineData {
                 None => (None, groups),
             };
 
+            // A head that is only its query is derived at build time from the
+            // group's programs' reflections, so a file whose heads all derive
+            // carries no head pool.
+            if heads.iter().all(|head| head.0.is_empty()) {
+                heads.clear();
+            }
             // The prefix is the group count alone in the common case, so it
             // derives from the group list and the text omits it; a section with
             // a longer prefix keeps it.

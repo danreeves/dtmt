@@ -39,6 +39,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             parts.channels = channels;
             parts.mid = Vec::new();
         }
+        // A group's head is carried as its query id alone once the rest derives
+        // from the group's programs' reflections at build time. This is lossless
+        // only when the derivation reproduces the shipped head, which the build
+        // checks (the section must stay byte-identical).
+        parts.head.truncate(4);
     }
 
     fs::write(&path, engine_data.to_text())?;
