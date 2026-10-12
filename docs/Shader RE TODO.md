@@ -1152,6 +1152,16 @@ both. The prefix is the material's channels' padded extent (32 there, 64 for the
 So a cbuffer is identified by its **field set**, not its size, and the const's
 offsets are the relative ones.
 
+**The `mid`'s cbuffers are the head's cbuffer descriptors minus `global_viewport`
+(2026-10-12).** Group 0's reflection gives `c_instance_offset` 16, `c_per_object`
+416, `global_environment_settings` 400, `c_depth_only` 304 - exactly the `mid`'s
+cbuffer order (the `W1` chain), and exactly the head's kind-0/1 descriptors minus
+`global_viewport`. So the interface const can key on the cbuffer **name**: the
+builder takes the head's cbuffer descriptors, drops `global_viewport` (which the
+`between` handles), and looks each name up. `c_per_object` and `c_depth_only`
+share a 272-byte variant in other groups, so the name - not the size - has to be
+the key.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
