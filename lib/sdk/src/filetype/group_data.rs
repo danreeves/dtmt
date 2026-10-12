@@ -54,6 +54,66 @@ const PACKED_LEN: usize = 28;
 /// shipped sections use this value for their per-object cbuffer.
 const PACKED_KEY: u32 = 0xB563_9618;
 
+/// One section of a group's `mid`: a header `{w1, w2, count}` and `count`
+/// records. The grammar was measured against the standard's five shipped mids
+/// (`docs/Shader RE TODO.md`); `W1` is the one field whose meaning is not yet
+/// known, so it is carried here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MidSection {
+    /// The section header's first word (`W1`).
+    pub w1: u32,
+    /// The section header's second word (`W2`); for a later canonical section it
+    /// is the first header's `W1 + x_end`.
+    pub w2: u32,
+    /// The section's records, 20 bytes each unless `packed`.
+    pub records: Vec<u8>,
+    /// Whether the records are the 28-byte packed copies (the final section).
+    pub packed: bool,
+}
+
+/// Splits a group's `mid` into its sections, or `None` when the bytes do not
+/// walk. Every section but the last holds 20-byte canonical records; the last
+/// holds 28-byte packed copies.
+pub fn mid_sections(mid: &[u8]) -> Option<Vec<MidSection>> {
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(mid.get(at..at + 4)?.try_into().ok()?))
+    };
+    let mut sections = Vec::new();
+    let mut at = 0usize;
+    while at + 12 <= mid.len() {
+        let (w1, w2) = (word(at)?, word(at + 4)?);
+        let count = word(at + 8)? as usize;
+        let rest = mid.len() - at - 12;
+        let packed = count > 0 && rest == count * PACKED_LEN;
+        let step = if packed { PACKED_LEN } else { RECORD_LEN };
+        let records = mid.get(at + 12..at + 12 + count * step)?.to_vec();
+        sections.push(MidSection {
+            w1,
+            w2,
+            records,
+            packed,
+        });
+        at += 12 + count * step;
+        if count == 0 {
+            break;
+        }
+    }
+    (at == mid.len() && !sections.is_empty()).then_some(sections)
+}
+
+/// Writes sections back out as a `mid`.
+pub fn mid_bytes(sections: &[MidSection]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for section in sections {
+        let step = if section.packed { PACKED_LEN } else { RECORD_LEN };
+        out.extend_from_slice(&section.w1.to_le_bytes());
+        out.extend_from_slice(&section.w2.to_le_bytes());
+        out.extend_from_slice(&((section.records.len() / step) as u32).to_le_bytes());
+        out.extend_from_slice(&section.records);
+    }
+    out
+}
+
 /// The first record of the engine's `global_viewport` table: `6BC91D73` on all
 /// seven sections measured - the six small families and the UI base - and one
 /// per group. The engine table is otherwise indistinguishable from the
@@ -1271,6 +1331,33 @@ fn is_packed(data: &[u8], at: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The `mid` grammar: a section per `{w1, w2, count}` header, canonical
+    /// 20-byte records, and a final 28-byte packed section.
+    #[test]
+    fn a_mid_walks_as_sections() {
+        let mut mid = Vec::new();
+        for word in [16u32, 176, 2] {
+            mid.extend_from_slice(&word.to_le_bytes());
+        }
+        mid.extend_from_slice(&[0u8; 40]); // two canonical records
+        for word in [304u32, 8, 1] {
+            mid.extend_from_slice(&word.to_le_bytes());
+        }
+        mid.extend_from_slice(&[0u8; 28]); // one packed copy
+        let sections = mid_sections(&mid).expect("the mid walks");
+        assert_eq!(sections.len(), 2);
+        assert_eq!(
+            (sections[0].w1, sections[0].w2, sections[0].records.len()),
+            (16, 176, 40)
+        );
+        assert!(!sections[0].packed);
+        assert!(sections[1].packed);
+        assert_eq!(sections[1].records.len(), 28);
+        assert_eq!(mid_bytes(&sections), mid);
+        // A truncated mid does not walk.
+        assert!(mid_sections(&mid[..mid.len() - 1]).is_none());
+    }
 
     /// A group data in the shipped shape: a 32-byte global header, one group of
     /// three 16-byte descriptors, then the engine's own table, a gap, the

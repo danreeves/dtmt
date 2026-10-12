@@ -8,7 +8,7 @@
 use std::error::Error;
 use std::fs;
 
-use sdk::filetype::group_data::{GroupData, Record};
+use sdk::filetype::group_data::{mid_sections, GroupData, Record};
 use sdk::filetype::shader_engine_data::EngineData;
 use sdk::murmur::Murmur32;
 
@@ -28,36 +28,6 @@ fn head_descriptors(head: &[u8]) -> Option<Vec<[u32; 4]>> {
             .map(|r| std::array::from_fn(|w| u32::from_le_bytes(r[w * 4..w * 4 + 4].try_into().unwrap())))
             .collect(),
     )
-}
-
-/// Walks a group's `mid` with the measured grammar: sections of
-/// `{w1, w2, count}` followed by `count` records - 20-byte canonical records,
-/// and a final 28-byte packed-copy section. `None` when the walk does not land
-/// exactly on the end.
-fn mid_sections(mid: &[u8]) -> Option<Vec<(u32, u32, usize, usize)>> {
-    const RECORD_LEN: usize = 20;
-    const PACKED_LEN: usize = 28;
-    let word = |at: usize| -> Option<u32> {
-        Some(u32::from_le_bytes(mid.get(at..at + 4)?.try_into().ok()?))
-    };
-    let mut out = Vec::new();
-    let mut at = 0usize;
-    while at + 12 <= mid.len() {
-        let (w1, w2) = (word(at)?, word(at + 4)?);
-        let count = word(at + 8)? as usize;
-        let rest = mid.len() - at - 12;
-        let size = if count > 0 && rest == count * PACKED_LEN {
-            PACKED_LEN
-        } else {
-            RECORD_LEN
-        };
-        out.push((w1, w2, count, size));
-        at += 12 + count * size;
-        if count == 0 {
-            break;
-        }
-    }
-    (at == mid.len()).then_some(out)
 }
 
 /// murmur32 of the engine's own resource names, for a readable descriptor dump.
@@ -116,7 +86,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                         "      mid: {}",
                         sections
                             .iter()
-                            .map(|(w1, w2, count, size)| format!("{{W1={w1} W2={w2} n={count} x{size}w}}"))
+                            .map(|section| {
+                                let step = if section.packed { 28 } else { 20 };
+                                format!(
+                                    "{{W1={} W2={} n={} x{step}w}}",
+                                    section.w1,
+                                    section.w2,
+                                    section.records.len() / step
+                                )
+                            })
                             .collect::<Vec<_>>()
                             .join(" | ")
                     ),
