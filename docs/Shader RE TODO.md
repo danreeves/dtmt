@@ -1098,6 +1098,17 @@ engine data. Dropping the engine data's `materials` pool on top of that does
 *not* reproduce the section (+112 B), so the material table is still built
 differently - the next gap on the road to dropping the engine data.
 
+**The material table is the channels' records (2026-10-12).** The engine data's
+`materials` pool is `{kind, flags, <channel>, offset, size}` runs -
+`0F5DE278`, `bca`, `bca`, `orm`, `nm`, ... - i.e. precisely the channel records
+the `mid`'s first section begins with. So the material table and the `mid` share
+one source: **the material's channels**. The `--reconstruct` path emits `inputs`
+from the section's *object table* (`#78E25D0F`, `#9A531871`, neither of which is
+a channel), which is why dropping the `materials` pool does not reproduce the
+section - the reconstruction should emit the channels (its `samplers` block
+already lists `bca`/`orm`/`nm`), and then the same channel records would drive
+both the material table and the `mid`.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
