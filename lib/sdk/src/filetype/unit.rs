@@ -823,7 +823,10 @@ fn f32_from_f16(bits: u16) -> f32 {
         if mantissa == 0 {
             f32::INFINITY
         } else {
-            f32::NAN
+            // A NaN half (`0xFE00` and friends) appears in shipped streams as
+            // "no value"; the difference from the reference reader is that it
+            // maps it to 0 rather than propagating a NaN into a normal.
+            0.0
         }
     } else {
         (mantissa as f32 / 1024.0 + 1.0) * 2.0f32.powi(exponent as i32 - 15)
