@@ -943,7 +943,25 @@ take each distinct resource once, map its flags (the engine's mined from a
 shipped head, a stage resource's by kind), then apply the `x` (24 per cbuffer, 8
 per other) and `y` (two bits per pass) rules and the header word above.
 `StageResources` sorts its resources by kind, so it has to keep the raw binding
-order for this. What is
+order for this.
+
+**Validated on the standard (2026-10-12).** Reflecting group 0's ten programs'
+built containers (`snoopy-std-dump/*.dxbc`) and taking each distinct binding once
+gives
+
+```
+global_viewport, c_instance_offset, c_per_object, bones, last_bones, idata,
+global_uav_buffers, global_environment_settings, global_samplers,
+static_minlod_sampler, global_texture2D, global_feedback_buffers, c_depth_only
+```
+
+and the shipped head is that list **minus the two samplers**, then the material's
+own texture (`9B8038E0`). So the head is `(the group's programs' bindings,
+samplers dropped, first-seen order) + the material's resources`, and every engine
+name's flags are already in `engine_descriptor_flags` - `A306B24F` is
+`global_uav_buffers` and `B3A2EB88` is `global_environment_settings`, both
+confirmed against the constants. The first eight descriptors match the shipped
+head exactly. What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`
