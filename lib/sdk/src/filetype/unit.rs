@@ -161,6 +161,11 @@ struct BsiGeometry {
     /// authored one omits it and gets the computed bounds.
     #[serde(default)]
     bounds: Option<[f32; 10]>,
+    /// The payload's mesh-geometry record as hex. A decompiled geometry carries
+    /// it so a recompile can write the record back byte for byte; an authored
+    /// geometry omits it and the streams are re-encoded from `streams`.
+    #[serde(default)]
+    raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -713,6 +718,13 @@ fn unify_geometry(geometry: &BsiGeometry) -> Result<(Vec<UnifiedStream>, Vec<u32
 }
 
 fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32]) -> Result<()> {
+    // A decompiled geometry carries the payload's record verbatim; writing it
+    // back is exact, which the re-encode below cannot be for the half-float
+    // streams (it drops POSITION `w` and re-rounds the octahedral normals).
+    if let Some(raw) = geometry.raw.as_ref() {
+        w.bytes(&hex_decode(raw)?);
+        return Ok(());
+    }
     w.u32(1); // mesh geometry version
     let (streams, indices) = unify_geometry(geometry)?;
     let mut formats = Vec::new();
@@ -990,9 +1002,13 @@ struct DecodedGeometry {
     bounds: [f32; 10],
     materials: Vec<u32>,
     unk2: u32,
+    /// The record exactly as it sits in the payload, so a recompile can write it
+    /// back byte for byte instead of re-encoding the streams.
+    raw: Vec<u8>,
 }
 
 fn parse_mesh_geometry(reader: &mut Reader<'_>) -> Result<DecodedGeometry> {
+    let record_start = reader.at;
     let version = reader.u32()?;
     let mut streams = Vec::new();
     for _ in 0..reader.u32()? {
@@ -1042,10 +1058,15 @@ fn parse_mesh_geometry(reader: &mut Reader<'_>) -> Result<DecodedGeometry> {
         bounds,
         materials,
         unk2,
+        raw: reader.data[record_start..reader.at].to_vec(),
     })
 }
 
 fn write_decoded_geometry(w: &mut Writer, geometry: &DecodedGeometry) {
+    if !geometry.raw.is_empty() {
+        w.bytes(&geometry.raw);
+        return;
+    }
     w.u32(geometry.version);
     w.u32(geometry.streams.len() as u32);
     for stream in &geometry.streams {
@@ -1467,6 +1488,7 @@ fn bsi_sjson(
                 .collect::<Vec<_>>()
                 .join(" ")
         ));
+        text.push_str(&format!("\t\traw = \"{}\"\n", hex_encode(&geometry.raw)));
         text.push_str("\t\tmaterials = [\n");
         for batch in &geometry.batches {
             let slot = geometry
@@ -2654,6 +2676,7 @@ renderables = {
             ],
             materials: Vec::new(),
             bounds: None,
+            raw: None,
         };
 
         let (streams, indices) = unify_geometry(&geometry).unwrap();
