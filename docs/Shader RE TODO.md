@@ -1249,6 +1249,25 @@ block is 823 bytes, not a multiple of 16, even though its channel records are 16
 bytes each. The grammar is still open, but it is a re-layout rather than an
 opaque blob, which is the thread to follow.
 
+**Every pixel block contains the whole preamble body (2026-10-12,
+`block_probe`).** Probing each program's device block against the preamble's 30
+12-byte `{id, flags, 0}` records:
+
+```
+program  1 Pixel: block  909 B; whole records 30/30, {id,flags} pairs 30/30
+program  3 Pixel: block  863 B; whole records 30/30, {id,flags} pairs 30/30
+...
+program 25 Pixel: block   92 B; whole records  0/30, {id,flags} pairs  6/30
+program  0 Vertex: block   52 B; whole records  0/30, {id,flags} pairs  3/30
+```
+
+Every pixel block contains **all 30** records; the tiny vertex blocks (52 B)
+contain none, and the 92-byte tail holds six `{id, flags}` pairs but no whole
+record. So "re-layout" is now precise: a pixel block is the preamble's body
+**re-encoded** - every record present, at re-ordered offsets, in a wider record -
+plus the program's own data. The grammar to find is the per-record re-encoding
+rule and then the program's extra records.
+
 **The copies are the channel rows, once per channel-bearing cbuffer
 (2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
 seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
