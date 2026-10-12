@@ -125,6 +125,10 @@ that look derivable are not:
 - **a program's `job`**: the build path does not read `program_jobs`, but removing
   the tags changes the built section's descriptor lists, so it is needed.
 
+The shared-front/back pool is near-optimal for the trailings: a pairwise
+longest-common-substring check (max 196 B, and every match a prefix or suffix)
+shows no long **middle** run left unshared, so the pool needs no third reference.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
