@@ -43,7 +43,7 @@ nothing known.
 | Shader section (`shader43`) | Partial (generating) | The `standard_base` family now derives from source: its engine data carries no resource lists (per-program blocks only) and the built section is byte-identical, verified in game. Remaining: the per-program device **block** grammar (still carried), the group template (blocked on the descriptor **`Y`** usage field), and the from-declaration family (the enumerator). See `Shader RE TODO.md`. The community `shader_section` (version `0x2b`) decodes/encodes shipped sections exactly, and its `shader_compiler` gives the root-parameter numbering. |
 | Strings | Partial | The format is done; the bundle-property / variant interaction is not (upstream issue #3). |
 | Unit | Partial | Static payloads round-trip and spawn; skins, animations, streamed meshes and actor/camera/light units are rejected. The community `unit_v115` writer is a reference. |
-| Bones | None | Only used through Unit today. The community `bones_writer` builds and validates a cooked BONES. |
+| Bones | Partial | The cooked body and 38-byte envelope are decoded (`filetype/bones.rs`: joint names, their 32-bit ids and the LOD counts), with a decompile path and a round-trip test. The build path and a game-sample check are not wired yet. The community `bones_writer` builds and validates a cooked BONES. |
 | Animation | None | The community `animation_writer` writes cooked clips (with a fitter). |
 | State Machine | None | The community `state_machine_writer` writes states, blends, layers and ragdoll states. |
 | Flow | None | The community `flow_resource` decodes/encodes a unit's compiled flow graph. |

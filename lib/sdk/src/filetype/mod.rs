@@ -1,3 +1,4 @@
+pub mod bones;
 pub mod condition;
 pub mod condition_tree;
 pub mod group_data;

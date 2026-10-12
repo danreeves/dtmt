@@ -18,6 +18,7 @@
 | Wwise Stream | [Full](File%20Type%20-%20Wwise%20Stream.-.md) | ✗ | ✗ |
 | Wwise Bank | [Partial](File%20Type%20-%20Wwise%20Bank.-.md) | ✗ | ✗ |
 | Unit            | [Partial](File%20Type%20-%20Unit.-.md) | ✓           | ✓             | DTMT compiles a `.unit` (SJSON) plus a `.bsi` (SJSON geometry) into the runtime payload and decompiles a payload back into one; four shipped static payloads round-trip at identical size and a static single-mesh unit spawns in game. Skins, animations, streamed meshes and actor/camera/light units are rejected with clear errors; LOD decompilation is untested. |
+| Bones           | Partial       | ✗           | ✓             | The cooked body (joint names, their 32-bit ids, the LOD counts) and the 38-byte envelope are decoded (`filetype/bones.rs`); decompile is wired, compile is not yet, and a game-sample check is pending. The community `bones_writer` writes and validates the same layout. |
 | Level           | None          | ✗           | ✗             |
 | Particles       | None          | ✗           | ✗             |
 

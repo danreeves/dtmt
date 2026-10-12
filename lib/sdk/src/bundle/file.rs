@@ -484,6 +484,9 @@ impl BundleFile {
 
             let res = match file_type {
                 BundleFileType::Lua => lua::decompile(ctx, data).await,
+                BundleFileType::Bones => {
+                    crate::filetype::bones::decompile(ctx, std::slice::from_ref(variant))
+                }
                 BundleFileType::Package => package::decompile(ctx, name.clone(), data),
                 BundleFileType::Texture => texture::decompile(ctx, name.clone(), variant).await,
                 BundleFileType::Material => material::decompile(ctx, name.clone(), variant).await,
