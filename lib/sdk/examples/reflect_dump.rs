@@ -31,14 +31,15 @@ fn section_bytes(data: &[u8]) -> Option<&[u8]> {
 /// canonical records a group's `mid` carries.
 fn dump_binding(binding: &dxc::BoundResource) {
     println!(
-        "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {}",
+        "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {} size {}",
         binding.name,
         binding.kind,
         kind_name(binding.kind),
         binding.bind_point,
         binding.bind_count,
         binding.flags,
-        binding.space
+        binding.space,
+        binding.size
     );
     for variable in &binding.variables {
         println!(
