@@ -394,6 +394,32 @@ records), its **trailing** the stream-out/state records. Next: decode the header
 variable records and `make_device_data`'s field offsets (`objdump` ships with
 w64devkit; `make_device_data` is the disassembly target).
 
+**The block's type is confirmed from the compiler's own RTTI (2026-10-12).** The
+`vftable`/TypeRTTI string pool in
+`sdk/engine/win64/dev/stingray_win64_dev_x64_compiler_1.exe` (`.rdata`) spells the
+D3D device data out exactly:
+
+```text
+stingray::Vector<stingray::D3DShaderPassData::Shader>::set_capacity
+stingray::Vector<stingray::D3DShaderPassData::Shader::ConstantBufferBindInfo>::...
+stingray::Vector<stingray::D3DShaderPassData::Shader::ResourceBindInfo>::...
+stingray::Vector<stingray::D3DShaderPassData::Shader::SamplerBindInfo>::...
+stingray::Vector<stingray::D3DShaderPassData::InstanceData::Variable>::...
+stingray::Vector<stingray::D3DShaderPassData::StreamOutDeclaration::Channel>::...
+```
+
+So a `D3DShaderPassData` is an array of `Shader`s (each with a
+**ConstantBufferBindInfo** / **ResourceBindInfo** / **SamplerBindInfo** array) plus
+an **InstanceData** variable array and a **StreamOutDeclaration** channel array -
+i.e. the `shader43` block is `head` = the `Shader` bind infos, `body` = the
+`InstanceData` variables (the preamble's own), `trailing` = the stream-out /
+state records. The writer is `stingray::shader_compiler::make_device_data`
+(`platform_interface.cpp`; its name string sits at `.rdata` `0x140ECD4C8`). What is
+still missing is the **field order inside each record** - a controlled compile (add
+one cbuffer / resource / sampler and diff the library header) or a
+`make_device_data` disassembly gives it; a plain count-driven guess from the head
+sizes does not fit (`104` vs `84` bytes for groups of `12` vs `10` descriptors).
+
 This confirms the writer's shape directly from the source: the library's
 **state block carries per-record fields the pass declares** (`write_mask0`,
 blend, z state), which is exactly where the `shader43` block's seam/mask words
