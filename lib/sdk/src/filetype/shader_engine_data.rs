@@ -1197,7 +1197,7 @@ fn derived_group_mid(programs: &[StageResources], channels: &[u32]) -> Vec<u8> {
         x_end += step;
         if flags & 0xFF <= 1 && *name != GLOBAL_VIEWPORT {
             if let Some(size) = sizes.get(name) {
-                cbuffers.push(*size);
+                cbuffers.push((*size, *name));
             }
         }
     }

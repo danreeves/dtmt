@@ -35,8 +35,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             continue;
         };
 
-        // The cbuffer sizes are the sections' own `W1`s.
-        let cbuffers: Vec<u32> = sections.iter().map(|section| section.w1).collect();
+        // The cbuffer sizes are the sections' own `W1`s (the hashes only matter
+        // to `packed_copies`, which this uses the shipped copies for).
+        let cbuffers: Vec<(u32, u32)> = sections.iter().map(|section| (section.w1, 0)).collect();
         let x_end = sections.first().map_or(0, |section| section.w2);
         let copies = sections
             .last()

@@ -124,7 +124,7 @@ pub fn engine_cbuffer(size: u32) -> Option<(bool, &'static [(u32, u32, u32, u32)
 /// cbuffer - so the first cbuffer's fields are never emitted, and the last
 /// section is the copies. The channel-bearing cbuffer's fields sit at
 /// `align16(the channels' extent) + the engine's relative offset`.
-pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32) -> Vec<u8> {
+pub fn derived_mid(cbuffers: &[(u32, u32)], channels: &[u8], copies: &[u8], x_end: u32) -> Vec<u8> {
     // The material's channels occupy a 16-aligned prefix of their cbuffer.
     let extent = channels
         .chunks_exact(20)
@@ -161,7 +161,7 @@ pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32)
     let sections: Vec<Vec<u8>> = (0..n)
         .map(|j| {
             if j + 1 < n {
-                records(cbuffers[j + 1])
+                records(cbuffers[j + 1].0)
             } else {
                 copies.to_vec()
             }
@@ -175,17 +175,17 @@ pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32)
     for (j, section) in sections.iter().enumerate() {
         let step = if j + 1 < n { 20 } else { 28 };
         let count = (section.len() / step) as u32;
-        let w2 = if is_global(cbuffers[j]) {
+        let w2 = if is_global(cbuffers[j].0) {
             0
         } else {
             accumulator
         };
-        for word in [cbuffers[j], w2, count] {
+        for word in [cbuffers[j].0, w2, count] {
             out.extend_from_slice(&word.to_le_bytes());
         }
         out.extend_from_slice(section);
-        if !is_global(cbuffers[j]) {
-            accumulator += cbuffers[j];
+        if !is_global(cbuffers[j].0) {
+            accumulator += cbuffers[j].0;
         }
     }
     out
@@ -239,18 +239,18 @@ pub fn channel_records(channels: &[u32]) -> Vec<u8> {
 /// cbuffer that carries the channels, with `b` the copy set index and `x` the
 /// cbuffer's packed index. Each row is `{channel, a, b, offset, kind, cbuffer,
 /// x}` where `a` is the kind for a kind-5 row and the component's byte offset
-/// (0, 8, ...) for the float2 rows.
-pub fn packed_copies(cbuffers: &[u32], channels: &[u32]) -> Vec<u8> {
+/// (0, 8, ...) for the float2 rows. `cbuffers` are `(compiled size, name hash)`.
+pub fn packed_copies(cbuffers: &[(u32, u32)], channels: &[u32]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut set = 0u32;
-    for size in cbuffers {
+    for (size, name) in cbuffers {
         // Only a cbuffer that carries the channels gets copies.
         let Some((true, _)) = engine_cbuffer(*size) else {
             continue;
         };
         let Some((hash, x)) = PACKED
             .iter()
-            .find(|(packed, ..)| packed == size)
+            .find(|(packed, cbuffer, _)| packed == size && cbuffer == name)
             .map(|(_, hash, x)| (hash, x))
         else {
             continue;
@@ -278,9 +278,14 @@ pub fn packed_copies(cbuffers: &[u32], channels: &[u32]) -> Vec<u8> {
     out
 }
 
-/// The cbuffers that carry copies: `(compiled size, its hash, its packed index)`
-/// - the last word of every copy row. Measured on the standard.
-pub const PACKED: &[(u32, u32, u32)] = &[(416, 0xB563_9618, 2), (304, 0xCFB4_40F0, 4)];
+/// The cbuffers that carry copies: `(compiled size, name hash, packed index)` -
+/// the last word of every copy row. Measured on the standard.
+pub const PACKED: &[(u32, u32, u32)] = &[
+    (416, 0xB563_9618, 2), // c_per_object
+    (304, 0xCFB4_40F0, 4), // c_depth_only
+    (272, 0xB563_9618, 1), // c_per_object, the smaller variant
+    (272, 0xCFB4_40F0, 1), // c_depth_only, the smaller variant
+];
 
 #[cfg(test)]
 mod tests {
@@ -323,7 +328,7 @@ mod tests {
             channels.extend_from_slice(&row(kind, hash, offset, size));
         }
 
-        let mid = derived_mid(&[16, 416], &channels, &[], 176);
+        let mid = derived_mid(&[(16, 0), (416, 0xB563_9618)], &channels, &[], 176);
         assert_eq!(u32::from_le_bytes(mid[0..4].try_into().unwrap()), 16);
         assert_eq!(u32::from_le_bytes(mid[4..8].try_into().unwrap()), 176);
         assert_eq!(u32::from_le_bytes(mid[8..12].try_into().unwrap()), 14);
@@ -355,7 +360,15 @@ mod tests {
     /// The packed copies: the channel rows once per channel-bearing cbuffer.
     #[test]
     fn the_copies_repeat_the_channels_per_cbuffer() {
-        let copies = packed_copies(&[16, 416, 400, 304], &[0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3]);
+        let copies = packed_copies(
+            &[
+                (16, 0),
+                (416, 0xB563_9618),
+                (400, 0),
+                (304, 0xCFB4_40F0),
+            ],
+            &[0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3],
+        );
         assert_eq!(copies.len(), 14 * 28);
         let row = |i: usize| -> [u32; 7] {
             std::array::from_fn(|w| {
