@@ -1933,6 +1933,7 @@ checksum = "93ead53efc7ea8ed3cfb0c79fc8023fbb782a5432b52830b6518941cebe6505c"
 dependencies = [
  "equivalent",
  "hashbrown",
+ "serde",
 ]
 
 [[package]]
@@ -3335,6 +3336,7 @@ dependencies = [
  "futures",
  "futures-util",
  "glob",
+ "indexmap",
  "luajit2-sys",
  "nanorand",
  "num-derive",

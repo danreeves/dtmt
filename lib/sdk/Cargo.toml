@@ -15,6 +15,7 @@ flate2 = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 glob = { workspace = true }
+indexmap = { workspace = true }
 luajit2-sys = { workspace = true }
 nanorand = { workspace = true }
 num-derive = { workspace = true }

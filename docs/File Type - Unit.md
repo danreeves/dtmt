@@ -222,30 +222,43 @@ the worked example.
 ## Shipped sweep (2026-10-12)
 
 `examples/unit_probe.rs` walks a directory of shipped bundles, decompiles every
-`Unit` payload, recompiles it and compares the bytes. On **300** bundles
-(2,607 units):
+`Unit` payload, recompiles it and compares the bytes. On **400** bundles
+(2,666 units):
 
 | Outcome | Count |
 |---------|-------|
-| decode rejected (skins / animations / streamed meshes) | 2,530 |
-| decoded | **77** |
-| of which recompiled | 77 |
-| of which **byte-identical to the shipped payload** | **0** |
+| decode rejected (skins / animations / streamed meshes) | 2,588 |
+| decoded | 78 |
+| of which **byte-identical to the shipped payload** | **2** |
 
-So the doc's earlier "four shipped static payloads round-trip at *identical
-size*" holds for size, but not for bytes: every rebuilt payload has the same
-length and differs in content. Two shapes of difference are visible:
+The first run, before the fix below, was **0** byte-identical.
 
-- **float precision** - e.g. `00970f393da1975b` differs at one byte
-  (`…ac 27 02 38` vs `…ab 27 02 38`), one ULP of the stored `f32`, i.e. the
-  value goes through text in the `.bsi`/`.unit` SJSON and back;
-- **a substituted value** - `004083ab7183d934` has `f32 0x3EB043E5` (`0.34424`)
-  at offset 128 in the shipped payload but `0x3E99999A` (`0.3`) in the rebuilt
-  one. Size is unchanged, so the field exists on both sides; something writes a
-  default where the shipped file has real data.
+### Node order was the first cause (fixed)
 
-Both are worth chasing because a payload that is not byte-exact cannot be trusted
-to be "the same resource", and the second one may be a plain bug.
+The rebuilt payload was a **pure permutation** of the shipped one: sorting both
+files' floors of 4-byte words gave *identical* multisets, so every value survived
+and only the order differed. The scene graph is a flat array in the payload but a
+nested dict in the `.bsi` SJSON, and the decompiler *deliberately sorted siblings
+by node name* - the comment even said so: *"the compiler stores children in a
+BTreeMap, so a recompiled payload comes back in the same order"*. That made the
+round trip self-consistent while destroying the shipped order.
+
+The fix: the bsi scene-graph maps (`nodes`, `children`, `geometries`) are
+`IndexMap` (a dependency already in the tree) rather than `BTreeMap`, and the
+emitter no longer sorts siblings, so the file's own order is written and read
+back.
+
+### What still differs
+
+The remaining 76 differ through other lossy steps, not order:
+
+- a node's `local` is `rotation x scale`, and the compiler decomposes the matrix
+  back (per `write_bsi_node`'s own note, the rows are normalized "which recovers
+  both the original rotation and the original world transform"). Shipped values
+  come back with their low mantissa bits zeroed, e.g. `0xBEE09822` (`-0.438659`)
+  becomes `0xBEE0A000` (`-0.438720`);
+- the `.unit`-level maps (`materials`, `renderables`, `lights`) are still
+  `BTreeMap`, so their order is not preserved either.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for

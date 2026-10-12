@@ -24,12 +24,20 @@ fn main() -> color_eyre::Result<()> {
     let mut decode_failed = 0usize;
     let mut shown_decode = 0usize;
     let mut shown_other = 0usize;
+    let mut dumped = false;
+    let dump_dir = std::env::args().nth(3);
 
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_file())
-        .collect();
+    // The first argument may be a single bundle file instead of a directory.
+    let dir_path = std::path::Path::new(&dir);
+    let mut entries: Vec<_> = if dir_path.is_file() {
+        vec![dir_path.to_path_buf()]
+    } else {
+        std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect()
+    };
     entries.sort();
     entries.truncate(limit);
 
@@ -51,7 +59,26 @@ fn main() -> color_eyre::Result<()> {
                 match unit::decompile(payload) {
                     Ok((unit_text, bsi_text)) => {
                         decoded += 1;
-                        match unit::compile(file.base_name().clone(), &unit_text, bsi_text.as_bytes()) {
+                        let rebuilt = unit::compile(
+                            file.base_name().clone(),
+                            &unit_text,
+                            bsi_text.as_bytes(),
+                        );
+                        if !dumped {
+                            if let (Some(out), Ok(rebuilt)) = (dump_dir.as_ref(), rebuilt.as_ref()) {
+                                std::fs::create_dir_all(out)?;
+                                let out = std::path::Path::new(out);
+                                std::fs::write(out.join("orig.bin"), payload)?;
+                                std::fs::write(
+                                    out.join("rebuilt.bin"),
+                                    rebuilt.variants().first().map(|v| v.data()).unwrap_or(&[]),
+                                )?;
+                                std::fs::write(out.join("unit.sjson"), &unit_text)?;
+                                std::fs::write(out.join("bsi.sjson"), &bsi_text)?;
+                                dumped = true;
+                            }
+                        }
+                        match rebuilt {
                             Ok(rebuilt) => {
                                 let same = rebuilt
                                     .variants()

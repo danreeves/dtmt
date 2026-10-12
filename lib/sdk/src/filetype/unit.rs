@@ -11,6 +11,8 @@
 //! material list. This module turns the authoring pair into that payload.
 
 use std::collections::{BTreeMap, BTreeSet};
+
+use indexmap::IndexMap;
 use std::io::Read;
 
 use color_eyre::eyre::{self, Context as _, Result, bail};
@@ -137,9 +139,9 @@ struct UnitDef {
 
 #[derive(Debug, Deserialize)]
 struct BsiDef {
-    geometries: BTreeMap<String, BsiGeometry>,
+    geometries: IndexMap<String, BsiGeometry>,
     #[serde(default)]
-    nodes: BTreeMap<String, BsiNode>,
+    nodes: IndexMap<String, BsiNode>,
     /// Declared so animation float streams parse typed; they are not compiled.
     #[serde(default)]
     animations: Vec<BsiAnimation>,
@@ -224,7 +226,7 @@ struct BsiMaterial {
 #[derive(Debug, Deserialize)]
 struct BsiNode {
     #[serde(default)]
-    children: BTreeMap<String, BsiNode>,
+    children: IndexMap<String, BsiNode>,
     #[serde(default)]
     geometries: Vec<String>,
     local: [f32; 16],
@@ -1464,12 +1466,9 @@ fn bsi_sjson(
             bail!("Scene graph node #{:08X} appears twice", node.name);
         }
     }
-    // Emit siblings sorted by node name: the compiler stores children in a
-    // BTreeMap, so a recompiled payload comes back in the same order.
-    roots.sort_by_key(|index| graph.nodes[*index].name);
-    for list in &mut children {
-        list.sort_by_key(|index| graph.nodes[*index].name);
-    }
+    // Keep the payload's own node order. The compiler stores children in an
+    // order-preserving map, so a recompiled payload comes back in the same
+    // order - but only if the emitted order is the file's, not a sorted one.
 
     text.push_str("nodes = {\n");
     for index in roots {
@@ -1646,7 +1645,7 @@ struct FlatNode<'a> {
 }
 
 fn flatten_nodes<'a>(
-    nodes: &'a BTreeMap<String, BsiNode>,
+    nodes: &'a IndexMap<String, BsiNode>,
     parent: Option<usize>,
     out: &mut Vec<FlatNode<'a>>,
 ) {
