@@ -1028,11 +1028,16 @@ reflection, not a hand-built 180-byte constant.
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
-`{3, 69}`, `{2, 2}`, `{2, 2}` for the standard's five groups - a small count
-(plausibly the group's pass count) and then the **first table's record count**
-(the shared engine pool's 69 when the group has an engine table, else the
-material table's 2). So the header word is the only wholly unexplained word of
-a head.
+`{3, 69}`, `{2, 2}`, `{2, 2}` for the standard's five groups, and **both words
+are now explained** (2026-10-12): the first is **the number of cbuffer
+descriptors** in the head - kind 0/1 - which for group 0 is `global_viewport`,
+`c_instance_offset`, `c_per_object`, `c_depth_only` and
+`global_environment_settings` = 5, for group 2 `global_viewport`, `c_per_object`,
+`D0BA3B10` = 3, and for groups 3/4 = 2 (all five match); the second is the
+**first table's record count** (the shared engine pool's 69 when the group has an
+engine table, else the material table's 2). So **every word of a head is
+derivable**: header word, count, each descriptor's name/flags/`x`/`y`, and the
+trailer.
 
 **The rebuilt group data's layout** (a byte dump of `GroupData::build`'s output
 for the standard, 10,725 B, matches the shipped blob): a `u32` group count,
