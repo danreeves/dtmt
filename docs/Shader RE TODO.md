@@ -929,7 +929,21 @@ in the shipped order); the `mid` needs the same table for its records, and the
 `between` for `global_viewport`. `derived_head` is currently dead code - neither
 the standard (carries its heads) nor the UI base (its declaration template
 carries them) reaches it - so this table is the concrete next step, not more
-field-level decoding. What is
+field-level decoding.
+
+**The head's descriptor order is the first-binding order.** The community's
+`shader_compiler` names this rule for the engine's root table - "the order a
+group's distinct constant-buffer / resource names are first bound across its
+passes and stages" - and the standard's heads fit it: `derived_head` pushes a
+fixed order (`c_per_object`, `global_viewport`, then cbuffers, then structured
+buffers) and only those two kinds, which is why it misses `A306B24F` (a UAV,
+flags `0x0107`) and `B3A2EB88` (flags `0x0101`) and orders the rest wrongly. So
+the head derivation is: walk the group's programs' reflected bindings in order,
+take each distinct resource once, map its flags (the engine's mined from a
+shipped head, a stage resource's by kind), then apply the `x` (24 per cbuffer, 8
+per other) and `y` (two bits per pass) rules and the header word above.
+`StageResources` sorts its resources by kind, so it has to keep the raw binding
+order for this. What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`

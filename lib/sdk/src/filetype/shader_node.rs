@@ -78,12 +78,18 @@ pub struct StageResources {
     pub buffers: Vec<ResourceDecl>,
     /// UAV bindings (kinds 4 and up).
     pub uavs: Vec<ResourceDecl>,
+    /// Every binding, in the order the reflection reports them. The lists above
+    /// are sorted by kind; this keeps the interleaved register order, which is
+    /// what a group's head needs - its descriptors are in first-binding order
+    /// across the group's programs.
+    pub bindings: Vec<dxc::BoundResource>,
 }
 
 impl StageResources {
     /// Sorts a container's reflection into the lists the tail needs.
     pub fn from_bindings(bindings: &[dxc::BoundResource]) -> Self {
         let mut resources = Self::default();
+        resources.bindings = bindings.to_vec();
         let decl = |binding: &dxc::BoundResource| {
             // The stride word is the one record field the reflection only gives
             // for a structured buffer, where DXC reports the element stride in
