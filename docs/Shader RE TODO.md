@@ -3694,23 +3694,44 @@ D3D12 render-device symbols to source paths with confidences:
 | `0x1405d4ee0` | `stingray::Shader::initialize_resource_data` | `engine/renderer/resources/shader.cpp` |
 | `0x1405d7410` | `stingray::ShaderTemplate::initialize` | “ |
 | `0x1405c7910` | `stingray::shader_reflection::calc_rbuffer_size_and_offsets` | “ |
-| `0x1407d46b0` | `stingray::D3D12ShaderPass::init` | `d3d12_render_device/shader/d3d12_shader_pass.cpp` |
+| `0x1407d46b0` | map says `D3D12ShaderPass::init`; really ray tracing (see below) | `d3d12_render_device/shader/d3d12_shader_pass.cpp` |
 | `0x1407d4420` | `stingray::decompress_oodle` | “ |
-| `0x1407d3a10`–`0x1407d4520` | unnamed helpers in the same TU | “ |
+| **`0x1407f5f4x`–`0x1407f64xx`** | **`stingray::D3D12ShaderPass::init`** (located from its assert) | “ |
 
 `Shader::initialize_resource_data` and `ShaderTemplate::initialize` carry the
 `vt2_sdk_unique_high_donor_one_to_one_validated_source_family` mapping, i.e. they
 are byte-identical to the VT2 SDK **binaries** — but that SDK ships no engine
 sources at all (zero `.cpp`/`.h`), only its shader and `.texture_category` data,
-so the disassembly stays the reference. `D3D12ShaderPass::init` (RVA `0x7d46b0`,
-file offset `0x7d3cb0` in `.text` at `0x600`) is the device pass constructor: it
-builds arrays with **×20** and **×16** strides plus several vector-growth paths
-(`shl $0x5` for a 32-byte element), matching the suspected record sizes (20-byte
-`ConstantBufferBindInfo` / `ResourceBindInfo`, 20-byte
-`StreamOutDeclaration::Channel`, 16-byte `InstanceData::Variable`). Its
-`assert_source_path` confidence means the address comes from an assert compiled
-into that very file, so it is trustworthy. This is the function to read the block
-field order off, together with the four unnamed helpers just above it.
+so the disassembly stays the reference. **The map's addresses are assert-site anchors, and some are mis-attributed.** Its
+row for `D3D12ShaderPass::init` points at `0x1407d46b0`, but the string the code
+there references is `stingray::D3D12RayTracingPipeline::remove_collection`, so
+that range is ray tracing. The reliable method is to take the **assert strings**
+and find the `.text` sites that reference them: the enclosing function names
+itself in `stingray::D3D12ShaderPass::init` (referenced from `0x1407f6427`) and
+the expression `actual_size != 0` (from `0x1407f5f43`), which places the **real
+`D3D12ShaderPass::init` at `0x1407f5f4x`–`0x1407f64xx`**. That is where the block
+field order has to be read off; it does not use literal 12/16/20 stride
+immediates (its arrays go through `shl $0x5` / `add $0x18` helper paths and read
+fields via computed indices), so the reader is not a flat `count + fixed records`
+loop at the instruction level.
+
+The binary also carries its whole **assert catalogue**: each assert bakes in the
+enclosing function and the source path, so a `strings` pass yields ~800
+`stingray::…` names plus a handful with the tested expression. Two of note:
+
+* `stingray::D3D12ShaderPass::init.actual_size != 0` — the pass reader reads a
+  **size word** and asserts it is non-zero, i.e. the block is a counted
+  `{size, records…}` list, confirming the framing the codec already assumes;
+* `stingray::ShaderPassFlags::flag`, message *"Trying to lookup unknown shader
+  pass flag %s!"* — the pass-flag table's own name resolution.
+
+Every path carries the build root
+`D:\a\d\eng\darktide\release\2026_08_11_Patch1.13.x\s\runtime\…`, which fixes the
+source layout exactly (`runtime/engine/renderer/resources/shader.cpp`,
+`runtime/d3d12_render_device/shader/d3d12_shader_pass.cpp`,
+`runtime/engine/renderer/shader_pass_flags.cpp`). No `BindInfo` / `ShaderPassData`
+/ `StreamOut` / `InstanceData` string exists in this build, so the pass structs
+stay unnamed and the disassembly remains the only source for their field order.
 
 ## Bounties
 
