@@ -170,8 +170,13 @@ ordinary DDS image.
 See [§3.4 of the format page](File%20Type%20-%20Texture.-.md#34-known-discrepancies--open-questions).
 The main ones:
 
-* Shipped streamed textures declare the `.stream` name length as `31`, while
-  DTMT's writer uses `name.len() + 6 = 37`.
+* **Resolved (2026-10-12).** The `.stream` slot length: a shipped streamed texture
+  declares `31` for its 31-character `data/ab/<16 hex>.stream` name, and a shipped
+  non-streamed one declares `30` for its 24-character `data/ab/<16 hex>` name - so
+  the rule is the name's length **plus 6 for the non-streamed form, plus 0 for a
+  `.stream` name**. `BundleVariant::set_external_data_file` (`bundle/file.rs`) now
+  applies exactly that; the mod's own bundles are unchanged (it has no streamed
+  texture), and the earlier fixed `+ 6` over-declared a streamed name by six bytes.
 * The game derives side-file names from `murmur64("<resource path>.texture")`
   (low bit set for streamed). DTMT derives them from the bare resource hash, so
   its names differ.
@@ -197,9 +202,11 @@ The *shipped game* agrees with DTMT's **shape**, not the community's hash: of th
 `data/<the name's first two hex>/<16 hex>.stream` - the directory **is** the name's
 first byte pair - and the names are a toolchain scheme (a counter in the high u16
 plus a hash), not a name hash. So the name is arbitrary and only the *path the
-resource records* matters; DTMT's form is right. The real discrepancies stay the
-two "Open questions": the `.stream` **slot length** (shipped `31`, DTMT
-`name.len() + 6 = 37` at `file.rs:112`; the non-streamed slot is `30 = 24 + 6`, so
-the `+6` looks like a non-streamed convention) and whether the game ever recomputes
-the name. Verifying either means parsing a *shipped* bundle's texture variant and
-reading `data_file_name_len` against the loose `.stream` beside it.
+resource records* matters; DTMT's form is right. The `.stream` **slot length** is
+now pinned against the shipped bundles: a streamed 31-character name declares
+`31`, a non-streamed 24-character one declares `30` (**+6 for the non-streamed
+form, +0 for a `.stream` name**), which is what `set_external_data_file` now does.
+The one remaining question is whether the game ever *recomputes* a name
+(`murmur64("<resource>.texture")`) instead of reading the recorded one -
+`examples/bundle_dump.rs` (now printing `data_file_name_len`) plus a shipped
+texture whose path is known answers it.

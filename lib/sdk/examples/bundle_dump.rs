@@ -16,12 +16,13 @@ fn main() {
         let resolved = ctx.lookup_hash(name_hash, HashGroup::Filename);
         for v in f.variants() {
             println!(
-                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?}",
+                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?} dfn_len={}",
                 resolved.display(),
                 f.props().bits(),
                 v.external(),
                 v.data().len(),
                 v.data_file_name(),
+                v.data_file_name_len(),
             );
         }
     }
