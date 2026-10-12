@@ -3705,15 +3705,20 @@ sources at all (zero `.cpp`/`.h`), only its shader and `.texture_category` data,
 so the disassembly stays the reference. **The map's addresses are assert-site anchors, and some are mis-attributed.** Its
 row for `D3D12ShaderPass::init` points at `0x1407d46b0`, but the string the code
 there references is `stingray::D3D12RayTracingPipeline::remove_collection`, so
-that range is ray tracing. The reliable method is to take the **assert strings**
-and find the `.text` sites that reference them: the enclosing function names
-itself in `stingray::D3D12ShaderPass::init` (referenced from `0x1407f6427`) and
-the expression `actual_size != 0` (from `0x1407f5f43`), which places the **real
-`D3D12ShaderPass::init` at `0x1407f5f4x`–`0x1407f64xx`**. That is where the block
-field order has to be read off; it does not use literal 12/16/20 stride
-immediates (its arrays go through `shl $0x5` / `add $0x18` helper paths and read
-fields via computed indices), so the reader is not a flat `count + fixed records`
-loop at the instruction level.
+that range is ray tracing. The reliable method is to take the **assert strings** and find the `.text` sites
+that reference them: the enclosing function names itself in
+`stingray::D3D12ShaderPass::init` (referenced from `0x1407f6427`) and the
+expression `actual_size != 0` (from `0x1407f5f43`), which places the **real
+`D3D12ShaderPass::init` at `0x1407f5ea0`**. It opens by bubbling out when
+`rcx[1] == 0`, then calls through a `.data` function pointer (`0x140f6f928`) with
+a request struct whose word at `+0x68` is `3` and `+0x20` is `1`, and *asserts the
+returned buffer is non-null* — the `actual_size != 0` check. So it **allocates
+and/or decompresses the pass blob** (the neighbouring strings in the same file
+are `stingray::decompress_oodle` and *"Decompression error, shader could not fit
+into decompressed buffer"*), then fills a pass object at `r10+0x250 … r10+0x448`.
+That is where the block's framing has to be read off; the reader is not a flat
+`count + fixed records` loop at the instruction level, so the field order will
+come from following the request struct and the buffer it fills.
 
 The binary also carries its whole **assert catalogue**: each assert bakes in the
 enclosing function and the source path, so a `strings` pass yields ~800
