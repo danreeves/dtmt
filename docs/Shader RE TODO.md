@@ -1228,6 +1228,16 @@ engine data could carry a **per-group channel list** (a handful of hashes)
 instead of the whole `mid` pool - 9.6 KB down to tens of bytes - with
 `derived_mid` doing the rest. That is the concrete next implementation.
 
+**The blocks carry the channels as 16-byte records (2026-10-12).** The device
+block for group 0's pixel program (823 B) holds, at byte 643,
+`03000000 8CCCAD2F 04000000 01000000` - `{kind 3, name hash, size 4, 1}` - once
+for `bca`, `orm` and `nm`, behind a count word (`0D000000`, 13). So a block is a
+record stream of the same family as the `mid`, but with a **16-byte** record
+`{kind, name, size, flags}` instead of the `mid`'s 20-byte one, and it is where a
+group's channels come from. Its full grammar is still open - and the blocks are
+now **71% of the engine data** (23,240 of 32,642 bytes), the one large decode
+left.
+
 **The copies are the channel rows, once per channel-bearing cbuffer
 (2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
 seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
