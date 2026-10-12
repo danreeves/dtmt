@@ -916,19 +916,28 @@ a run of sections, each `{ u32 W1, u32 W2, u32 count }` + `count` records.
   (`{bca, 5, 0, 0, 5, c_per_object, 1}`), with a trailing `X` where `derived_mid`
   writes a constant.
 
-**Every standard group walks exactly.** Group 0's 535 words are
-`3 + 14x5 + 3 + 58x5 + 3 + 13x5 + 3 + 14x7` - three canonical sections and a
-copy section; group 0's canonical records include `A17AE7B4` (the engine's
-`world_view_proj`, offset 128 size 64). Groups 2 and 3 are `3 + n x 5 + 3 + m x
-7` words (1 + 7 and 9 + 3 records). Each later section's second word is the
-first header's `W1 + x_end` (16 + 176 = 192, 272 + 128 = 400, 16 + 80 = 96), so
-`W1` is an offset the sections share; the first header's third word is the
-record count (its fourth word is the first record's `kind`). Open: `W1`
-(16 / 272 / 416 / 304 measured) and the third section's `W2 = 0`, which breaks
-the `W1 + x_end` rule. The `mid` is therefore **not a new grammar**: it is
-`group_data.rs`'s canonical records and packed copies, so `derived_mid` should
-be the template's existing `VariableTable` / `rebuild` path fed from the
-compiled program's reflection, not a hand-built 180-byte constant.
+**Every standard group walks exactly.** Walking all five shipped mids with
+`{W1, W2, count}` + `count` records (20-byte canonical records, the last section
+28-byte copies) lands on the word in every case:
+
+```
+mid 0 (535): {16,176,14} 5w | {416,192,58} 5w | {400,0,13} 5w | {304,608,14} 7w
+mid 1 (535): {16,160,14} 5w | {416,176,58} 5w | {400,0,13} 5w | {304,592,14} 7w
+mid 2 ( 60): {272,128,1} 5w  | {16,400,7} 7w
+mid 3 ( 72): {16,80,9} 5w    | {272,96,3} 7w
+```
+
+Group 0's canonical records include `A17AE7B4` (the engine's `world_view_proj`,
+offset 128 size 64); the copies section is the shape `derived_mid` already
+emits per texture slot. `W2` of a later canonical section is
+`W1(first) + x_end` (16 + 176 = 192, 272 + 128 = 400, 16 + 80 = 96), and the
+copy section's `W2` is `W1(s2) + W2(s2)` (416 + 192 = 608, 416 + 176 = 592).
+The only open field is `W1` (16 / 272 / 416 / 400 / 304 measured - all multiples
+of 16, 400/416 for the second canonical section, 304 for the copies). The `mid`
+is **not a new grammar**: it is `group_data.rs`'s canonical records and packed
+copies, so `derived_mid` should be the template's existing `VariableTable` /
+`rebuild` path fed from the compiled program's reflection, not a hand-built
+180-byte constant.
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
