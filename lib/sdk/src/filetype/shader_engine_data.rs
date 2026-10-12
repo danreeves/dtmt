@@ -718,6 +718,12 @@ struct GroupTemplateText {
     /// toolchain's own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     engine: Option<Hex>,
+    /// When the engine's table is the toolchain's own with its last records
+    /// dropped, how many it drops. A file captured from an earlier game build
+    /// carries a prefix of the toolchain's table, so this is a few bytes rather
+    /// than the whole table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engine_drop: Option<usize>,
     /// Distinct material record tables, as packed records.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     materials: Vec<Hex>,
@@ -1887,9 +1893,16 @@ impl EngineData {
         // mapping when the file carries no `group` tags.
         let mut group_conditions: Vec<usize> = Vec::new();
         if let Some(template) = text.group_template {
-            let engine = match &template.engine {
-                Some(engine) => records_from_bytes(&engine.0)?,
-                None => tool_engine_table()?,
+            let engine = match (&template.engine, template.engine_drop) {
+                (Some(engine), _) => records_from_bytes(&engine.0)?,
+                (None, Some(drop)) => {
+                    let tool = tool_engine_table()?;
+                    let keep = tool.len().checked_sub(drop).ok_or_else(|| {
+                        color_eyre::eyre::eyre!("the engine table drops more records than it has")
+                    })?;
+                    tool[..keep].to_vec()
+                }
+                (None, None) => tool_engine_table()?,
             };
             let part = |list: &[Hex], index: usize, what: &str| -> Result<Vec<u8>> {
                 list.get(index).map(|hex| hex.0.clone()).ok_or_else(|| {
@@ -2142,9 +2155,20 @@ impl EngineData {
 
         let group_template = self.group_template.as_ref().map(|template| {
             // The engine's table is a toolchain constant, so it is only written
-            // when the file carries a different one.
+            // when the file carries a different one. When the difference is that
+            // the file's table is a prefix of the toolchain's (a file captured
+            // from an earlier game build), the count of dropped records is
+            // written instead of the whole table.
             let tool_table = tool_engine_table().unwrap_or_default();
-            let engine = (template.engine != tool_table).then(|| records_bytes(&template.engine).into());
+            let engine_drop = (template.engine != tool_table)
+                .then(|| {
+                    let keep = template.engine.len();
+                    (tool_table.get(..keep) == Some(template.engine.as_slice()))
+                        .then_some(tool_table.len() - keep)
+                })
+                .flatten();
+            let engine = (template.engine != tool_table && engine_drop.is_none())
+                .then(|| records_bytes(&template.engine).into());
 
             // Distinct material tables, referenced by the groups.
             let mut materials: Vec<Hex> = Vec::new();
@@ -2238,6 +2262,7 @@ impl EngineData {
             GroupTemplateText {
                 prefix,
                 engine,
+                engine_drop,
                 materials,
                 heads,
                 betweens,
