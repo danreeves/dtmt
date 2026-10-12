@@ -1173,6 +1173,21 @@ cbuffer's *name* does not map to one set - the set is chosen per group - which
 means the const should key on the set (or carry the set per group) rather than on
 the name alone.
 
+**The `mid`'s headers interleave with the *next* cbuffer (2026-10-12).** Reading
+the sections against the cbuffer sizes gives the exact layout: the header before
+a section is `{the previous cbuffer's size, W2, the next cbuffer's field count}`,
+so the fields after a header belong to the **following** cbuffer, and the first
+cbuffer's own fields are not emitted at all. Group 2 confirms it: `{272, 128, 1}`
++ 1 record + `{16, 400, 7}` + 7 copies, where 272 and 16 are its two cbuffers'
+sizes and the single record is the second cbuffer's field; the last header
+carries the copy count. `W2` is the running `W1 + W2` of the previous section,
+and `0` for a cbuffer with no packed data (group 0's third,
+`global_environment_settings`). So the assembly is: for each cbuffer (the head's
+cbuffer descriptors minus `global_viewport`, sizes from the reflection),
+`{previous size, running W2, next field count}` + the next cbuffer's channels and
+engine fields (`engine_cbuffer(size)` at `prefix + relative`), then the packed
+copies.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
