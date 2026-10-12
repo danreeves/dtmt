@@ -5,6 +5,7 @@ pub mod group_data;
 pub mod lua;
 pub mod material;
 pub mod package;
+pub mod particles;
 pub mod permutation;
 pub mod shader;
 pub mod shader_block;

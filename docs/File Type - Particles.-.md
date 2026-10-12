@@ -47,11 +47,15 @@ visualizers draw with, units mesh particles spawn) are hashed with the same
 
 ## dtmt status
 
-**None.** No reader or writer exists yet. A first step is the container
-(effect header, system header, the curve/gradient blocks) and a raw-component
-view; the component registry is the bulk of the work. The community
-`particles_resource.{h,cpp}` decodes and encodes every shipped effect exactly and
-publishes the component schema, so it is the reference to port.
+**Limited.** `filetype/particles.rs` reads and writes the **effect header**
+(lifetime, culling distance and flags), the effect **variables** (name hash +
+three floats) and the **system list** (each system kept as opaque bytes, walked
+by its `+0x23C` stride), with `dtmt build` / `bundle inject` / `bundle extract
+--decompile` wired and three round-trip tests. The **component model** inside
+each system (channels, initializers, simulators, visualizers) is not decoded, so
+the systems are hex. The community `particles_resource.{h,cpp}` decodes and
+encodes every shipped effect exactly and publishes the component schema, so it
+is the reference to port next.
 
 ## Reference
 
