@@ -56,6 +56,31 @@ fn main() -> Result<(), Box<dyn Error>> {
     else {
         return Ok(());
     };
+
+    // For every pixel block, the head's length (the first record's offset) and
+    // the trailing length after the last record.
+    println!("pixel blocks: head / records / trailing");
+    for (index, (stage, block)) in engine_data.programs.iter().enumerate() {
+        if *stage != sdk::filetype::shader::Stage::Pixel || block.len() <= 128 {
+            continue;
+        }
+        let offsets: Vec<usize> = records
+            .iter()
+            .filter_map(|record| {
+                block
+                    .windows(12)
+                    .position(|window| window == &record[..])
+            })
+            .collect();
+        let head = offsets.iter().min().copied().unwrap_or(0);
+        let end = offsets.iter().map(|offset| offset + 12).max().unwrap_or(0);
+        println!(
+            "  program {index:2}: {:4} / {} records at {head}..{end} / trailing {}",
+            block.len(),
+            offsets.len(),
+            block.len() - end,
+        );
+    }
     let mut at: Vec<(usize, usize)> = records
         .iter()
         .enumerate()

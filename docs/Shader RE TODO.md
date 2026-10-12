@@ -1290,6 +1290,23 @@ after all: the earlier "spread" reading was an artefact of comparing against the
 per-program head (144 B here) and the trailing program data are what the grammar
 still has to produce.
 
+**The blocks share an identical 348-byte record run (2026-10-12).** Every pixel
+block holds the body's 30 records contiguously, and only the bytes *around* them
+differ - the head before and the trailing data after:
+
+```
+program  1:  909 B - head 144, records 144..492, trailing 417
+program  3:  863 B - head  35, records  35..472, trailing 391
+program 21:  625 B - head  84, records  84..432, trailing 193
+program 19: 1310 B - head  96, records  96..444, trailing 866
+```
+
+So a block is `{head} + {the shared body} + {trailing}`, with the head (84-144 B)
+and the trailing (193-866 B) per program. Factoring the shared body out of the
+twelve pixel tails would remove ~4 KB of the ~23 KB immediately, and the
+head/trailing are the program-specific parts a full derivation still has to
+produce.
+
 **The copies are the channel rows, once per channel-bearing cbuffer
 (2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
 seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
