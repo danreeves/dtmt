@@ -2413,6 +2413,17 @@ principle holds - `split base + head + body + mask` - but every parameter
 therefore a small recorded table of its own; `derived_programs` needs the
 family's table, not one global shape.
 
+**The standard's blocks are not preamble-derived (2026-10-12).** `split base +
+head + body + mask` describes the UI base's family; the standard's 14 tails (12
+raw hex, 2 diffs) do **not** contain the preamble's body anywhere - the body's
+first bytes `30000000 1D000000` appear in none of them - and the 11 non-trivial
+blocks share **no common prefix at all** (0.5 B). They are independent
+per-program record streams, several of odd length (585, 617, 687, 791, 807,
+823), so they are not even word-aligned. Their openings are `{0|2, ...}` -
+`0, 3, 10, ...`; `0, 2, 3, 0xFFFFFFFF, ...`; `2, 0, 2, 2, 1, ...`. So the standard
+needs its own grammar for the block (the program's own device records), not a
+family table of the preamble shape.
+
 **The `477` mask belongs to the UI base only (2026-10-03, named families).**
 Resolving real materials by name and shape:
 
