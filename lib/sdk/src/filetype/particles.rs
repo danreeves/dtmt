@@ -76,7 +76,7 @@ pub struct Variable {
     pub value: [f32; 3],
 }
 
-/// One particle system: its header read, its component bodies kept as hex.
+/// One particle system: its header read, its component bodies partly kept as hex.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct System {
@@ -89,13 +89,14 @@ pub struct System {
     pub channel_stride: u32,
     /// The header bytes `0x58..0x214`, hex.
     pub header: String,
-    pub initializers: u32,
+    /// The initializer list.
+    pub initializers: Vec<Initializer>,
+    /// Any bytes between the initializers' end and the simulator records, hex.
+    pub initializer_padding: String,
     pub simulators: u32,
     pub visualizers: u32,
     /// The unknown words at `0x228`/`0x234`/`0x238`, hex.
     pub unknown: String,
-    /// The initializer block, hex.
-    pub initializer_data: String,
     /// The simulator records, hex.
     pub simulator_records: String,
     /// The simulator data, hex.
@@ -103,6 +104,53 @@ pub struct System {
     /// The visualizer block, hex.
     pub visualizer_data: String,
 }
+
+/// One initializer: its op name and its operand bytes (kept opaque; the field
+/// layouts are not modelled yet).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Initializer {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The operand bytes, hex.
+    pub data: String,
+}
+
+/// The initializer op codes, in registry order (the community's
+/// `initializer_specs`). Op `0x0d`/`0x0e`/`0x11` are variable length.
+const INITIALIZERS: [&str; 25] = [
+    "zero",
+    "random_float",
+    "velocity_cone",
+    "position_sphere",
+    "position_box",
+    "random_int",
+    "zero_velocity",
+    "copy",
+    "velocity_box",
+    "normal_box",
+    "tangent_box",
+    "position_cylinder",
+    "velocity_cylinder",
+    "position_mesh",
+    "position_mesh_skinned",
+    "float",
+    "vector",
+    "vector_language_program",
+    "leap_number",
+    "initializer_13",
+    "spline_control_points",
+    "multiply_by_variable",
+    "rotation_align_to_local",
+    "runtime_position_mesh",
+    "initializer_18",
+];
+
+/// The fixed operand size of each initializer op (the variable ones are
+/// `0x0d`/`0x0e`/`0x11`, handled in [`initializer_size`]).
+const INITIALIZER_SIZES: [usize; 25] = [
+    8, 12, 32, 12, 28, 12, 4, 12, 28, 32, 28, 40, 32, 0, 0, 8, 16, 0, 4, 4, 64, 12, 8, 20, 4,
+];
 
 /// A compiled particle effect.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -171,6 +219,21 @@ fn name_hash(text: &str) -> Result<u32> {
         .map_err(|_| color_eyre::eyre::eyre!("a particles name must be `#<8 hex>`"))
 }
 
+/// The operand size of an initializer, from its op (the variable ops read a
+/// count out of the operand).
+fn initializer_size(op: usize, bytes: &[u8], at: usize) -> Result<usize> {
+    match op {
+        0x0d => Ok(0x18 + 24 * u32_at(bytes, at + 0x14)? as usize),
+        0x0e => Ok(u32_at(bytes, at + 0x2c)? as usize),
+        0x11 => Ok(0x48 + u32_at(bytes, at + 0x44)? as usize),
+        _ => INITIALIZER_SIZES
+            .get(op)
+            .copied()
+            .filter(|size| *size > 0)
+            .ok_or_else(|| color_eyre::eyre::eyre!("unknown initializer op {op}")),
+    }
+}
+
 impl System {
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < SYSTEM_HEADER {
@@ -193,7 +256,7 @@ impl System {
             bail!("a particles system's header word 0x54 is set");
         }
 
-        let initializers = u32_at(bytes, 0x214)?;
+        let initializers_count = u32_at(bytes, 0x214)?;
         let initializer_at = u32_at(bytes, 0x218)? as usize;
         let simulators = u32_at(bytes, 0x21c)?;
         let records = u32_at(bytes, 0x220)? as usize;
@@ -217,6 +280,28 @@ impl System {
             unknown.extend_from_slice(&bytes[at..at + 4]);
         }
 
+        let mut initializers = Vec::with_capacity(initializers_count as usize);
+        let mut at = initializer_at;
+        for _ in 0..initializers_count {
+            let op = u32_at(bytes, at)? as usize;
+            let size = initializer_size(op, bytes, at + 4)?;
+            let operand = bytes
+                .get(at + 4..at + 4 + size)
+                .ok_or_else(|| color_eyre::eyre::eyre!("an initializer's operands run past the body"))?;
+            initializers.push(Initializer {
+                kind: INITIALIZERS
+                    .get(op)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("unknown initializer op {op}"))?
+                    .to_string(),
+                data: hex(operand),
+            });
+            at += 4 + size;
+        }
+        if at > records {
+            bail!("a particles system's initializers run past its simulator records");
+        }
+        let initializer_padding = hex(&bytes[at..records]);
+
         Ok(Self {
             name: format!("#{:08x}", u32_at(bytes, 0)?),
             capacity: u32_at(bytes, 4)?,
@@ -225,10 +310,10 @@ impl System {
             channel_stride: u32_at(bytes, 0x10)?,
             header: slice(0x58, 0x214),
             initializers,
+            initializer_padding,
             simulators,
             visualizers,
             unknown: hex(&unknown),
-            initializer_data: slice(SYSTEM_HEADER, records),
             simulator_records: slice(records, data),
             simulator_data: slice(data, visualizer_at),
             visualizer_data: slice(visualizer_at, end),
@@ -236,7 +321,6 @@ impl System {
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        let initializer_data = from_hex(&self.initializer_data)?;
         let simulator_records = from_hex(&self.simulator_records)?;
         let simulator_data = from_hex(&self.simulator_data)?;
         let visualizer_data = from_hex(&self.visualizer_data)?;
@@ -250,8 +334,19 @@ impl System {
         if simulator_records.len() != 5 * self.simulators as usize {
             bail!("a particles system's simulator records are not five bytes each");
         }
+        let mut initializer_bytes = Vec::new();
+        for initializer in &self.initializers {
+            let op = INITIALIZERS
+                .iter()
+                .position(|name| *name == initializer.kind)
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!("unknown initializer type '{}'", initializer.kind)
+                })?;
+            push_u32(&mut initializer_bytes, op as u32);
+            initializer_bytes.extend_from_slice(&from_hex(&initializer.data)?);
+        }
 
-        let records = SYSTEM_HEADER + initializer_data.len();
+        let records = SYSTEM_HEADER + initializer_bytes.len() + from_hex(&self.initializer_padding)?.len();
         let data = records + simulator_records.len();
         let visualizer_at = data + simulator_data.len();
         let end = visualizer_at + visualizer_data.len();
@@ -266,7 +361,7 @@ impl System {
             out[0x14 + 4 * index..0x18 + 4 * index].copy_from_slice(&size.to_le_bytes());
         }
         out[0x58..0x214].copy_from_slice(&header);
-        out[0x214..0x218].copy_from_slice(&self.initializers.to_le_bytes());
+        out[0x214..0x218].copy_from_slice(&(self.initializers.len() as u32).to_le_bytes());
         out[0x218..0x21c].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
         out[0x21c..0x220].copy_from_slice(&self.simulators.to_le_bytes());
         out[0x220..0x224].copy_from_slice(&(records as u32).to_le_bytes());
@@ -282,7 +377,8 @@ impl System {
             out[at..at + 4].copy_from_slice(&unknown[index * 4..index * 4 + 4]);
         }
 
-        out.extend_from_slice(&initializer_data);
+        out.extend_from_slice(&initializer_bytes);
+        out.extend_from_slice(&from_hex(&self.initializer_padding)?);
         out.extend_from_slice(&simulator_records);
         out.extend_from_slice(&simulator_data);
         out.extend_from_slice(&visualizer_data);
@@ -411,7 +507,7 @@ pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
 mod test {
     use super::*;
 
-    /// One system: two channels, no components, an all-zero header tail.
+    /// One system: two channels, one `random_float` initializer.
     fn system(name: u32) -> Vec<u8> {
         let mut out = vec![0u8; SYSTEM_HEADER];
         out[0..4].copy_from_slice(&name.to_le_bytes());
@@ -421,11 +517,18 @@ mod test {
         out[0x10..0x14].copy_from_slice(&16u32.to_le_bytes()); // channel stride
         out[0x14..0x18].copy_from_slice(&4u32.to_le_bytes()); // channel 0 size
         out[0x18..0x1c].copy_from_slice(&12u32.to_le_bytes()); // channel 1 size
+
+        // One `random_float` initializer (op 1, 12 operand bytes).
+        let mut initializer = 1u32.to_le_bytes().to_vec();
+        initializer.extend_from_slice(&[0u8; 12]);
+        let records = SYSTEM_HEADER + initializer.len();
+        out[0x214..0x218].copy_from_slice(&1u32.to_le_bytes()); // initializer count
         out[0x218..0x21c].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out[0x220..0x224].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out[0x224..0x228].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out[0x230..0x234].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out[0x23c..0x240].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x220..0x224].copy_from_slice(&(records as u32).to_le_bytes());
+        out[0x224..0x228].copy_from_slice(&(records as u32).to_le_bytes());
+        out[0x230..0x234].copy_from_slice(&(records as u32).to_le_bytes());
+        out[0x23c..0x240].copy_from_slice(&(records as u32).to_le_bytes());
+        out.extend_from_slice(&initializer);
         out
     }
 
@@ -461,6 +564,9 @@ mod test {
         assert_eq!(effect.systems[0].capacity, 64);
         assert_eq!(effect.systems[0].channels, [4, 12]);
         assert_eq!(effect.systems[0].channel_stride, 16);
+        assert_eq!(effect.systems[0].initializers.len(), 1);
+        assert_eq!(effect.systems[0].initializers[0].kind, "random_float");
+        assert_eq!(effect.systems[0].initializers[0].data, "000000000000000000000000");
         assert_eq!(effect.to_binary().unwrap(), bytes);
     }
 
