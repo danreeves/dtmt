@@ -1199,6 +1199,15 @@ table gives both. Which channels a group has is its own: groups 3 and 4 carry
 only `bca` (a depth pass samples one), while 0-2 carry all three. The group's
 sampled set is what the material graph's evaluation resolves.
 
+**That per-group subset is the last input (2026-10-12).** Everything else the
+`mid` needs is now derived and verified, but *which* of the material's channels a
+group carries is not in the declaration: the standard's reconstructed node has a
+single code block listing all seven sampler slots, and the enumerated node has
+none, while groups 3/4 carry only `bca`. It is a property of the group's *passes*
+(a depth pass samples one channel), so it has to come from the pass-level
+evaluation, not the flat sampler list. That is the one piece to wire before
+`derived_mid` can replace the carried `mids` pool.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
