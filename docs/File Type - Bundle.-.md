@@ -82,3 +82,19 @@ uint32 unknown_3;
 
 File files[num_entries] <optimize=false>;
 ```
+
+## Confirmed header constants (2026-10-12)
+
+Across **3,000** shipped bundles (`bundle/<name>`, 200 B – 3 MB):
+
+| Field | Value | Occurrence |
+|-------|-------|------------|
+| `version` | `0xF0000008` | 3,000 / 3,000 |
+| `unknown_1` | `3` | 3,000 / 3,000 |
+| `unknown_3` (the word after `unpacked_size`) | `0` | 3,000 / 3,000 |
+
+So both "unknown" words are **constants**, not content-dependent — they carry no
+information, and DTMT's writer already emits `0` for `unknown_3` while its reader
+skips the word. `FileMeta.flags` (the suspected deleted-file bitflag) and
+`FileHeader.unknown_2` (`1` in every sample) are the only header fields whose
+meaning is still untested.

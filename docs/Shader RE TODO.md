@@ -3738,6 +3738,16 @@ source layout exactly (`runtime/engine/renderer/resources/shader.cpp`,
 / `StreamOut` / `InstanceData` string exists in this build, so the pass structs
 stay unnamed and the disassembly remains the only source for their field order.
 
+**Where the pass data is consumed.** `D3D12ShaderPass::init` is a *loader*, not
+the field reader: it bails when `rcx[1]==0`, builds a request struct on the stack
+(word `+0x68 = 3`, `+0x20 = 1`, `+0x118 = 0xFFFFFFFF` at the call site), calls
+through the `.data` pointer `0x140f6f928`, and asserts the returned buffer is
+non-null. A scan of `.text` for `call 0x1407f5ea0` finds **22** sites, all in one
+tight cluster at `0x1407df0xx`–`0x1407e08xx` (per-pass/per-stage setup) — so the
+code that *reads the records* is in that cluster, not in `init` itself, and the
+block's field order has to be read off those callers (they touch the pass object
+at `+0x250 … +0x448`).
+
 ## Bounties
 
 `unknown.txt` (hashes seen in Darktide shader structures that the dictionary

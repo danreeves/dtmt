@@ -278,13 +278,19 @@ channel set (`df`, `dfa`, `dfa1`, `nm`, `orm`, `ao`, `ma`, `mae`, `gsm`, `hm`,
 `vehicle`, `vfx`, … groups. `murmur32` is the same function `IdString32` uses, so
 a category written from an SJSON name round-trips.
 
-Status: the hash scheme is **Verified**. The **name set is data-driven** — one
-`.texture_category` resource per name, carried inside the shipped bundles but
-never present as a plain string — so only names the dictionary happens to know
-resolve (`Dictionary::add_derived_texture_categories` derives the engine-id form
-of every `texture_categories/<leaf>` row in `dictionary.csv`). Roughly twenty
-further hashes seen in shipped textures, including the three most common after
-`ui`, are still unnamed.
+Status: the hash scheme is **Verified** (the twelve above are pinned against
+shipped data). The **name set is not recoverable from the install**: a category is
+nominally a `.texture_category` resource, but a file of that type
+(`murmur64("texture_category") = 0x4A664BF2F2E1360F`) appears in **none** of 4,000
+sampled shipped bundles, the engine binary carries no `texture_categories/…`
+strings (the categories are hashed at build time), and the dictionary knows only
+39 leaves — the enriched scratch dictionary has the same 39. So only names the
+dictionary happens to know resolve: `Dictionary::add_derived_texture_categories`
+derives the engine-id form of each `texture_categories/<leaf>` row in
+`dictionary.csv`. Roughly twenty further hashes seen in shipped textures,
+including the three most common after `ui`, stay unnamed. This is display-only:
+a build writes `murmur32` of whatever category name the SJSON gives, so authoring
+is unaffected.
 
 ---
 
