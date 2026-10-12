@@ -932,23 +932,23 @@ offset 128 size 64); the copies section is the shape `derived_mid` already
 emits per texture slot. `W2` of a later canonical section is
 `W1(first) + x_end` (16 + 176 = 192, 272 + 128 = 400, 16 + 80 = 96), and the
 copy section's `W2` is `W1(s2) + W2(s2)` (416 + 192 = 608, 416 + 176 = 592).
-**`W1` is the size of one of the group's cbuffers, from the compiled
-reflection** (solved 2026-10-12). The VT2 SDK's `.shader_library` files are
-**DXBC with an RDEF chunk naming every cbuffer member**, which pointed at
+**`W1` is a cbuffer's size, from the compiled reflection** (solved
+2026-10-12). The VT2 SDK's `.shader_library` files are **DXBC with an RDEF chunk
+naming every cbuffer member**, which pointed at
 `ID3D12ShaderReflectionConstantBuffer::GetVariableByIndex`; `lib/dxc` now
-exposes each constant buffer's variables (`CbufferVariable`: name, offset, size,
-engine kind), and `reflect_dump` prints them. The reflection shows every cbuffer
-as one opaque variable (`_NN_m0`) of exactly the buffer's size: the standard's
+exposes each constant buffer's variables (`CbufferVariable`), and `reflect_dump`
+prints them. The reflection - and the decompiled `.shader_source` - show every
+cbuffer as **one opaque `float4 _NN_m0[N]` array**: the standard's
 `global_viewport` **1776**, `c_instance_offset` **16**, `c_per_object` **416**,
-`global_environment_settings` **400**, `c_depth_only` **304**. Those are
-precisely the mid's `W1`s (16 / 416 / 400 / 304, plus 272 for a variant's
-`c_per_object`), and `global_viewport`'s 1776 is the `between`'s word0. So a
-section is `{cbuffer size, running offset, record count}` - **one canonical
-section per non-engine cbuffer** the group's programs bind, then the packed-copy
-section. `W1` is therefore already in hand: `StageResources.cbuffer_sizes`, which
-the tail lists are built from. Only a record's own name (the `world_view_proj`
-kind of field) still needs the variable dictionary, because the reflection's
-variable names come back mangled. The `mid` is **not a new grammar**: it is `group_data.rs`'s
+`global_environment_settings` **400**, `c_depth_only` **304**. Those sizes are
+the mid's `W1`s (16 / 416 / 400 / 304, plus 272 for a variant's `c_per_object`)
+and `global_viewport`'s 1776 is the `between`'s word0. So `W1` is a **running
+cbuffer offset** - each section is one cbuffer's field records and the header's
+first word is the previous cbuffer's size - already in hand as
+`StageResources.cbuffer_sizes`. The mid's records are that cbuffer's **fields**:
+resolved through `dictionary.csv`, group 0's are `world_view_proj`, `view_proj`,
+`world`, `last_world`, `bca`, `nm`, `orm`, `material_id`, `linear_depth`, etc. -
+the declaration's own cbuffer fields, not the reflection's opaque array. The `mid` is **not a new grammar**: it is `group_data.rs`'s
 canonical records and packed copies, so `derived_mid` should be the template's
 existing `VariableTable` / `rebuild` path fed from the compiled program's
 reflection, not a hand-built 180-byte constant.
