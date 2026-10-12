@@ -1381,20 +1381,52 @@ struct ChunkParts {
     tail: Option<TailRef>,
 }
 
-/// A shared front: `node`'s bytes up to `len`.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A shared front: `node`'s bytes up to `len`. Written as `"node:len"`.
+#[derive(Clone, Copy, Debug)]
 struct HeadRef {
     node: usize,
     len: usize,
 }
 
-/// A shared back: `node`'s bytes from `start`.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+impl Serialize for HeadRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{}:{}", self.node, self.len))
+    }
+}
+
+impl<'de> Deserialize<'de> for HeadRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (node, len) = split_ref(&String::deserialize(deserializer)?)
+            .ok_or_else(|| serde::de::Error::custom("a shared front is `node:len`"))?;
+        Ok(HeadRef { node, len })
+    }
+}
+
+/// A shared back: `node`'s bytes from `start`. Written as `"node:start"`.
+#[derive(Clone, Copy, Debug)]
 struct TailRef {
     node: usize,
     start: usize,
+}
+
+impl Serialize for TailRef {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&format!("{}:{}", self.node, self.start))
+    }
+}
+
+impl<'de> Deserialize<'de> for TailRef {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let (node, start) = split_ref(&String::deserialize(deserializer)?)
+            .ok_or_else(|| serde::de::Error::custom("a shared back is `node:start`"))?;
+        Ok(TailRef { node, start })
+    }
+}
+
+/// Splits a `"node:offset"` reference.
+fn split_ref(text: &str) -> Option<(usize, usize)> {
+    let (node, offset) = text.split_once(':')?;
+    Some((node.trim().parse().ok()?, offset.trim().parse().ok()?))
 }
 
 /// A slice of the preamble body a block carries: its start and length.
