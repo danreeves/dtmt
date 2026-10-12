@@ -3724,9 +3724,15 @@ The binary also carries its whole **assert catalogue**: each assert bakes in the
 enclosing function and the source path, so a `strings` pass yields ~800
 `stingray::…` names plus a handful with the tested expression. Two of note:
 
-* `stingray::D3D12ShaderPass::init.actual_size != 0` — the pass reader reads a
-  **size word** and asserts it is non-zero, i.e. the block is a counted
-  `{size, records…}` list, confirming the framing the codec already assumes;
+* `stingray::D3D12ShaderPass::init`, expression `actual_size != 0` — the pass
+  reader allocates a buffer of that size and asserts it is non-zero, i.e. the
+  block is a counted `{size, records…}` structure, confirming the framing the
+  codec already assumes;
+* `stingray::decompress_oodle`, whose two asserts in the same file read
+  *"Unknown semantic name"* and *"Decompression error, shader could not fit into
+  decompression buffer"* — so the same translation unit **resolves semantic names
+  by lookup** (matching the pass records' semantic-bearing `StreamOutDeclaration::
+  Channel` / `InstanceData::Variable`), and the pass blob is Oodle-compressed;
 * `stingray::ShaderPassFlags::flag`, message *"Trying to lookup unknown shader
   pass flag %s!"* — the pass-flag table's own name resolution.
 
