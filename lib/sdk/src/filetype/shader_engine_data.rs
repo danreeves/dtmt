@@ -989,6 +989,15 @@ const PACKED_CBUFFER: u32 = 0xB563_9618;
 fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
     let samples = resources.values().any(StageResources::samples);
 
+    // The compiled cbuffer sizes, by the hash a descriptor carries: the header
+    // word needs its material (kind-0) cbuffers' sizes.
+    let mut sizes: HashMap<u32, u32> = HashMap::new();
+    for stage in resources.values() {
+        for (name, size) in &stage.cbuffer_sizes {
+            sizes.insert(u32::from(murmur::Murmur32::hash(name.as_bytes())), *size);
+        }
+    }
+
     let mut descriptors: Vec<(u32, u32, u32)> = Vec::new();
     let mut seen: Vec<u32> = Vec::new();
     let mut push = |name: u32, flags: u32, y: u32| {
@@ -1021,8 +1030,22 @@ fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
         push(GLOBAL_FEEDBACK_BUFFERS, 0x0105, 10);
     }
 
+    // The header word: the per-draw total (24 per cbuffer, 8 per other)
+    // rounded up to 16, plus the sizes of the material (kind-0) cbuffers -
+    // measured exact on the standard's five shipped groups.
+    let per_draw: u32 = descriptors
+        .iter()
+        .map(|(_, flags, _)| if flags & 0xFF <= 1 { 24 } else { 8 })
+        .sum();
+    let material: u32 = descriptors
+        .iter()
+        .filter(|(_, flags, _)| flags & 0xFF == 0)
+        .filter_map(|(name, _, _)| sizes.get(name).copied())
+        .sum();
+    let header = per_draw.div_ceil(16) * 16 + material;
+
     let mut out = Vec::new();
-    out.extend_from_slice(&0x130u32.to_le_bytes());
+    out.extend_from_slice(&header.to_le_bytes());
     out.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
     let mut x = 0u32;
     for (name, flags, y) in &descriptors {
@@ -2684,6 +2707,34 @@ impl EngineData {
 mod tests {
     use super::*;
 
+    /// The head's header word: the per-draw total (24 per cbuffer, 8 per other)
+    /// rounded up to 16, plus the material (kind-0) cbuffers' compiled sizes.
+    #[test]
+    fn the_head_header_word_grows_with_the_material_cbuffers() {
+        let mut pixel = StageResources::default();
+        pixel.cbuffers = vec![
+            "global_viewport".to_string(),
+            "c_instance_offset".to_string(),
+            "c_depth_only".to_string(),
+        ];
+        pixel
+            .cbuffer_sizes
+            .insert("global_viewport".to_string(), 1776);
+        pixel
+            .cbuffer_sizes
+            .insert("c_instance_offset".to_string(), 16);
+        pixel.cbuffer_sizes.insert("c_depth_only".to_string(), 304);
+        let mut resources = HashMap::new();
+        resources.insert(Stage::Pixel, pixel);
+
+        let head = derived_head(&resources);
+        let header = u32::from_le_bytes(head[0..4].try_into().unwrap());
+        // The four descriptors (c_per_object, global_viewport, c_instance_offset,
+        // c_depth_only) are 24 per draw = 96, already 16-aligned; the material
+        // cbuffers are c_instance_offset (16) + c_depth_only (304) = 320.
+        assert_eq!(header, 96 + 320);
+    }
+
     fn empty_engine_data() -> EngineData {
         EngineData {
             material_hash: 0,
@@ -3827,3 +3878,5 @@ programs = []
         );
     }
 }
+
+
