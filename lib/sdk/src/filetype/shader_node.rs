@@ -46,6 +46,9 @@ pub struct ResourceDecl {
     pub space: u32,
     /// The number of contiguous registers: 0 is an unbounded array.
     pub count: u32,
+    /// The tail record's stride word: 0 for a raw (byte-address) buffer, the
+    /// element stride for a structured buffer, `0xFFFFFFFF` for a texture.
+    pub stride: u32,
 }
 
 /// What a stage's compiled container binds, as the engine's tail lists need it.
@@ -81,11 +84,25 @@ impl StageResources {
     /// Sorts a container's reflection into the lists the tail needs.
     pub fn from_bindings(bindings: &[dxc::BoundResource]) -> Self {
         let mut resources = Self::default();
-        let decl = |binding: &dxc::BoundResource| ResourceDecl {
-            name: binding.name.clone(),
-            register: binding.bind_point,
-            space: binding.space,
-            count: binding.bind_count,
+        let decl = |binding: &dxc::BoundResource| {
+            // The stride word is the one record field the reflection only gives
+            // for a structured buffer, where DXC reports the element stride in
+            // `NumSamples`. A raw byte-address buffer has none, and a texture's
+            // word is the sentinel.
+            let stride = if matches!(binding.kind, 7 | 8) {
+                0
+            } else if matches!(binding.kind, 5 | 6 | 9 | 10 | 11) {
+                binding.samples
+            } else {
+                0xFFFF_FFFF
+            };
+            ResourceDecl {
+                name: binding.name.clone(),
+                register: binding.bind_point,
+                space: binding.space,
+                count: binding.bind_count,
+                stride,
+            }
         };
         for binding in bindings {
             match binding.kind {
@@ -99,9 +116,11 @@ impl StageResources {
                 2 => resources.textures.push(decl(binding)),
                 3 if binding.bind_count == 0 => resources.sampler_arrays.push(decl(binding)),
                 3 => resources.samplers.push(decl(binding)),
-                5 => resources.buffers.push(decl(binding)),
-                // 1 tbuffer, 4+ UAV kinds.
-                _ => resources.uavs.push(decl(binding)),
+                // The UAV kinds: 4 RW typed, 6 RW structured, 8 RW byte-address,
+                // 9/10/11 the append/consume/counter structured forms.
+                4 | 6 | 8 | 9 | 10 | 11 => resources.uavs.push(decl(binding)),
+                // The other SRV kinds: 1 tbuffer, 5 structured, 7 byte-address.
+                _ => resources.buffers.push(decl(binding)),
             }
         }
         resources
@@ -546,6 +565,19 @@ pub enum ConditionTerm {
     Hash(u32),
 }
 
+/// The engine's 32-bit id for a declaration name: a `#<hex>` name is the id
+/// itself, anything else is `Murmur32` of the name. A declaration that carries
+/// a record the dictionary cannot name writes it as `#<hex>` (the same spelling
+/// a pass's raw `conditions` uses), so an unnamed material variable round-trips.
+pub fn name_id(name: &str) -> u32 {
+    if let Some(hex) = name.strip_prefix('#')
+        && let Ok(value) = u32::from_str_radix(hex, 16)
+    {
+        return value;
+    }
+    u32::from(crate::murmur::Murmur32::hash(name.as_bytes()))
+}
+
 impl ConditionTerm {
     /// Parses a written term: `#<hex>` is a raw id, anything else a name.
     pub fn parse(text: &str) -> Self {
@@ -597,6 +629,10 @@ pub struct CompileJob {
     /// The pass's condition set, in order. Derived from `layer`/`render_state`
     /// unless the pass wrote a raw `conditions` list.
     pub condition_terms: ConditionSet,
+    /// The group the pass belongs to, when the declaration names one. `None`
+    /// for a declaration that does not (the single-group path, or one whose
+    /// groups derive from a uniform repeat).
+    pub group: Option<usize>,
     /// The permutation's macros plus the pass's own, each with its stage limit.
     pub macros: Vec<JobMacro>,
 }
@@ -752,6 +788,11 @@ pub struct PassValue {
     /// family whose condition ids have no names still round-trips.
     #[serde(default)]
     pub conditions: Option<Vec<String>>,
+    /// The group this pass belongs to, written by the enumerator from the
+    /// program→group mapping so the build can carry the group→tail assignment
+    /// instead of deriving it from a uniform repeat.
+    #[serde(default)]
+    pub group: Option<usize>,
     /// The key the engine sorts variants by.
     #[serde(default)]
     pub branch_key: Option<String>,
@@ -936,6 +977,7 @@ impl ShaderNode {
                         layer: pass.layer.clone(),
                         render_state: pass.render_state.clone(),
                         condition_terms,
+                        group: pass.group,
                         macros,
                     });
                 }
@@ -954,9 +996,17 @@ impl ShaderNode {
     fn normalize(&mut self) -> Result<()> {
         let mut variables = BTreeMap::new();
         for (uuid, input) in &self.inputs {
-            let (kind, flags) = input_type(uuid, input)?;
+            // A declaration may key an input by a raw `#<hex>` hash (the
+            // reconstructor's form for a record the dictionary cannot name)
+            // and leave `name` out; the key is the name then.
+            let name = if input.name.is_empty() && uuid.starts_with('#') {
+                uuid.as_str()
+            } else {
+                input.name.as_str()
+            };
+            let (kind, flags) = input_type(name, input)?;
             variables.insert(
-                input.name.clone(),
+                name.to_string(),
                 VariableDef {
                     kind,
                     domain: domain(input.domain.as_deref())?,
@@ -1052,6 +1102,7 @@ fn walk_pass_entry(entry: &PassEntryValue) -> Result<PassEntry> {
             defines: pass.defines.clone().into(),
             render_state: pass.render_state.clone(),
             conditions: pass.conditions.clone(),
+            group: pass.group,
             branch_key: pass.branch_key.clone(),
         }),
     })
@@ -1150,22 +1201,21 @@ fn channel_def(
 }
 
 /// An input's type and the permutation flags that enable it.
-fn input_type(uuid: &str, input: &Input) -> Result<(ValueType, Vec<String>)> {
-    if input.name.is_empty() {
-        bail!("the input {uuid} has no name");
+fn input_type(name: &str, input: &Input) -> Result<(ValueType, Vec<String>)> {
+    if name.is_empty() {
+        bail!("an input has no name");
     }
-    let Some((name, flags)) = input.kind.split() else {
+    let Some((kind, flags)) = input.kind.split() else {
         bail!(
-            "the input {} has the type {:?}, which names no single type",
-            input.name,
+            "the input {name} has the type {:?}, which names no single type",
             input.kind
         );
     };
-    if name.is_empty() {
-        bail!("the input {} has no type", input.name);
+    if kind.is_empty() {
+        bail!("the input {name} has no type");
     }
-    let Some(kind) = ValueType::parse(name) else {
-        bail!("the input {} has the unknown type {name}", input.name);
+    let Some(kind) = ValueType::parse(kind) else {
+        bail!("the input {name} has the unknown type {kind}");
     };
     Ok((kind, flags.to_vec()))
 }
@@ -2626,6 +2676,17 @@ mod tests {
         let text = "inputs = {\n\t\"1\" = { type = { vector3: [] } }\n}";
         let err = ShaderNode::from_sjson(text).expect_err("no name");
         assert!(err.to_string().contains("no name"), "{err}");
+    }
+
+    #[test]
+    fn reads_an_input_keyed_by_its_raw_hash() {
+        // A record the dictionary cannot name is carried as a `#<hex>` name, so
+        // the group data's record hash round-trips without a name.
+        let text = "inputs = {\n\t\"#78E25D0F\" = { type = \"vector4\" }\n}";
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        assert_eq!(node.variables["#78E25D0F"].kind, ValueType::Float4);
+        assert_eq!(name_id("#78E25D0F"), 0x78E2_5D0F);
+        assert_eq!(name_id("texture_map"), 0xE503_152C);
     }
 
     #[test]

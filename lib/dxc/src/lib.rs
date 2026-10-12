@@ -361,6 +361,10 @@ pub struct BoundResource {
     pub flags: u32,
     /// The register space.
     pub space: u32,
+    /// The register's stride in bytes for a structured buffer (DXC reports it
+    /// in `NumSamples`), 0 for every other kind. A structured buffer's element
+    /// size is not otherwise in the reflection.
+    pub samples: u32,
     /// A constant buffer's byte size; 0 for every other kind.
     pub size: u32,
 }
@@ -673,6 +677,7 @@ impl Compiler {
                 bind_count: desc.bind_count,
                 flags: desc.flags,
                 space: desc.space,
+                samples: desc.samples,
                 size,
             });
         }

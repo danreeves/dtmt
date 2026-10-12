@@ -15,6 +15,7 @@ use sdk::filetype::material::{self, ShaderOverrides};
 use sdk::filetype::package::Package;
 use sdk::filetype::shader::Stage;
 use sdk::filetype::shader_compile;
+use sdk::filetype::shader_decl::ValueType;
 use sdk::filetype::shader_graph::{Evaluation, Graph, NodeDef};
 use sdk::filetype::shader_node::{CompileJob, ShaderNode, STAGES, StageResources, entry_for, profile_for};
 use sdk::filetype::shader_engine_data::{EngineData, PermutationPlan};
@@ -361,7 +362,6 @@ async fn compile_declaration(
     // contexts are then derived from these rather than carried.
     let mut overrides = ShaderOverrides {
         permutations: permutation_plans(&jobs),
-        material_records: material_records(evaluation),
         jobs: jobs.clone(),
         ..ShaderOverrides::default()
     };
@@ -423,67 +423,154 @@ async fn compile_declaration(
         }
     }
 
+    // The material table, from the declaration's inputs (or the graph's
+    // exports) and the compiled `c_per_object` cbuffer's size. The cbuffer only
+    // checks the derived layout - a reconstructed source's `c_per_object` is a
+    // flat array, so its reflection gives the total, not the members' offsets.
+    overrides.material_records = material_records(&node, evaluation);
+    if let Some(size) = overrides
+        .resources
+        .values()
+        .find_map(|resources| resources.cbuffer_sizes.get("c_per_object").copied())
+    {
+        let extent = overrides
+            .material_records
+            .iter()
+            .map(|record| record.offset + record.size)
+            .max()
+            .unwrap_or(0);
+        if extent != size {
+            tracing::warn!(
+                "the derived material table is {extent} bytes; the compiled c_per_object is {size}"
+            );
+        }
+    }
+
     Ok(overrides)
 }
 
-/// The material table's records, derived from the graph's material inputs and
-/// the engine's standard rows.
+/// The material table's records, derived from the declaration's inputs and the
+/// engine's standard rows.
 ///
 /// One texture slot per sampled channel - the sampler index, the texture index
 /// and the second texture, all named after the channel (measured on the UI
 /// base: `texture_map` at 0 kind 5, at 4 kind 1 and at 16 kind 1) - then the
 /// engine's `c_per_object` matrices (`view_proj` at 32, `world_view_proj` at
-/// 96, `world` at 160) and the graph's exported variables from 224.
-fn material_records(evaluation: Option<&Evaluation>) -> Vec<Record> {
+/// 96, `world` at 160) and the declaration's own variables from 224.
+///
+/// The variables are the graph's exports for a graph material, or the
+/// declaration's `inputs` for a plain one; an input may be named `#<hex>` when
+/// the dictionary cannot name the record. Their offsets are a running
+/// constant-buffer layout ([`pack`]): an element takes the next offset that
+/// does not straddle a 16-byte row, which is HLSL's own `c_per_object` packing,
+/// and the compiled cbuffer's size is the check on the result. The engine's
+/// three matrices are always laid out first regardless of how the declaration
+/// spells them, so a declaration that carries them as inputs still gets the
+/// shipped positions.
+fn material_records(node: &ShaderNode, evaluation: Option<&Evaluation>) -> Vec<Record> {
     let mut records = Vec::new();
-    let Some(evaluation) = evaluation else {
-        return records;
-    };
     let mut offset = 0u32;
-    for channel in &evaluation.samplers {
+
+    // The texture slots: the graph's sampled channels, or the declaration's
+    // code-block `samplers` table.
+    let samplers: Vec<String> = match evaluation {
+        Some(evaluation) => evaluation.samplers.clone(),
+        None => declared_samplers(node),
+    };
+    for channel in &samplers {
         for (kind, at, size) in [(5u32, 0u32, 4u32), (1, 4, 8), (1, 16, 8)] {
             records.push(record(kind, channel, offset + at, size));
         }
         offset += 24;
     }
+
+    // The engine's standard rows, then the declaration's own variables.
     offset = offset.next_multiple_of(16);
     for name in ["view_proj", "world_view_proj", "world"] {
         records.push(record(4, name, offset, 64));
         offset += 64;
     }
-    for (name, kind, _) in &evaluation.exports {
-        let Some((code, size)) = export_kind(kind) else {
+    let variables: Vec<(String, ValueType)> = match evaluation {
+        Some(evaluation) => evaluation
+            .exports
+            .iter()
+            .filter_map(|(name, hlsl, _)| ValueType::parse(hlsl).map(|kind| (name.clone(), kind)))
+            .collect(),
+        None => node
+            .variables
+            .iter()
+            .map(|(name, variable)| (name.clone(), variable.kind))
+            .collect(),
+    };
+    for (name, kind) in &variables {
+        // The engine's three rows above already stand in for the matrices, so a
+        // declaration that also names one contributes nothing here.
+        if ["view_proj", "world_view_proj", "world"].contains(&name.as_str()) {
             continue;
+        }
+        // A texture slot is a code-block sampler, not a record of its own - but
+        // a reconstructed declaration carries the sampler index as a `texture`
+        // input, which is the kind 5 uint record.
+        if samplers.contains(name) {
+            continue;
+        }
+        let (code, size) = match kind {
+            ValueType::Texture2D => (5, 4),
+            other => match other.record_kind() {
+                Some(code) => (code, other.size()),
+                None => continue,
+            },
         };
-        offset = offset.next_multiple_of(16);
+        offset = pack(offset, size);
         records.push(record(code, name, offset, size));
         offset += size;
     }
     records
 }
 
+/// The next constant-buffer offset a `size`-byte element can take: aligned to
+/// its own component alignment (4 for a scalar or `float3`, 8 for a `float2`,
+/// 16 for a `float4`/matrix) and never straddling a 16-byte row. This is HLSL's
+/// `c_per_object` packing, which the shipped tables follow (`camera_pos`
+/// follows `camera_unprojection` at 16, a `float2` packs after a scalar at its
+/// 8-byte alignment, a `float4` starts a row).
+fn pack(offset: u32, size: u32) -> u32 {
+    let align = match size {
+        8 => 8,
+        16 | 64 => 16,
+        _ => 4,
+    };
+    let mut at = offset.next_multiple_of(align);
+    if size <= 16 && (at % 16) + size > 16 {
+        at = at.next_multiple_of(16);
+    }
+    at
+}
+
+/// The texture slots a plain declaration's code blocks name, in block order and
+/// without repetition: the table a material's `textures` keys bind.
+fn declared_samplers(node: &ShaderNode) -> Vec<String> {
+    let mut slots = Vec::new();
+    for block in node.code_blocks.values() {
+        for slot in block.sampler_defs() {
+            if !slots.contains(&slot.slot_name) {
+                slots.push(slot.slot_name);
+            }
+        }
+    }
+    slots
+}
+
 /// One material record for a named variable: the kind and size its type gives.
+/// A `#<hex>` name hashes to the raw id, so an unnamed record round-trips.
 fn record(kind: u32, name: &str, offset: u32, size: u32) -> Record {
     Record {
         kind,
         flags: 0,
-        hash: u32::from(sdk::murmur::Murmur32::hash(name.as_bytes())),
+        hash: sdk::filetype::shader_node::name_id(name),
         offset,
         size,
     }
-}
-
-/// The record kind and byte size of an HLSL type, or `None` when the group
-/// data cannot size it.
-fn export_kind(kind: &str) -> Option<(u32, u32)> {
-    Some(match kind {
-        "float" | "scalar" => (0, 4),
-        "float2" | "vector2" => (1, 8),
-        "float3" | "vector3" => (2, 12),
-        "float4" | "vector4" => (3, 16),
-        "float4x4" | "matrix" => (4, 64),
-        _ => return None,
-    })
 }
 
 /// The permutation plans a declaration's compile jobs stand for: one plan per
@@ -718,7 +805,12 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                         )
                     })?;
 
-                if !overrides.material_records.is_empty() {
+                // A file that carries no material tables - a from-scratch
+                // declaration whose groups derive - takes the declaration's
+                // derived table. A captured file keeps the tables it carries:
+                // the standard family's differ per group, so overwriting them
+                // with the first group's table changes the section.
+                if !overrides.material_records.is_empty() && engine_data.material_tables.is_empty() {
                     // The material tables are identical across a section's
                     // groups (measured: the shipped UI base's 36 groups carry
                     // the same channel and variable tables), so the derived one
@@ -755,6 +847,43 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
 
                 let carried = overrides.is_empty();
                 let resources = overrides.resources.clone();
+
+                // A file that names the declaration job each program uses
+                // carries no container bytes: frame each program with the
+                // container its job and stage compiled. `job_containers` holds
+                // each job's vertex container then its pixel one, in job order.
+                if engine_data.program_jobs.iter().any(Option::is_some) {
+                    let mut compiled: Vec<Vec<u8>> = Vec::new();
+                    let mut program_containers =
+                        Vec::with_capacity(engine_data.programs.len());
+                    for (index, (stage, _)) in engine_data.programs.iter().enumerate() {
+                        let job = engine_data.program_jobs[index].ok_or_else(|| {
+                            eyre::eyre!("program {index} names no compile job")
+                        })?;
+                        let at = job * 2 + if *stage == Stage::Pixel { 1 } else { 0 };
+                        let container = overrides
+                            .job_containers
+                            .get(at)
+                            .map(|(_, container)| container)
+                            .ok_or_else(|| {
+                                eyre::eyre!(
+                                    "program {index} names job {job}, which compiled no {stage:?} \
+                                     container"
+                                )
+                            })?;
+                        let slot = match compiled.iter().position(|other| other == container) {
+                            Some(slot) => slot,
+                            None => {
+                                compiled.push(container.clone());
+                                compiled.len() - 1
+                            }
+                        };
+                        program_containers.push(Some(slot));
+                    }
+                    engine_data.containers = compiled;
+                    engine_data.program_containers = program_containers;
+                }
+
                 let mut containers = HashMap::new();
                 if overrides.job_containers.len() > 2 && !engine_data.containers.is_empty() {
                     // A multi-job declaration (a family's passes enumerated): a
@@ -1161,4 +1290,58 @@ pub(crate) async fn run(_ctx: sdk::Context, matches: &ArgMatches) -> Result<()> 
     build(&cfg, out_path, game_dir, force).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdk::filetype::shader_node::name_id;
+
+    /// The material table packs a declaration's inputs: the sampler triple, the
+    /// engine's matrices, then the variables in HLSL layout order. The inputs
+    /// are a `BTreeMap`, so they are laid out by name.
+    #[test]
+    fn the_material_table_packs_the_declarations_inputs() {
+        let text = r##"
+            inputs = {
+                "1" = { name = "mod_tint" type = "vector4" }
+                "2" = { name = "fade" type = "scalar" }
+                "#78E25D0F" = { type = "vector2" }
+            }
+            code_blocks = {
+                b = { samplers = { texture_map = { slot_name = "texture_map" } } }
+            }
+        "##;
+        let node = ShaderNode::from_sjson(text).expect("parse");
+        let records = material_records(&node, None);
+        let find = |hash: u32| {
+            records
+                .iter()
+                .find(|record| record.hash == hash)
+                .map(|record| (record.kind, record.offset, record.size))
+        };
+
+        // The sampler triple, then the engine's standard matrices.
+        assert_eq!(find(name_id("texture_map")), Some((5, 0, 4)));
+        assert_eq!(find(name_id("view_proj")), Some((4, 32, 64)));
+        assert_eq!(find(name_id("world_view_proj")), Some((4, 96, 64)));
+        assert_eq!(find(name_id("world")), Some((4, 160, 64)));
+
+        // The variables: `#78E25D0F` (float2), `fade` (float) and `mod_tint`
+        // (float4), in name order, packed without straddling a 16-byte row.
+        assert_eq!(find(0x78E2_5D0F), Some((1, 224, 8)));
+        assert_eq!(find(name_id("fade")), Some((0, 232, 4)));
+        assert_eq!(find(name_id("mod_tint")), Some((3, 240, 16)));
+    }
+
+    #[test]
+    fn a_record_packs_beside_a_scalar_but_not_across_a_row() {
+        assert_eq!(pack(0, 4), 0);
+        assert_eq!(pack(4, 8), 8);
+        assert_eq!(pack(12, 4), 12);
+        assert_eq!(pack(12, 12), 16);
+        assert_eq!(pack(8, 12), 16);
+        assert_eq!(pack(16, 12), 16);
+        assert_eq!(pack(0, 64), 0);
+    }
 }

@@ -32,7 +32,7 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::shader::{self, Stage};
-use super::shader_node::StageResources;
+use super::shader_node::{ResourceDecl, StageResources};
 use crate::filetype::group_data::{Dependency, GroupData, GroupParts, GroupTemplate, Record};
 use crate::murmur;
 
@@ -104,26 +104,7 @@ const GLOBAL_UAV_BUFFERS: u32 = 0xA306_B24F;
 fn descriptors(template: &GroupTemplate) -> Result<BTreeMap<u32, u32>> {
     let mut agreed: Option<BTreeMap<u32, u32>> = None;
     for parts in &template.groups {
-        // The head is the query id, the group's two words, its descriptor
-        // list, then the first table's header: skip the query and the header
-        // word, then the count opens the list.
-        let head = parts
-            .head
-            .get(8..)
-            .ok_or_else(|| color_eyre::eyre::eyre!("a group head is too short"))?;
-        let count = u32::from_le_bytes(
-            head[..4]
-                .try_into()
-                .map_err(|_| color_eyre::eyre::eyre!("a group head is too short"))?,
-        ) as usize;
-        let bytes = head
-            .get(4..4 + count * 16)
-            .ok_or_else(|| color_eyre::eyre::eyre!("a group's descriptor list is short"))?;
-        let mut list = BTreeMap::new();
-        for index in 0..count {
-            let name = u32::from_le_bytes(bytes[index * 16..index * 16 + 4].try_into().unwrap());
-            list.insert(name, index as u32);
-        }
+        let list = group_descriptors(parts)?;
         match &agreed {
             None => agreed = Some(list),
             Some(previous) if *previous != list => {
@@ -135,17 +116,67 @@ fn descriptors(template: &GroupTemplate) -> Result<BTreeMap<u32, u32>> {
     agreed.ok_or_else(|| color_eyre::eyre::eyre!("the template has no groups"))
 }
 
-/// The lists (3, 5, 6 and 8) a stage's tail should hold, from its own
-/// reflection and the engine's conventions:
+/// One group's descriptor list as a name-hash -> index map, from its head: the
+/// query id, the group's two words, its descriptor list, then the first table's
+/// header.
+fn group_descriptors(parts: &crate::filetype::group_data::GroupParts) -> Result<BTreeMap<u32, u32>> {
+    let head = parts
+        .head
+        .get(8..)
+        .ok_or_else(|| color_eyre::eyre::eyre!("a group head is too short"))?;
+    let count = u32::from_le_bytes(
+        head[..4]
+            .try_into()
+            .map_err(|_| color_eyre::eyre::eyre!("a group head is too short"))?,
+    ) as usize;
+    let bytes = head
+        .get(4..4 + count * 16)
+        .ok_or_else(|| color_eyre::eyre::eyre!("a group's descriptor list is short"))?;
+    let mut list = BTreeMap::new();
+    for index in 0..count {
+        let name = u32::from_le_bytes(bytes[index * 16..index * 16 + 4].try_into().unwrap());
+        list.insert(name, index as u32);
+    }
+    Ok(list)
+}
+
+/// The descriptors of one group, when a program's tail belongs to it - the
+/// per-program form a family whose groups disagree on their lists needs.
+fn descriptors_for_group(template: &GroupTemplate, group: usize) -> Result<BTreeMap<u32, u32>> {
+    let parts = template
+        .groups
+        .get(group)
+        .ok_or_else(|| color_eyre::eyre::eyre!("a program names group {group}, which is missing"))?;
+    group_descriptors(parts)
+}
+
+/// The engine's spelling of a resource name. DXC names a texture / sampler
+/// pair from a combined sampler object `__tex_<name>` / `__samp_<name>`; the
+/// engine's own records use `<name>` (the same rule the
+/// Darktide-Asset-Compiler's `id32` applies).
+fn engine_name(name: &str) -> &str {
+    for prefix in ["__tex_", "__samp_"] {
+        if let Some(rest) = name.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    name
+}
+
+/// The lists (2, 3, 4, 5, 6 and 8) a stage's tail should hold, from its own
+/// reflection: the non-UAV SRVs (bounded then unbounded), the UAVs (bounded
+/// then unbounded), the static samplers, and the bindless sampler array.
 ///
-/// - a texture array becomes the engine's `global_texture2D` record and an
-///   unbounded sampler array its `global_samplers` one;
-/// - a stage that samples gets the engine's `static_minlod_sampler` record and,
-///   as the UI base shows, its `global_feedback_buffers` one;
-/// - any other binding becomes its own record, named by its HLSL name.
+/// The engine's own resources (`static_minlod_sampler`,
+/// `global_feedback_buffers`, `global_texture2D`, `global_samplers`) are in the
+/// container's reflection too, so they are written once, from it, rather than
+/// as separate engine records.
 ///
 /// The 7-word records carry the resource's index in the group's descriptor
-/// list, so the descriptor table comes in with them.
+/// list, so the descriptor table comes in with them. Their shape is
+/// `{name, index, register, count, space, stride, 0}`, where `count` is
+/// `0xFFFFFFFF` for an unbounded array and `stride` is 0 for a raw buffer, the
+/// element stride for a structured buffer, or `0xFFFFFFFF` for a texture.
 fn set_derived_lists(
     lists: &mut shader::TailLists,
     resources: &StageResources,
@@ -156,18 +187,37 @@ fn set_derived_lists(
             color_eyre::eyre::eyre!("{name:08X} is not in the group's descriptor list")
         })
     };
+    let hash =
+        |name: &str| -> u32 { u32::from(murmur::Murmur32::hash(engine_name(name).as_bytes())) };
+    let resource = |decl: &ResourceDecl| -> Result<Vec<u32>> {
+        let name = hash(&decl.name);
+        let count = if decl.count == 0 {
+            0xFFFF_FFFF
+        } else {
+            decl.count
+        };
+        Ok(vec![
+            name,
+            index(name)?,
+            decl.register,
+            count,
+            decl.space,
+            decl.stride,
+            0,
+        ])
+    };
 
-    let mut textures = Vec::new();
+    // Lists 2 and 3: the non-UAV SRVs, bounded (srvs) and unbounded (arrays). A
+    // structured buffer is one or the other by its bind count. A bindless
+    // texture array is the engine's `global_texture2D` whatever the declaration
+    // names it (`g_material_textures` in a from-scratch source).
+    let mut srvs = Vec::new();
+    let mut srv_arrays = Vec::new();
     for decl in &resources.textures {
-        // The bounded-texture record's shape is not measured yet; fail rather
-        // than write a guess.
-        bail!(
-            "the bounded texture binding '{}' has no measured record shape yet",
-            decl.name
-        );
+        srvs.push(resource(decl)?);
     }
     for decl in &resources.texture_arrays {
-        textures.push(vec![
+        srv_arrays.push(vec![
             GLOBAL_TEXTURE2D,
             index(GLOBAL_TEXTURE2D)?,
             decl.register,
@@ -177,41 +227,80 @@ fn set_derived_lists(
             0,
         ]);
     }
+    for decl in &resources.buffers {
+        if decl.count == 0 {
+            srv_arrays.push(resource(decl)?);
+        } else {
+            srvs.push(resource(decl)?);
+        }
+    }
 
-    let mut buffers = Vec::new();
-    if resources.samples() {
-        buffers.push(vec![
-            GLOBAL_FEEDBACK_BUFFERS,
-            index(GLOBAL_FEEDBACK_BUFFERS)?,
+    // Lists 4 and 5: the UAVs, bounded and unbounded. The engine's
+    // `global_feedback_buffers` and `static_minlod_sampler` (list 6) are
+    // sampler-side resources: a stage that binds the bindless sampler array
+    // always carries them, whether or not the declaration names them. A
+    // reconstructed container's reflection already has them, hence the dedupe; a
+    // stage that merely reads a texture (`linear_depth`) without a sampler does
+    // not (so the gate is the sampler array, not "samples a texture").
+    let engine_sampler_resources = !resources.sampler_arrays.is_empty();
+    let mut uavs = Vec::new();
+    let mut uav_arrays = Vec::new();
+    for decl in &resources.uavs {
+        if decl.count == 0 {
+            uav_arrays.push(resource(decl)?);
+        } else {
+            uavs.push(resource(decl)?);
+        }
+    }
+    if engine_sampler_resources
+        && descriptors.contains_key(&GLOBAL_FEEDBACK_BUFFERS)
+        && !uav_arrays.iter().any(|record| record[0] == GLOBAL_FEEDBACK_BUFFERS)
+    {
+        uav_arrays.insert(
             0,
-            0xFFFF_FFFF,
-            31,
-            0xFFFF_FFFF,
-            0,
-        ]);
+            vec![
+                GLOBAL_FEEDBACK_BUFFERS,
+                index(GLOBAL_FEEDBACK_BUFFERS)?,
+                0,
+                0xFFFF_FFFF,
+                31,
+                0xFFFF_FFFF,
+                0,
+            ],
+        );
     }
 
-    let mut samplers = Vec::new();
-    if resources.samples() {
-        samplers.push(vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]);
-    }
-    for decl in &resources.samplers {
-        samplers.push(vec![
-            u32::from(murmur::Murmur32::hash(decl.name.as_bytes())),
-            decl.register,
-            1,
-            decl.space,
-        ]);
+    // List 6: the static samplers, `{name, register, count, space}`.
+    let mut samplers: Vec<Vec<u32>> = resources
+        .samplers
+        .iter()
+        .map(|decl| {
+            vec![
+                hash(&decl.name),
+                decl.register,
+                decl.count.max(1),
+                decl.space,
+            ]
+        })
+        .collect();
+    if engine_sampler_resources && !samplers.iter().any(|record| record[0] == STATIC_MINLOD_SAMPLER)
+    {
+        samplers.insert(0, vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]);
     }
 
+    // List 8: the bindless sampler array, the engine's `global_samplers`. The
+    // record is written in the engine's 3-word form; the codec reads a fourth
+    // `space` word, which the block framing here absorbs (see `TailLists::SIZES`).
     let sampler_arrays = resources
         .sampler_arrays
         .iter()
-        .map(|_| vec![GLOBAL_SAMPLERS, 0, 0])
+        .map(|decl| vec![GLOBAL_SAMPLERS, decl.register, 0])
         .collect();
 
-    lists.lists[3] = textures;
-    lists.lists[5] = buffers;
+    lists.lists[2] = srvs;
+    lists.lists[3] = srv_arrays;
+    lists.lists[4] = uavs;
+    lists.lists[5] = uav_arrays;
     lists.lists[6] = samplers;
     lists.lists[8] = sampler_arrays;
     Ok(())
@@ -268,16 +357,19 @@ fn context_count_of(contexts: &[u8]) -> usize {
 }
 
 /// The constant-buffer list a split tail should hold, from the container's own
-/// reflection: the names in register order, with the sizes from the group data's
-/// material table (`c_per_object`) and the engine table (`global_viewport`), the
-/// indexes from the group's descriptor list, and the constant 1 and 0 words.
+/// reflection: the names in register order, the sizes from the compiled
+/// container (it is the authority for every cbuffer, `c_per_object` included)
+/// and the engine table (`global_viewport`), the indexes from the group's
+/// descriptor list, and the constant 1 and 0 words.
 ///
-/// Every group must agree on a size, because the program-to-group mapping is not
-/// decoded; a cbuffer with no size source is an error rather than a guess.
+/// A group's material table is only a fallback for `c_per_object`, when the
+/// reflection gives no size: the table is our packing of the declaration's
+/// inputs and can be narrower than the compiled buffer. A cbuffer with no size
+/// source at all is an error rather than a guess.
 fn derived_cbuffers(
     resources: &StageResources,
     template: &GroupTemplate,
-    material_tables: &[Vec<Record>],
+    material: &[Record],
     descriptors: &BTreeMap<u32, u32>,
 ) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(4 + resources.cbuffers.len() * 24);
@@ -290,33 +382,21 @@ fn derived_cbuffers(
             )
         })?;
         let size = match hash {
-            C_PER_OBJECT => {
-                let compiled = resources
-                    .cbuffer_sizes
-                    .get(name)
-                    .copied()
-                    .filter(|size| *size > 0)
-                    .map(|size| size.div_ceil(16) * 16);
-                if material_tables.is_empty() {
-                    // A declaration without a graph carries no material table,
-                    // so the compiled container's own size stands in.
-                    compiled.ok_or_else(|| {
-                        color_eyre::eyre::eyre!("the cbuffer {hash:08X} ({name}) has no size")
-                    })?
-                } else {
-                    let mut sizes = material_tables.iter().map(|table| table_size(table));
-                    let first = sizes
-                        .next()
-                        .ok_or_else(|| color_eyre::eyre::eyre!("the file has no material table"))?;
-                    if sizes.any(|size| size != first) {
-                        bail!(
-                            "the groups disagree about c_per_object's size; the program-to-group \
-                             mapping is not decoded"
-                        );
-                    }
-                    first
-                }
-            }
+            // The compiled container's own size is authoritative: the group's
+            // material table is our packing of the declaration's inputs, which
+            // can be narrower than the compiled buffer (the standard's group 0
+            // table is 16 bytes against a compiled 416), so the table is only a
+            // fallback for a container whose size the reflection did not give.
+            C_PER_OBJECT => resources
+                .cbuffer_sizes
+                .get(name)
+                .copied()
+                .filter(|size| *size > 0)
+                .map(|size| size.div_ceil(16) * 16)
+                .or_else(|| (!material.is_empty()).then(|| table_size(material)))
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!("the cbuffer {hash:08X} ({name}) has no size")
+                })?,
             GLOBAL_VIEWPORT => table_size(&template.engine),
             // The engine's other cbuffers take the compiled container's own
             // size, rounded to the 16-byte granularity the tail records use.
@@ -732,6 +812,31 @@ impl GroupTailText {
     }
 }
 
+/// The number of conditions in a condition-header tail, when its bytes are one:
+/// `u32 n`, `n` 17-byte entries, then an eight-byte trailer.
+fn condition_count(bytes: &[u8]) -> Option<usize> {
+    let n = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+    (bytes.len() == 4 + n * 17 + 8).then_some(n)
+}
+
+/// Fills the program-to-group mapping when the file carries none: a group owns
+/// `2 × n` consecutive programs, where `n` is the number of conditions in the
+/// group's tail, in group order. The rule was measured across six families
+/// (`examples/program_groups.rs`); a family whose total does not match its
+/// program count is left unmapped, and its tails stay carried.
+fn derive_program_groups(engine_data: &mut EngineData, group_conditions: &[usize]) {
+    if engine_data.program_groups.iter().any(Option::is_some) {
+        return;
+    }
+    let mut groups = Vec::new();
+    for (group, count) in group_conditions.iter().enumerate() {
+        groups.extend(std::iter::repeat_n(Some(group), count * 2));
+    }
+    if !groups.is_empty() && groups.len() == engine_data.programs.len() {
+        engine_data.program_groups = groups;
+    }
+}
+
 /// One group of the template: its query id (absent when the contexts carry it -
 /// they do, one to one and in the same order) and the parts it uses.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -751,6 +856,20 @@ struct GroupText {
     material: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     material_first: bool,
+    /// Whether the group carries the shared engine table. Defaults to true; a
+    /// group with no engine table writes `engine = false`.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    engine: bool,
+}
+
+/// The default for `GroupText.engine`.
+fn default_true() -> bool {
+    true
+}
+
+/// Whether a group carries the shared engine table.
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 /// One distinct program tail: the block that closes it, and the lists only when
@@ -1048,6 +1167,16 @@ struct ProgramText {
     tail: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     container: Option<usize>,
+    /// The declaration compile job this program's container comes from, when
+    /// the file carries no container bytes: the build compiles the job and
+    /// frames the program with its container. It is the source-tree form of
+    /// `container`, which a captured file uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    job: Option<usize>,
+    /// The group this program's tail belongs to, when a split tail derives its
+    /// lists against that group's descriptors (a family whose groups disagree).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<usize>,
 }
 
 /// Writes a block as its own bytes, or - when that is smaller - as the
@@ -1155,6 +1284,16 @@ pub struct EngineData {
     /// when the program carries no container (an engine data file from before
     /// the containers were captured).
     pub program_containers: Vec<Option<usize>>,
+    /// The declaration compile job whose container each program uses, parallel
+    /// to `programs`, for a file that carries no container bytes. The build
+    /// compiles the job and frames the program with its container, so the
+    /// source declaration is the only source.
+    pub program_jobs: Vec<Option<usize>>,
+    /// The group each program's tail belongs to, parallel to `programs`. A
+    /// split tail derives its lists against that group's descriptor list; a
+    /// family whose groups disagree on it needs this, since one map cannot
+    /// stand for all groups.
+    pub program_groups: Vec<Option<usize>>,
     /// Whether each program's tail is a **split** tail - an empty constant
     /// buffer list and empty resource lists that the build fills from the
     /// container's reflection - parallel to `programs`. A carried tail, even one
@@ -1404,6 +1543,8 @@ impl EngineData {
             tails: Vec::new(),
             containers,
             program_containers,
+            program_jobs: Vec::new(),
+            program_groups: Vec::new(),
             permutations: None,
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
@@ -1439,6 +1580,8 @@ impl EngineData {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            program_jobs: Vec::new(),
+            program_groups: Vec::new(),
             program_split: Vec::new(),
             permutations: text
                 .permutations
@@ -1473,6 +1616,9 @@ impl EngineData {
         // The group data: the carried bytes, or the template they are rebuilt
         // from.
         engine_data.group_data = text.group_data.map(Hex::into_bytes).unwrap_or_default();
+        // The condition count of each group's tail, for the program-to-group
+        // mapping when the file carries no `group` tags.
+        let mut group_conditions: Vec<usize> = Vec::new();
         if let Some(template) = text.group_template {
             let engine = match &template.engine {
                 Some(engine) => records_from_bytes(&engine.0)?,
@@ -1505,6 +1651,7 @@ impl EngineData {
                             tail: index / repeat,
                             material: 0,
                             material_first: true,
+                            engine: true,
                         })
                         .collect()
                 }
@@ -1534,6 +1681,7 @@ impl EngineData {
                 groups.push(GroupParts {
                     head,
                     material_first: group.material_first,
+                    has_engine: group.engine,
                     // An empty pool means the part is derived: the engine's
                     // constants for `between`, and the material table's texture
                     // slots for `mid` (filled in `generate`).
@@ -1584,6 +1732,14 @@ impl EngineData {
             engine_data.material_tables = tables;
             engine_data.group_tail_slots = group_tail_slots.clone();
             engine_data.group_repeat = template.repeat.unwrap_or(0);
+            group_conditions = group_tail_slots
+                .iter()
+                .map(|slot| match template.tails.get(*slot) {
+                    Some(GroupTailText::Conditions { conditions }) => conditions.len(),
+                    Some(GroupTailText::Hex(hex)) => condition_count(&hex.0).unwrap_or(0),
+                    _ => 0,
+                })
+                .collect();
             for (slot, tail) in template.tails.iter().enumerate() {
                 if let GroupTailText::Pass { context, pass } = tail {
                     engine_data.pass_tail_refs.push((slot, context.clone(), *pass));
@@ -1638,10 +1794,43 @@ impl EngineData {
             }
             engine_data.programs.push((stage, tail));
             engine_data.program_containers.push(program.container);
+            engine_data.program_jobs.push(program.job);
+            engine_data.program_groups.push(program.group);
             engine_data
                 .program_split
                 .push(split_flags.get(program.tail).copied().unwrap_or(false));
         }
+
+        // A file that carries the group data as a blob but whose groups walk is
+        // read as its template, so a write-back drops the blob (the groups'
+        // heads/descriptors/headers dedupe). The template is only adopted when
+        // it rebuilds the blob byte for byte - a family whose packed run or
+        // condition framing the reader does not model losslessly keeps its blob
+        // rather than risk a different section on the next build.
+        if engine_data.group_template.is_none() && !engine_data.group_data.is_empty() {
+            if let Ok(query_ids) = context_queries(&engine_data.contexts) {
+                let group =
+                    crate::filetype::group_data::GroupData::new(engine_data.group_data.clone());
+                if let Some(template) = group.template(&query_ids)
+                    && let Some(tables) = group.object_tables(&query_ids)
+                {
+                    let material: Vec<Vec<crate::filetype::group_data::Record>> =
+                        tables.iter().map(|(_, records)| records.clone()).collect();
+                    let rebuilt = crate::filetype::group_data::GroupData::build(
+                        &template,
+                        &material,
+                        &template.engine,
+                    );
+                    if rebuilt.ok().as_deref() == Some(engine_data.group_data.as_slice()) {
+                        engine_data.group_template = Some(template);
+                        engine_data.material_tables = material;
+                        engine_data.group_data = Vec::new();
+                    }
+                }
+            }
+        }
+
+        derive_program_groups(&mut engine_data, &group_conditions);
 
         Ok(engine_data)
     }
@@ -1728,6 +1917,7 @@ impl EngineData {
                     // zero placeholder either way.
                     material: material_indexes.get(index).copied().unwrap_or(0),
                     material_first: parts.material_first,
+                    engine: parts.has_engine,
                 });
             }
 
@@ -1791,24 +1981,29 @@ impl EngineData {
             }
         }
         let mut block_heads: Vec<Hex> = Vec::new();
+        // A split tail's resource records index the group's descriptor list. A
+        // family whose groups agree on it (or whose programs carry their group
+        // via `program_groups`, derived or written) can split; one that does
+        // neither keeps its tails carried.
+        let descriptors_agree = self
+            .group_template
+            .as_ref()
+            .is_some_and(|template| descriptors(template).is_ok());
+        let per_program_groups = self.program_groups.iter().any(Option::is_some);
         let tails: Vec<TailText> = tails
             .iter()
             .map(|tail| {
                 // A tail is split - and stores only its block - when its
-                // constant buffers are all the engine's own and its lists
-                // parse: the build derives both from the container's own
-                // reflection. Anything else is carried whole.
+                // constant buffers are all the engine's own, the groups agree on
+                // their descriptor lists (or each program names its group) and
+                // its lists parse: the build derives both from the container's
+                // own reflection. Anything else is carried whole.
                 let parsed = shader::Tail::parse(tail);
                 let lists = parsed
                     .as_ref()
                     .and_then(|parsed| shader::TailLists::parse(&parsed.rest));
                 let split = match (&parsed, &lists) {
-                    (Some(parsed), Some(_)) => {
-                        self.group_template.is_some()
-                            && parsed.cbuffers.iter().all(|entry| {
-                                matches!(entry.name_hash(), C_PER_OBJECT | GLOBAL_VIEWPORT)
-                            })
-                    }
+                    (Some(_), Some(_)) => descriptors_agree || per_program_groups,
                     _ => false,
                 };
                 match (split, lists) {
@@ -1854,8 +2049,8 @@ impl EngineData {
         let programs = self
             .programs
             .iter()
-            .zip(tail_indexes.iter().zip(&container_indexes))
-            .map(|((stage, _), (tail, container))| ProgramText {
+            .enumerate()
+            .map(|(index, (stage, _))| ProgramText {
                 stage: match stage {
                     Stage::Vertex => "Vertex".to_string(),
                     Stage::Pixel => "Pixel".to_string(),
@@ -1865,8 +2060,10 @@ impl EngineData {
                     Stage::Compute => "Compute".to_string(),
                     Stage::Other => "Other".to_string(),
                 },
-                tail: *tail,
-                container: *container,
+                tail: tail_indexes[index],
+                container: container_indexes[index],
+                job: self.program_jobs.get(index).copied().flatten(),
+                group: self.program_groups.get(index).copied().flatten(),
             })
             .collect();
 
@@ -2001,11 +2198,13 @@ impl EngineData {
     ) -> Option<GroupTemplate> {
         let mut template = self.group_template.as_ref()?.clone();
         for (index, group) in template.groups.iter_mut().enumerate() {
-            // A head that is just the query waits for its derived rest.
+            // A head that is just the query waits for its derived rest. A
+            // group with no engine table legitimately has an empty `between`,
+            // so it is only derived when the group carries the engine table.
             if group.head.len() == 4 {
                 group.head.extend_from_slice(&derived_head(resources));
             }
-            if group.between.is_empty() {
+            if group.between.is_empty() && group.has_engine {
                 group.between = derived_between();
             }
             if group.mid.is_empty() {
@@ -2074,27 +2273,55 @@ impl EngineData {
                             lists.lists.iter().all(|records| records.is_empty())
                         }) =>
                 {
-                    let resources = resources.get(stage).ok_or_else(|| {
-                        color_eyre::eyre::eyre!(
-                            "no reflection for program {index} ({stage:?}): its constant buffers \
-                             and resource lists are derived from the compiled container"
-                        )
-                    })?;
+                    // The program's own container's reflection: a multi-job
+                    // family's programs bind different resources, so the first
+                    // job's per-stage reflection cannot stand in. Fall back to
+                    // the passed-in per-stage resources when reflection fails.
+                    let reflected = crate::filetype::shader_node::StageResources::from_container(container).ok();
+                    let resources = reflected.as_ref().or_else(|| resources.get(stage)).ok_or_else(
+                        || {
+                            color_eyre::eyre::eyre!(
+                                "no reflection for program {index} ({stage:?}): its constant buffers \
+                                 and resource lists are derived from the compiled container"
+                            )
+                        },
+                    )?;
                     let template = template.ok_or_else(|| {
                         color_eyre::eyre::eyre!(
                             "program {index} ({stage:?}) needs a group template to index its \
                              records"
                         )
                     })?;
-                    let descriptors = descriptors(template)?;
+                    let descriptors = if self.program_groups.is_empty() {
+                        descriptors(template)?
+                    } else {
+                        // A program that names no group has a tail whose records
+                        // are common to every group (a vertex tail's), so the
+                        // first group stands in.
+                        let group = self.program_groups.get(index).copied().flatten();
+                        descriptors_for_group(template, group.unwrap_or(0))?
+                    };
                     let mut lists = shader::TailLists::parse(&parsed.rest).ok_or_else(|| {
                         color_eyre::eyre::eyre!(
                             "program {index} ({stage:?}): a split tail's lists do not parse"
                         )
                     })?;
                     set_derived_lists(&mut lists, resources, &descriptors)?;
+                    let material: &[Record] = match self.material_tables.len() {
+                        0 => &[],
+                        1 => &self.material_tables[0],
+                        _ => {
+                            let group = self
+                                .program_groups
+                                .get(index)
+                                .copied()
+                                .flatten()
+                                .unwrap_or(0);
+                            self.material_tables.get(group).map(Vec::as_slice).unwrap_or(&[])
+                        }
+                    };
                     let mut bytes =
-                        derived_cbuffers(resources, template, &self.material_tables, &descriptors)?;
+                        derived_cbuffers(resources, template, material, &descriptors)?;
                     bytes.extend_from_slice(&lists.bytes());
                     Some(bytes)
                 }
@@ -2187,6 +2414,12 @@ impl EngineData {
         Ok(())
     }
 
+    /// The context query ids, in context order - the walk that pairs a group
+    /// with the query that selects it.
+    pub fn query_ids(&self) -> Result<Vec<u32>> {
+        context_queries(&self.contexts)
+    }
+
     /// Fills `material_tables` from the carried `group_data` blob when the file
     /// has no template: the groups walk by the contexts' query ids and each
     /// group's material table is read out. This is what a family whose groups do
@@ -2206,9 +2439,13 @@ impl EngineData {
 
     /// Derives the group tails from the declaration's compile jobs, when the
     /// file carries none: each job's condition set is `conditions_bytes` of its
-    /// `condition_ids` (its `layer`/`render_state`/`defines`, hashed). The pool
-    /// is the distinct sets in job order, and the groups repeat it - group `i`
-    /// uses tail `i / (groups / pool)`, the same convention as `repeat`.
+    /// `condition_ids` (its `layer`/`render_state`, hashed).
+    ///
+    /// A declaration that tags its passes with a `group` carries the
+    /// group→tail assignment: one group per distinct index, in the order the
+    /// groups first appear, each with that group's condition set. A declaration
+    /// that names no group falls back to the repeating model (group `i` uses
+    /// tail `i / repeat`), which is the UI base's shape.
     ///
     /// The UI base's six tails are exactly six passes' condition sets (see
     /// `docs/Shader Permutations.md`), so this replaces the carried pool.
@@ -2243,27 +2480,62 @@ impl EngineData {
         {
             return Ok(());
         }
-        // The groups per tail: the file's `repeat`, or - for a file that
-        // carried no template at all - the query count over the tail count,
-        // which is what the family's `repeat` is (36 queries / 6 tails = 6).
-        let repeat = if self.group_repeat > 0 {
-            self.group_repeat
+
+        // The declaration can name the group each pass belongs to. A group owns
+        // several passes (one per code block), so the group→tail assignment is
+        // carried per group rather than recovered from a uniform `repeat`: one
+        // group per distinct index, its tail the condition set of that group's
+        // passes, the groups in the order their first pass appears. A
+        // declaration that names no group falls back to the repeating model.
+        let tagged = jobs.iter().any(|job| job.group.is_some());
+        let (groups, slots): (
+            Vec<crate::filetype::group_data::GroupParts>,
+            Vec<usize>,
+        ) = if tagged {
+            let mut order: Vec<usize> = Vec::new();
+            let mut slots: Vec<usize> = Vec::new();
+            let mut groups: Vec<crate::filetype::group_data::GroupParts> = Vec::new();
+            for job in jobs {
+                let group = job.group.unwrap_or(0);
+                if order.contains(&group) {
+                    continue;
+                }
+                let bytes = conditions_bytes(&job.condition_ids());
+                slots.push(pool.iter().position(|other| *other == bytes).unwrap_or(0));
+                order.push(group);
+                groups.push(crate::filetype::group_data::GroupParts {
+                    head: 0u32.to_le_bytes().to_vec(),
+                    material_first: true,
+                    has_engine: true,
+                    between: Vec::new(),
+                    mid: Vec::new(),
+                    tail: bytes,
+                });
+            }
+            (groups, slots)
         } else {
-            jobs.len().div_ceil(pool.len()).max(1)
+            // The groups per tail: the file's `repeat`, or the query count over
+            // the tail count (36 queries / 6 tails = 6).
+            let repeat = if self.group_repeat > 0 {
+                self.group_repeat
+            } else {
+                jobs.len().div_ceil(pool.len()).max(1)
+            };
+            let groups: Vec<crate::filetype::group_data::GroupParts> = (0..repeat * pool.len())
+                .map(|index| crate::filetype::group_data::GroupParts {
+                    head: 0u32.to_le_bytes().to_vec(),
+                    material_first: true,
+                    has_engine: true,
+                    between: Vec::new(),
+                    mid: Vec::new(),
+                    tail: pool[index / repeat].clone(),
+                })
+                .collect();
+            let slots = (0..groups.len()).map(|index| index / repeat).collect();
+            (groups, slots)
         };
-        // Build the groups: one per (tail, repeat) - `repeat` consecutive
-        // groups share a tail - every other part a zero placeholder the other
-        // derived parts fill. The prefix is the group count.
-        let groups: Vec<crate::filetype::group_data::GroupParts> = (0..repeat * pool.len())
-            .map(|index| crate::filetype::group_data::GroupParts {
-                head: 0u32.to_le_bytes().to_vec(),
-                material_first: true,
-                between: Vec::new(),
-                mid: Vec::new(),
-                tail: pool[index / repeat].clone(),
-            })
-            .collect();
         let count = groups.len() as u32;
+        self.group_tail_slots = slots;
         match self.group_template.as_mut() {
             Some(template) => {
                 template.groups = groups;
@@ -2424,6 +2696,8 @@ mod tests {
             tails: Vec::new(),
             containers: Vec::new(),
             program_containers: Vec::new(),
+            program_jobs: Vec::new(),
+            program_groups: Vec::new(),
             program_split: Vec::new(),
             pass_tail_refs: Vec::new(),
             group_tail_slots: Vec::new(),
@@ -2600,6 +2874,28 @@ programs = []
     }
 
     #[test]
+    fn a_program_round_trips_a_job_reference() {
+        // The source-tree form: the file names the declaration's compile job
+        // for a program and carries no container bytes.
+        let mut engine_data = empty_engine_data();
+        let tail = vec![1u8, 2, 3, 4];
+        engine_data.programs = vec![
+            (Stage::Vertex, tail.clone()),
+            (Stage::Pixel, tail.clone()),
+        ];
+        engine_data.program_jobs = vec![Some(2), Some(2)];
+
+        let text = engine_data.to_text();
+        assert!(text.contains("job = 2"), "{text}");
+        assert!(!text.contains("containers = ["), "{text}");
+        assert!(!text.contains("container = "), "{text}");
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        assert_eq!(parsed.program_jobs, vec![Some(2), Some(2)]);
+        assert_eq!(parsed.program_containers, vec![None, None]);
+    }
+
+    #[test]
     fn a_group_template_round_trips_and_rebuilds() {
         // A synthetic template: two groups, one material record each and one
         // engine record. The text form must carry the template back and the
@@ -2617,6 +2913,7 @@ programs = []
             // The head ends with the first table's count word.
             head: vec![0u8; 40],
             material_first,
+            has_engine: true,
             between: vec![0u8; 12],
             mid: vec![0u8; 28],
             tail: vec![0u8; 8],
@@ -2695,6 +2992,7 @@ programs = []
         let group = |index: usize, tail: Vec<u8>| GroupParts {
             head: query(index),
             material_first: true,
+            has_engine: true,
             between: vec![0u8; 12],
             mid: vec![0u8; 8],
             tail,
@@ -2771,6 +3069,7 @@ programs = []
                 crate::filetype::shader_node::ConditionTerm::Name("gui".into()),
                 crate::filetype::shader_node::ConditionTerm::Name("gui_hdr".into()),
             ],
+            group: None,
             macros: vec![JobMacro {
                 name: "SINGLE".into(),
                 stages: Vec::new(),
@@ -2783,6 +3082,43 @@ programs = []
             engine_data.group_template.as_ref().unwrap().groups[0].tail,
             expected
         );
+    }
+
+    /// A pass's `group` tag carries the group→tail assignment: one group per
+    /// distinct index, in first-appearance order, so a family whose passes
+    /// outnumber its groups (the standard family's 11 passes over 5 groups)
+    /// derives its own list instead of a uniform `repeat`.
+    #[test]
+    fn a_passes_group_tag_carries_the_group_to_tail_assignment() {
+        let job = |group: usize, layer: &str| crate::filetype::shader_node::CompileJob {
+            context: "default".into(),
+            permutation: 0,
+            code_block: "b".into(),
+            layer: Some(layer.into()),
+            render_state: None,
+            condition_terms: vec![crate::filetype::shader_node::ConditionTerm::Name(
+                layer.into(),
+            )],
+            group: Some(group),
+            macros: Vec::new(),
+        };
+        // Two passes share group 0, one pass is group 1.
+        let jobs = vec![job(0, "gui"), job(0, "gui"), job(1, "gui_hdr")];
+
+        let mut engine_data = empty_engine_data();
+        engine_data.derive_tails(&jobs).unwrap();
+
+        let template = engine_data.group_template.as_ref().unwrap();
+        assert_eq!(template.groups.len(), 2, "one group per distinct index");
+        assert_eq!(
+            template.groups[0].tail,
+            conditions_bytes(&[0x9FCF_E126])
+        );
+        assert_eq!(
+            template.groups[1].tail,
+            conditions_bytes(&[0xBC4E_E226])
+        );
+        assert_eq!(engine_data.group_tail_slots, vec![0, 1]);
     }
 
     #[test]
@@ -2919,6 +3255,7 @@ programs = []
             groups: vec![GroupParts {
                 head,
                 material_first: true,
+                has_engine: true,
                 between: Vec::new(),
                 mid: Vec::new(),
                 tail: Vec::new(),
@@ -2948,7 +3285,7 @@ programs = []
 
         let descriptors = descriptors(&template).unwrap();
         let prefix =
-            derived_cbuffers(&resources, &template, &[material_table], &descriptors).unwrap();
+            derived_cbuffers(&resources, &template, &material_table, &descriptors).unwrap();
         assert_eq!(prefix.len(), 4 + 2 * 24);
         assert_eq!(u32::from_le_bytes(prefix[0..4].try_into().unwrap()), 2);
         let entry = |index: usize| -> [u32; 6] {
@@ -2963,15 +3300,9 @@ programs = []
 
     #[test]
     fn the_resource_lists_come_from_the_container_reflection() {
-        // The engine names the derived lists use.
-        assert_eq!(
-            STATIC_MINLOD_SAMPLER,
-            u32::from(murmur::Murmur32::hash(b"static_minlod_sampler"))
-        );
-        assert_eq!(
-            GLOBAL_SAMPLERS,
-            u32::from(murmur::Murmur32::hash(b"global_samplers"))
-        );
+        // The engine's own resource names, and the engine's spelling of the
+        // DXC-generated texture/sampler pair names (`__tex_`/`__samp_` stripped:
+        // the Darktide-Asset-Compiler's `id32` rule).
         assert_eq!(
             GLOBAL_TEXTURE2D,
             u32::from(murmur::Murmur32::hash(b"global_texture2D"))
@@ -2980,74 +3311,324 @@ programs = []
             GLOBAL_FEEDBACK_BUFFERS,
             u32::from(murmur::Murmur32::hash(b"global_feedback_buffers"))
         );
+        assert_eq!(
+            GLOBAL_SAMPLERS,
+            u32::from(murmur::Murmur32::hash(b"global_samplers"))
+        );
+        assert_eq!(engine_name("__tex__mi_texcoord0"), "_mi_texcoord0");
+        assert_eq!(engine_name("__samp__mi_coords"), "_mi_coords");
+        assert_eq!(engine_name("linear_depth"), "linear_depth");
 
-        // A pixel stage's reflection, as the UI base's container reports it.
-        let bindings = vec![
+        fn binding(
+            name: &str,
+            kind: u32,
+            bind_point: u32,
+            bind_count: u32,
+            space: u32,
+            samples: u32,
+        ) -> dxc::BoundResource {
             dxc::BoundResource {
-                name: "global_viewport".into(),
-                kind: 0,
-                bind_point: 0,
-                bind_count: 1,
-                flags: 1,
-                space: 0,
-                size: 0,
-            },
-            dxc::BoundResource {
-                name: "c_per_object".into(),
-                kind: 0,
-                bind_point: 1,
-                bind_count: 1,
-                flags: 1,
-                space: 0,
-                size: 0,
-            },
-            dxc::BoundResource {
-                name: "g_material_samplers".into(),
-                kind: 3,
-                bind_point: 0,
-                bind_count: 0,
+                name: name.into(),
+                kind,
+                bind_point,
+                bind_count,
                 flags: 0,
-                space: 2,
+                space,
+                samples,
                 size: 0,
-            },
-            dxc::BoundResource {
-                name: "g_material_textures".into(),
-                kind: 2,
-                bind_point: 0,
-                bind_count: 0,
-                flags: 0xC,
-                space: 2,
-                size: 0,
-            },
+            }
+        }
+
+        // A pixel stage's reflection, as the standard family's containers report
+        // it: two cbuffers, the engine's sampler/texture/UAV resources, one
+        // material texture and one bounded structured buffer.
+        let bindings = vec![
+            binding("global_viewport", 0, 0, 1, 0, 0),
+            binding("c_per_object", 0, 1, 1, 0, 0),
+            binding("global_samplers", 3, 0, 0, 2, 0),
+            binding("static_minlod_sampler", 3, 0, 1, 31, 0),
+            binding("__samp__mi_coords", 3, 0, 1, 0, 0),
+            binding("global_texture2D", 2, 0, 0, 2, 0),
+            binding("__tex__mi_texcoord0", 2, 0, 1, 0, 0),
+            binding("bones", 5, 0, 0, 12, 64),
+            binding("idata", 5, 0, 0, 9, 16),
+            binding("bounded_sbuffer", 5, 0, 1, 0, 32),
+            binding("global_feedback_buffers", 4, 0, 0, 31, 0),
+            binding("global_uav_buffers", 8, 0, 0, 10, 0),
+            binding("uav_scratch", 4, 0, 1, 0, 0),
         ];
         let resources = StageResources::from_bindings(&bindings);
         assert_eq!(resources.cbuffers, vec!["global_viewport", "c_per_object"]);
+        assert_eq!(resources.textures.len(), 1);
         assert_eq!(resources.texture_arrays.len(), 1);
+        assert_eq!(resources.samplers.len(), 2);
         assert_eq!(resources.sampler_arrays.len(), 1);
-        assert!(resources.samples());
+        assert_eq!(resources.buffers.len(), 3);
+        assert_eq!(resources.uavs.len(), 3);
+        // A structured buffer's stride is the reflection's `NumSamples`.
+        assert_eq!(resources.buffers[0].stride, 64);
+        assert_eq!(resources.buffers[1].stride, 16);
 
-        // The descriptors the records index into, in the UI base's order.
+        // The descriptor (root parameter) indices the records carry.
+        let mi_texcoord0 = u32::from(murmur::Murmur32::hash(b"_mi_texcoord0"));
+        let mi_coords = u32::from(murmur::Murmur32::hash(b"_mi_coords"));
+        let bounded_sbuffer = u32::from(murmur::Murmur32::hash(b"bounded_sbuffer"));
+        let uav_scratch = u32::from(murmur::Murmur32::hash(b"uav_scratch"));
         let descriptors = std::collections::BTreeMap::from([
-            (C_PER_OBJECT, 0),
-            (GLOBAL_VIEWPORT, 1),
+            (GLOBAL_VIEWPORT, 0),
+            (C_PER_OBJECT, 1),
             (GLOBAL_TEXTURE2D, 2),
-            (GLOBAL_FEEDBACK_BUFFERS, 3),
+            (mi_texcoord0, 3),
+            (BONES, 4),
+            (IDATA, 5),
+            (GLOBAL_UAV_BUFFERS, 6),
+            (GLOBAL_FEEDBACK_BUFFERS, 7),
+            (GLOBAL_SAMPLERS, 8),
+            (uav_scratch, 9),
+            (bounded_sbuffer, 10),
         ]);
+
         let mut lists = shader::TailLists {
             lists: vec![Vec::new(); 9],
             block: Vec::new(),
         };
         set_derived_lists(&mut lists, &resources, &descriptors).unwrap();
+
+        // Bounded SRVs (list 2): the bounded texture and the bounded structured
+        // buffer, `{name, index, register, count, space, stride, 0}`.
+        assert_eq!(
+            lists.lists[2],
+            vec![
+                vec![mi_texcoord0, 3, 0, 1, 0, 0xFFFF_FFFF, 0],
+                vec![bounded_sbuffer, 10, 0, 1, 0, 32, 0],
+            ]
+        );
+        // Unbounded SRVs (list 3): the bindless texture array, then the
+        // unbounded structured buffers.
         assert_eq!(
             lists.lists[3],
-            vec![vec![GLOBAL_TEXTURE2D, 2, 0, 0xFFFF_FFFF, 2, 0xFFFF_FFFF, 0]]
+            vec![
+                vec![GLOBAL_TEXTURE2D, 2, 0, 0xFFFF_FFFF, 2, 0xFFFF_FFFF, 0],
+                vec![BONES, 4, 0, 0xFFFF_FFFF, 12, 64, 0],
+                vec![IDATA, 5, 0, 0xFFFF_FFFF, 9, 16, 0],
+            ]
+        );
+        // Bounded UAVs (list 4) and unbounded UAVs (list 5).
+        assert_eq!(
+            lists.lists[4],
+            vec![vec![uav_scratch, 9, 0, 1, 0, 0xFFFF_FFFF, 0]]
         );
         assert_eq!(
             lists.lists[5],
-            vec![vec![GLOBAL_FEEDBACK_BUFFERS, 3, 0, 0xFFFF_FFFF, 31, 0xFFFF_FFFF, 0]]
+            vec![
+                vec![GLOBAL_FEEDBACK_BUFFERS, 7, 0, 0xFFFF_FFFF, 31, 0xFFFF_FFFF, 0],
+                vec![GLOBAL_UAV_BUFFERS, 6, 0, 0xFFFF_FFFF, 10, 0, 0],
+            ]
         );
-        assert_eq!(lists.lists[6], vec![vec![STATIC_MINLOD_SAMPLER, 0, 1, 31]]);
+        // Static samplers (list 6), `{name, register, count, space}`.
+        assert_eq!(
+            lists.lists[6],
+            vec![
+                vec![STATIC_MINLOD_SAMPLER, 0, 1, 31],
+                vec![mi_coords, 0, 1, 0],
+            ]
+        );
+        // The bindless sampler array (list 8).
         assert_eq!(lists.lists[8], vec![vec![GLOBAL_SAMPLERS, 0, 0]]);
+        // The codec's unused second constant-buffer list and `resources[0]`.
+        assert!(lists.lists[0].is_empty());
+        assert!(lists.lists[1].is_empty());
+    }
+
+    /// Diffs the derived resource lists against a built material's carried
+    /// tails. `DTMT_ENGINE_DATA` is the engine-data text, `DTMT_MATERIAL` the
+    /// material file the build produced from it; with neither set the test is a
+    /// no-op. Every program should derive the lists its tail carries, which is
+    /// what the split needs.
+    #[test]
+    #[ignore = "needs DTMT_ENGINE_DATA and DTMT_MATERIAL"]
+    fn the_derived_lists_match_a_built_section() {
+        let (Ok(engine_text), Ok(material_path)) = (
+            std::env::var("DTMT_ENGINE_DATA"),
+            std::env::var("DTMT_MATERIAL"),
+        ) else {
+            return;
+        };
+        let engine = EngineData::from_text(&std::fs::read_to_string(engine_text).unwrap()).unwrap();
+        let data = std::fs::read(&material_path).unwrap();
+        let shader_offset = u32::from_le_bytes(data[12..16].try_into().unwrap()) as usize;
+        let shader_size = u32::from_le_bytes(data[16..20].try_into().unwrap()) as usize;
+        let section = &data[shader_offset..shader_offset + shader_size];
+        let device_offset = u32::from_le_bytes(section[40..44].try_into().unwrap()) as usize;
+        let device_size = u32::from_le_bytes(section[44..48].try_into().unwrap()) as usize;
+        let device = &section[device_offset..device_offset + device_size];
+        let programs = shader::parse_programs(device).unwrap();
+        let template = engine.group_template.clone().expect("a group template");
+        assert_eq!(programs.len(), engine.programs.len());
+
+        let mut mismatches = 0;
+        for (index, program) in programs.iter().enumerate() {
+            let carried = &engine.programs[index].1;
+            let (Some(parsed), Ok(resources)) = (
+                shader::Tail::parse(carried),
+                StageResources::from_container(&program.container),
+            ) else {
+                continue;
+            };
+            let Some(carried_lists) = shader::TailLists::parse(&parsed.rest) else {
+                continue;
+            };
+            let group = engine
+                .program_groups
+                .get(index)
+                .copied()
+                .flatten()
+                .unwrap_or(0);
+            let descriptors = descriptors_for_group(&template, group).unwrap();
+            let mut derived = shader::TailLists {
+                lists: vec![Vec::new(); 9],
+                block: Vec::new(),
+            };
+            set_derived_lists(&mut derived, &resources, &descriptors).unwrap();
+            for list in [2usize, 3, 4, 5, 6, 8] {
+                if derived.lists[list] != carried_lists.lists[list] {
+                    mismatches += 1;
+                    println!(
+                        "program {index} ({:?}, group {group}) list {list}:\n  carried {:?}\n  derived {:?}",
+                        program.stage, carried_lists.lists[list], derived.lists[list]
+                    );
+                }
+            }
+            // The constant-buffer prefix too.
+            let material = engine
+                .material_tables
+                .get(group)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            match derived_cbuffers(&resources, &template, material, &descriptors) {
+                Ok(derived_cbuffers) => {
+                    let carried_prefix = &carried[..4 + parsed.cbuffers.len() * 24];
+                    if derived_cbuffers != carried_prefix {
+                        mismatches += 1;
+                        println!(
+                            "program {index} ({:?}, group {group}) cbuffers:\n  carried {:?}\n  derived {:?}",
+                            program.stage, carried_prefix, derived_cbuffers
+                        );
+                    }
+                }
+                Err(err) => {
+                    mismatches += 1;
+                    println!("program {index} ({:?}, group {group}) cbuffers: {err}", program.stage);
+                }
+            }
+        }
+
+        // Per-group head: the descriptors (names), their flags, the x offset and
+        // the y usage mask, from the group's programs' bindings.
+        let mut derived_groups: Vec<Vec<u32>> = vec![Vec::new(); template.groups.len()];
+        let mut derived_y: Vec<std::collections::BTreeMap<u32, u32>> =
+            (0..template.groups.len())
+                .map(|_| std::collections::BTreeMap::new())
+                .collect();
+        let mut current = usize::MAX;
+        let mut position = 0u32;
+        for (index, program) in programs.iter().enumerate() {
+            let group = engine
+                .program_groups
+                .get(index)
+                .copied()
+                .flatten()
+                .unwrap_or(0);
+            if group != current {
+                current = group;
+                position = 0;
+            }
+            let Ok(bindings) = dxc::reflect(&program.container) else {
+                position += 1;
+                continue;
+            };
+            let Some(list) = derived_groups.get_mut(group) else {
+                continue;
+            };
+            for binding in &bindings {
+                if !matches!(binding.kind, 0 | 2 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11) {
+                    continue;
+                }
+                let name =
+                    u32::from(murmur::Murmur32::hash(engine_name(&binding.name).as_bytes()));
+                if !list.contains(&name) {
+                    list.push(name);
+                }
+                *derived_y[group].entry(name).or_default() |= 1 << position;
+            }
+            position += 1;
+        }
+        let mut fields = [0usize; 3];
+        for (index, parts) in template.groups.iter().enumerate() {
+            let shipped = head_records(&parts.head);
+            let names: Vec<u32> = shipped.iter().map(|r| r[0]).collect();
+            if derived_groups.get(index) != Some(&names) {
+                mismatches += 1;
+                println!("group {index} descriptor order differs");
+            }
+            let mut x = 0u32;
+            for record in &shipped {
+                let flags = engine_descriptor_flags(record[0]);
+                if flags != record[1] {
+                    if fields[0] < 6 {
+                        println!(
+                            "group {index} {:08X} flags shipped {:08X} derived {:08X}",
+                            record[0], record[1], flags
+                        );
+                    }
+                    fields[0] += 1;
+                }
+                if x != record[2] {
+                    fields[1] += 1;
+                }
+                let y = derived_y[index].get(&record[0]).copied().unwrap_or(0);
+                if y != record[3] {
+                    if fields[2] < 6 {
+                        println!(
+                            "group {index} {:08X} y shipped {:X} derived {:X}",
+                            record[0], record[3], y
+                        );
+                    }
+                    fields[2] += 1;
+                }
+                x += if flags & 0xFF <= 1 { 24 } else { 8 };
+            }
+        }
+        println!(
+            "head field mismatches: flags {} x {} y {} (of {} descriptors)",
+            fields[0],
+            fields[1],
+            fields[2],
+            template.groups.iter().map(|g| head_records(&g.head).len()).sum::<usize>()
+        );
+
+        assert_eq!(mismatches, 0, "{mismatches} list mismatches");
+    }
+
+    /// A group head's descriptor records: after the query id and one word, a u32
+    /// count then `count` 16-byte `{name, flags, x, y}` records.
+    fn head_records(head: &[u8]) -> Vec<[u32; 4]> {
+        let Some(tail) = head.get(8..) else {
+            return Vec::new();
+        };
+        let Some(n) = tail
+            .get(..4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
+        else {
+            return Vec::new();
+        };
+        let Some(bytes) = tail.get(4..4 + n * 16) else {
+            return Vec::new();
+        };
+        bytes
+            .chunks_exact(16)
+            .map(|r| std::array::from_fn(|w| u32::from_le_bytes(r[w * 4..w * 4 + 4].try_into().unwrap())))
+            .collect()
     }
 
     #[test]
@@ -3079,6 +3660,7 @@ programs = []
                 head
             },
             material_first: true,
+            has_engine: true,
             between: Vec::new(),
             mid: Vec::new(),
             tail: Vec::new(),

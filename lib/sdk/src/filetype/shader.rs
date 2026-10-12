@@ -222,12 +222,15 @@ impl Tail {
 /// block that closes the tail. Each list is a `u32` count followed by that
 /// many records; the record size is fixed per list (see [`TailLists::SIZES`]).
 ///
-/// The framing was read off every program of six engine-data files: list 2
-/// holds engine records (render-set textures and engine cbuffer variables), 3
-/// the bindless texture array, 4 nothing in any sample, 5 the bindless buffer
-/// array, 6 static samplers, 7 the stage's inputs and 8 the bindless sampler
-/// array. Lists 0 and 1 are empty in every sample, so their record size is
-/// unknown.
+/// The framing was read off every program of six engine-data files and checked
+/// against the Darktide-Asset-Compiler's shader-section codec: after the
+/// constant-buffer list come two more 6-word lists (an unused second
+/// constant-buffer list and an unused `resources[0]`), then four 7-word
+/// resource lists (SRVs, bindless SRV arrays, UAVs, bindless UAV arrays) that
+/// this reader folds into lists 2..5, then the 4-word static samplers (6), the
+/// 3-word stage inputs (7) and the 3-word bindless sampler array (8). The
+/// community codec reads a fourth `space` word on the sampler array, but writing
+/// it hangs the game at D3D init, so the engine's runtime is 3 words.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TailLists {
     /// The records of each list, in order.
@@ -237,7 +240,9 @@ pub struct TailLists {
 }
 
 impl TailLists {
-    /// Record sizes in words for the nine lists.
+    /// Record sizes in words for the nine lists. Lists 0 and 1 are the codec's
+    /// unused second constant-buffer list and `resources[0]`; no sample gives
+    /// them a record.
     pub const SIZES: [usize; 9] = [0, 0, 7, 7, 7, 7, 4, 3, 3];
 
     /// Reads the lists and the block from the bytes after the constant buffer

@@ -1204,11 +1204,16 @@ fn reconstruct(
             if slot_hashes.contains(&record.hash) {
                 continue;
             }
-            if let Some(name) = name_of(record.hash) {
-                out.push_str(&format!(
+            match name_of(record.hash) {
+                Some(name) => out.push_str(&format!(
                     "    {name} = {{ name = \"{name}\" type = \"{}\" }}\n",
                     type_of(record.kind)
-                ));
+                )),
+                None => out.push_str(&format!(
+                    "    \"#{:08X}\" = {{ type = \"{}\" }}\n",
+                    record.hash,
+                    type_of(record.kind)
+                )),
             }
         }
     }
@@ -1601,18 +1606,25 @@ fn enumerate_family(
     );
 
     // The material's inputs: the first group's object table, named where the
-    // dictionary can.
+    // dictionary can and `#<hex>` otherwise, so the record the dictionary
+    // cannot name still reaches `material_records` (which rebuilds the table
+    // from the inputs, with the offsets from their running HLSL layout).
     out.push_str("inputs = {\n");
     if let Some((_, records)) = group
         .object_tables(&query_ids)
         .and_then(|tables| tables.into_iter().next())
     {
         for record in records {
-            if let Some(name) = names.and_then(|names| names.get(&record.hash)) {
-                out.push_str(&format!(
+            match names.and_then(|names| names.get(&record.hash)) {
+                Some(name) => out.push_str(&format!(
                     "    {name} = {{ name = \"{name}\" type = \"{}\" }}\n",
                     variable_type(record.kind)
-                ));
+                )),
+                None => out.push_str(&format!(
+                    "    \"#{:08X}\" = {{ type = \"{}\" }}\n",
+                    record.hash,
+                    variable_type(record.kind)
+                )),
             }
         }
     }
@@ -1629,6 +1641,9 @@ fn enumerate_family(
     }
     out.push_str("}\n\nshader_contexts = {\n    default = {\n        passes = [\n");
     for (n, group_index) in distinct_groups.iter().enumerate() {
+        let group = group_index
+            .map(|index| format!(" group={index}"))
+            .unwrap_or_default();
         let set = group_index
             .and_then(|index| condition_sets.get(index))
             .filter(|set| !set.is_empty())
@@ -1637,7 +1652,9 @@ fn enumerate_family(
                 format!(" conditions=[{}]", words.join(" "))
             })
             .unwrap_or_default();
-        out.push_str(&format!("            {{ code_block=\"pair_{n}\"{set} }}\n"));
+        out.push_str(&format!(
+            "            {{ code_block=\"pair_{n}\"{group}{set} }}\n"
+        ));
     }
     out.push_str("        ]\n    }\n}\n");
 

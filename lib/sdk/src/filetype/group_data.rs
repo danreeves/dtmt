@@ -428,6 +428,30 @@ impl GroupData {
     /// reader implemented it, and without it a table's 12-byte header tail reads
     /// as a one-record table of its own. The UI base's material table was read at
     /// +76 for exactly that reason; the real table is at +88.
+    /// Each group's runs' first-record hashes, for diagnosing a group data that
+    /// does not template. The engine run is the one whose head is
+    /// [`ENGINE_FIRST_HASH`].
+    pub fn group_run_heads(&self, query_ids: &[u32]) -> Option<Vec<Vec<u32>>> {
+        let starts = self.group_starts(query_ids)?;
+        let mut out = Vec::new();
+        for (index, start) in starts.iter().enumerate() {
+            let end = starts.get(index + 1).copied().unwrap_or(self.data.len());
+            let mut heads = Vec::new();
+            let mut at = *start;
+            while at + 2 * RECORD_LEN <= end {
+                let run = self.run_at(at);
+                if run.is_empty() {
+                    at += 1;
+                    continue;
+                }
+                heads.push(run[0].hash);
+                at += run.len() * RECORD_LEN;
+            }
+            out.push(heads);
+        }
+        Some(out)
+    }
+
     pub fn run_at(&self, at: usize) -> Vec<Record> {
         // A run inside the descriptor table is not a table: the descriptors are
         // metadata, so header bytes that happen to read as records are skipped.
@@ -1019,13 +1043,19 @@ impl GroupData {
                 at += run.len() * RECORD_LEN;
             }
             let (mat_at, mat_len) = mat_at?;
-            let (engine_at, engine_len) = engine_at?;
-            let material_first = mat_at < engine_at;
-            let (first_at, first_len, second_at, second_len) = if material_first {
-                (mat_at, mat_len, engine_at, engine_len)
-            } else {
-                (engine_at, engine_len, mat_at, mat_len)
-            };
+            // A group with no engine table (the standard family's last groups)
+            // carries only the material table; the bytes after it are `mid`.
+            let (first_at, first_len, second_at, second_len, material_first, has_engine) =
+                match engine_at {
+                    Some((engine_at, engine_len)) => {
+                        if mat_at < engine_at {
+                            (mat_at, mat_len, engine_at, engine_len, true, true)
+                        } else {
+                            (engine_at, engine_len, mat_at, mat_len, false, true)
+                        }
+                    }
+                    None => (mat_at, mat_len, mat_at + mat_len * RECORD_LEN, 0, true, false),
+                };
 
             // Between the second table's records and the condition header: the
             // packed run's header and copies. Its framing is the one part the
@@ -1037,6 +1067,7 @@ impl GroupData {
             groups.push(GroupParts {
                 head: self.data.get(start..first_at)?.to_vec(),
                 material_first,
+                has_engine,
                 between: self
                     .data
                     .get(first_at + first_len * RECORD_LEN..second_at)?
@@ -1081,14 +1112,18 @@ impl GroupData {
             // Each table's count word is the last word of the bytes before its
             // records, so the material's table writes its count wherever that
             // lands - in the head when the material comes first, in `between`
-            // when the engine's does.
+            // when the engine's does. A group with no engine table writes only
+            // the material table and leaves the carried bytes alone.
+            let engine_len = if parts.has_engine { engine.len() } else { 0 };
             let (first_len, second_len) = if parts.material_first {
-                (records.len(), engine.len())
+                (records.len(), engine_len)
             } else {
-                (engine.len(), records.len())
+                (engine_len, records.len())
             };
             write_count(&mut head, first_len)?;
-            write_count(&mut between, second_len)?;
+            if parts.has_engine {
+                write_count(&mut between, second_len)?;
+            }
 
             out.extend_from_slice(&head);
             if parts.material_first {
@@ -1096,12 +1131,16 @@ impl GroupData {
                     record.write(&mut out);
                 }
                 out.extend_from_slice(&between);
-                for record in engine {
-                    record.write(&mut out);
+                if parts.has_engine {
+                    for record in engine {
+                        record.write(&mut out);
+                    }
                 }
             } else {
-                for record in engine {
-                    record.write(&mut out);
+                if parts.has_engine {
+                    for record in engine {
+                        record.write(&mut out);
+                    }
                 }
                 out.extend_from_slice(&between);
                 for record in records {
@@ -1146,6 +1185,11 @@ pub struct GroupParts {
     /// Whether the material's table is the first one. Shaders differ: the UI
     /// base runs material-then-engine, the small families engine-then-material.
     pub material_first: bool,
+    /// Whether the group carries the shared engine table at all. The UI base and
+    /// most families do; the standard family's last groups carry only the
+    /// material table, so the shared engine records are not written for them and
+    /// the bytes between the tables are carried whole.
+    pub has_engine: bool,
     /// Between the two tables' records: the second table's header, ending with
     /// its count word, which [`GroupData::build`] rewrites.
     pub between: Vec<u8>,

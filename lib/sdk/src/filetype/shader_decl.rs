@@ -59,6 +59,20 @@ impl ValueType {
             Self::Float4x4 => 64,
         }
     }
+
+    /// The group data's record kind for this type, when the table can hold it.
+    /// A texture is a code-block slot, not a `c_per_object` variable, so it has
+    /// no record of its own.
+    pub fn record_kind(self) -> Option<u32> {
+        Some(match self {
+            Self::Float => 0,
+            Self::Float2 => 1,
+            Self::Float3 => 2,
+            Self::Float4 => 3,
+            Self::Float4x4 => 4,
+            Self::Texture2D => return None,
+        })
+    }
 }
 
 /// The type spellings a `.shader_node` uses, in either of the two dialects the
@@ -73,7 +87,11 @@ impl ValueType {
             "float2" | "vector2" => Self::Float2,
             "float3" | "vector3" => Self::Float3,
             "float4" | "vector4" => Self::Float4,
-            "float4x4" | "matrix" | "float3x3" => Self::Float4x4,
+            "float4x4" | "matrix" => Self::Float4x4,
+            // The group data has no 3x3 size, so a `float3x3` is sized as a
+            // 4x4 (64 bytes) rather than rejected. Unverified: a real 3x3
+            // (36/48 bytes) is not representable.
+            "float3x3" => Self::Float4x4,
             "texture2d" | "texture" => Self::Texture2D,
             _ => return None,
         })
@@ -305,6 +323,12 @@ pub struct Pass {
     /// The pass's condition set written raw (names or `#<hex>` ids), when the
     /// declaration names one instead of deriving it from `layer`/`render_state`.
     pub conditions: Option<Vec<String>>,
+    /// The group the pass belongs to, when the declaration names one. A group
+    /// owns several passes (one per code block), so the group→tail assignment
+    /// cannot be recovered from the pass count; the enumerator writes the group
+    /// it read off the section, and `derive_tails` builds one group per
+    /// distinct index instead of a uniform `repeat`.
+    pub group: Option<usize>,
     /// The key the engine sorts variants by, when the pass names one.
     pub branch_key: Option<String>,
 }

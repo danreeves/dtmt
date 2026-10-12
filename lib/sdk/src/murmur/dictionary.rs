@@ -14,17 +14,23 @@ pub enum HashGroup {
     Filetype,
     Strings,
     TextureCategory,
+    /// A name the Darktide-Asset-Compiler contributes to the dictionary.
+    AssetCompiler,
+    /// A category this reader does not know; a newer dictionary may add one, so
+    /// an unknown value is kept rather than rejecting the whole file.
     #[default]
+    #[serde(other)]
     Other,
 }
 
 impl HashGroup {
-    pub fn all() -> [Self; 5] {
+    pub fn all() -> [Self; 6] {
         [
             Self::Filename,
             Self::Filetype,
             Self::Strings,
             Self::TextureCategory,
+            Self::AssetCompiler,
             Self::Other,
         ]
     }
@@ -37,6 +43,7 @@ impl std::fmt::Display for HashGroup {
             HashGroup::Filetype => write!(f, "filetype"),
             HashGroup::Strings => write!(f, "strings"),
             HashGroup::TextureCategory => write!(f, "texture-category"),
+            HashGroup::AssetCompiler => write!(f, "asset-compiler"),
             HashGroup::Other => write!(f, "other"),
         }
     }
