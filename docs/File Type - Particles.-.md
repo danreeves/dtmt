@@ -50,23 +50,24 @@ visualizers draw with, units mesh particles spawn) are hashed with the same
 **Limited.** `filetype/particles.rs` reads and writes the **effect header**
 (lifetime, culling distance and flags), the effect **variables** (name hash +
 three floats), each **system header** (name, capacity, `min_capacity_scaling`,
-the channel sizes/stride, and the initializer / simulator / visualizer counts)
-and the **initializer list** (each initializer's op name and raw operand bytes;
-the community's 25 ops, with the three variable-length ones - `position_mesh`,
-`position_mesh_skinned`, `vector_language_program` - sized from their operands).
-`dtmt build` / `bundle inject` / `bundle extract --decompile` are wired and three
-round-trip tests cover the container. Still opaque: the initializer **operand
-fields** (the per-op layouts), the **simulator** records/data and the
-**visualizer** block; the community `particles_resource.{h,cpp}` decodes those and
-is the reference to port next.
+the channel sizes/stride, and the initializer / simulator / visualizer counts),
+the **initializer list** (each initializer's op name and raw operand bytes; the
+community's 25 ops, the three variable-length ones sized from their operands) and
+the **simulator list** (each simulator's op name and its data-block offset; the
+community's 50 ops). `dtmt build` / `bundle inject` / `bundle extract
+--decompile` are wired and three round-trip tests cover the container. Still
+opaque: the initializer **operand fields** (the per-op layouts), the **simulator
+data** block and the **visualizer** block; the community
+`particles_resource.{h,cpp}` decodes those and is the reference to port next.
 
 **Verified on shipped effects** (2026-10-12): six of the game's effects - from
 `lasgun_beam_yellow` (1,848 B) to `fire_grenade_player_initial_blast` (22,862 B)
 and `expeditions_explosion_trap` (22,838 B) - decompile (initializer types
-`random_float` x160, `zero` x37, `position_sphere` x28, ...) and **recompile
-byte-for-byte** (each re-injected body hashes identical to the original), so the
-effect-header / variable / system-header / initializer walk matches the game's
-own resources.
+`random_float` x160, `zero` x37, `position_sphere` x28; simulator types
+`age_age` x35, `burst_emitter` x30, `position_integrate` x19, ...) and
+**recompile byte-for-byte** (each re-injected body hashes identical to the
+original), so the effect-header / variable / system-header / initializer /
+simulator walk matches the game's own resources.
 
 ## Reference
 

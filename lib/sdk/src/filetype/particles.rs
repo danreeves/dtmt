@@ -93,13 +93,12 @@ pub struct System {
     pub initializers: Vec<Initializer>,
     /// Any bytes between the initializers' end and the simulator records, hex.
     pub initializer_padding: String,
-    pub simulators: u32,
+    /// The simulator list.
+    pub simulators: Vec<Simulator>,
     pub visualizers: u32,
     /// The unknown words at `0x228`/`0x234`/`0x238`, hex.
     pub unknown: String,
-    /// The simulator records, hex.
-    pub simulator_records: String,
-    /// The simulator data, hex.
+    /// The simulator data block, hex.
     pub simulator_data: String,
     /// The visualizer block, hex.
     pub visualizer_data: String,
@@ -115,6 +114,71 @@ pub struct Initializer {
     /// The operand bytes, hex.
     pub data: String,
 }
+
+/// One simulator: its op name and the offset of its data in the system's data
+/// block (the data itself is kept opaque).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Simulator {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub offset: u32,
+}
+
+/// The simulator op codes, in registry order (the community's
+/// `simulator_specs`).
+const SIMULATORS: [&str; 50] = [
+    "age_age",
+    "position_integrate",
+    "position_integrate_scaled",
+    "velocity_accelerate",
+    "advance_frame",
+    "integrate_float_scaled",
+    "plane_collision",
+    "rate_spawn",
+    "trail_spawn",
+    "collision_spawn",
+    "wind",
+    "warp_box",
+    "rate_emitter",
+    "burst_emitter",
+    "grid_collision",
+    "fast_forward_static",
+    "debug_draw",
+    "local_space",
+    "ray",
+    "copy_variable_to_float",
+    "scale_float",
+    "spiral",
+    "query_collision",
+    "collision_resolution",
+    "integrate_float",
+    "query_vector_field",
+    "air_resistance",
+    "vector_language_program",
+    "spline_control_points",
+    "copy_vector3",
+    "write_float",
+    "write_int",
+    "size",
+    "color",
+    "copy_float",
+    "rotate_by_velocity",
+    "copy_float_and_floor",
+    "distance_fade",
+    "opacity_kill",
+    "stretch_by_velocity",
+    "rotation_face_velocity",
+    "rotation_align_to_velocity",
+    "uv_tile",
+    "hdr_color",
+    "rotation_3d_from_2d",
+    "tangent_to_next",
+    "snap_to_translation",
+    "local_age",
+    "rotation_3d",
+    "scale_3d",
+];
 
 /// The initializer op codes, in registry order (the community's
 /// `initializer_specs`). Op `0x0d`/`0x0e`/`0x11` are variable length.
@@ -258,7 +322,7 @@ impl System {
 
         let initializers_count = u32_at(bytes, 0x214)?;
         let initializer_at = u32_at(bytes, 0x218)? as usize;
-        let simulators = u32_at(bytes, 0x21c)?;
+        let simulators_count = u32_at(bytes, 0x21c)?;
         let records = u32_at(bytes, 0x220)? as usize;
         let data = u32_at(bytes, 0x224)? as usize;
         let visualizers = u32_at(bytes, 0x22c)?;
@@ -302,6 +366,31 @@ impl System {
         }
         let initializer_padding = hex(&bytes[at..records]);
 
+        if records + 5 * simulators_count as usize != data {
+            bail!("a particles system's simulator records do not end at its data block");
+        }
+        let mut simulator_list = Vec::with_capacity(simulators_count as usize);
+        for index in 0..simulators_count as usize {
+            let op = *bytes
+                .get(records + 5 * index)
+                .ok_or_else(|| color_eyre::eyre::eyre!("a simulator record is short"))?
+                as usize;
+            let offset = u32::from_le_bytes(
+                bytes
+                    .get(records + 5 * index + 1..records + 5 * index + 5)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a simulator record is short"))?
+                    .try_into()
+                    .unwrap(),
+            );
+            simulator_list.push(Simulator {
+                kind: SIMULATORS
+                    .get(op)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("unknown simulator op {op}"))?
+                    .to_string(),
+                offset,
+            });
+        }
+
         Ok(Self {
             name: format!("#{:08x}", u32_at(bytes, 0)?),
             capacity: u32_at(bytes, 4)?,
@@ -311,17 +400,15 @@ impl System {
             header: slice(0x58, 0x214),
             initializers,
             initializer_padding,
-            simulators,
+            simulators: simulator_list,
             visualizers,
             unknown: hex(&unknown),
-            simulator_records: slice(records, data),
             simulator_data: slice(data, visualizer_at),
             visualizer_data: slice(visualizer_at, end),
         })
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>> {
-        let simulator_records = from_hex(&self.simulator_records)?;
         let simulator_data = from_hex(&self.simulator_data)?;
         let visualizer_data = from_hex(&self.visualizer_data)?;
         let header = from_hex(&self.header)?;
@@ -331,8 +418,16 @@ impl System {
         if self.channels.len() > 16 {
             bail!("a particles system has too many channels");
         }
-        if simulator_records.len() != 5 * self.simulators as usize {
-            bail!("a particles system's simulator records are not five bytes each");
+        let mut simulator_records = Vec::with_capacity(self.simulators.len() * 5);
+        for simulator in &self.simulators {
+            let op = SIMULATORS
+                .iter()
+                .position(|name| *name == simulator.kind)
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!("unknown simulator type '{}'", simulator.kind)
+                })?;
+            simulator_records.push(op as u8);
+            simulator_records.extend_from_slice(&simulator.offset.to_le_bytes());
         }
         let mut initializer_bytes = Vec::new();
         for initializer in &self.initializers {
@@ -363,7 +458,7 @@ impl System {
         out[0x58..0x214].copy_from_slice(&header);
         out[0x214..0x218].copy_from_slice(&(self.initializers.len() as u32).to_le_bytes());
         out[0x218..0x21c].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out[0x21c..0x220].copy_from_slice(&self.simulators.to_le_bytes());
+        out[0x21c..0x220].copy_from_slice(&(self.simulators.len() as u32).to_le_bytes());
         out[0x220..0x224].copy_from_slice(&(records as u32).to_le_bytes());
         out[0x224..0x228].copy_from_slice(&(data as u32).to_le_bytes());
         out[0x22c..0x230].copy_from_slice(&self.visualizers.to_le_bytes());
