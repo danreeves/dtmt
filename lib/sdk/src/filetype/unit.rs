@@ -1484,9 +1484,15 @@ fn bsi_sjson(
         }
         text.push_str("\t\t]\n\t\tstreams = [\n");
         for (stream_index, stream) in geometry.streams.iter().enumerate() {
-            let channel = geometry.channels.get(stream_index).ok_or_else(|| {
-                eyre::eyre!("geometry {index} stream {stream_index} has no channel")
-            })?;
+            // The payload gives every channel an explicit `stream` index; do not
+            // assume the channel list is in stream order.
+            let channel = geometry
+                .channels
+                .iter()
+                .find(|channel| channel.stream as usize == stream_index)
+                .ok_or_else(|| {
+                    eyre::eyre!("geometry {index} stream {stream_index} has no channel")
+                })?;
             let data = decode_stream(channel.component, channel.kind, &stream.data)?;
             let components = data.len() / stream.vertices.max(1) as usize;
             text.push_str(&format!(
