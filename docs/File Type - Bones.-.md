@@ -81,4 +81,9 @@ stored in the SJSON - they are recomputed from the names.
 
 - **Not yet checked against a game-shipped `.bones`.** The format is verified
   against the community writer and the tests, but no shipped sample has been
-  decoded (the game's `bundle_database.data` listing is slow to scan).
+  decoded. The game's `bundle_database.data` can be explored -
+  `dtmt bundle db list-bundles` (16,102 bundles, names are resource paths) and
+  `dtmt bundle db list-files <db> <bundle>` - but the character bundles tried
+  (`…/third_person/base`, `…/third_person/npc`) carry materials and textures,
+  not the unit or its bones, so the bundle holding a `.bones` is still to be
+  located.
