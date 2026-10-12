@@ -914,7 +914,22 @@ So **`header = round16(per-draw total) + sum`**, and all five groups fit. The
 rounding only bites group 4 (72 -> 80); the other four are already 16-aligned.
 The per-draw `x` allocates 24 per cbuffer regardless of the real size, so the two
 terms are independent - which is why the header word looked like "x_end plus a
-mystery constant". What is
+mystery constant".
+
+**Dropping the head content is how to exercise the derivation - and it fails
+today (2026-10-12).** Blanking the standard's five head-pool entries (so each
+group's head is just its 4-byte query - the only shape `derived_head` runs on)
+stops the build with **`A306B24F is not in the group's descriptor list`**:
+`derived_head` emits the engine's own descriptors plus the reflection's cbuffers
+and structured buffers, but not the **other reflected resources** the standard's
+heads carry (`A306B24F` flags `0x0107`, `B3A2EB88` `0x0101`, `9B8038E0`
+`0x0003`), and its order differs. So before the carried heads can be dropped, the
+group template's head needs the family's own **descriptor table** (names + flags
+in the shipped order); the `mid` needs the same table for its records, and the
+`between` for `global_viewport`. `derived_head` is currently dead code - neither
+the standard (carries its heads) nor the UI base (its declaration template
+carries them) reaches it - so this table is the concrete next step, not more
+field-level decoding. What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`
