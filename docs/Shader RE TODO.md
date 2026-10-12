@@ -1188,6 +1188,17 @@ cbuffer descriptors minus `global_viewport`, sizes from the reflection),
 engine fields (`engine_cbuffer(size)` at `prefix + relative`), then the packed
 copies.
 
+**The material's channels pack sequentially (2026-10-12).** Group 0's first `mid`
+section shows the layout: `bca`'s rows are `{5, 0, 4}`, `{1, 4, 8}`, `{1, 16, 8}`
+(a 24-byte extent - it keeps a kind-5 row), then `orm`'s `{1, 0, 8}`, `{1, 8, 8}`
+and `nm`'s `{1, 0, 8}`, `{1, 8, 8}` (16 bytes each), so the channels run
+0..56 and the prefix is `align16(56) = 64`. The rows are *not* a fixed stride -
+each channel's rows are packed, and the next channel starts at the previous
+one's end - so a channel is `(its rows, its extent)` and the engine's channel
+table gives both. Which channels a group has is its own: groups 3 and 4 carry
+only `bca` (a depth pass samples one), while 0-2 carry all three. The group's
+sampled set is what the material graph's evaluation resolves.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
