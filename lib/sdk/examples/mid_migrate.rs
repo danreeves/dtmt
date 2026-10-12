@@ -44,6 +44,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         // only when the derivation reproduces the shipped head, which the build
         // checks (the section must stay byte-identical).
         parts.head.truncate(4);
+        // The `between` derives from the engine table's size, so a group that
+        // carries the engine table need not carry it.
+        parts.between.clear();
     }
 
     fs::write(&path, engine_data.to_text())?;

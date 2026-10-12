@@ -1264,9 +1264,11 @@ fn engine_kind_flags(kind: u32) -> u32 {
     }
 }
 
-/// The engine's `between` bytes: two constants then the engine table's count
-/// word, which [`GroupData::build`] rewrites.
-fn derived_between() -> Vec<u8> {    let mut out = vec![0xF0, 0, 0, 0, 0x40, 0, 0, 0];
+/// The engine's `between` bytes: the engine table's byte size, a zero word, and
+/// the table's count word, which [`GroupData::build`] rewrites.
+fn derived_between(engine_size: u32) -> Vec<u8> {
+    let mut out = engine_size.to_le_bytes().to_vec();
+    out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
     out
 }
@@ -2481,6 +2483,11 @@ impl EngineData {
             if heads.iter().all(|head| head.0.is_empty()) {
                 heads.clear();
             }
+            // A group's `between` derives from the engine table's size, so a
+            // file whose betweens all derive carries no `between` pool.
+            if betweens.iter().all(|between| between.0.is_empty()) {
+                betweens.clear();
+            }
             // The prefix is the group count alone in the common case, so it
             // derives from the group list and the text omits it; a section with
             // a longer prefix keeps it.
@@ -2770,6 +2777,7 @@ impl EngineData {
     ) -> Option<GroupTemplate> {
         let mut template = self.group_template.as_ref()?.clone();
         let engine_count = template.engine.len();
+        let engine_size = table_size(&template.engine);
         for (index, group) in template.groups.iter_mut().enumerate() {
             // A head that is just the query waits for its derived rest. A
             // group with no engine table legitimately has an empty `between`,
@@ -2788,7 +2796,7 @@ impl EngineData {
                 group.head.extend_from_slice(&head);
             }
             if group.between.is_empty() && group.has_engine {
-                group.between = derived_between();
+                group.between = derived_between(engine_size);
             }
             if group.mid.is_empty() {
                 // A group that carries its channels has no `mid` bytes: the
