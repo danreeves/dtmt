@@ -821,6 +821,13 @@ contexts + conditions (~0.3 KB) and the program list (~1.8 KB). So the two
 milestones left are the per-program block grammar and deriving the standard
 family's group data (the enumerator).
 
+**The contexts and conditions do not derive from the declaration alone** (checked
+2026-10-12): dropping the file's `contexts`/`conditions` so `build.rs`'s
+`permutation_plans` derives them from the 11-pass declaration builds a section
+**112 bytes smaller** (145,492 vs 145,604), so the derived condition tree is not
+the family's. They stay carried until the family's conditions are declared - the
+enumerator (`Shader Permutations.md`).
+
 `group_probe` on the migrated file shows why the group template is not just the
 `derived_head` path: the five groups' heads are **212/180/180/116/100 bytes**
 and their `mid`s 2140/2140/240/288/288 - each group has its own descriptor list
