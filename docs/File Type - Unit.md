@@ -272,12 +272,19 @@ behaviour - the mod's bundles are byte-identical either way.
 The remaining 58 differ later in the payload. The half-float class is closed - the
 `f32` -> half helper rounded by *truncating*, which put a one-ULP difference
 (`0x37A6` vs `0x37A5`) between a rebuilt stream and the shipped one; it now rounds
-to nearest, ties to even, like the engine's conversion. What is left shows up
-further along, and the values at the same offset can differ by more than a rounding
-(e.g. half `0x33E5` vs `0x3A07`), so the next thing to compare is the **order** the
-unified streams place vertices in (`unify_geometry`) and the bounds blocks of
-*second* mesh objects and LODs. `bitsquid/stingray/vertex_stream.py`,
-`index_stream.py` and `mesh_geometry.py` are the reference.
+to nearest, ties to even, like the engine's conversion.
+
+What is left is inside the **vertex streams** again, but it is no longer a
+rounding: for `020a812a4f4fe41b` the two halves at offset 2244 are `0x33E5`
+(`0.1136`) shipped and `0x3A07` (`0.6274`) rebuilt, and at 2292 `00 3C 02 00` vs
+`00 3C 00 3C`. So the *data* we assemble for a stream element differs from what the
+payload holds - the streams' element layout / vertex order, not the encode. That is
+where `bitsquid/stingray/vertex_stream.py` and `index_stream.py` are the reference
+(and `mesh_geometry.py` for how a `CT_HALF4`/`CT_HALF2` channel packs).
+
+`examples/unit_probe.rs` gained a third argument: given a directory it dumps every
+decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under that directory, so a
+failing unit can be picked out and diffed.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for

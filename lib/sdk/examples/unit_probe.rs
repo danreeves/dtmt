@@ -24,7 +24,7 @@ fn main() -> color_eyre::Result<()> {
     let mut decode_failed = 0usize;
     let mut shown_decode = 0usize;
     let mut shown_other = 0usize;
-    let mut dumped = false;
+    let mut dumped = 0usize;
     let dump_dir = std::env::args().nth(3);
 
     // The first argument may be a single bundle file instead of a directory.
@@ -64,10 +64,10 @@ fn main() -> color_eyre::Result<()> {
                             &unit_text,
                             bsi_text.as_bytes(),
                         );
-                        if !dumped {
-                            if let (Some(out), Ok(rebuilt)) = (dump_dir.as_ref(), rebuilt.as_ref()) {
-                                std::fs::create_dir_all(out)?;
-                                let out = std::path::Path::new(out);
+                        if let Some(out) = dump_dir.as_ref() {
+                            if let Ok(rebuilt) = rebuilt.as_ref() {
+                                let out = std::path::Path::new(out).join(dumped.to_string());
+                                std::fs::create_dir_all(&out)?;
                                 std::fs::write(out.join("orig.bin"), payload)?;
                                 std::fs::write(
                                     out.join("rebuilt.bin"),
@@ -75,7 +75,7 @@ fn main() -> color_eyre::Result<()> {
                                 )?;
                                 std::fs::write(out.join("unit.sjson"), &unit_text)?;
                                 std::fs::write(out.join("bsi.sjson"), &bsi_text)?;
-                                dumped = true;
+                                dumped += 1;
                             }
                         }
                         match rebuilt {
