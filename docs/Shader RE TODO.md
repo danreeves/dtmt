@@ -1079,6 +1079,15 @@ material's channels at 0..56, then the engine's `view_proj` 64, `world_view_proj
 engine's offsets are fixed - the material's channels occupy a fixed prefix - so
 the table is `(cbuffer, kind, hash, offset, size)` and records as one const.
 
+**The second header word (`W2`) is a running sum (2026-10-12).** Group 0's
+sections have `W2 = 176, 192, 0, 608`: the first is `x_end`; the second is
+`W1(first) + W2(first)` (16 + 176); the third is `0` - its cbuffer,
+`c_depth_only`, contributes nothing; and the packed-copy section is
+`W1(second) + W2(second)` (416 + 192). Groups 1-4 fit the same pattern (160/176,
+128/400, 80/96). So `W2` is the running end of a section's data in the packed
+space, `0` for a section with none - the last small rule needed before
+`derived_mid` can be written.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
