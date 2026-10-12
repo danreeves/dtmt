@@ -574,6 +574,10 @@ struct Text {
     /// blocks' `head` indexes name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     block_heads: Vec<ChunkText>,
+    /// The distinct slices of the preamble body the blocks carry, which the
+    /// blocks' `body` indexes name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    block_bodies: Vec<BodyText>,
     /// The distinct bytes a block puts after the preamble body slice, which the
     /// blocks' `trailing` indexes name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1334,15 +1338,11 @@ struct BlockDiff {
     /// absent when the block *is* the body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     head: Option<usize>,
-    /// The slice of the preamble's body the block carries verbatim: its start
-    /// and length. A block is `head + body[start..start+len] (patched) +
-    /// trailing`. The standard's blocks share one 348-byte run of the body's
-    /// records, so this is what stops twelve tails repeating it.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    body_start: u32,
-    /// The slice's length; absent means to the end of the body.
+    /// The slice of the preamble body the block carries, when it is not the
+    /// whole body. The slices repeat across a family's programs, so they are
+    /// pooled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    body_len: Option<u32>,
+    body: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     patches: Vec<PatchText>,
     /// The index of the bytes after the slice in the file's shared trailing
@@ -1390,6 +1390,14 @@ struct HeadRef {
 struct TailRef {
     node: usize,
     start: usize,
+}
+
+/// A slice of the preamble body a block carries: its start and length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BodyText {
+    start: u32,
+    len: u32,
 }
 
 /// The shortest shared run worth writing as a reference: below this the bytes
@@ -1502,11 +1510,6 @@ fn chunk_bytes(entries: &[ChunkText], index: usize) -> Result<Vec<u8>> {
     read(entries, index, entries.len() + 1)
 }
 
-/// Serde skip for a zero `u32`.
-fn is_zero(value: &u32) -> bool {
-    *value == 0
-}
-
 /// One patched byte of a block: its offset into the body and the value.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1547,6 +1550,7 @@ struct ProgramText {
 fn block_text(
     block: &[u8],
     preamble: &[u8],
+    bodies: &mut Vec<BodyText>,
     heads: &mut BytesPool,
     trailings: &mut BytesPool,
 ) -> BlockText {
@@ -1595,10 +1599,24 @@ fn block_text(
     // next permutation's when a channel repeats) end with the same bytes.
     let trailing = block[at + len..].to_vec();
     let trailing = (!trailing.is_empty()).then(|| trailings.intern(&trailing));
+    // The body slice goes into the file's shared pool: a family's programs
+    // carry the same run, so it is written once. The whole body is the default.
+    let body = (start != 0 || len != body.len()).then(|| {
+        let spec = BodyText {
+            start: start as u32,
+            len: len as u32,
+        };
+        match bodies.iter().position(|other| *other == spec) {
+            Some(index) => index,
+            None => {
+                bodies.push(spec);
+                bodies.len() - 1
+            }
+        }
+    });
     BlockText::Body(BlockDiff {
         head,
-        body_start: start as u32,
-        body_len: Some(len as u32),
+        body,
         patches,
         trailing,
     })
@@ -1608,6 +1626,7 @@ fn block_text(
 fn block_bytes(
     spec: &BlockText,
     preamble: &[u8],
+    bodies: &[BodyText],
     heads: &[Vec<u8>],
     trailings: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
@@ -1617,10 +1636,15 @@ fn block_bytes(
             let body = preamble
                 .get(12..)
                 .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
-            let start = diff.body_start as usize;
-            let len = diff
-                .body_len
-                .map_or(body.len().saturating_sub(start), |len| len as usize);
+            let (start, len) = match diff.body {
+                Some(index) => {
+                    let slice = bodies.get(index).ok_or_else(|| {
+                        color_eyre::eyre::eyre!("a block body is out of range")
+                    })?;
+                    (slice.start as usize, slice.len as usize)
+                }
+                None => (0, body.len()),
+            };
             let slice = body.get(start..start + len).ok_or_else(|| {
                 color_eyre::eyre::eyre!("a block's body slice is out of range")
             })?;
@@ -2196,6 +2220,7 @@ impl EngineData {
                 bytes.extend_from_slice(&block_bytes(
                     block,
                     &engine_data.device_preamble,
+                    &text.block_bodies,
                     &block_head_bytes,
                     &trailing_bytes,
                 )?);
@@ -2429,6 +2454,7 @@ impl EngineData {
                 }
             }
         }
+        let mut block_bodies: Vec<BodyText> = Vec::new();
         let mut block_heads = BytesPool::default();
         let mut block_trailings = BytesPool::default();
         // A split tail's resource records index the group's descriptor list. A
@@ -2463,6 +2489,7 @@ impl EngineData {
                             block_text(
                                 &lists.block,
                                 &self.device_preamble,
+                                &mut block_bodies,
                                 &mut block_heads,
                                 &mut block_trailings,
                             )
@@ -2594,6 +2621,7 @@ impl EngineData {
             group_template,
             containers: containers.iter().map(|bytes| Hex((*bytes).clone())).collect(),
             block_heads: block_heads.entries,
+            block_bodies,
             block_trailings: block_trailings.entries,
             tails,
             programs,
@@ -4402,11 +4430,12 @@ programs = []
         let mut headed = vec![2u8, 0, 0, 0];
         headed.extend_from_slice(&body);
         for block in [body.clone(), patched, headed] {
+            let mut bodies = Vec::new();
             let mut heads = BytesPool::default();
             let mut trailings = BytesPool::default();
-            let spec = block_text(&block, &preamble, &mut heads, &mut trailings);
+            let spec = block_text(&block, &preamble, &mut bodies, &mut heads, &mut trailings);
             let parsed =
-                block_bytes(&spec, &preamble, &heads.bytes, &trailings.bytes).unwrap();
+                block_bytes(&spec, &preamble, &bodies, &heads.bytes, &trailings.bytes).unwrap();
             assert_eq!(parsed, block, "spec {spec:?}");
         }
     }
