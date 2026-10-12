@@ -417,8 +417,33 @@ state records. The writer is `stingray::shader_compiler::make_device_data`
 (`platform_interface.cpp`; its name string sits at `.rdata` `0x140ECD4C8`). What is
 still missing is the **field order inside each record** - a controlled compile (add
 one cbuffer / resource / sampler and diff the library header) or a
-`make_device_data` disassembly gives it; a plain count-driven guess from the head
-sizes does not fit (`104` vs `84` bytes for groups of `12` vs `10` descriptors).
+`make_device_data` disassembly gives it. (Early guesses from the *descriptor* counts
+failed - `104` vs `84` for groups of `12` vs `10` descriptors - because the head
+counts the *cbuffer* descriptors, not all of them; see the record sizes below.)
+
+**The record sizes, from the compiler's own `set_capacity` (2026-10-12).**
+Disassembling each `Vector<T>::set_capacity` instantiation (found through its
+assert string in `.rdata`) gives the writer's *serialized* element sizes:
+
+| type | bytes |
+| --- | ---: |
+| `D3DShaderPassData::Shader::ConstantBufferBindInfo` | **20** |
+| `D3DShaderPassData::Shader::ResourceBindInfo` | **20** |
+| `D3DShaderPassData::Shader::SamplerBindInfo` | **12** |
+| `D3DShaderPassData::InstanceData::Variable` | **16** |
+| `D3DShaderPassData::StreamOutDeclaration::Channel` | **20** |
+| `D3DShaderPassData::Shader` (in memory) | 128 |
+
+(The size is the `lea (%rX,%rX,4)/shl $2` = x20 before the allocation; e.g. the
+`ConstantBufferBindInfo` function at `0x1402785DA`.) A block is therefore the
+serialized `D3DShaderPassData` - **head** = the shader's bind-infos, **body** = the
+engine's config records (the same 30 `{index, value, 0}` the preamble's
+`config_base` holds), **trailing** = the instance variables (16 B each), the
+stream-out channels and the rest. The head sizes are consistent with a sum of these
+arrays plus a small count word - `104 = 5 x 20 + 4` (group 0) and `84 = 4 x 20 + 4`
+(group 1) - but not with a cbuffers-only count (`68` for group 2 is `64 + 4` and
+`64` is not a multiple of `20`), so the head mixes the cbuffer, resource and sampler
+arrays; the field order inside each record is the remaining unknown.
 
 This confirms the writer's shape directly from the source: the library's
 **state block carries per-record fields the pass declares** (`write_mask0`,
