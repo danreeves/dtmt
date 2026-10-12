@@ -1238,6 +1238,17 @@ group's channels come from. Its full grammar is still open - and the blocks are
 now **71% of the engine data** (23,240 of 32,642 bytes), the one large decode
 left.
 
+**The blocks re-lay-out the preamble's body (2026-10-12).** The standard's
+device blocks do **not** end with the preamble body verbatim (as the UI base's
+apparently do). The body's records appear *spread* through the block at unrelated
+offsets - the body's byte 12 at 582, byte 24 at 177, byte 48 at 225, byte 96 at
+386 - while the block's own start differs (`1E000000` where the body has
+`1D000000`). So a block is a **re-layout of the body's records plus the
+program's own data**, not a copy. Nor is it a plain 16-byte record stream: a
+block is 823 bytes, not a multiple of 16, even though its channel records are 16
+bytes each. The grammar is still open, but it is a re-layout rather than an
+opaque blob, which is the thread to follow.
+
 **The copies are the channel rows, once per channel-bearing cbuffer
 (2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
 seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
