@@ -1036,6 +1036,22 @@ offset, size, kind - the same kind of mined table as `engine_descriptor_flags`).
 That is the route to dropping the `mid` pool (9.6 KB, 23% of the file) for the
 standard, and it needs no reconstruction of the original HLSL.
 
+**The sections map to the group's cbuffers, one header ahead (2026-10-12).**
+Reading group 0's `mid` records (`group_probe`) makes the layout explicit.
+Section 1 is `{W1=16, W2=176, n=14}` and its 14 records are the material's
+channels (`bca` at 0, `orm` at 24, `nm` at 40 - each expanding into its
+components) followed by the engine's view matrices (`view_proj` 64,
+`world_view_proj` 128, `world` 192, `last_world` 256, `711b4adc` 320) and two
+more (`ed9d8188` 384, `b9d685cb` 400) - i.e. exactly **`c_per_object`'s 416
+bytes**. Its `W1` is 16, `c_instance_offset`'s size, so a header carries the
+**previous** cbuffer's size and the **current** cbuffer's field count. Section 2
+(`{416, 192, 58}`) is `global_environment_settings`'s 58 fields, section 3
+(`{400, 0, 13}`) is `c_depth_only`'s, and section 4 (`{304, 608, 14}`) the packed
+copies. So the `mid` is `for each cbuffer: {the previous cbuffer's size, running
+offset, its field count} + its fields`, with the material's channels packed
+first in `c_per_object` - derivable from the group's cbuffers (the reflection),
+the material's channels (`.material`) and a recorded engine interface table.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,

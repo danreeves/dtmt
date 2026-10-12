@@ -82,22 +82,35 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 match mid_sections(&parts.mid) {
-                    Some(sections) => println!(
-                        "      mid: {}",
-                        sections
-                            .iter()
-                            .map(|section| {
-                                let step = if section.packed { 28 } else { 20 };
-                                format!(
-                                    "{{W1={} W2={} n={} x{step}w}}",
-                                    section.w1,
-                                    section.w2,
-                                    section.records.len() / step
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(" | ")
-                    ),
+                    Some(sections) => {
+                        println!("      mid:");
+                        for section in &sections {
+                            let step = if section.packed { 28 } else { 20 };
+                            println!(
+                                "        {{W1={} W2={} n={} x{step}w}}",
+                                section.w1,
+                                section.w2,
+                                section.records.len() / step
+                            );
+                            for record in section.records.chunks(step) {
+                                let w: Vec<u32> = record
+                                    .chunks(4)
+                                    .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+                                    .collect();
+                                if section.packed {
+                                    println!(
+                                        "          copy {:#010x} a={} b={} offset={} kind={} cbuffer={:#010x} x={}",
+                                        w[0], w[1], w[2], w[3], w[4], w[5], w[6]
+                                    );
+                                } else {
+                                    println!(
+                                        "          rec kind={} flags={} hash={:#010x} offset={} size={}",
+                                        w[0], w[1], w[2], w[3], w[4]
+                                    );
+                                }
+                            }
+                        }
+                    }
                     None => println!("      mid: does not walk ({} B)", parts.mid.len()),
                 }
             }
