@@ -3625,6 +3625,39 @@ programs = []
             template.groups.iter().map(|g| head_records(&g.head).len()).sum::<usize>()
         );
 
+        // The `between` part: `{global_viewport size, 0, material record count}`
+        // for a group that carries the engine table, empty for one that does not.
+        let viewport_size = programs
+            .iter()
+            .find_map(|program| {
+                StageResources::from_container(&program.container)
+                    .ok()
+                    .and_then(|r| r.cbuffer_sizes.get("global_viewport").copied())
+            })
+            .unwrap_or(0);
+        for (index, parts) in template.groups.iter().enumerate() {
+            let derived_between = if parts.has_engine {
+                let mut between = viewport_size.to_le_bytes().to_vec();
+                between.extend_from_slice(&0u32.to_le_bytes());
+                let materials = engine
+                    .material_tables
+                    .get(index)
+                    .map(Vec::len)
+                    .unwrap_or(0) as u32;
+                between.extend_from_slice(&materials.to_le_bytes());
+                between
+            } else {
+                Vec::new()
+            };
+            if derived_between != parts.between {
+                mismatches += 1;
+                println!(
+                    "group {index} between: shipped {:02X?} derived {:02X?}",
+                    parts.between, derived_between
+                );
+            }
+        }
+
         assert_eq!(mismatches, 0, "{mismatches} list mismatches");
     }
 

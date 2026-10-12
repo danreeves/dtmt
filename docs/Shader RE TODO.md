@@ -877,14 +877,21 @@ mismatches). The rules:
   `global_feedback_buffers` (UAV) `2`.
 
 So each descriptor **record** (`name`, `flags`, `x`, `y`) of a per-group head is
-fully derivable. One field is still unexplained: the head's leading **header
-word** (`parts.head[4..8]`) - the standard's groups carry `0x390`, `0x380`,
-`0x1A0`, `0x170`, `0x170` where `derived_head` writes a hard-coded `0x130` (a UI
-base value that rendered). It is not a function of the descriptor count (the two
+fully derivable. **The `between` part derives too**: it is `{global_viewport
+size, 0, material record count}` (the standard's are `1776, 0, 2` / `1776, 0, 2`
+/ `1776, 0, 11`), where `derived_between` writes a hard-coded UI-base
+`{240, 64, 0}`.
+
+One field is still unexplained: the head's leading **header word**
+(`parts.head[4..8]`) - the standard's groups carry `0x390`, `0x380`, `0x1A0`,
+`0x170`, `0x170` where `derived_head` writes a hard-coded `0x130` (a UI base
+value that rendered). It is not a function of the descriptor count (the two
 `0x170` heads have 6 and 5 records, while the two 10-record heads are `0x380`
-and `0x1A0`), so it encodes something else - a size or offset. What is left for
-the group template is that header word, the per-group `mid`, and dropping the
-carried heads.
+and `0x1A0`). It **tracks the descriptors' final `x`**: `header - x_end` is
+`736, 736, 288, 296, 296` across the five groups, so it is `x_end` plus a
+per-family/table constant (a size or offset). What is left for the group
+template is that header word, the per-group `mid`, and dropping the carried
+heads.
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
