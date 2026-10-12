@@ -34,6 +34,7 @@
 [Shader Node](File+Type+-+Shader+Node.-)<br>
 [Shader Source](File+Type+-+Shader+Source.-)<br>
 [Strings](File+Type+-+Strings.-)<br>
+[Particles](File+Type+-+Particles.-)<br>
 [Package](File+Type+-+Package.-)<br>
 [Wwise Event](File+Type+-+Wwise+Event.-)<br>
 [Wwise Stream](File+Type+-+Wwise+Stream.-)<br>
