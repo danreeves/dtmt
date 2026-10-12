@@ -155,6 +155,12 @@ struct BsiGeometry {
     streams: Vec<BsiStream>,
     #[serde(default)]
     materials: Vec<BsiMaterial>,
+    /// The payload's bounding volume: `min`, `max` and four trailing words.
+    /// Baked at cook time from the source mesh, so it cannot be recomputed from
+    /// the stored (half-float) vertices; a decompiled geometry carries it and an
+    /// authored one omits it and gets the computed bounds.
+    #[serde(default)]
+    bounds: Option<[f32; 10]>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,6 +236,11 @@ struct BsiNode {
     #[serde(default)]
     geometries: Vec<String>,
     local: [f32; 16],
+    /// The node's index in the payload's flat scene-graph array. A decompiled
+    /// unit carries it so the compiler can restore the file's own order, which
+    /// need not be a pre-order walk of the nested `.bsi` tree.
+    #[serde(default)]
+    index: Option<u32>,
     /// The payload's own rotation basis and scale. A decompiled unit carries
     /// them so a recompile writes the engine's floats back instead of the
     /// `local` matrix's folded `rotation x scale`; authored nodes omit them.
@@ -756,8 +767,19 @@ fn write_mesh_geometry(w: &mut Writer, geometry: &BsiGeometry, slot_ids: &[u32])
         w.u32(0); // bone set
     }
 
-    let (min, max) = geometry_bounds(geometry);
-    write_bounding_volume(w, min, max);
+    match geometry.bounds {
+        // A decompiled `.bsi` carries the payload's own min/max plus its four
+        // trailing words (bounding-sphere data); write them back verbatim.
+        Some(bounds) => {
+            for value in bounds {
+                w.f32(value);
+            }
+        }
+        None => {
+            let (min, max) = geometry_bounds(geometry);
+            write_bounding_volume(w, min, max);
+        }
+    }
     w.u32_array(slot_ids);
     w.u32(0); // unknown flags
     Ok(())
@@ -1406,6 +1428,15 @@ fn bsi_sjson(
             indices.len(),
             indices.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(" ")
         ));
+        text.push_str(&format!(
+            "\t\tbounds = [ {} ]\n",
+            geometry
+                .bounds
+                .iter()
+                .map(|value| format!("{value}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
         text.push_str("\t\tmaterials = [\n");
         for batch in &geometry.batches {
             let slot = geometry
@@ -1529,7 +1560,7 @@ fn write_bsi_node(
     ];
     let world = node.world;
     text.push_str(&format!(
-        "{indent}\"#{:08X}\" = {{\n{indent}\tgeometries = [ {geometries} ]\n{indent}\tlocal = [ {} ]\n{indent}\trotation = [ {} ]\n{indent}\tscale = [ {} ]\n{indent}\tworld = [ {} ]\n",
+        "{indent}\"#{:08X}\" = {{\n{indent}\tindex = {index}\n{indent}\tgeometries = [ {geometries} ]\n{indent}\tlocal = [ {} ]\n{indent}\trotation = [ {} ]\n{indent}\tscale = [ {} ]\n{indent}\tworld = [ {} ]\n",
         node.name,
         local
             .iter()
@@ -1774,6 +1805,27 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     let flat = {
         let mut flat = Vec::new();
         flatten_nodes(&bsi.nodes, None, &mut flat);
+
+        // A decompiled `.bsi` records each node's index in the payload's flat
+        // array, which need not be a pre-order walk of the nested tree. Restore
+        // that order, remapping the parent positions flattening recorded.
+        if flat.iter().all(|node| node.node.index.is_some()) {
+            let mut order: Vec<usize> = (0..flat.len()).collect();
+            order.sort_by_key(|&index| flat[index].node.index.unwrap());
+            let mut remap = vec![0usize; flat.len()];
+            for (new_index, &old_index) in order.iter().enumerate() {
+                remap[old_index] = new_index;
+            }
+            let reordered: Vec<_> = order
+                .iter()
+                .map(|&old| FlatNode {
+                    name: flat[old].name,
+                    node: flat[old].node,
+                    parent: flat[old].parent.map(|parent| remap[parent]),
+                })
+                .collect();
+            flat = reordered;
+        }
         flat
     };
     // One mesh object per renderable.
@@ -2548,6 +2600,7 @@ renderables = {
                 },
             ],
             materials: Vec::new(),
+            bounds: None,
         };
 
         let (streams, indices) = unify_geometry(&geometry).unwrap();
