@@ -574,6 +574,10 @@ struct Text {
     /// blocks' `head` indexes name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     block_heads: Vec<Hex>,
+    /// The distinct bytes a block puts after the preamble body slice, which the
+    /// blocks' `trailing` indexes name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    block_trailings: Vec<Hex>,
     /// Distinct program tails, referenced by `programs[].tail`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tails: Vec<TailText>,
@@ -1335,9 +1339,11 @@ struct BlockDiff {
     body_len: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     patches: Vec<PatchText>,
-    /// The bytes after the slice, which are per program.
-    #[serde(default, skip_serializing_if = "Hex::is_empty")]
-    trailing: Hex,
+    /// The index of the bytes after the slice in the file's shared trailing
+    /// pool; absent when there are none. Programs repeat a handful of trailings
+    /// (the pixel/vertex pair per permutation), so this stops them repeating.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trailing: Option<usize>,
 }
 
 /// Serde skip for a zero `u32`.
@@ -1382,7 +1388,12 @@ struct ProgramText {
 /// byte; the standard's are a per-program head, a shared 348-byte run of the
 /// body's records and a per-program tail, so referencing the run instead of
 /// repeating it is what keeps twelve tails from carrying it twelve times.
-fn block_text(block: &[u8], preamble: &[u8], heads: &mut Vec<Hex>) -> BlockText {
+fn block_text(
+    block: &[u8],
+    preamble: &[u8],
+    heads: &mut Vec<Hex>,
+    trailings: &mut Vec<Hex>,
+) -> BlockText {
     let body = preamble.get(12..).unwrap_or_default();
     if body.is_empty() {
         return BlockText::Hex(block.to_vec().into());
@@ -1430,17 +1441,34 @@ fn block_text(block: &[u8], preamble: &[u8], heads: &mut Vec<Hex>) -> BlockText 
             heads.len() - 1
         }
     });
+    // The trailing does too: a permutation's vertex and pixel blocks (and the
+    // next permutation's when a channel repeats) end with the same bytes.
+    let trailing = block[at + len..].to_vec();
+    let trailing = (!trailing.is_empty()).then(|| {
+        match trailings.iter().position(|other| other.0 == trailing) {
+            Some(index) => index,
+            None => {
+                trailings.push(trailing.into());
+                trailings.len() - 1
+            }
+        }
+    });
     BlockText::Body(BlockDiff {
         head,
         body_start: start as u32,
         body_len: Some(len as u32),
         patches,
-        trailing: block[at + len..].to_vec().into(),
+        trailing,
     })
 }
 
 /// Reads a block written by [`block_text`].
-fn block_bytes(spec: &BlockText, preamble: &[u8], heads: &[Hex]) -> Result<Vec<u8>> {
+fn block_bytes(
+    spec: &BlockText,
+    preamble: &[u8],
+    heads: &[Hex],
+    trailings: &[Hex],
+) -> Result<Vec<u8>> {
     match spec {
         BlockText::Hex(hex) => Ok(hex.0.clone()),
         BlockText::Body(diff) => {
@@ -1473,7 +1501,12 @@ fn block_bytes(spec: &BlockText, preamble: &[u8], heads: &[Hex]) -> Result<Vec<u
                     .get_mut(header_len + offset)
                     .ok_or_else(|| color_eyre::eyre::eyre!("a patch is out of range"))? = value;
             }
-            block.extend_from_slice(&diff.trailing.0);
+            if let Some(index) = diff.trailing {
+                let trailing = trailings
+                    .get(index)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a block trailing is out of range"))?;
+                block.extend_from_slice(&trailing.0);
+            }
             Ok(block)
         }
     }
@@ -2009,6 +2042,7 @@ impl EngineData {
                     block,
                     &engine_data.device_preamble,
                     &text.block_heads,
+                    &text.block_trailings,
                 )?);
             }
             engine_data.tails.push(bytes);
@@ -2229,6 +2263,7 @@ impl EngineData {
             }
         }
         let mut block_heads: Vec<Hex> = Vec::new();
+        let mut block_trailings: Vec<Hex> = Vec::new();
         // A split tail's resource records index the group's descriptor list. A
         // family whose groups agree on it (or whose programs carry their group
         // via `program_groups`, derived or written) can split; one that does
@@ -2258,7 +2293,12 @@ impl EngineData {
                     (true, Some(lists)) => TailText {
                         lists: None,
                         block: (!lists.block.is_empty()).then(|| {
-                            block_text(&lists.block, &self.device_preamble, &mut block_heads)
+                            block_text(
+                                &lists.block,
+                                &self.device_preamble,
+                                &mut block_heads,
+                                &mut block_trailings,
+                            )
                         }),
                     },
                     _ => TailText {
@@ -2360,6 +2400,7 @@ impl EngineData {
             group_template,
             containers: containers.iter().map(|bytes| Hex((*bytes).clone())).collect(),
             block_heads,
+            block_trailings,
             tails,
             programs,
         }
@@ -4168,8 +4209,9 @@ programs = []
         headed.extend_from_slice(&body);
         for block in [body.clone(), patched, headed] {
             let mut heads = Vec::new();
-            let spec = block_text(&block, &preamble, &mut heads);
-            let parsed = block_bytes(&spec, &preamble, &heads).unwrap();
+            let mut trailings = Vec::new();
+            let spec = block_text(&block, &preamble, &mut heads, &mut trailings);
+            let parsed = block_bytes(&spec, &preamble, &heads, &trailings).unwrap();
             assert_eq!(parsed, block, "spec {spec:?}");
         }
     }
