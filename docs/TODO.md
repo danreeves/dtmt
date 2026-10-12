@@ -32,9 +32,12 @@ as of 2026-10-12:
   - but it still carries the **group template** (descriptor lists/head,
   `between`, per-group `mid` and material table, the group list),
   **contexts/conditions/preamble**, the **per-program device blocks** (~23 KB)
-  and the **program list**. Blocked on three decodes (all in
-  `Shader RE TODO.md`): the head's **header word**, the per-group **`mid`**, and
-  the **program block grammar**.
+  and the **program list**. The per-group **`mid` is now decoded** - sections of
+  `{variable size, running offset, count}`, one per cbuffer variable, then the
+  packed copies - and `lib/dxc` now **exposes each constant buffer's variables**
+  (`CbufferVariable`), so the mid can be built from them. The remaining blockers
+  (all in `Shader RE TODO.md`) are the head's **header word** and the
+  **program block grammar**.
 - **Particle shaders: not started.** The `particles` file type decodes the
   particle **effect resource** (`filetype/particles.rs`), *not* a shader; no
   particle `.shader_node`/`.shader_source` work exists.
