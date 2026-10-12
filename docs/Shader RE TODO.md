@@ -88,6 +88,11 @@ head trails `{n, record_count}` much like the group head. The leading words hold
 per-program resource records (`0x40` and `0xFFFFFFFF` recur); decoding them is the
 remaining work for deriving the blocks.
 
+A block is **not** a rearrangement of the preamble: the longest run it shares with
+the preamble is the 393-byte record run (the body), and the whole block is not a
+substring of it. So the head and the trailing are per-program data, not slices of
+the engine block.
+
 **A program's group derives (2026-10-12).** `derive_program_groups` already fills
 the program-to-group mapping from the group tails' condition counts; `to_text` now
 omits each program's `group` tag when it equals what that rule produces (verified

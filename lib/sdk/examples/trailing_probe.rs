@@ -1,7 +1,7 @@
 //! Dumps a pixel program's device block split into its head, its run of the
 //! preamble body's records, and the trailing bytes after them, as `u32` words -
 //! to see whether the trailing follows a record grammar (and is derivable) or is
-//! per-shader data.
+//! per-shader data. It also reports how much of the preamble the block carries.
 //!
 //! ```text
 //! trailing_probe <engine_data>
@@ -21,6 +21,24 @@ fn words(bytes: &[u8]) -> String {
         .join(" ")
 }
 
+/// The longest run of `needle` that appears verbatim in `haystack`.
+fn longest_common(haystack: &[u8], needle: &[u8]) -> usize {
+    let mut best = 0;
+    for start in 0..needle.len() {
+        for at in 0..haystack.len() {
+            let mut run = 0;
+            while start + run < needle.len()
+                && at + run < haystack.len()
+                && needle[start + run] == haystack[at + run]
+            {
+                run += 1;
+            }
+            best = best.max(run);
+        }
+    }
+    best
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args().nth(1).ok_or("usage: trailing_probe <engine_data>")?;
     let engine_data = EngineData::from_text(&fs::read_to_string(&path)?)?;
@@ -31,6 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let records: Vec<&[u8]> = body[4..4 + count * 12].chunks_exact(12).collect();
     println!("preamble {} B; {} records", preamble.len(), records.len());
 
+    let mut reported = false;
     for (index, (stage, tail)) in engine_data.programs.iter().enumerate() {
         if *stage != Stage::Pixel {
             continue;
@@ -67,6 +86,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             trailing.len()
         );
         println!("   trailing: {}", words(trailing));
+
+        if !reported {
+            reported = true;
+            println!(
+                "   << longest run of the block in the preamble: {} B; of the preamble in the \
+                 block: {} B; whole block in preamble: {} >>",
+                longest_common(preamble, block),
+                longest_common(block, preamble),
+                preamble.windows(block.len()).any(|w| w == block)
+            );
+        }
     }
     Ok(())
 }
