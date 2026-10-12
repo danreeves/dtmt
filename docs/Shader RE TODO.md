@@ -1219,6 +1219,15 @@ group template (heads, `mid`s, `between`) derivable from the blocks plus the
 engine interface. The blocks themselves (~23 KB) are then the one thing the file
 has to keep, and the block grammar is what would finally remove them.
 
+**So the `mid` needs no per-group bytes beyond the channel hashes
+(2026-10-12).** With the channels in the blocks, every `mid` input is derivable:
+the cbuffers from the head's kind-0/1 descriptors (their sizes from the
+reflection), `x_end` from the head's per-draw total, the channel records from
+`channel_records`, and the packed copies from the channels' kind-5 rows. So the
+engine data could carry a **per-group channel list** (a handful of hashes)
+instead of the whole `mid` pool - 9.6 KB down to tens of bytes - with
+`derived_mid` doing the rest. That is the concrete next implementation.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
