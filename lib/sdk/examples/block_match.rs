@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let device = section.device_data();
     let programs = shader::parse_programs(device)?;
 
+    let mut shown = 0;
     for (index, program) in programs.iter().enumerate() {
         if program.stage != shader::Stage::Pixel {
             continue;
@@ -64,7 +65,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         println!();
-        break;
+        shown += 1;
+        if shown >= 4 {
+            break;
+        }
     }
     Ok(())
 }
