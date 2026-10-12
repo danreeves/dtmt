@@ -445,6 +445,16 @@ arrays plus a small count word - `104 = 5 x 20 + 4` (group 0) and `84 = 4 x 20 +
 `64` is not a multiple of `20`), so the head mixes the cbuffer, resource and sampler
 arrays; the field order inside each record is the remaining unknown.
 
+**The writer's disassembly map (2026-10-12).** `objdump -d -j .text` (a 143 MB
+listing) plus the name strings gives the walk: the
+`stingray::shader_compiler::make_device_data` name string is referenced once, in a
+*dispatcher* at `0x1403EF787` (it logs the name and switches on the platform id,
+`cmp $0x5`); the per-platform maker pointer comes from an 8-byte table at
+`0x141286CC8` looked up by `0x14069B3A0`; and the `D3DShaderPassData::Shader` array
+is walked at `0x14069B400` (`shl $0x7` - the 128-byte stride - with the array base
+at `0x10(%rbx)`). So the device-data writer's field order is a bounded disassembly
+from `0x14069B400`; `trailing_probe` and a controlled compile are the cross-checks.
+
 This confirms the writer's shape directly from the source: the library's
 **state block carries per-record fields the pass declares** (`write_mask0`,
 blend, z state), which is exactly where the `shader43` block's seam/mask words
