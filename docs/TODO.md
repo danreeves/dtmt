@@ -69,7 +69,7 @@ grammar - a custom base material can only use a shipped interface today.
 
 | File type | In dtmt | Next step |
 |-----------|---------|-----------|
-| Bundle | Partial | A few header fields and their interaction with external `data/` files is unknown. |
+| Bundle | Partial | The header's "unknown" words are pinned: `version = 0xF0000008`, `unknown_1 = 3`, `unknown_3 = 0` in all 3,000 sampled bundles, and **`FileMeta.flags` is the external-data-file bit** (`flags & 4` = the data lives in a `data/` file - 67,165 entries take only `0`/`4`, so it is *not* a deleted-file bitflag). A data-file name without the flag is a stream reference. Remaining: `FileHeader.unknown_2`. See [`File Type - Bundle.-.md`](File+Type+-+Bundle.-). |
 | Bundle Database | Partial | See [`File Type - Bundle Database.-.md`](File+Type+-+Bundle+Database.-). |
 | Package | Complete | Nothing. The community writer's `package_v43` corroborates the layout. |
 | Lua | Complete | Nothing. |

@@ -95,6 +95,32 @@ Across **3,000** shipped bundles (`bundle/<name>`, 200 B – 3 MB):
 
 So both "unknown" words are **constants**, not content-dependent — they carry no
 information, and DTMT's writer already emits `0` for `unknown_3` while its reader
-skips the word. `FileMeta.flags` (the suspected deleted-file bitflag) and
-`FileHeader.unknown_2` (`1` in every sample) are the only header fields whose
-meaning is still untested.
+skips the word.
+
+### `FileMeta.flags` is the external-data-file bit (2026-10-12)
+
+The doc above speculated that one of the `FileMeta.flags` bits "might designate a
+deleted file". It does not: over **3,000** shipped bundles / **67,165** file
+entries the word takes exactly two values,
+
+| Value | Entries |
+|-------|---------|
+| `0x00000004` | 37,138 |
+| `0x00000000` | 30,027 |
+
+and correlating it with the parsed entries shows what bit 2 means:
+
+| `props` | `external` | data file name | Entries |
+|---------|-----------|----------------|---------|
+| `00000004` | true | present | 13,483 |
+| `00000000` | false | present | 5,814 |
+| `00000000` | false | none | 2,191 |
+
+So **`flags & 4` = "this entry's data lives in an external `data/` file"** — it is
+always set when the variant is external and never when it is not. A data-file name
+*without* the flag is a **stream** reference (the resource's own body is inline and
+the named file is auxiliary) — which is why a streamed texture is `external=false`
+*and* carries a `data/xx/<16 hex>.stream` name.
+
+`FileHeader.unknown_2` (always `1`) is the only header field left without a tested
+meaning.
