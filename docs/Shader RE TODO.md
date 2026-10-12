@@ -1128,6 +1128,20 @@ row or two per group - rather than a wholesale mismatch.
 file's because the file also carries the 28-byte header and the material
 template; do not compare the two directly.)
 
+**The engine interface is keyed by cbuffer name, and its offsets are relative
+(2026-10-12).** Mining the engine fields out of the `mid`s (78 distinct ones)
+shows the same field at two *different* absolute offsets in different groups -
+`view_proj` at 32 and 64, `A17AE7B4` at 96 and 128 - because a cbuffer's size
+includes the material's channels, so it varies with the material. The interface
+therefore has to key on the **cbuffer name** (`c_per_object`,
+`global_environment_settings`, `c_depth_only`) and store each field's offset
+*relative to the end of the material's variables* (padded to 16), which is the
+"offsets by HLSL packing" rule. The `mid`'s records then carry the absolute
+offset (the channels' padded size + the relative one). The mined table is at
+`%TEMP%/dtmt-mat/mid-interface.txt` as `(size, kind, hash, offset, size)`; it
+needs re-keying by name and re-basing by the channel prefix before it can be a
+const.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
