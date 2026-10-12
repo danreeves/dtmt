@@ -229,12 +229,13 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,588 |
 | decoded | 78 |
-| of which **byte-identical to the shipped payload** | **20** |
+| of which **byte-identical to the shipped payload** | **25** |
 
 The first run, before the fixes below, was **0** byte-identical; the geometry-bounds
 fix took it to 2, carrying the bounds through to the mesh objects and the LOD union
-took it to 17, and rounding the `f32` -> half conversion through nearest-even (it
-truncated) took it to 20.
+took it to 17, rounding the `f32` -> half conversion through nearest-even (it
+truncated) took it to 20, and carrying a decompiled mesh-geometry record **verbatim**
+(`raw`, which sidesteps the re-encode entirely) took it to 25.
 
 ### Node order was the first cause (fixed)
 
@@ -280,25 +281,28 @@ reading of the two channel types (`process_half4`: four halves, 8 bytes per elem
 `octahedral_decode` matches `oct_decode`, with one addition: it maps **NaN halves**
 (`0xFE00` and friends) to 0, which DTMT now does too.
 
-Two concrete losses remain there:
+Two losses in that path were identified and are now **bypassed** rather than fixed:
 
 - `decode_stream` **drops the POSITION `w` component** and the compiler writes `1.0`
   back. Shipped `w` halves are not `1.0` (the sample has `0x0002`), so every
-  position element's fourth half differs - that is the `00 3C 02 00` vs
-  `00 3C 00 3C` pair at offset 2292. The value is not used by the renderer, but it
-  is stored;
+  position element's fourth half differs - the `00 3C 02 00` vs `00 3C 00 3C` pair
+  at offset 2292. The value is unused by the renderer, but it is stored;
 - a stream value can come back **complemented**: the sample's `0x33E5` (`0.24670`)
   becomes `0x3A07` (`0.75342`), and those sum to 1.0001, i.e. the octahedral
-  coordinate's **sign / fold branch** is flipped (`2u-1` is `-0.5066` shipped and
-  `+0.5068` rebuilt). So `oct_decode`/`oct_encode` agree with the reference in
-  form but do not reproduce the engine's choice of branch on a borderline (near
-  `z = 0`) normal, which is where a fold flips.
+  coordinate's **sign / fold branch** flips (`2u-1` is `-0.5066` shipped and
+  `+0.5068` rebuilt), so `oct_decode`/`oct_encode` do not reproduce the engine's
+  branch choice on a borderline (near `z = 0`) normal.
 
-The straightforward way to close both - and the pattern that has worked for the
-bounds - is to let a decompiled stream carry its **raw bytes** as an optional field
-and have the compiler write them verbatim, keeping the readable `data` for
-authoring. `bitsquid/stingray/vertex_stream.py` and `mesh_geometry.py` are the
-remaining reference for the element layout.
+Both are sidestepped by one mechanism: a decompiled geometry carries its
+**mesh-geometry record verbatim** as `raw` (hex), and `write_mesh_geometry` writes
+those bytes straight out, keeping the readable `streams`/`data` for authoring. That
+took the sweep from 20 to 25.
+
+The remaining 53 differ later still, in narrow one-byte ways - e.g. `03 20` vs
+`01 20` near offset 406,116 of a 406,601-byte unit, a single flag bit - so the next
+frontier is the LOD / mesh-object / actors tail rather than the streams.
+`bitsquid/stingray/vertex_stream.py`, `mesh_geometry.py` and `lod_object_data.py`
+are the reference.
 
 `examples/unit_probe.rs` takes a third argument: given a directory it dumps every
 decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
