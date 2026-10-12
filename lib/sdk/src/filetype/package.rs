@@ -102,12 +102,25 @@ where
 type PackageType = HashMap<BundleFileType, HashSet<String>>;
 type PackageDefinition = HashMap<String, HashSet<String>>;
 
-#[derive(Default)]
 pub struct Package {
     _name: IdString64,
     _root: PathBuf,
     inner: PackageType,
     flags: u8,
+}
+
+impl Default for Package {
+    /// A fresh package carries the footer byte `1`, which is what the engine's
+    /// own writer emits (`package_v43`'s validator rejects any other value);
+    /// [`Package::new`] sets the same.
+    fn default() -> Self {
+        Self {
+            _name: Default::default(),
+            _root: Default::default(),
+            inner: Default::default(),
+            flags: 1,
+        }
+    }
 }
 
 impl Deref for Package {
@@ -321,7 +334,7 @@ mod test {
 
         assert_eq!(
             pkg.to_binary().unwrap(),
-            vec![0x2b, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]
+            vec![0x2b, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1]
         );
     }
 
@@ -334,7 +347,7 @@ mod test {
             pkg.to_binary().unwrap(),
             vec![
                 0x2b, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0xe2, 0x17, 0xd1, 0x2c, 0xfa, 0x8d, 0x4e,
-                0xa1, 0xe2, 0x17, 0xd1, 0x2c, 0xfa, 0x8d, 0x4e, 0xa1,
+                0xa1, 0xe2, 0x17, 0xd1, 0x2c, 0xfa, 0x8d, 0x4e, 0xa1, 0x1
             ]
         );
     }
@@ -371,8 +384,12 @@ mod test {
 
     #[tokio::test]
     async fn absolute_wildcard() {
-        let path = PathBuf::from("/tmp/test");
-        let root = PathBuf::from("/tmp");
+        // An absolute wildcard is rejected on every platform, so build one from
+        // the current directory rather than a Unix-only literal like `/tmp`
+        // (which is not absolute on Windows).
+        let root = std::env::current_dir().unwrap();
+        let path = root.join("test");
+        assert!(path.is_absolute());
 
         let res = resolve_wildcard(path, &root, None).await;
         assert!(res.is_err());
