@@ -175,3 +175,31 @@ The main ones:
 * The game derives side-file names from `murmur64("<resource path>.texture")`
   (low bit set for streamed). DTMT derives them from the bare resource hash, so
   its names differ.
+
+## Cross-check with the community writer (2026-10-12)
+
+`Darktide-Asset-Compiler`'s `stingray/texture/texture_writer.cpp` gives its
+profiles and its side-file rule:
+
+- `TextureProfile{id, dxgi_format, block_bytes, srgb, body_flags, footer_word,
+  filtering}` - e.g. `substance_basic_bc_static_control_bc1_srgb` = BC1 sRGB
+  (`dxgi_format 72`, 8 B/block, `body_flags 0x101`, `footer_word 0xa88c22b7`) and
+  `substance_basic_orm_bc1` = BC1 linear (`71`, 8, `0x001`, `0xe514d1dc`). So the
+  body's flags word is **`0x101` for an sRGB family and `0x001` for a linear one**,
+  the footer is a per-family hash, and there are five families (bc, bca, nm, orm,
+  pbr_emissive_em).
+- its side-file name is
+  `data/am/<hex16(id64("texture-stream:" + resource))>.stream`, with `id64` =
+  `murmur64(s, 0)`.
+
+The *shipped game* agrees with DTMT's **shape**, not the community's hash: of the
+**186,955** `bundle/data/**/*.stream` files, every path is
+`data/<the name's first two hex>/<16 hex>.stream` - the directory **is** the name's
+first byte pair - and the names are a toolchain scheme (a counter in the high u16
+plus a hash), not a name hash. So the name is arbitrary and only the *path the
+resource records* matters; DTMT's form is right. The real discrepancies stay the
+two "Open questions": the `.stream` **slot length** (shipped `31`, DTMT
+`name.len() + 6 = 37` at `file.rs:112`; the non-streamed slot is `30 = 24 + 6`, so
+the `+6` looks like a non-streamed convention) and whether the game ever recomputes
+the name. Verifying either means parsing a *shipped* bundle's texture variant and
+reading `data_file_name_len` against the loose `.stream` beside it.
