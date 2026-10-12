@@ -79,6 +79,15 @@ a pixel block's head, its run of the body's records and the trailing after them 
   derive from the channel list plus the head, but the record grammar is not yet
   decoded.
 
+The block's **head** is a distinct structure, not the group head: program 1's (104
+B) is `{2, 0, 4, 2, 0x100, 0, 0x40, 3, FFFFFFFF, 0x40, 0, 4, FFFFFFFF, 0x40, 0, 2,
+0xC0, 0x40, 0x40, 0x80, 0x58, 0, 0, 0, 42, 30}` and program 3's (84 B) ends `{...,
+0x50, 0x58, 0, 0, 0, 43, 30}`. The **last word is always 30** - the body's record
+count - and the word before it varies per program (42, 43, 35, 38, 48, ...), so the
+head trails `{n, record_count}` much like the group head. The leading words hold
+per-program resource records (`0x40` and `0xFFFFFFFF` recur); decoding them is the
+remaining work for deriving the blocks.
+
 **A program's group derives (2026-10-12).** `derive_program_groups` already fills
 the program-to-group mapping from the group tails' condition counts; `to_text` now
 omits each program's `group` tag when it equals what that rule produces (verified
