@@ -205,6 +205,17 @@ count, {cbuffer_count, engine_record_count}}`. Group 0's 208 bytes are
 *different* table (program 1's 104 bytes start `{2, 0, 4, 2, 0x100, ...}` and trail
 `{42, 30}`), so the group derivation does not cover it - see above.
 
+**The block head is the *group's* cbuffer bind infos (2026-10-12).**
+`examples/block_match.rs` reads a *shipped* section's pixel program with its tail
+lists and its block together. Program 1's tail declares **three** cbuffers
+(`global_viewport` 1776, `global_environment_settings` 400, `c_per_object` 416),
+but its block head is **100 B = 5 x 20** - the *group's* five cbuffer descriptors -
+followed by the count word (`30`) that frames the body and the body itself. So the
+head is the group's cbuffer bind infos (not the program's own cbuffer list), and the
+20-byte records index the group's descriptors; their field order is still unmapped
+(the records' words - `{2,0,4,2,0x100}`, `{0,0x40,3,FFFFFFFF,0x40}`, ... - match
+neither the descriptor `x`s nor the cbuffer sizes).
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
