@@ -27,7 +27,7 @@ as of 2026-10-12:
 - **`ui_default_base` (GUI / title): done.** No engine data - it builds from the
   declaration alone (section `CD9854D69AC9A5B7`), verified in game.
 - **`standard_base`: the `mid` derives and the blocks share their body and tail.**
-  `standard_base.engine_data` is now **9,763 B** - down from 375,410 when the
+  `standard_base.engine_data` is now **9,651 B** - down from 375,410 when the
   section was captured, and from 42,091 - a **77% cut**. The programs' cbuffer and
   resource lists derive; the group **`mid`** does too (the file carries each
   group's **channel list**); a program's **group** is derived from the group

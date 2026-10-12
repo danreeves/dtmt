@@ -151,7 +151,15 @@ standard's 69 records) and the second is zero - the toolchain's `derived_between
 reproduces the shipped bytes exactly, so `to_text` omits an all-empty `between`
 pool and `mid_migrate` clears each group's between. Took the file from
 **9,905 -> 9,763 bytes**. (`GroupData::build` rewriting the count still needs
-checking against a family whose count differs.)
+checking against a family whose count differs. The UI base - a declaration-only
+family with no engine data - also derives its betweens, and so now carries the
+engine-table size too instead of the old hardcoded `{0xF0, 0x40, 0}`; the pumpkin
+test still renders.)
+
+**A repeating group list is a pool plus a pattern (2026-10-12).** The standard's
+five groups hold only three distinct specs, so `to_text` writes the distinct specs
+and a `pattern` of indices when that is smaller (`group_pattern = [0 0 1 2 2]`),
+and the reader expands through it. Took the file from **9,763 -> 9,651 bytes**.
 
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
