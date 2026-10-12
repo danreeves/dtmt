@@ -721,6 +721,18 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 return sdk::filetype::unit::compile(name, &unit_sjson, &bsi);
             }
 
+            // A `.bones` is compiled from its SJSON (the joint names and LODs).
+            if file_type == BundleFileType::Bones {
+                let bones_sjson = fs::read_to_string(&path)
+                    .await
+                    .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+                let name = apply_name_override(
+                    name_overrides,
+                    path.with_extension("").to_slash_lossy().to_string(),
+                );
+                return sdk::filetype::bones::compile(name, &bones_sjson);
+            }
+
             let mut sjson = fs::read_to_string(&path)
                 .await
                 .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;

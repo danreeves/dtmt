@@ -14,8 +14,9 @@ use std::io::Cursor;
 use color_eyre::{Report, Result, eyre::bail};
 
 use crate::binary::sync::ReadExt;
-use crate::bundle::file::{BundleFileVariant, UserFile};
-use crate::murmur::Murmur32;
+use crate::bundle::file::UserFile;
+use crate::murmur::{IdString64, Murmur32};
+use crate::{BundleFile, BundleFileType, BundleFileVariant};
 
 /// The type hash the cooked-resource envelope carries for a bones resource.
 pub const BONES_TYPE: u64 = 0x18de_ad01_056b_72e9;
@@ -146,6 +147,16 @@ pub fn decompile(_ctx: &crate::Context, variants: &[BundleFileVariant]) -> Resul
     Ok(vec![UserFile::new(bones.to_sjson()?.into_bytes())])
 }
 
+/// Compiles a bones SJSON into a bundle file `name`d after the resource path.
+pub fn compile(name: IdString64, bones_sjson: &str) -> Result<BundleFile> {
+    let bones = Bones::from_sjson(bones_sjson)?;
+    let mut variant = BundleFileVariant::new();
+    variant.set_data(bones.to_binary()?);
+    let mut file = BundleFile::new(name, BundleFileType::Bones);
+    file.add_variant(variant);
+    Ok(file)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -185,6 +196,15 @@ mod test {
         assert_eq!(bones.lods, [3, 2]);
         assert_eq!(bones.name, "#0123456789abcdef");
         assert_eq!(bones.to_binary().unwrap(), bytes);
+    }
+
+    #[test]
+    fn a_bones_sjson_round_trips() {
+        // The build path: SJSON -> cooked bytes -> a bundle file.
+        let bones = Bones::from_binary(&sample()).unwrap();
+        let sjson = bones.to_sjson().unwrap();
+        assert_eq!(Bones::from_sjson(&sjson).unwrap(), bones);
+        assert!(sjson.contains("j_spine"), "the names are in the SJSON");
     }
 
     #[test]
