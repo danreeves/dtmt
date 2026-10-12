@@ -827,7 +827,34 @@ and their `mid`s 2140/2140/240/288/288 - each group has its own descriptor list
 and material table. Deriving it needs a **per-group** head (the union of that
 group's programs' resources in root order, which `derive_program_groups` can now
 select) rather than the single `derived_head(resources)`, plus the per-group
-`between`/`mid`. Runs: `group_probe <engine_data>` (rebuilt group data 10,725 B).
+`between`/`mid`. `group_probe` now dumps each group's descriptor list
+(`[{name, flags, x, y}]`): the `x` offsets follow the same 24-per-cbuffer /
+8-per-other rule `derived_head` uses, but the **`y` usage field is
+family-specific** - the standard's `bones`/`idata` are 341, `global_uav_buffers`
+682, `linear_depth` 256, the textures 1 and `global_feedback_buffers` 2, against
+the UI base's 0/5/10. So the group-template milestone needs the descriptor `Y`
+mask, decoded below.
+
+**`y` is decoded: a 2-bit-per-pass usage mask.** Correlating the whole game's
+group descriptors (`C:\Users\Dan\dtmt-dump\groups.csv`, 80,465 rows, via the
+scratch `decode-descriptors.ps1`) shows `y`'s values are exactly the fields `01`
+or `10` repeated: `1, 5, 21, 85, 341, ...` (the `01` sequence, `x -> 4x + 1`) and
+`2, 10, 42, 170, 682, ...` (the `10` sequence), plus gapped masks like `256`
+(`0x100`, pass 4's `01` field alone). So `y` packs **two bits per pass** - bit
+`2k` for the pass's first stage, bit `2k+1` for its second - and the field count
+is the group's pass count. Worked against the shipped reflections: group 0's
+`bones`/`idata` `0x155` = the first stage of all five passes (p0/p2/p4/p6/p8),
+`last_bones` `0x1` = pass 0 alone, `global_uav_buffers` `0x2AA` = the second
+stage of all five (p1/p3/p5/p7/p9); group 3's vertex-only `bones`/`idata` `1`,
+its `global_uav_buffers` `2`. The bindless arrays are the exception - every group
+has `global_texture2D` `1`/`5` and `global_feedback_buffers` `2`/`10` (the two
+`01`/`10` sequences over the group's passes), so they are attributed to a fixed
+stage, not to whichever program reads them. `linear_depth` `0x100` attributes it
+to pass 4's first stage, which the recompiled reflections do not, so **the mask
+is mined from the shipped group data, and deriving a head needs each pass's
+stage→resource set** (the root-signature order the community compiler's
+`shader_compiler` builds). Runs: `group_probe <engine_data>` (rebuilt group data
+10,725 B), or `decode-descriptors.ps1` over the miner's `groups.csv`.
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
