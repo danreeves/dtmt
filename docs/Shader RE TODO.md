@@ -876,8 +876,15 @@ mismatches). The rules:
   `linear_depth` (SRV, pass 4) `0x100`, `global_texture2D` `1`,
   `global_feedback_buffers` (UAV) `2`.
 
-So a per-group head is fully derivable. What is left for the group template is
-the per-group `between`/`mid` and dropping the carried heads.
+So each descriptor **record** (`name`, `flags`, `x`, `y`) of a per-group head is
+fully derivable. One field is still unexplained: the head's leading **header
+word** (`parts.head[4..8]`) - the standard's groups carry `0x390`, `0x380`,
+`0x1A0`, `0x170`, `0x170` where `derived_head` writes a hard-coded `0x130` (a UI
+base value that rendered). It is not a function of the descriptor count (the two
+`0x170` heads have 6 and 5 records, while the two 10-record heads are `0x380`
+and `0x1A0`), so it encodes something else - a size or offset. What is left for
+the group template is that header word, the per-group `mid`, and dropping the
+carried heads.
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
