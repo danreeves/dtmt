@@ -435,7 +435,11 @@ assert string in `.rdata`) gives the writer's *serialized* element sizes:
 | `D3DShaderPassData::Shader` (in memory) | 128 |
 
 (The size is the `lea (%rX,%rX,4)/shl $2` = x20 before the allocation; e.g. the
-`ConstantBufferBindInfo` function at `0x1402785DA`.) A block is therefore the
+`ConstantBufferBindInfo` function at `0x1402785DA`; the instantiations are otherwise
+unreferenced - they exist for the type table - so these are the *types'* sizes. Note
+the VT2 compiler is **D3D11-only** (see "The seam is not in the D3D11 header"), so
+Darktide's D3D12 serialization may differ; the type definitions are shared engine
+code, which is why the standard's heads fit them.) A block is therefore the
 serialized `D3DShaderPassData` - **head** = the shader's bind-infos, **body** = the
 engine's config records (the same 30 `{index, value, 0}` the preamble's
 `config_base` holds), **trailing** = the instance variables (16 B each), the
