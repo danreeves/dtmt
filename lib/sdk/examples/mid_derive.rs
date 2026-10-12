@@ -16,10 +16,10 @@ use std::fs;
 
 use sdk::filetype::group_data::{mid_bytes, mid_sections};
 use sdk::filetype::shader_engine_data::EngineData;
-use sdk::filetype::shader_engine_interface::derived_mid;
+use sdk::filetype::shader_engine_interface::{channel_records, derived_mid};
 
 /// The material's channels, whose rows are the ones before the engine's fields.
-const CHANNELS: [u32; 3] = [0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3];
+const CHANNELS_NAMED: [u32; 3] = [0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3];
 
 fn main() -> Result<(), Box<dyn Error>> {
     let path = std::env::args().nth(1).ok_or("usage: mid_derive <engine_data>")?;
@@ -45,16 +45,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         let channels: Vec<u8> = sections
             .first()
             .map(|section| {
-                section
-                    .records
-                    .chunks_exact(20)
-                    .filter(|row| {
-                        let hash = u32::from_le_bytes(row[8..12].try_into().unwrap());
-                        CHANNELS.contains(&hash)
-                    })
-                    .flatten()
-                    .copied()
-                    .collect::<Vec<u8>>()
+                // The group's channels, in the order its records carry them.
+                let mut named: Vec<u32> = Vec::new();
+                for row in section.records.chunks_exact(20) {
+                    let hash = u32::from_le_bytes(row[8..12].try_into().unwrap());
+                    if CHANNELS_NAMED.contains(&hash) && !named.contains(&hash) {
+                        named.push(hash);
+                    }
+                }
+                // ... built from the engine's channel table, not copied.
+                let built = channel_records(&named);
+                for row in built.chunks_exact(20) {
+                    let hash = u32::from_le_bytes(row[8..12].try_into().unwrap());
+                    assert!(
+                        named.contains(&hash),
+                        "a channel row names a channel that is not in the group"
+                    );
+                }
+                built
             })
             .unwrap_or_default();
 
