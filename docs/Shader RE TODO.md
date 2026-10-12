@@ -1088,6 +1088,16 @@ sections have `W2 = 176, 192, 0, 608`: the first is `x_end`; the second is
 space, `0` for a section with none - the last small rule needed before
 `derived_mid` can be written.
 
+**The declaration's `inputs` drive the build (2026-10-12).** The standard's
+`.shader_node` in the mod is the *enumerated* form, which carries no `inputs`; the
+`--reconstruct` path emits them (`#78E25D0F`, `#9A531871` - the group's two
+object records, both textures). Adding those two entries to the mod's node leaves
+the built section **byte-identical** (`578c983197da6b91`, 145,604 B), so the
+material's variables now reach the build from the declaration rather than the
+engine data. Dropping the engine data's `materials` pool on top of that does
+*not* reproduce the section (+112 B), so the material table is still built
+differently - the next gap on the road to dropping the engine data.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
