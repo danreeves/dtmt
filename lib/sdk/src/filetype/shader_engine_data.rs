@@ -3767,6 +3767,62 @@ programs = []
     }
 
     #[test]
+    fn a_group_list_that_repeats_specs_is_a_pool_and_a_pattern() {
+        // The standard's shape: five groups holding three distinct specs, so the
+        // text writes the distinct specs and a `pattern` naming them.
+        use crate::filetype::group_data::{GroupParts, GroupTemplate, Record};
+
+        let engine = vec![Record {
+            kind: 2,
+            flags: 0,
+            hash: 0x6BC9_1D73,
+            offset: 0,
+            size: 12,
+        }];
+        let group = |tail: u8| GroupParts {
+            head: vec![0u8; 4],
+            material_first: true,
+            has_engine: true,
+            between: vec![0u8; 12],
+            mid: vec![0u8; 8],
+            tail: vec![tail; 12],
+            channels: Vec::new(),
+        };
+        let template = GroupTemplate {
+            prefix: 5u32.to_le_bytes().to_vec(),
+            groups: vec![
+                group(0xA1),
+                group(0xA1),
+                group(0xB2),
+                group(0xB3),
+                group(0xB3),
+            ],
+            engine,
+        };
+
+        let mut engine_data = empty_engine_data();
+        engine_data.group_template = Some(template);
+        engine_data.material_tables = vec![Vec::new(); 5];
+
+        let text = engine_data.to_text();
+        assert!(text.contains("pattern ="), "the list is not a pool:\n{text}");
+        // The pattern names the distinct specs: 0,0,1,2,2.
+        assert!(
+            text.contains("pattern = [\n    0\n    0\n    1\n    2\n    2\n  ]"),
+            "the pattern is not 0,0,1,2,2:\n{text}"
+        );
+
+        let parsed = EngineData::from_text(&text).unwrap();
+        let template = parsed.group_template.as_ref().expect("template");
+        assert_eq!(template.groups.len(), 5);
+        assert_eq!(template.groups[0].tail, vec![0xA1; 12]);
+        assert_eq!(template.groups[1].tail, template.groups[0].tail);
+        assert_eq!(template.groups[2].tail, vec![0xB2; 12]);
+        assert_eq!(template.groups[3].tail, vec![0xB3; 12]);
+        assert_eq!(template.groups[4].tail, template.groups[3].tail);
+    }
+
+    #[test]
     fn a_pass_tail_resolves_from_the_declaration() {
         // A group tail may name one of the declaration's compile jobs instead of
         // carrying hashes: `{ context = "default" pass = 0 }`. The build
