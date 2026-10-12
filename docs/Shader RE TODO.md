@@ -955,13 +955,14 @@ global_uav_buffers, global_environment_settings, global_samplers,
 static_minlod_sampler, global_texture2D, global_feedback_buffers, c_depth_only
 ```
 
-and the shipped head is that list **minus the two samplers**, then the material's
-own texture (`9B8038E0`). So the head is `(the group's programs' bindings,
-samplers dropped, first-seen order) + the material's resources`, and every engine
-name's flags are already in `engine_descriptor_flags` - `A306B24F` is
-`global_uav_buffers` and `B3A2EB88` is `global_environment_settings`, both
-confirmed against the constants. The first eight descriptors match the shipped
-head exactly. What is
+and the shipped head is that list **minus the two samplers** (11 descriptors),
+then one more - the material's `linear_depth` (`9B8038E0`, flags `0x0003`, which
+is not a container binding of group 0). So the head is `(the group's programs'
+bindings, samplers dropped, first-seen order) + the material's resources`, and
+every engine name's flags are already in `engine_descriptor_flags` - `A306B24F`
+is `global_uav_buffers` and `B3A2EB88` is `global_environment_settings`, both
+confirmed against the constants. The 11 derived descriptors match the shipped
+head position for position; only `linear_depth`'s source is still open. What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`

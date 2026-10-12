@@ -979,6 +979,32 @@ fn permutations_contexts(
 /// The `c_per_object` cbuffer hash the packed copies are keyed by.
 const PACKED_CBUFFER: u32 = 0xB563_9618;
 
+/// A group's head descriptors, from the group's programs' reflected bindings:
+/// each distinct binding once, in **first-binding order**, with samplers dropped
+/// (they live in the tail lists, not the head). Flags are the engine's mined
+/// ones, or - for a name the engine table does not know - the binding's own
+/// kind. Measured against the standard's group 0: this reproduces 11 of its 12
+/// shipped descriptors position for position.
+pub fn head_descriptors(bindings: &[dxc::BoundResource]) -> Vec<(u32, u32)> {
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    for binding in bindings {
+        // A sampler is not a head descriptor.
+        if binding.kind == 3 {
+            continue;
+        }
+        let hash = u32::from(murmur::Murmur32::hash(binding.name.as_bytes()));
+        if out.iter().any(|(name, _)| *name == hash) {
+            continue;
+        }
+        let flags = match engine_descriptor_flags(hash) {
+            0 => binding.kind,
+            flags => flags,
+        };
+        out.push((hash, flags));
+    }
+    out
+}
+
 /// The engine's group head after the query: the header word, the descriptor
 /// list and the two trailing words. The descriptors are the engine's own
 /// resources (their flags mined from the shipped groups) and the stage's own
@@ -2733,6 +2759,39 @@ mod tests {
         // c_depth_only) are 24 per draw = 96, already 16-aligned; the material
         // cbuffers are c_instance_offset (16) + c_depth_only (304) = 320.
         assert_eq!(header, 96 + 320);
+    }
+
+    /// A group's head descriptors: the reflected bindings in first-binding
+    /// order, samplers dropped, flags from the engine table or the kind.
+    #[test]
+    fn head_descriptors_are_the_bindings_without_samplers() {
+        let binding = |name: &str, kind: u32| dxc::BoundResource {
+            name: name.into(),
+            kind,
+            bind_point: 0,
+            bind_count: 1,
+            flags: 0,
+            space: 0,
+            samples: 0,
+            size: 0,
+            variables: Vec::new(),
+        };
+        let bindings = vec![
+            binding("global_viewport", 0),
+            binding("c_per_object", 0),
+            binding("global_samplers", 3),
+            binding("tex", 2),
+            binding("c_per_object", 0),
+        ];
+        let descriptors = head_descriptors(&bindings);
+        let hash = |name: &str| u32::from(murmur::Murmur32::hash(name.as_bytes()));
+        let names: Vec<u32> = descriptors.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            vec![hash("global_viewport"), hash("c_per_object"), hash("tex")]
+        );
+        assert_eq!(descriptors[0].1, 0x0101); // the engine's mined flags
+        assert_eq!(descriptors[2].1, 2); // an unknown name takes its kind
     }
 
     fn empty_engine_data() -> EngineData {
