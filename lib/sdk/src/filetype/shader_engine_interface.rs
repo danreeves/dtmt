@@ -198,6 +198,43 @@ fn is_global(size: u32) -> bool {
     size == 400
 }
 
+/// The engine's channel shapes, by name hash: each channel's `(kind, offset,
+/// size)` rows within its own extent. `bca` keeps a leading kind-5 row; the
+/// two-float2 shape is the common one, so [`channel_rows`] falls back to it for a
+/// channel the table does not name.
+pub const CHANNELS: &[(u32, &[(u32, u32, u32)])] = &[
+    (0x2FAD_CC8C, &[(5, 0, 4), (1, 4, 8), (1, 16, 8)]), // bca
+];
+
+/// A channel's rows: its entry in [`CHANNELS`], or the common two-float2 shape.
+pub fn channel_rows(hash: u32) -> &'static [(u32, u32, u32)] {
+    CHANNELS
+        .iter()
+        .find(|entry| entry.0 == hash)
+        .map_or(&[(1, 0, 8), (1, 8, 8)], |entry| entry.1)
+}
+
+/// The channel records a `mid` carries for `channels` (their hashes, in
+/// declaration order): each channel's rows, packed one channel after another.
+pub fn channel_records(channels: &[u32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut base = 0u32;
+    for channel in channels {
+        let rows = channel_rows(*channel);
+        for (kind, offset, size) in rows {
+            for word in [*kind, 0, *channel, base + offset, *size] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        base += rows
+            .iter()
+            .map(|(_, offset, size)| offset + size)
+            .max()
+            .unwrap_or(0);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +287,21 @@ mod tests {
             u32::from_le_bytes(mid[at + w * 4..at + w * 4 + 4].try_into().unwrap())
         });
         assert_eq!(engine, [4, 0, 0x57CB_AEC2, 64, 64]);
+    }
+
+    /// The material's channel records pack one channel after another: `bca` 24
+    /// bytes, then `orm` at 24 and `nm` at 40.
+    #[test]
+    fn the_channel_records_pack_sequentially() {
+        let records = channel_records(&[0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3]);
+        assert_eq!(records.len(), 7 * 20);
+        let row = |i: usize| -> [u32; 5] {
+            std::array::from_fn(|w| {
+                u32::from_le_bytes(records[i * 20 + w * 4..i * 20 + w * 4 + 4].try_into().unwrap())
+            })
+        };
+        assert_eq!(row(0), [5, 0, 0x2FAD_CC8C, 0, 4]);
+        assert_eq!(row(3), [1, 0, 0x8655_079C, 24, 8]);
+        assert_eq!(row(6), [1, 0, 0xB45E_95F3, 48, 8]);
     }
 }
