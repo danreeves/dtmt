@@ -979,28 +979,47 @@ fn permutations_contexts(
 /// The `c_per_object` cbuffer hash the packed copies are keyed by.
 const PACKED_CBUFFER: u32 = 0xB563_9618;
 
-/// A group's head descriptors, from the group's programs' reflected bindings:
-/// each distinct binding once, in **first-binding order**, with samplers dropped
-/// (they live in the tail lists, not the head). Flags are the engine's mined
-/// ones, or - for a name the engine table does not know - the binding's own
-/// kind. Measured against the standard's group 0: this reproduces 11 of its 12
-/// shipped descriptors position for position.
-pub fn head_descriptors(bindings: &[dxc::BoundResource]) -> Vec<(u32, u32)> {
-    let mut out: Vec<(u32, u32)> = Vec::new();
-    for binding in bindings {
-        // A sampler is not a head descriptor.
-        if binding.kind == 3 {
-            continue;
+/// A group's head descriptors, from the group's programs' reflected bindings
+/// (in program order, vertex/pixel pairs): each distinct binding once, in
+/// **first-binding order**, with samplers dropped (they live in the tail lists,
+/// not the head). Flags are the engine's mined ones, or - for a name the engine
+/// table does not know - the binding's own kind. `y` is two bits per pass: bit
+/// `2k` when the resource is bound as an SRV in pass `k` (the program pair
+/// `2k`/`2k+1`), bit `2k+1` as a UAV; a cbuffer takes no bit. Measured against
+/// the standard: this reproduces group 0's shipped descriptor list and its
+/// `y` values (`0x155` for an SRV bound in all five passes, `0x2AA` for a UAV).
+pub fn head_descriptors(programs: &[Vec<dxc::BoundResource>]) -> Vec<(u32, u32, u32)> {
+    let mut out: Vec<(u32, u32, u32)> = Vec::new();
+    for (index, bindings) in programs.iter().enumerate() {
+        let pass = index / 2;
+        for binding in bindings {
+            // A sampler is not a head descriptor.
+            if binding.kind == 3 {
+                continue;
+            }
+            let hash = u32::from(murmur::Murmur32::hash(binding.name.as_bytes()));
+            let slot = match out.iter().position(|(name, ..)| *name == hash) {
+                Some(slot) => slot,
+                None => {
+                    let flags = match engine_descriptor_flags(hash) {
+                        0 => binding.kind,
+                        flags => flags,
+                    };
+                    out.push((hash, flags, 0));
+                    out.len() - 1
+                }
+            };
+            // A cbuffer takes no pass bit.
+            if binding.kind == 0 {
+                continue;
+            }
+            let bit = if matches!(binding.kind, 4 | 6..=11) {
+                pass * 2 + 1
+            } else {
+                pass * 2
+            };
+            out[slot].2 |= 1 << bit;
         }
-        let hash = u32::from(murmur::Murmur32::hash(binding.name.as_bytes()));
-        if out.iter().any(|(name, _)| *name == hash) {
-            continue;
-        }
-        let flags = match engine_descriptor_flags(hash) {
-            0 => binding.kind,
-            flags => flags,
-        };
-        out.push((hash, flags));
     }
     out
 }
@@ -2762,7 +2781,8 @@ mod tests {
     }
 
     /// A group's head descriptors: the reflected bindings in first-binding
-    /// order, samplers dropped, flags from the engine table or the kind.
+    /// order, samplers dropped, flags from the engine table or the kind, and the
+    /// per-pass `y` bits.
     #[test]
     fn head_descriptors_are_the_bindings_without_samplers() {
         let binding = |name: &str, kind: u32| dxc::BoundResource {
@@ -2776,20 +2796,37 @@ mod tests {
             size: 0,
             variables: Vec::new(),
         };
-        let bindings = vec![
-            binding("global_viewport", 0),
-            binding("c_per_object", 0),
-            binding("global_samplers", 3),
-            binding("tex", 2),
-            binding("c_per_object", 0),
+        // Two passes (four programs): a cbuffer, an SRV bound in both passes, a
+        // sampler, an unknown SRV in pass 1, and a UAV in pass 1.
+        let programs = vec![
+            vec![
+                binding("global_viewport", 0),
+                binding("idata", 5),
+                binding("global_samplers", 3),
+            ],
+            vec![binding("global_viewport", 0), binding("idata", 5)],
+            vec![binding("idata", 5), binding("tex", 2)],
+            vec![binding("idata", 5), binding("uav", 7)],
         ];
-        let descriptors = head_descriptors(&bindings);
+        let descriptors = head_descriptors(&programs);
         let hash = |name: &str| u32::from(murmur::Murmur32::hash(name.as_bytes()));
-        let names: Vec<u32> = descriptors.iter().map(|(name, _)| *name).collect();
+        let names: Vec<u32> = descriptors.iter().map(|(name, ..)| *name).collect();
         assert_eq!(
             names,
-            vec![hash("global_viewport"), hash("c_per_object"), hash("tex")]
+            vec![
+                hash("global_viewport"),
+                hash("idata"),
+                hash("tex"),
+                hash("uav")
+            ]
         );
+        // A cbuffer takes no bit; `idata` is an SRV in passes 0 and 1 (bits 0 and
+        // 2); `tex` is an SRV only in pass 1 (bit 2); `uav` a UAV only in pass 1
+        // (bit 3).
+        assert_eq!(descriptors[0].2, 0);
+        assert_eq!(descriptors[1].2, 0b0101);
+        assert_eq!(descriptors[2].2, 0b0100);
+        assert_eq!(descriptors[3].2, 0b1000);
         assert_eq!(descriptors[0].1, 0x0101); // the engine's mined flags
         assert_eq!(descriptors[2].1, 2); // an unknown name takes its kind
     }
