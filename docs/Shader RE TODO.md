@@ -450,10 +450,12 @@ listing) plus the name strings gives the walk: the
 `stingray::shader_compiler::make_device_data` name string is referenced once, in a
 *dispatcher* at `0x1403EF787` (it logs the name and switches on the platform id,
 `cmp $0x5`); the per-platform maker pointer comes from an 8-byte table at
-`0x141286CC8` looked up by `0x14069B3A0`; and the `D3DShaderPassData::Shader` array
-is walked at `0x14069B400` (`shl $0x7` - the 128-byte stride - with the array base
-at `0x10(%rbx)`). So the device-data writer's field order is a bounded disassembly
-from `0x14069B400`; `trailing_probe` and a controlled compile are the cross-checks.
+`0x141286CC8` looked up by `0x14069B3A0`; and the type accessors corroborate the
+sizes - `Vector<D3DShaderPassData::Shader>::at` at `0x14069B400` (`shl $0x7` = the
+128-byte stride) and the `InstanceData::Variable` one at `0x14069B490` (`shl $0x4` =
+16). So the writer's field order is a bounded disassembly from there; the
+`.pdata`-less symbols mean it must be found by the field writes, and
+`trailing_probe` plus a controlled compile are the cross-checks.
 
 This confirms the writer's shape directly from the source: the library's
 **state block carries per-record fields the pass declares** (`write_mask0`,
