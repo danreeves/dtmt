@@ -1946,8 +1946,19 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(0x000c_2001);
         w.u32(3);
         w.u32(1);
-        let (min, max) = geometry_bounds(geometry_at(*geometry_index)?);
-        write_bounding_volume(&mut w, min, max);
+        match geometry_at(*geometry_index)?.bounds {
+            // The mesh object's bounds are the geometry's own (baked at cook
+            // time), so a decompiled geometry's `bounds` serve both.
+            Some(bounds) => {
+                for value in bounds {
+                    w.f32(value);
+                }
+            }
+            None => {
+                let (min, max) = geometry_bounds(geometry_at(*geometry_index)?);
+                write_bounding_volume(&mut w, min, max);
+            }
+        }
         w.u32(0); // unknown
     }
 
@@ -1988,7 +1999,13 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         let mut min = [f32::MAX; 3];
         let mut max = [f32::MIN; 3];
         for (_, geometry_index, _) in &meshes {
-            let (mesh_min, mesh_max) = geometry_bounds(geometry_at(*geometry_index)?);
+            let geometry = geometry_at(*geometry_index)?;
+            let (mesh_min, mesh_max) = match geometry.bounds {
+                Some(bounds) => {
+                    ([bounds[0], bounds[1], bounds[2]], [bounds[3], bounds[4], bounds[5]])
+                }
+                None => geometry_bounds(geometry),
+            };
             for axis in 0..3 {
                 min[axis] = min[axis].min(mesh_min[axis]);
                 max[axis] = max[axis].max(mesh_max[axis]);
