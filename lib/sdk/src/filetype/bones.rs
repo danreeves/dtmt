@@ -100,8 +100,13 @@ impl Bones {
 
     /// Writes the cooked bytes back, recomputing each joint's id from its name.
     pub fn to_binary(&self) -> Result<Vec<u8>> {
-        let name_hash = u64::from_str_radix(self.name.trim_start_matches('#'), 16)
-            .map_err(|_| color_eyre::eyre::eyre!("a bones name must be `#<hex>`"))?;
+        // An empty name is written as 0; `compile` sets the resource's own hash.
+        let name_hash = if self.name.is_empty() {
+            0
+        } else {
+            u64::from_str_radix(self.name.trim_start_matches('#'), 16)
+                .map_err(|_| color_eyre::eyre::eyre!("a bones name must be `#<hex>`"))?
+        };
 
         let mut body = Vec::new();
         body.extend_from_slice(&(self.names.len() as u32).to_le_bytes());
