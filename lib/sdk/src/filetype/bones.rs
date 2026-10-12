@@ -227,4 +227,22 @@ mod test {
         bytes[at] ^= 0xFF;
         assert!(Bones::from_binary(&bytes).is_err());
     }
+
+    #[test]
+    fn a_non_bones_type_hash_is_rejected() {
+        let mut bytes = sample();
+        bytes[0] ^= 0xFF;
+        assert!(Bones::from_binary(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_truncated_or_mismatched_envelope_is_rejected() {
+        let bytes = sample();
+        // Shorter than the envelope.
+        assert!(Bones::from_binary(&bytes[..ENVELOPE - 1]).is_err());
+        // A body/stream size that does not add up.
+        let mut wrong = bytes.clone();
+        wrong[29] = wrong[29].wrapping_add(1);
+        assert!(Bones::from_binary(&wrong).is_err());
+    }
 }
