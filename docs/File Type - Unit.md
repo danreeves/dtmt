@@ -229,9 +229,11 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,588 |
 | decoded | 78 |
-| of which **byte-identical to the shipped payload** | **2** |
+| of which **byte-identical to the shipped payload** | **17** |
 
-The first run, before the fix below, was **0** byte-identical.
+The first run, before the fixes below, was **0** byte-identical; the geometry-bounds
+fix took it to 2 and carrying the bounds through to the mesh objects and the LOD
+union took it to 17.
 
 ### Node order was the first cause (fixed)
 
@@ -250,26 +252,28 @@ back.
 
 ### What still differs
 
-The payload's **geometry bounds** are now carried instead of recomputed. They are
-baked at cook time from the *source* mesh, so they are not the min/max of the
-stored (half-float) vertices - recomputing them always drifted. `BsiGeometry` has
-an optional `bounds` (the ten words the payload stores: min, max and four
-bounding-sphere values) which the decompiler fills and the compiler writes back.
+The payload's **bounding volumes** are carried now. They are baked at cook time
+from the *source* mesh, so they are not the min/max of the stored half-float
+vertices and recomputing them always drifted. `BsiGeometry` has an optional
+`bounds` (the ten words the payload stores: min, max and four bounding-sphere
+values) which the decompiler fills, and the compiler reuses for the geometry
+itself, for the mesh objects (whose bounds are the same values) and for the LOD
+union. That is what took the sample from 0 to 17 byte-identical.
 
-That moved `012a19dd517fcdd1`'s first difference from offset **856** (inside the
-geometry's bounding volume) to **1224**. The value at 1224 is the *same* min vector
-in a **mesh-object** bounds block, so the same fix is needed for the mesh objects
-(and LOD objects): the `.unit`'s renderables do not carry their bounds yet.
+The `BsiNode` scene graph also carries the payload's own `index`, `rotation`,
+`scale` and `world`, so the compiler restores the file's flat node order and
+writes the engine's TRS and world matrices back instead of a folded
+`rotation x scale` and a recomputed world.
 
-The scene graph also carries the payload's own transforms and order now: optional
-`index`, `rotation`, `scale` and `world` fields on `BsiNode`, filled by the
-decompiler, so the compiler restores the file's flat node order and writes the
-engine's own TRS and world matrices back rather than a folded `rotation x scale`
-and a recomputed world. An authored `.bsi` omits all of them and keeps the
-previous behaviour - the mod's bundles are byte-identical either way.
+An authored `.bsi` omits every one of those optional fields and keeps the previous
+behaviour - the mod's bundles are byte-identical either way.
 
-`bitsquid/stingray/vertex_stream.py`, `index_stream.py` and `mesh_geometry.py` are
-the reference for the streams themselves.
+The remaining 61 differ later, in narrower ways; the samples show
+- a one-ULP float difference in a stream value (`…a6 37` vs `…a5 37`), and
+- a whole word instead of a float in one stream (`0x000033E5` vs `0x00003A06`),
+
+so the per-channel stream encode (`bitsquid/stingray/vertex_stream.py`,
+`index_stream.py`, `mesh_geometry.py`) is the next thing to compare.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
