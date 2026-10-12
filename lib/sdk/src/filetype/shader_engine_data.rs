@@ -2507,6 +2507,11 @@ impl EngineData {
             if betweens.iter().all(|between| between.0.is_empty()) {
                 betweens.clear();
             }
+            // A group's `mid` derives from its channels, so an all-empty pool is
+            // not written either.
+            if mids.iter().all(|mid| mid.0.is_empty()) {
+                mids.clear();
+            }
             // The prefix is the group count alone in the common case, so it
             // derives from the group list and the text omits it; a section with
             // a longer prefix keeps it.
