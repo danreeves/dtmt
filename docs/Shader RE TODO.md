@@ -85,6 +85,14 @@ omits each program's `group` tag when it equals what that rule produces (verifie
 on the standard: group `i` owns `conditions(i) × 2` consecutive programs). Took the
 file from **14,165 -> 13,801 bytes**, byte-identical.
 
+**The trailings pool as shared-suffix chains (2026-10-12).** The seven distinct
+trailings share long **suffixes** (up to 196 bytes - the per-program resource
+runs), so the pool now stores each as its unique prefix plus a reference to an
+earlier entry's suffix (`tail = { node = 1 start = 162 }`). The text can no longer
+express this as a plain hex list, so an older file re-migrates through
+`to_text` (the intermediate `Vec<Hex>` form is not read back). Took the file from
+**13,801 -> 12,911 bytes**, byte-identical.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
