@@ -313,16 +313,89 @@ impl ShaderDesc {
     }
 }
 
-/// `ID3D12ShaderReflectionConstantBuffer`: `GetDesc` first. The interface does
-/// not inherit `IUnknown`, so it is borrowed and must not be released.
+/// `ID3D12ShaderReflectionConstantBuffer`: `GetDesc`, then the two variable
+/// getters. The interface does not inherit `IUnknown`, so it is borrowed and
+/// must not be released.
 #[repr(C)]
 struct ID3D12ShaderReflectionConstantBufferVtbl {
     get_desc: unsafe extern "system" fn(*mut c_void, *mut ShaderBufferDesc) -> Hresult,
+    get_variable_by_index: unsafe extern "system" fn(*mut c_void, u32) -> *mut c_void,
+    get_variable_by_name: *const c_void,
 }
 
 #[repr(C)]
 struct ID3D12ShaderReflectionConstantBuffer {
     vtable: *const ID3D12ShaderReflectionConstantBufferVtbl,
+}
+
+/// `D3D12_SHADER_VARIABLE_DESC`.
+#[repr(C)]
+#[derive(Default)]
+struct ShaderVariableDesc {
+    name: *const u8,
+    start_offset: u32,
+    size: u32,
+    flags: u32,
+    default_value: *mut c_void,
+    start_texture: u32,
+    texture_size: u32,
+    start_sampler: u32,
+    sampler_size: u32,
+}
+
+/// `D3D12_SHADER_TYPE_DESC`.
+#[repr(C)]
+#[derive(Default)]
+struct ShaderTypeDesc {
+    class: u32,
+    ty: u32,
+    rows: u32,
+    columns: u32,
+    elements: u32,
+    members: u32,
+    offset: u32,
+}
+
+/// `ID3D12ShaderReflectionVariable`: `GetDesc` then `GetType`; borrowed, and
+/// only the first two of the interface's methods are declared.
+#[repr(C)]
+struct ID3D12ShaderReflectionVariableVtbl {
+    get_desc: unsafe extern "system" fn(*mut c_void, *mut ShaderVariableDesc) -> Hresult,
+    get_type: unsafe extern "system" fn(*mut c_void) -> *mut c_void,
+}
+
+#[repr(C)]
+struct ID3D12ShaderReflectionVariable {
+    vtable: *const ID3D12ShaderReflectionVariableVtbl,
+}
+
+/// `ID3D12ShaderReflectionType`: `GetDesc` first; borrowed.
+#[repr(C)]
+struct ID3D12ShaderReflectionTypeVtbl {
+    get_desc: unsafe extern "system" fn(*mut c_void, *mut ShaderTypeDesc) -> Hresult,
+}
+
+#[repr(C)]
+struct ID3D12ShaderReflectionType {
+    vtable: *const ID3D12ShaderReflectionTypeVtbl,
+}
+
+/// The engine's type code for a variable, from the reflection's
+/// `D3D_SHADER_VARIABLE_CLASS` and `D3D_SHADER_VARIABLE_TYPE`: kinds 0..4 are
+/// `float`, `float2`, `float3`, `float4` and a matrix (the sizes 4/8/12/16/64
+/// `group_data`'s canonical records use), and 5 is `uint`.
+fn variable_kind(class: u32, ty: u32, columns: u32) -> u32 {
+    // D3D_SVT_UINT is 3.
+    if ty == 3 {
+        return 5;
+    }
+    match class {
+        // D3D_SVC_SCALAR, then a vector's width, then any matrix.
+        0 => 0,
+        1 => columns.saturating_sub(1).min(3),
+        2 | 3 => 4,
+        _ => 0,
+    }
 }
 
 /// The `ID3D12ShaderReflection` methods this crate calls, in the header's
@@ -367,6 +440,24 @@ pub struct BoundResource {
     pub samples: u32,
     /// A constant buffer's byte size; 0 for every other kind.
     pub size: u32,
+    /// A constant buffer's variables, in declaration order; empty for every
+    /// other kind. Each is the name, byte offset, size and engine type code a
+    /// `group_data` canonical record needs.
+    pub variables: Vec<CbufferVariable>,
+}
+
+/// One variable of a constant buffer, as the reflection reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CbufferVariable {
+    /// The name the HLSL gave it.
+    pub name: String,
+    /// Its byte offset in the buffer.
+    pub offset: u32,
+    /// Its size in bytes.
+    pub size: u32,
+    /// The engine's type code, mapped from the reflection's class and type by
+    /// [`variable_kind`].
+    pub kind: u32,
 }
 
 /// The `DxcCreateInstance` export's signature.
@@ -628,6 +719,8 @@ impl Compiler {
         // carry: `D3D12_SHADER_BUFFER_DESC.Size`, by name.
         let mut cbuffer_sizes: std::collections::BTreeMap<String, u32> =
             std::collections::BTreeMap::new();
+        let mut cbuffer_variables: std::collections::BTreeMap<String, Vec<CbufferVariable>> =
+            std::collections::BTreeMap::new();
         for index in 0..constant_buffers {
             let buffer = unsafe {
                 ((*vtable).get_constant_buffer_by_index)(reflection as *mut c_void, index)
@@ -648,7 +741,46 @@ impl Compiler {
                     .to_string_lossy()
                     .into_owned()
             };
-            cbuffer_sizes.insert(name, desc.size);
+            // The buffer's variables, in declaration order: the canonical
+            // records a group's `mid` carries.
+            let mut variables = Vec::new();
+            for variable in 0..desc.variables {
+                let var = unsafe {
+                    ((*(*buffer).vtable).get_variable_by_index)(buffer as *mut c_void, variable)
+                };
+                if var.is_null() {
+                    break;
+                }
+                let var = var as *mut ID3D12ShaderReflectionVariable;
+                let mut vdesc = ShaderVariableDesc::default();
+                if unsafe { ((*(*var).vtable).get_desc)(var as *mut c_void, &mut vdesc) } < 0 {
+                    continue;
+                }
+                let name = if vdesc.name.is_null() {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(vdesc.name as *const i8) }
+                        .to_string_lossy()
+                        .into_owned()
+                };
+                let mut kind = 0;
+                let ty = unsafe { ((*(*var).vtable).get_type)(var as *mut c_void) };
+                if !ty.is_null() {
+                    let ty = ty as *mut ID3D12ShaderReflectionType;
+                    let mut tdesc = ShaderTypeDesc::default();
+                    if unsafe { ((*(*ty).vtable).get_desc)(ty as *mut c_void, &mut tdesc) } >= 0 {
+                        kind = variable_kind(tdesc.class, tdesc.ty, tdesc.columns);
+                    }
+                }
+                variables.push(CbufferVariable {
+                    name,
+                    offset: vdesc.start_offset,
+                    size: vdesc.size,
+                    kind,
+                });
+            }
+            cbuffer_sizes.insert(name.clone(), desc.size);
+            cbuffer_variables.insert(name, variables);
         }
 
         // The count lives in `D3D12_SHADER_DESC`, whose layout is ABI-sized;
@@ -670,6 +802,7 @@ impl Compiler {
                     .into_owned()
             };
             let size = cbuffer_sizes.get(&name).copied().unwrap_or(0);
+            let variables = cbuffer_variables.remove(&name).unwrap_or_default();
             bindings.push(BoundResource {
                 name,
                 kind: desc.kind,
@@ -679,6 +812,7 @@ impl Compiler {
                 space: desc.space,
                 samples: desc.samples,
                 size,
+                variables,
             });
         }
 

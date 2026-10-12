@@ -27,8 +27,28 @@ fn section_bytes(data: &[u8]) -> Option<&[u8]> {
     data.get(20..)
 }
 
-fn kind_name(kind: u32) -> &'static str {
-    match kind {
+/// One binding, and - for a constant buffer - its variables, which are the
+/// canonical records a group's `mid` carries.
+fn dump_binding(binding: &dxc::BoundResource) {
+    println!(
+        "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {}",
+        binding.name,
+        binding.kind,
+        kind_name(binding.kind),
+        binding.bind_point,
+        binding.bind_count,
+        binding.flags,
+        binding.space
+    );
+    for variable in &binding.variables {
+        println!(
+            "        var {:?} offset {} size {} kind {}",
+            variable.name, variable.offset, variable.size, variable.kind
+        );
+    }
+}
+
+fn kind_name(kind: u32) -> &'static str {    match kind {
         0 => "cbuffer",
         1 => "tbuffer",
         2 => "texture",
@@ -55,16 +75,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match dxc::reflect(&data) {
                 Ok(bindings) => {
                     for binding in &bindings {
-                        println!(
-                            "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {}",
-                            binding.name,
-                            binding.kind,
-                            kind_name(binding.kind),
-                            binding.bind_point,
-                            binding.bind_count,
-                            binding.flags,
-                            binding.space
-                        );
+                        dump_binding(binding);
                     }
                 }
                 Err(err) => println!("    reflection failed: {err}"),
@@ -90,16 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match dxc::reflect(&program.container) {
                 Ok(bindings) => {
                     for binding in &bindings {
-                        println!(
-                            "    {:?} kind {} ({}) bind {} count {} flags {:#x} space {}",
-                            binding.name,
-                            binding.kind,
-                            kind_name(binding.kind),
-                            binding.bind_point,
-                            binding.bind_count,
-                            binding.flags,
-                            binding.space
-                        );
+                        dump_binding(binding);
                     }
                 }
                 Err(err) => println!("    reflection failed: {err}"),

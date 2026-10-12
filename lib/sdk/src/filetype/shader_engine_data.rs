@@ -3341,6 +3341,7 @@ programs = []
                 space,
                 samples,
                 size: 0,
+                variables: Vec::new(),
             }
         }
 
