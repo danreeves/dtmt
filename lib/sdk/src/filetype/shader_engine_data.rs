@@ -864,6 +864,11 @@ struct GroupText {
     /// group with no engine table writes `engine = false`.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     engine: bool,
+    /// The material's channels this group carries, one little-endian `u32` name
+    /// hash after another. Written only when the file does not carry the `mid`s,
+    /// so the build derives them.
+    #[serde(default, skip_serializing_if = "Hex::is_empty")]
+    channels: Hex,
 }
 
 /// The default for `GroupText.engine`.
@@ -1786,6 +1791,7 @@ impl EngineData {
                             material: 0,
                             material_first: true,
                             engine: true,
+                            channels: Hex(Vec::new()),
                         })
                         .collect()
                 }
@@ -1839,6 +1845,12 @@ impl EngineData {
                                 group.tail
                             )
                         })?,
+                    channels: group
+                        .channels
+                        .0
+                        .chunks_exact(4)
+                        .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+                        .collect(),
                 });
                 group_tail_slots.push(group.tail);
                 // An empty `materials` list means the table is derived - the
@@ -2052,6 +2064,13 @@ impl EngineData {
                     material: material_indexes.get(index).copied().unwrap_or(0),
                     material_first: parts.material_first,
                     engine: parts.has_engine,
+                    channels: Hex(
+                        parts
+                            .channels
+                            .iter()
+                            .flat_map(|channel| channel.to_le_bytes())
+                            .collect(),
+                    ),
                 });
             }
 
@@ -2684,6 +2703,7 @@ impl EngineData {
                     between: Vec::new(),
                     mid: Vec::new(),
                     tail: bytes,
+                    channels: Vec::new(),
                 });
             }
             (groups, slots)
@@ -2703,6 +2723,7 @@ impl EngineData {
                     between: Vec::new(),
                     mid: Vec::new(),
                     tail: pool[index / repeat].clone(),
+                    channels: Vec::new(),
                 })
                 .collect();
             let slots = (0..groups.len()).map(|index| index / repeat).collect();
@@ -3170,6 +3191,7 @@ programs = []
             between: vec![0u8; 12],
             mid: vec![0u8; 28],
             tail: vec![0u8; 8],
+            channels: Vec::new(),
         };
         let template = GroupTemplate {
             prefix: 2u32.to_le_bytes().to_vec(),
@@ -3249,6 +3271,7 @@ programs = []
             between: vec![0u8; 12],
             mid: vec![0u8; 8],
             tail,
+            channels: Vec::new(),
         };
         let template = GroupTemplate {
             prefix: 6u32.to_le_bytes().to_vec(),
@@ -3512,6 +3535,7 @@ programs = []
                 between: Vec::new(),
                 mid: Vec::new(),
                 tail: Vec::new(),
+                channels: Vec::new(),
             }],
             // The engine table's extent gives global_viewport 1792 (1788
             // rounded up to 16).
@@ -4000,6 +4024,7 @@ programs = []
             between: Vec::new(),
             mid: Vec::new(),
             tail: Vec::new(),
+            channels: Vec::new(),
         };
         let template = GroupTemplate {
             prefix: 1u32.to_le_bytes().to_vec(),

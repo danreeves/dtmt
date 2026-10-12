@@ -1137,6 +1137,9 @@ impl GroupData {
                     .get(second_at + second_len * RECORD_LEN..tail_start)?
                     .to_vec(),
                 tail: self.data.get(tail_start..end)?.to_vec(),
+                // A template cut from a shipped blob has no channel list; the
+                // `mid` it carries is the source instead.
+                channels: Vec::new(),
             });
         }
         Some(GroupTemplate {
@@ -1259,6 +1262,11 @@ pub struct GroupParts {
     pub mid: Vec<u8>,
     /// The condition header's bytes after that shared 28-byte record.
     pub tail: Vec<u8>,
+    /// The material's channels this group carries, as name hashes in the order
+    /// the `mid` packs them. A file whose `mid` is empty carries these instead,
+    /// and the build derives the `mid` from them (see
+    /// [`crate::filetype::shader_engine_interface::derived_mid`]).
+    pub channels: Vec<u32>,
 }
 
 /// Rewrites a run of canonical records in place, shrinking the run to fit and
