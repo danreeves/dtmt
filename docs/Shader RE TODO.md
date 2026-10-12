@@ -1104,10 +1104,14 @@ differently - the next gap on the road to dropping the engine data.
 the `mid`'s first section begins with. So the material table and the `mid` share
 one source: **the material's channels**. The `--reconstruct` path emits `inputs`
 from the section's *object table* (`#78E25D0F`, `#9A531871`, neither of which is
-a channel), which is why dropping the `materials` pool does not reproduce the
-section - the reconstruction should emit the channels (its `samplers` block
-already lists `bca`/`orm`/`nm`), and then the same channel records would drive
-both the material table and the `mid`.
+a channel). But the derivation is **already implemented**: `build.rs`'s
+`material_records` builds the table from the graph's sampled channels - `{5, 0,
+<channel>, offset, 4}`, `{1, 0, <channel>, offset + 4, 8}`, `{1, 0, <channel>,
+offset + 16, 8}` per channel - then the engine's `view_proj` / `world_view_proj` /
+`world` rows at 64 bytes each, then the declaration's own variables. So the +112
+B is a detail of those records (the shipped table also carries `last_world`)
+rather than a missing input - and the same channel rows are what the `mid`'s
+first section starts with, so one fix serves both.
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
