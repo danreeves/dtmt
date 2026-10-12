@@ -250,20 +250,26 @@ back.
 
 ### What still differs
 
-The remaining 76 first differ **before** the scene graph, so the loss is in the
-**geometry** section, not the node transforms. For `012a19dd517fcdd1` (1833 bytes)
-the first difference is at **856**, inside the stream data, and the rebuilt values
-come back with their low mantissa bits zeroed (`0xBEE09822` -> `0xBEE0A000`). So
-the vertex/index stream encode is the next thing to chase;
-`bitsquid/stingray/vertex_stream.py`, `index_stream.py` and `mesh_geometry.py` are
-the reference.
+The payload's **geometry bounds** are now carried instead of recomputed. They are
+baked at cook time from the *source* mesh, so they are not the min/max of the
+stored (half-float) vertices - recomputing them always drifted. `BsiGeometry` has
+an optional `bounds` (the ten words the payload stores: min, max and four
+bounding-sphere values) which the decompiler fills and the compiler writes back.
 
-The scene graph no longer has to lose anything: `BsiNode` carries optional
-`rotation`, `scale` and `world` fields, and the decompiler fills them from the
-payload, so the compiler writes the engine's own TRS and world matrices back
-instead of the folded `rotation x scale` and a recomputed world matrix. An
-authored `.bsi` omits them and keeps the previous behaviour - the mod's bundles are
-byte-identical either way.
+That moved `012a19dd517fcdd1`'s first difference from offset **856** (inside the
+geometry's bounding volume) to **1224**. The value at 1224 is the *same* min vector
+in a **mesh-object** bounds block, so the same fix is needed for the mesh objects
+(and LOD objects): the `.unit`'s renderables do not carry their bounds yet.
+
+The scene graph also carries the payload's own transforms and order now: optional
+`index`, `rotation`, `scale` and `world` fields on `BsiNode`, filled by the
+decompiler, so the compiler restores the file's flat node order and writes the
+engine's own TRS and world matrices back rather than a folded `rotation x scale`
+and a recomputed world. An authored `.bsi` omits all of them and keeps the
+previous behaviour - the mod's bundles are byte-identical either way.
+
+`bitsquid/stingray/vertex_stream.py`, `index_stream.py` and `mesh_geometry.py` are
+the reference for the streams themselves.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
