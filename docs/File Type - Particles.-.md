@@ -57,6 +57,12 @@ the systems are hex. The community `particles_resource.{h,cpp}` decodes and
 encodes every shipped effect exactly and publishes the component schema, so it
 is the reference to port next.
 
+**Verified on a shipped effect** (2026-10-12): `dtmt bundle extract --decompile`
+on `content/fx/particles/explosions/expeditions_explosion_trap` yields
+`life_time = 4`, `culling_distance = 30`, `use_random_seed = true`, one variable
+(`#197aa554`) and ten systems (each ~4.6 KB). So the effect-header / variable /
+system walk matches the game's own resources.
+
 ## Reference
 
 `C:\dev\Darktide-Asset-Compiler` (`github.com/fviuff/Darktide-Asset-Compiler`),
