@@ -287,9 +287,12 @@ Two concrete losses remain there:
   position element's fourth half differs - that is the `00 3C 02 00` vs
   `00 3C 00 3C` pair at offset 2292. The value is not used by the renderer, but it
   is stored;
-- an octahedral coordinate can come back different by more than a rounding
-  (`0x33E5` -> `0x3A07`), so `oct_decode`/`oct_encode` are not an exact inverse
-  pair as the engine's own path is.
+- a stream value can come back **complemented**: the sample's `0x33E5` (`0.24670`)
+  becomes `0x3A07` (`0.75342`), and those sum to 1.0001, i.e. the octahedral
+  coordinate's **sign / fold branch** is flipped (`2u-1` is `-0.5066` shipped and
+  `+0.5068` rebuilt). So `oct_decode`/`oct_encode` agree with the reference in
+  form but do not reproduce the engine's choice of branch on a borderline (near
+  `z = 0`) normal, which is where a fold flips.
 
 The straightforward way to close both - and the pattern that has worked for the
 bounds - is to let a decompiled stream carry its **raw bytes** as an optional field
