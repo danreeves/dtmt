@@ -577,7 +577,7 @@ struct Text {
     /// The distinct bytes a block puts after the preamble body slice, which the
     /// blocks' `trailing` indexes name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    block_trailings: Vec<Hex>,
+    block_trailings: Vec<TrailingText>,
     /// Distinct program tails, referenced by `programs[].tail`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tails: Vec<TailText>,
@@ -1352,6 +1352,94 @@ struct BlockDiff {
     trailing: Option<usize>,
 }
 
+/// One entry of the shared trailing pool: its own bytes, then (when it has one)
+/// another entry's bytes from an offset. The trailings share long suffixes (the
+/// per-program resource runs), so a later one writes only its unique prefix and
+/// references the earlier one's suffix.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TrailingText {
+    #[serde(default, skip_serializing_if = "Hex::is_empty")]
+    prefix: Hex,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tail: Option<TailRef>,
+}
+
+/// A reference into the trailing pool: `node`'s bytes from `start`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TailRef {
+    node: usize,
+    start: usize,
+}
+
+/// The trailing pool while a file is written: the entries, and the bytes each
+/// one stands for (so a new trailing can find the longest suffix to reference).
+#[derive(Default)]
+struct TrailingPool {
+    entries: Vec<TrailingText>,
+    bytes: Vec<Vec<u8>>,
+}
+
+impl TrailingPool {
+    /// Adds `value` and returns its index. A trailing that ends with a suffix of
+    /// an entry already in the pool is stored as its unique prefix plus a
+    /// reference to that suffix.
+    fn intern(&mut self, value: &[u8]) -> usize {
+        if let Some(index) = self.bytes.iter().position(|bytes| bytes == value) {
+            return index;
+        }
+        let mut best: Option<(usize, usize, usize)> = None;
+        for (node, bytes) in self.bytes.iter().enumerate() {
+            let mut run = 0;
+            while run < bytes.len().min(value.len())
+                && bytes[bytes.len() - 1 - run] == value[value.len() - 1 - run]
+            {
+                run += 1;
+            }
+            if run > 0 && best.map_or(true, |(_, _, longest)| run > longest) {
+                best = Some((node, bytes.len() - run, run));
+            }
+        }
+        let entry = match best {
+            Some((node, start, run)) => TrailingText {
+                prefix: value[..value.len() - run].to_vec().into(),
+                tail: Some(TailRef { node, start }),
+            },
+            None => TrailingText {
+                prefix: value.to_vec().into(),
+                tail: None,
+            },
+        };
+        let index = self.entries.len();
+        self.bytes.push(value.to_vec());
+        self.entries.push(entry);
+        index
+    }
+}
+
+/// Reads the bytes an entry of the trailing pool stands for.
+fn trailing_bytes(entries: &[TrailingText], index: usize) -> Result<Vec<u8>> {
+    fn read(entries: &[TrailingText], index: usize, budget: usize) -> Result<Vec<u8>> {
+        if budget == 0 {
+            color_eyre::eyre::bail!("the trailing pool has a cycle");
+        }
+        let entry = entries
+            .get(index)
+            .ok_or_else(|| color_eyre::eyre::eyre!("a trailing reference is out of range"))?;
+        let mut bytes = entry.prefix.0.clone();
+        if let Some(tail) = &entry.tail {
+            let parent = read(entries, tail.node, budget - 1)?;
+            let slice = parent.get(tail.start..).ok_or_else(|| {
+                color_eyre::eyre::eyre!("a trailing reference's start is out of range")
+            })?;
+            bytes.extend_from_slice(slice);
+        }
+        Ok(bytes)
+    }
+    read(entries, index, entries.len() + 1)
+}
+
 /// Serde skip for a zero `u32`.
 fn is_zero(value: &u32) -> bool {
     *value == 0
@@ -1398,7 +1486,7 @@ fn block_text(
     block: &[u8],
     preamble: &[u8],
     heads: &mut Vec<Hex>,
-    trailings: &mut Vec<Hex>,
+    trailings: &mut TrailingPool,
 ) -> BlockText {
     let body = preamble.get(12..).unwrap_or_default();
     if body.is_empty() {
@@ -1450,15 +1538,7 @@ fn block_text(
     // The trailing does too: a permutation's vertex and pixel blocks (and the
     // next permutation's when a channel repeats) end with the same bytes.
     let trailing = block[at + len..].to_vec();
-    let trailing = (!trailing.is_empty()).then(|| {
-        match trailings.iter().position(|other| other.0 == trailing) {
-            Some(index) => index,
-            None => {
-                trailings.push(trailing.into());
-                trailings.len() - 1
-            }
-        }
-    });
+    let trailing = (!trailing.is_empty()).then(|| trailings.intern(&trailing));
     BlockText::Body(BlockDiff {
         head,
         body_start: start as u32,
@@ -1473,7 +1553,7 @@ fn block_bytes(
     spec: &BlockText,
     preamble: &[u8],
     heads: &[Hex],
-    trailings: &[Hex],
+    trailings: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
     match spec {
         BlockText::Hex(hex) => Ok(hex.0.clone()),
@@ -1511,7 +1591,7 @@ fn block_bytes(
                 let trailing = trailings
                     .get(index)
                     .ok_or_else(|| color_eyre::eyre::eyre!("a block trailing is out of range"))?;
-                block.extend_from_slice(&trailing.0);
+                block.extend_from_slice(trailing);
             }
             Ok(block)
         }
@@ -2039,6 +2119,9 @@ impl EngineData {
         // lists for it to fill; a carried tail is the whole tail. A tail written
         // with `lists` (even an all-zero one) is carried whole, and its program
         // must not be derived.
+        let trailing_bytes: Vec<Vec<u8>> = (0..text.block_trailings.len())
+            .map(|index| trailing_bytes(&text.block_trailings, index))
+            .collect::<Result<_>>()?;
         let split_flags: Vec<bool> = text.tails.iter().map(|tail| tail.lists.is_none()).collect();
         for tail in text.tails {
             let mut bytes = match &tail.lists {
@@ -2055,7 +2138,7 @@ impl EngineData {
                     block,
                     &engine_data.device_preamble,
                     &text.block_heads,
-                    &text.block_trailings,
+                    &trailing_bytes,
                 )?);
             }
             engine_data.tails.push(bytes);
@@ -2288,7 +2371,7 @@ impl EngineData {
             }
         }
         let mut block_heads: Vec<Hex> = Vec::new();
-        let mut block_trailings: Vec<Hex> = Vec::new();
+        let mut block_trailings = TrailingPool::default();
         // A split tail's resource records index the group's descriptor list. A
         // family whose groups agree on it (or whose programs carry their group
         // via `program_groups`, derived or written) can split; one that does
@@ -2452,7 +2535,7 @@ impl EngineData {
             group_template,
             containers: containers.iter().map(|bytes| Hex((*bytes).clone())).collect(),
             block_heads,
-            block_trailings,
+            block_trailings: block_trailings.entries,
             tails,
             programs,
         }
@@ -4261,9 +4344,9 @@ programs = []
         headed.extend_from_slice(&body);
         for block in [body.clone(), patched, headed] {
             let mut heads = Vec::new();
-            let mut trailings = Vec::new();
+            let mut trailings = TrailingPool::default();
             let spec = block_text(&block, &preamble, &mut heads, &mut trailings);
-            let parsed = block_bytes(&spec, &preamble, &heads, &trailings).unwrap();
+            let parsed = block_bytes(&spec, &preamble, &heads, &trailings.bytes).unwrap();
             assert_eq!(parsed, block, "spec {spec:?}");
         }
     }
