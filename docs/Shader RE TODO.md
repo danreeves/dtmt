@@ -374,6 +374,26 @@ channel slots, `0x0C..0x1A` the engine variable block). `4B32DF61` is not a plai
 name hash of any token, so it is the per-library/query identity, like the
 `shader43` query id.
 
+**A second library confirms the header *is* the writer's device data
+(2026-10-12).** `linearize_depth.shader_library`
+(`data/02/0205d79d3be91999`, 5776 B - the `linearize_depth` filter in
+`post_processing/utilities.shader_source`) is a **945-byte header + its DXBC**
+(`DXBC` at `+0x3B1`, chunks `RDEF` `ISGN` `OSGN` `SHEX` `STAT`). The header is the
+VT2 writer's per-pass data - the analog of the `shader43` **shader_data** and
+**block** together - and it is readable: `+0x00` the config count
+(`0x4C` = 76), `+0x04` `2`, `+0x08` the per-library hash, then **variable-length
+cbuffer records** shaped `{variable_count, 0, name, 0, size, ...}` - `world_view_proj`
+(`A17AE7B4`) at `+0x48` with its size `0x40` at `+0x50`, the second cbuffer
+(`CDF7C2BF`) at `+0x68` with size `0x0C` at `+0x70`, matching the filter's own
+`CBUFFER_START(c0)`. The RTTI names give the shape the header holds:
+`D3DShaderPassData::Shader::{ConstantBufferBindInfo, ResourceBindInfo,
+SamplerBindInfo}`, `StreamOutDeclaration::Channel`, `InstanceData::Variable`. So the
+`shader43` block looks like a `D3DShaderPassData` - its **head** the shader bind
+infos, its **body** the engine's `InstanceData` variables (the preamble's 30
+records), its **trailing** the stream-out/state records. Next: decode the header's
+variable records and `make_device_data`'s field offsets (`objdump` ships with
+w64devkit; `make_device_data` is the disassembly target).
+
 This confirms the writer's shape directly from the source: the library's
 **state block carries per-record fields the pass declares** (`write_mask0`,
 blend, z state), which is exactly where the `shader43` block's seam/mask words
