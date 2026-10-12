@@ -18,13 +18,39 @@ community project is found that already knows part of a format.
 known for usable results, gaps remain; *Limited* - some work begun; *None* -
 nothing known.
 
+## The shader goal (top priority)
+
+**Every shader should compile from its own `.material` + `.shader_node` +
+`.shader_source`, with no carried `shader_engine_data` side file.** Per family,
+as of 2026-10-12:
+
+- **`ui_default_base` (GUI / title): done.** No engine data - it builds from the
+  declaration alone (section `CD9854D69AC9A5B7`), verified in game.
+- **`standard_base`: not done.** Still ships `standard_base.engine_data`
+  (**42,091 B**, down from 375,410). The programs' **cbuffer and resource lists
+  now derive** from the compiled containers, so the file no longer carries them
+  - but it still carries the **group template** (descriptor lists/head,
+  `between`, per-group `mid` and material table, the group list),
+  **contexts/conditions/preamble**, the **per-program device blocks** (~23 KB)
+  and the **program list**. Blocked on three decodes (all in
+  `Shader RE TODO.md`): the head's **header word**, the per-group **`mid`**, and
+  the **program block grammar**.
+- **Particle shaders: not started.** The `particles` file type decodes the
+  particle **effect resource** (`filetype/particles.rs`), *not* a shader; no
+  particle `.shader_node`/`.shader_source` work exists.
+
+Also outstanding for **any** custom shader: our own **interface** (our own
+cbuffers, resources and channels) is still blocked on the device block's record
+grammar - a custom base material can only use a shipped interface today.
+
 ## Where things stand
 
 - **Compile + decompile work today:** Bundle, Bundle Database, Package, Lua,
   Strings, Texture (partial), Material (partial), Unit (partial).
-- **Active workstream:** the material **shader** - deleting `.engine_data` and
-  deriving the `shader43` section from `.material` + `.shader_node` +
-  `.shader_source`. See `Shader RE TODO.md`.
+- **Active workstream (top priority):** the material **shader** - deleting
+  `.engine_data` and deriving the `shader43` section from `.material` +
+  `.shader_node` + `.shader_source`. See "The shader goal" above and
+  `Shader RE TODO.md`.
 - **Formats with real work left:** the shader section, Particles, Level, Sound,
   and the resource side a Unit pulls in (Bones, Animation, State Machine, Flow,
   Physics).
@@ -56,6 +82,20 @@ nothing known.
 
 These move on their own schedule, so revisit them when a format's decode is
 picked up - someone may already have cracked it.
+
+### VT2 SDK (the writer's ground truth)
+
+`C:\Program Files (x86)\Steam\steamapps\common\Vermintide 2 SDK` - the official
+Vermintide 2 SDK. Under `TEMP/streamable_resources_compile/` it ships the
+toolchain's **own** compiler output: 250 compiled `.shader_library` files (the
+VT2 device data), `debug_file_index.sjson` naming every one, and
+`shader_cache.db`. Its dev binaries carry RTTI/assert strings that name the
+writer's types and functions (`stingray::shader_compiler::make_device_data`,
+`stingray::D3DShaderPassData` and its `ResourceBindInfo`/`ConstantBufferBindInfo`
+/`SamplerBindInfo`, `D3DShaderPass::initialize_shader_program`, ...), and the
+source file names (`platform_d3d12.cpp`, `platform_interface.cpp`,
+`library_compiler.cpp`). It is the closest thing to a spec for the `shader43`
+writer. See `Shader RE TODO.md`, "The VT2 SDK is the writer's ground truth".
 
 ### Darktide-Asset-Compiler
 
