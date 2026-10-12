@@ -187,6 +187,16 @@ old helper is gone). The shared-front/back threshold (`MIN_SHARED`) was over
 conservative at 24 - a compact `head = "2:60"` reference costs about a line, so a
 12-byte share already pays. Took the file from **9,651 -> 9,578 bytes**.
 
+**The group head's layout is pinned (2026-10-12).** Reading a shipped head as
+`u32` words shows the exact shape: `{header, descriptor_count, {name, flags, x, y} x
+count, {cbuffer_count, engine_record_count}}`. Group 0's 208 bytes are
+`{0x390, 12, ...}` with twelve descriptors (`global_viewport` `0x516D5CCD` flags
+`0x0101`, `c_per_object` `0xB5639618` 0, `bones` `0x18DEAD01` `0x00400004` with
+`y = 0x155`, ...), then `{5, 69}` - five cbuffer descriptors and the engine table's
+69 records. That is what `derived_head_for_group` rebuilds. The **block** head is a
+*different* table (program 1's 104 bytes start `{2, 0, 4, 2, 0x100, ...}` and trail
+`{42, 30}`), so the group derivation does not cover it - see above.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
