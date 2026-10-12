@@ -30,9 +30,38 @@ fn head_descriptors(head: &[u8]) -> Option<Vec<[u32; 4]>> {
     )
 }
 
+/// Walks a group's `mid` with the measured grammar: sections of
+/// `{w1, w2, count}` followed by `count` records - 20-byte canonical records,
+/// and a final 28-byte packed-copy section. `None` when the walk does not land
+/// exactly on the end.
+fn mid_sections(mid: &[u8]) -> Option<Vec<(u32, u32, usize, usize)>> {
+    const RECORD_LEN: usize = 20;
+    const PACKED_LEN: usize = 28;
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(mid.get(at..at + 4)?.try_into().ok()?))
+    };
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 12 <= mid.len() {
+        let (w1, w2) = (word(at)?, word(at + 4)?);
+        let count = word(at + 8)? as usize;
+        let rest = mid.len() - at - 12;
+        let size = if count > 0 && rest == count * PACKED_LEN {
+            PACKED_LEN
+        } else {
+            RECORD_LEN
+        };
+        out.push((w1, w2, count, size));
+        at += 12 + count * size;
+        if count == 0 {
+            break;
+        }
+    }
+    (at == mid.len()).then_some(out)
+}
+
 /// murmur32 of the engine's own resource names, for a readable descriptor dump.
-fn known_name(hash: u32) -> Option<&'static str> {
-    for name in [
+fn known_name(hash: u32) -> Option<&'static str> {    for name in [
         "global_viewport",
         "c_per_object",
         "c_instance_offset",
@@ -81,6 +110,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .unwrap_or_default();
                         println!("      [{slot:2}] {name:08X}{label:<24} flags {flags:08X} x {x} y {y}");
                     }
+                }
+                match mid_sections(&parts.mid) {
+                    Some(sections) => println!(
+                        "      mid: {}",
+                        sections
+                            .iter()
+                            .map(|(w1, w2, count, size)| format!("{{W1={w1} W2={w2} n={count} x{size}w}}"))
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                    None => println!("      mid: does not walk ({} B)", parts.mid.len()),
                 }
             }
             println!("engine records: {}", template.engine.len());
