@@ -93,6 +93,15 @@ express this as a plain hex list, so an older file re-migrates through
 `to_text` (the intermediate `Vec<Hex>` form is not read back). Took the file from
 **13,801 -> 12,911 bytes**, byte-identical.
 
+**The blocks' head and trailing pools share fronts and backs (2026-10-12).** The
+same pool (`BytesPool` / `ChunkText`) now serves the block **heads** too, which
+share long **fronts** (up to 60 bytes) - a value is written as its own middle bytes
+with an optional `head = { node, len }` front and `tail = { node, start }` back. A
+shared run is only referenced when it is at least 24 bytes (below that the fields
+cost more than the bytes they save). A plain blob still parses (`ChunkText` is an
+untagged `Plain(Hex) | Parts`), so an older pool migrates through `to_text`. Took
+the file from **12,911 -> 12,546 bytes**, byte-identical.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
