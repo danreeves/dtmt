@@ -183,7 +183,10 @@ and the reader expands through it. Took the file from **9,763 -> 9,651 bytes**.
 - a program's **`job`**: deleting the tags rebuilds a section **127 KB smaller**
   (the build compiles the declaration's jobs and frames each program with its
   container), so it is load-bearing despite the build path not reading
-  `program_jobs` directly.
+  `program_jobs` directly;
+- the **material tables** (554 B): deleting the `materials` pool and rebuilding
+  gives a section **112 bytes larger** whose body differs throughout (not a plain
+  insertion), so the derived table is not the shipped one and the pool is carried.
 
 **Stage names are unquoted, and shorter shares pay (2026-10-12).** `serde_sjson`
 writes a `String` raw, so the `serialize_quoted` wrapper on a program's stage was
