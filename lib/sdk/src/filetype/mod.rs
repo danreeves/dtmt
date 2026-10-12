@@ -14,6 +14,7 @@ pub mod shader_decl;
 pub mod shader_engine_block;
 pub mod shader_node;
 pub mod shader_engine_data;
+pub mod shader_engine_interface;
 pub mod shader_graph;
 pub mod shader_source;
 pub mod strings;
