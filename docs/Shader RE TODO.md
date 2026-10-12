@@ -180,6 +180,13 @@ and the reader expands through it. Took the file from **9,763 -> 9,651 bytes**.
   container), so it is load-bearing despite the build path not reading
   `program_jobs` directly.
 
+**Stage names are unquoted, and shorter shares pay (2026-10-12).** `serde_sjson`
+writes a `String` raw, so the `serialize_quoted` wrapper on a program's stage was
+what forced `"Vertex"`; dropping it writes the SJSON-idiomatic `Vertex` (and the
+old helper is gone). The shared-front/back threshold (`MIN_SHARED`) was over
+conservative at 24 - a compact `head = "2:60"` reference costs about a line, so a
+12-byte share already pays. Took the file from **9,651 -> 9,578 bytes**.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
