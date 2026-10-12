@@ -47,5 +47,43 @@ fn main() -> Result<(), Box<dyn Error>> {
             block.len()
         );
     }
+
+    // Where the body's records sit in the first pixel block, in block order.
+    let Some((_, block)) = engine_data
+        .programs
+        .iter()
+        .find(|(stage, block)| *stage == sdk::filetype::shader::Stage::Pixel && block.len() > 128)
+    else {
+        return Ok(());
+    };
+    let mut at: Vec<(usize, usize)> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(index, record)| {
+            block
+                .windows(12)
+                .position(|window| window == &record[..])
+                .map(|offset| (offset, index))
+        })
+        .collect();
+    at.sort();
+    println!("the body's records in the block, in block order (offset, record):");
+    for (offset, index) in &at {
+        let record = records[*index];
+        let words: Vec<u32> = record
+            .chunks(4)
+            .map(|word| u32::from_le_bytes(word.try_into().unwrap()))
+            .collect();
+        println!(
+            "  {offset:5}  record {index:2}  {words:08X?}  gap-before {}",
+            offset
+                - at
+                    .iter()
+                    .filter(|(other, _)| other < offset)
+                    .map(|(other, _)| other + 12)
+                    .max()
+                    .unwrap_or(0)
+        );
+    }
     Ok(())
 }

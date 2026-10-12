@@ -1268,6 +1268,28 @@ record. So "re-layout" is now precise: a pixel block is the preamble's body
 plus the program's own data. The grammar to find is the per-record re-encoding
 rule and then the program's extra records.
 
+**A block is head + the shared body + the program's data (2026-10-12).** The
+probe now prints where the body's records sit in a pixel block:
+
+```
+144  record  0  [00000000, 00000000, 00000300]
+156  record  1  [00000000, 00000000, 001D0000]
+168  record  2  [00000000, 00000000, 08000000]
+...  (in the body's own order)
+348  record 17  ...  gap-before 12
+...
+480  record 28
+```
+
+The records are **contiguous and in the body's order**, not spread. The block's
+first 144 bytes are the per-program **head**, then the body's 30 records verbatim
+(with a 12-byte gap where the program's own record is inserted), then the
+program's trailing data. So the doc's original "block = body + head" model holds
+after all: the earlier "spread" reading was an artefact of comparing against the
+*file's* preamble (473 B) instead of the runtime's `device_preamble` (863 B). The
+per-program head (144 B here) and the trailing program data are what the grammar
+still has to produce.
+
 **The copies are the channel rows, once per channel-bearing cbuffer
 (2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
 seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
