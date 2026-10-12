@@ -113,15 +113,18 @@ the program list wrote every index even when it was the default `0` (`head = 0`,
 `tail = 0`, ...); they now skip it. Took the file from **12,266 -> 11,870 bytes**,
 byte-identical.
 
-**Pool references are compact, and two negative results (2026-10-12).** A shared
-front/back reference is written `head = "2:60"` (`node:len` / `node:start`) rather
-than a four-line table - **11,870 -> 11,552 bytes**, byte-identical. Two things
-that look derivable are not:
+**Pool references are compact, and two results (2026-10-12).** A shared front/back
+reference is written `head = "2:60"` (`node:len` / `node:start`) rather than a
+four-line table - **11,870 -> 11,552 bytes**, byte-identical. Two things that look
+derivable:
 
-- **the group heads** (the bulk of the group template): clearing them and
-  rebuilding fails with *`A7FF6329 is not in the group's descriptor list`* - the
-  rebuilt container's reflection loses a resource the shipped head names, so the
-  head stays carried until the reconstruction is lossless;
+- **the group heads** (the bulk of the group template) - they do derive, after a
+  real fix: `head_descriptors` hashed the raw dxc binding name, but the resource
+  *lists* hash the engine's spelling (dxc's combined-sampler `__tex_` / `__samp_`
+  prefixes stripped, [`engine_name`]). With the two made consistent, clearing the
+  heads rebuilds the section **byte-identically**, so `to_text` now omits a head
+  pool whose entries are all query-only and `mid_migrate` truncates each group's
+  head to its query. Took the file from **11,552 -> 9,905 bytes**, byte-identical;
 - **a program's `job`**: the build path does not read `program_jobs`, but removing
   the tags changes the built section's descriptor lists, so it is needed.
 
