@@ -962,7 +962,12 @@ bindings, samplers dropped, first-seen order) + the material's resources`, and
 every engine name's flags are already in `engine_descriptor_flags` - `A306B24F`
 is `global_uav_buffers` and `B3A2EB88` is `global_environment_settings`, both
 confirmed against the constants. The 11 derived descriptors match the shipped
-head position for position; only `linear_depth`'s source is still open. What is
+head position for position, and the 12th (`linear_depth`) is explained too: the
+source declares `Texture2D<float4> linear_depth : register(t0, space0)`, but the
+*rebuilt* container strips it (the reconstruction leaves it unused), so it is
+absent from the rebuilt reflection while the shipped container binds it. The rule
+is therefore exactly **the group's programs' bindings, samplers dropped** - no
+separate material term. What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`
