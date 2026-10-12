@@ -250,15 +250,20 @@ back.
 
 ### What still differs
 
-The remaining 76 differ through other lossy steps, not order:
+The remaining 76 first differ **before** the scene graph, so the loss is in the
+**geometry** section, not the node transforms. For `012a19dd517fcdd1` (1833 bytes)
+the first difference is at **856**, inside the stream data, and the rebuilt values
+come back with their low mantissa bits zeroed (`0xBEE09822` -> `0xBEE0A000`). So
+the vertex/index stream encode is the next thing to chase;
+`bitsquid/stingray/vertex_stream.py`, `index_stream.py` and `mesh_geometry.py` are
+the reference.
 
-- a node's `local` is `rotation x scale`, and the compiler decomposes the matrix
-  back (per `write_bsi_node`'s own note, the rows are normalized "which recovers
-  both the original rotation and the original world transform"). Shipped values
-  come back with their low mantissa bits zeroed, e.g. `0xBEE09822` (`-0.438659`)
-  becomes `0xBEE0A000` (`-0.438720`);
-- the `.unit`-level maps (`materials`, `renderables`, `lights`) are still
-  `BTreeMap`, so their order is not preserved either.
+The scene graph no longer has to lose anything: `BsiNode` carries optional
+`rotation`, `scale` and `world` fields, and the decompiler fills them from the
+payload, so the compiler writes the engine's own TRS and world matrices back
+instead of the folded `rotation x scale` and a recomputed world matrix. An
+authored `.bsi` omits them and keeps the previous behaviour - the mod's bundles are
+byte-identical either way.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for

@@ -115,14 +115,14 @@ struct Light {
 
 #[derive(Debug, Deserialize)]
 struct UnitDef {
-    materials: BTreeMap<String, String>,
+    materials: IndexMap<String, String>,
     #[serde(default)]
     lod: Vec<LodDef>,
-    renderables: BTreeMap<String, RenderableDef>,
+    renderables: IndexMap<String, RenderableDef>,
     #[serde(default)]
     editor_metadata: Option<EditorMetadata>,
     #[serde(default)]
-    lights: BTreeMap<String, Light>,
+    lights: IndexMap<String, Light>,
     /// Opaque payload sections a decompiled unit carries verbatim (hex, no
     /// `#`). Mod authored units omit them and get the compiler's defaults.
     #[serde(default)]
@@ -230,6 +230,18 @@ struct BsiNode {
     #[serde(default)]
     geometries: Vec<String>,
     local: [f32; 16],
+    /// The payload's own rotation basis and scale. A decompiled unit carries
+    /// them so a recompile writes the engine's floats back instead of the
+    /// `local` matrix's folded `rotation x scale`; authored nodes omit them.
+    #[serde(default)]
+    rotation: Option<[f32; 9]>,
+    #[serde(default)]
+    scale: Option<[f32; 3]>,
+    /// The payload's own world matrix. A decompiled unit carries it so a
+    /// recompile reproduces the engine's floats; an authored node omits it and
+    /// the compiler derives the world matrix from `local` and the hierarchy.
+    #[serde(default)]
+    world: Option<[f32; 16]>,
     #[serde(default)]
     parent: Option<String>,
 }
@@ -1515,10 +1527,26 @@ fn write_bsi_node(
         node.position[2],
         1.0,
     ];
+    let world = node.world;
     text.push_str(&format!(
-        "{indent}\"#{:08X}\" = {{\n{indent}\tgeometries = [ {geometries} ]\n{indent}\tlocal = [ {} ]\n",
+        "{indent}\"#{:08X}\" = {{\n{indent}\tgeometries = [ {geometries} ]\n{indent}\tlocal = [ {} ]\n{indent}\trotation = [ {} ]\n{indent}\tscale = [ {} ]\n{indent}\tworld = [ {} ]\n",
         node.name,
         local
+            .iter()
+            .map(|value| format!("{value}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        node.rotation
+            .iter()
+            .map(|value| format!("{value}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        node.scale
+            .iter()
+            .map(|value| format!("{value}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        world
             .iter()
             .map(|value| format!("{value}"))
             .collect::<Vec<_>>()
@@ -1787,6 +1815,14 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         };
     }
 
+    // A decompiled unit carries the payload's own world matrices; use them so a
+    // recompile reproduces the engine's floats instead of our recomputation.
+    if flat.iter().all(|node| node.node.world.is_some()) {
+        for (index, node) in flat.iter().enumerate() {
+            worlds[index] = node.node.world.unwrap();
+        }
+    }
+
     let mut w = Writer::new();
     w.u32(UNIT_VERSION);
 
@@ -1810,21 +1846,20 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.u32(flat.len() as u32);
     for node in &flat {
         let local = node.node.local;
-        w.f32(local[0]);
-        w.f32(local[1]);
-        w.f32(local[2]);
-        w.f32(local[4]);
-        w.f32(local[5]);
-        w.f32(local[6]);
-        w.f32(local[8]);
-        w.f32(local[9]);
-        w.f32(local[10]);
+        let rotation = node.node.rotation.unwrap_or([
+            local[0], local[1], local[2], local[4], local[5], local[6], local[8], local[9],
+            local[10],
+        ]);
+        let scale = node.node.scale.unwrap_or([1.0, 1.0, 1.0]);
+        for value in rotation {
+            w.f32(value);
+        }
         w.f32(local[12]);
         w.f32(local[13]);
         w.f32(local[14]);
-        w.f32(1.0);
-        w.f32(1.0);
-        w.f32(1.0);
+        for value in scale {
+            w.f32(value);
+        }
     }
     for world in &worlds {
         for value in world {
