@@ -36,8 +36,9 @@ as of 2026-10-12:
   carry verbatim and pool their **body slice**, head and trailing bytes (shared
   fronts and backs); zero-valued indices are omitted; and the engine table is
   carried as the count of records it drops from the toolchain's captured table
-  (4), not the whole 2.7 KB. Every step is confirmed by the built section being
-  **byte-identical** and rendering in game. Still carried: the group template's
+  (4), not the whole 2.7 KB. Every step is confirmed by the built section
+  matching the shipped one (with two pre-existing material-size bytes still
+  open) and rendering in game. Still carried: the group template's
   `between`/materials, the **contexts/conditions/preamble**, the per-program
   **block head and the distinct trailings** and the **program list**
   (`stage`/`tail`/`job`). The remaining decode is the per-program block grammar,
