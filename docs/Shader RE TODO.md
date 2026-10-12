@@ -1111,6 +1111,16 @@ table is the object table (two slot rows), the graph-derived one the channels'
 clones - and it is the concrete mismatch to close: `material_records` should
 agree with the `inputs` the reconstruction already emits.
 
+Those two hashes are **not** the material's channels (`bca` `2FADCC8C`, `nm`
+`B45E95F3`, `orm` `8655079C`) nor its texture paths (`textures/mods/snoopymod/
+pumpkin_color` `44363231`, `..._normal` `a244124a`), and the dictionary does not
+name them at all. The material is `material_contexts = { surface_material =
+"twitch_icon_bad_indigestion" }`, i.e. it **inherits** a template, so its object
+table's two rows are that template's own engine-provided textures - which the
+build's graph evaluation resolves, and which is why they have no dictionary name.
+So `material_records` has to reproduce the *object* table's rows (the resolved
+engine textures), not the declaration's channel clones.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
