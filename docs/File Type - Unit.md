@@ -274,18 +274,28 @@ The remaining 58 differ later in the payload. The half-float class is closed - t
 (`0x37A6` vs `0x37A5`) between a rebuilt stream and the shipped one; it now rounds
 to nearest, ties to even, like the engine's conversion.
 
-What is left is inside the **vertex streams** again, but it is not a permutation and
-not a rounding: for `020a812a4f4fe41b` the two halves at offset 2244 are `0x33E5`
-(`0.1136`) shipped and `0x3A07` (`0.6274`) rebuilt, at 2292 `00 3C 02 00` vs
-`00 3C 00 3C`, and sorting the stream window's `u16` words gives *different*
-multisets - so a value is being mis-assembled, not merely reordered.
+What is left is inside the **vertex streams**. `bitsquid/math_utils.py` confirms our
+reading of the two channel types (`process_half4`: four halves, 8 bytes per element
+- its message says 12 but its check is `% 8`; `process_half2`: two halves) and its
+`octahedral_decode` matches `oct_decode`, with one addition: it maps **NaN halves**
+(`0xFE00` and friends) to 0, which DTMT now does too.
 
-The dump hints at why: both streams report `size = 252 stride = 12` even though one
-is `CT_HALF4` and the other `CT_HALF2`, so `size` looks like the *element count*
-(identical for every stream of a geometry) while `stride`/the type decide how many
-halves each element packs. Our reader/writer may be mapping that pair wrongly.
-`bitsquid/stingray/vertex_stream.py` and `mesh_geometry.py` are the reference for
-how a `CT_HALF4`/`CT_HALF2` channel lays out.
+Two concrete losses remain there:
+
+- `decode_stream` **drops the POSITION `w` component** and the compiler writes `1.0`
+  back. Shipped `w` halves are not `1.0` (the sample has `0x0002`), so every
+  position element's fourth half differs - that is the `00 3C 02 00` vs
+  `00 3C 00 3C` pair at offset 2292. The value is not used by the renderer, but it
+  is stored;
+- an octahedral coordinate can come back different by more than a rounding
+  (`0x33E5` -> `0x3A07`), so `oct_decode`/`oct_encode` are not an exact inverse
+  pair as the engine's own path is.
+
+The straightforward way to close both - and the pattern that has worked for the
+bounds - is to let a decompiled stream carry its **raw bytes** as an optional field
+and have the compiler write them verbatim, keeping the readable `data` for
+authoring. `bitsquid/stingray/vertex_stream.py` and `mesh_geometry.py` are the
+remaining reference for the element layout.
 
 `examples/unit_probe.rs` takes a third argument: given a directory it dumps every
 decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
