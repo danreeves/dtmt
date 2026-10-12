@@ -1025,6 +1025,17 @@ canonical records and packed copies, so `derived_mid` should be the template's
 existing `VariableTable` / `rebuild` path fed from the compiled program's
 reflection, not a hand-built 180-byte constant.
 
+**The `mid` is derivable without the original declaration (2026-10-12).** Group
+0's first `mid` section resolves to `bca`, `nm`, `orm` - exactly
+`standard_base.material`'s `channels = ["bca", "orm", "nm"]` - plus `view_proj`,
+`world_view_proj`, `world`, `last_world`, `linear_depth` and `material_id`, which
+are the engine's. So a `mid` section is **the material's channels plus the
+engine's cbuffer fields**: the channels come from the `.material`, and the
+engine's fields need only a recorded **engine interface table** (name, cbuffer,
+offset, size, kind - the same kind of mined table as `engine_descriptor_flags`).
+That is the route to dropping the `mid` pool (9.6 KB, 23% of the file) for the
+standard, and it needs no reconstruction of the original HLSL.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
