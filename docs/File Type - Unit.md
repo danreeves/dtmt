@@ -229,11 +229,12 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,588 |
 | decoded | 78 |
-| of which **byte-identical to the shipped payload** | **17** |
+| of which **byte-identical to the shipped payload** | **20** |
 
 The first run, before the fixes below, was **0** byte-identical; the geometry-bounds
-fix took it to 2 and carrying the bounds through to the mesh objects and the LOD
-union took it to 17.
+fix took it to 2, carrying the bounds through to the mesh objects and the LOD union
+took it to 17, and rounding the `f32` -> half conversion through nearest-even (it
+truncated) took it to 20.
 
 ### Node order was the first cause (fixed)
 
@@ -268,12 +269,15 @@ writes the engine's TRS and world matrices back instead of a folded
 An authored `.bsi` omits every one of those optional fields and keeps the previous
 behaviour - the mod's bundles are byte-identical either way.
 
-The remaining 61 differ later, in narrower ways; the samples show
-- a one-ULP float difference in a stream value (`…a6 37` vs `…a5 37`), and
-- a whole word instead of a float in one stream (`0x000033E5` vs `0x00003A06`),
-
-so the per-channel stream encode (`bitsquid/stingray/vertex_stream.py`,
-`index_stream.py`, `mesh_geometry.py`) is the next thing to compare.
+The remaining 58 differ later in the payload. The half-float class is closed - the
+`f32` -> half helper rounded by *truncating*, which put a one-ULP difference
+(`0x37A6` vs `0x37A5`) between a rebuilt stream and the shipped one; it now rounds
+to nearest, ties to even, like the engine's conversion. What is left shows up
+further along, and the values at the same offset can differ by more than a rounding
+(e.g. half `0x33E5` vs `0x3A07`), so the next thing to compare is the **order** the
+unified streams place vertices in (`unify_geometry`) and the bounds blocks of
+*second* mesh objects and LODs. `bitsquid/stingray/vertex_stream.py`,
+`index_stream.py` and `mesh_geometry.py` are the reference.
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
