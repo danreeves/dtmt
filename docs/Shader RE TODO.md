@@ -63,19 +63,27 @@ is engine-side data whose records come from the game build.
 
 **What the block's trailing is (2026-10-12).** `examples/trailing_probe.rs` dumps
 a pixel block's head, its run of the body's records and the trailing after them as
-`u32` words. Two things stand out:
+`u32` words. What stands out:
 
 - the trailing opens with the **same six words in every pixel program**
   (`0000000E 00000400 00000000 00000D00 00010000 00000000`), so it is not purely
-  per-shader; the values look one byte out of a `u32` stride, which is part of why
-  the framing is not yet solved;
+  per-shader;
+- at the byte level it opens with a run of **12-byte records** whose second byte
+  counts up (`5E 5F 60 61`), then switches to a longer record type - so the framing
+  is irregular (the trailing lengths are odd: 379/353/249/828/155), not a plain
+  `u32 count` + fixed records;
 - it closes with runs of a repeated ~15-word record that carries a **type word and
   a hash** - and the hashes are the group's **channel** hashes (`8CCCAD2F`,
   `9C075586`, `F3955EB4`), the same ones the `mid` derives from. So the trailing
   looks like the per-program **resource-binding shadow** and is a candidate to
   derive from the channel list plus the head, but the record grammar is not yet
-  decoded (the trailing lengths are odd - 379/353/249/828/155 - so the framing is
-  irregular, not a plain `u32 count` + fixed records).
+  decoded.
+
+**A program's group derives (2026-10-12).** `derive_program_groups` already fills
+the program-to-group mapping from the group tails' condition counts; `to_text` now
+omits each program's `group` tag when it equals what that rule produces (verified
+on the standard: group `i` owns `conditions(i) × 2` consecutive programs). Took the
+file from **14,165 -> 13,801 bytes**, byte-identical.
 
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
