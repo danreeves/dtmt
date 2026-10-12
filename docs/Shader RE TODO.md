@@ -1208,6 +1208,17 @@ none, while groups 3/4 carry only `bca`. It is a property of the group's *passes
 evaluation, not the flat sampler list. That is the one piece to wire before
 `derived_mid` can replace the carried `mids` pool.
 
+**...and the device blocks carry it (2026-10-12).** The per-group channel set is
+in the blocks, not the declaration: tail 1-8 (groups 0-2) contain all three
+channel hashes (`bca` `8CCCAD2F`, `orm` `9C075586`, `nm` `F3955EB4`), tails 9-10
+(groups 3-4) contain only `bca`, and the vertex tail (0) and the smallest pixel
+tail (11) none. So a group's channels are the union of its programs' blocks'
+channel records - the `mid` derives from the *carried blocks*, not the material
+graph. That makes the chain concrete: **blocks -> channels -> `mid`**, with the
+group template (heads, `mid`s, `between`) derivable from the blocks plus the
+engine interface. The blocks themselves (~23 KB) are then the one thing the file
+has to keep, and the block grammar is what would finally remove them.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
