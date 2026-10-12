@@ -1228,6 +1228,17 @@ engine data could carry a **per-group channel list** (a handful of hashes)
 instead of the whole `mid` pool - 9.6 KB down to tens of bytes - with
 `derived_mid` doing the rest. That is the concrete next implementation.
 
+**The copies are the channel rows, once per channel-bearing cbuffer
+(2026-10-12).** Group 0's last section (14 rows) is **two identical sets of
+seven**: first `c_per_object` (`0xB5639618`) with `x = 2`, then `c_depth_only`
+(`0xCFB440F0`) with `x = 4`. Each row is `{channel hash, a, b, offset, kind,
+cbuffer, x}` and the seven are exactly the `mid`'s channel rows - `bca`'s
+`{5,0,4}`, `{1,4,8}`, `{1,16,8}`, then `orm`'s and `nm`'s two each - with `b` the
+copy set (0, then 1) and `a` the kind for the kind-5 row and the component's byte
+offset (0, 8) for the float2 rows, which is the shape the old `derived_mid`
+emitted for one slot. So the copies derive from the channels plus the cbuffers
+that carry them; only `x` (2 and 4) is still unexplained.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
