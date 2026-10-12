@@ -865,6 +865,17 @@ lists **exactly**. So a derived head needs only the `flags` (the
 8-per-other running offset) on top - what is left for the group template is the
 per-group head loop, the per-group `between`, and `mid` from the material table.
 
+A field-level pass gives the remaining gap over the 43 descriptors: **name order
+0**, **flags 9**, **x 5** (it follows `flags`), **y 33**. The flags misses are
+names `engine_descriptor_flags` does not know: `global_environment_settings`
+(`0x101`), `linear_depth` and the material `_mi_*` textures (`0x3`), so it needs
+a **kind-based fallback** (texture `0x3`, material cbuffer `0x0`) plus the mined
+engine-cbuffer/engine-texture values. The `y` mask must be **0 for cbuffers**
+(the shipped cbuffers are all 0); for the SRV/UAV/texture resources the
+reflection-derived mask still disagrees with the shipped one except for
+`bones`/`idata`, so the mask's per-program bit assignment remains the open piece
+of `Y`.
+
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
 `TailLists::set_inputs` hashes each element's name upper cased, groups the
