@@ -274,17 +274,22 @@ The remaining 58 differ later in the payload. The half-float class is closed - t
 (`0x37A6` vs `0x37A5`) between a rebuilt stream and the shipped one; it now rounds
 to nearest, ties to even, like the engine's conversion.
 
-What is left is inside the **vertex streams** again, but it is no longer a
-rounding: for `020a812a4f4fe41b` the two halves at offset 2244 are `0x33E5`
-(`0.1136`) shipped and `0x3A07` (`0.6274`) rebuilt, and at 2292 `00 3C 02 00` vs
-`00 3C 00 3C`. So the *data* we assemble for a stream element differs from what the
-payload holds - the streams' element layout / vertex order, not the encode. That is
-where `bitsquid/stingray/vertex_stream.py` and `index_stream.py` are the reference
-(and `mesh_geometry.py` for how a `CT_HALF4`/`CT_HALF2` channel packs).
+What is left is inside the **vertex streams** again, but it is not a permutation and
+not a rounding: for `020a812a4f4fe41b` the two halves at offset 2244 are `0x33E5`
+(`0.1136`) shipped and `0x3A07` (`0.6274`) rebuilt, at 2292 `00 3C 02 00` vs
+`00 3C 00 3C`, and sorting the stream window's `u16` words gives *different*
+multisets - so a value is being mis-assembled, not merely reordered.
 
-`examples/unit_probe.rs` gained a third argument: given a directory it dumps every
-decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under that directory, so a
-failing unit can be picked out and diffed.
+The dump hints at why: both streams report `size = 252 stride = 12` even though one
+is `CT_HALF4` and the other `CT_HALF2`, so `size` looks like the *element count*
+(identical for every stream of a geometry) while `stride`/the type decide how many
+halves each element packs. Our reader/writer may be mapping that pair wrongly.
+`bitsquid/stingray/vertex_stream.py` and `mesh_geometry.py` are the reference for
+how a `CT_HALF4`/`CT_HALF2` channel lays out.
+
+`examples/unit_probe.rs` takes a third argument: given a directory it dumps every
+decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
+can be picked out and diffed (the sample above is dump `1`).
 
 `bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
 `vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
