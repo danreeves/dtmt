@@ -145,8 +145,10 @@ pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32)
         if has_channels {
             out.extend_from_slice(channels);
         }
+        // The channels' prefix applies only to the cbuffer that carries them.
+        let base = if has_channels { prefix } else { 0 };
         for (kind, hash, offset, len) in fields {
-            for word in [*kind, 0, *hash, prefix + offset, *len] {
+            for word in [*kind, 0, *hash, base + offset, *len] {
                 out.extend_from_slice(&word.to_le_bytes());
             }
         }
@@ -154,7 +156,8 @@ pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32)
     };
 
     let n = cbuffers.len();
-    // The j-th section is the (j+1)-th cbuffer's fields; the last is the copies.
+    // The j-th section is the (j+1)-th cbuffer's fields; the last is the copies,
+    // whose records are 28 bytes rather than 20.
     let sections: Vec<Vec<u8>> = (0..n)
         .map(|j| {
             if j + 1 < n {
@@ -166,20 +169,24 @@ pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32)
         .collect();
 
     let mut out = Vec::new();
-    let mut w2 = x_end;
+    // The running total advances by each cbuffer's size, but a global cbuffer
+    // contributes nothing *and* prints a zero `W2`.
+    let mut accumulator = x_end;
     for (j, section) in sections.iter().enumerate() {
-        let count = (section.len() / 20) as u32;
+        let step = if j + 1 < n { 20 } else { 28 };
+        let count = (section.len() / step) as u32;
+        let w2 = if is_global(cbuffers[j]) {
+            0
+        } else {
+            accumulator
+        };
         for word in [cbuffers[j], w2, count] {
             out.extend_from_slice(&word.to_le_bytes());
         }
         out.extend_from_slice(section);
-        // A global cbuffer carries no packed copies, so its `W2` is zero and the
-        // running total does not advance.
-        w2 = if is_global(cbuffers[j]) {
-            0
-        } else {
-            cbuffers[j] + w2
-        };
+        if !is_global(cbuffers[j]) {
+            accumulator += cbuffers[j];
+        }
     }
     out
 }
