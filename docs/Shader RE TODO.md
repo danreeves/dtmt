@@ -52,6 +52,15 @@ blocks repeat a handful of trailings). Together that took the file from
 **42,091 -> 16,921 bytes** (a 60% cut from the capture) with the built section
 byte-identical. The body needs no new pool: the preamble already carries it.
 
+**The engine table is carried as a diff (2026-10-12).** The group template's
+engine table is the toolchain's captured table (`data/global_viewport.hex`) with
+its **last four records dropped** - every common record matches the toolchain's in
+kind, offset and size, and the four are the toolchain table's last four. So
+`GroupTemplateText` writes `engine_drop = 4` (the count of trailing records the
+file drops) instead of the 2.7 KB table, taking the file from **16,921 ->
+14,165 bytes**, byte-identical. It is a diff, not a derivation: the engine table
+is engine-side data whose records come from the game build.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other

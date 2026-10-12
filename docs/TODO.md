@@ -27,15 +27,16 @@ as of 2026-10-12:
 - **`ui_default_base` (GUI / title): done.** No engine data - it builds from the
   declaration alone (section `CD9854D69AC9A5B7`), verified in game.
 - **`standard_base`: the `mid` derives and the blocks share their body and tail.**
-  `standard_base.engine_data` is now **16,921 B** - down from 375,410 when the
-  section was captured, and from 42,091 - a **60% cut**. The programs' cbuffer and
+  `standard_base.engine_data` is now **14,165 B** - down from 375,410 when the
+  section was captured, and from 42,091 - a **66% cut**. The programs' cbuffer and
   resource lists derive; the group **`mid`** does too (the file carries each
-  group's **channel list**); and the device **blocks** now reference both the slice
-  of the preamble body they carry verbatim (a shared 393-byte run) and the shared
-  bytes after it (the pixel/vertex pair per permutation repeats a handful of
-  trailings), which together removed ~16 KB. Every step is confirmed by the built
-  section being **byte-identical** and rendering in game. Still carried: the
-  group template's heads/`between`/engine/materials, the
+  group's **channel list**); the device **blocks** reference both the slice of the
+  preamble body they carry verbatim (a shared 393-byte run) and the shared bytes
+  after it (the pixel/vertex pair per permutation repeats a handful of trailings);
+  and the engine table is carried as the count of records it drops from the
+  toolchain's captured table (4), not the whole 2.7 KB. Every step is confirmed by
+  the built section being **byte-identical** and rendering in game. Still carried:
+  the group template's heads/`between`/materials, the
   **contexts/conditions/preamble**, the per-program **block head and the distinct
   trailings** and the **program list**. The remaining decode is the per-program
   block head/tail, plus the enumerator and a lossless reconstruction.
