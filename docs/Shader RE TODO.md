@@ -904,33 +904,31 @@ produces **180 bytes** for every standard group against the shipped
 standard's `mid` is a per-group packed region `derived_mid` does not model.
 
 The `mid` pool is the **biggest single piece of the carried file** - 9,648
-chars / 4,808 B, 23% (the program-block pool is the 23 KB of `tails`). Its
-grammar is now largely read:
+chars / 4,808 B, 23% (the program-block pool is the 23 KB of `tails`). It is
+the same data `group_data.rs` parses for a shipped blob, in template form:
+a run of sections, each `{ u32 W1, u32 W2, u32 count }` + `count` records.
 
-```
-mid = { u32 A, u32 x_end, u32 run0_count, u32 5 }
-      run0_count x { u32 0, u32 name, u32 offset, u32 size, u32 kind }  (20 B)
-      then a sequence of runs, each headed `{ u32 X, u32 count[, u32 ?] }`
-      + `count` records:
-        - variable run: 20-byte records, the run0 shape
-        - copy run    : 28-byte { variable, a, b, offset, kind, cbuffer, X' }
-```
+- The records of every section but the last are the **20-byte canonical
+  records** `group_data.rs` already models - `{kind, flags, name_hash,
+  cbuffer_offset, size}` (kinds 0..4 size 4/8/12/16/64).
+- The last section is the **28-byte packed copies** `{name, a, b, offset, kind,
+  cbuffer, X}` - the shape `derived_mid` emits per texture slot
+  (`{bca, 5, 0, 0, 5, c_per_object, 1}`), with a trailing `X` where `derived_mid`
+  writes a constant.
 
-`run0` and the later variable runs are the group's **cbuffer variables** (name
-hash, packed offset, size, kind): group 0's `A17AE7B4` is the engine's
-`world_view_proj` (offset 128, size 64). The copy run holds the **packed
-copies** `{variable, a, b, offset, kind, cbuffer, X'}` - the shape
-`derived_mid` emits per texture slot (`{bca, 5, 0, 0, 5, c_per_object, 1}`),
-with a trailing `X'` where `derived_mid` writes a constant.
-
-**Every standard group now walks exactly.** Group 0's 535 words split
-`4 + 14x5 + {192,58,0} + 58x5 + {0,13,5} + 13x5 + {608,14} + 14x7`; groups 2
-and 3 are `16 + run0 x 20 + 8 + copies x 28` = 240 and 288 B (1 + 7 and 9 + 3
-records). Group 0 has **three** variable runs (three cbuffers) where groups 2/3
-have one. The last header word `5` is constant (the pass count); `A` is 16 for
-groups 0/1/3 but **272** for group 2, and a run's `X` (192 = `A + x_end`, then
-`0`, then `608` for group 0's copy run) and a variable run's third header word
-are the fields still open.
+**Every standard group walks exactly.** Group 0's 535 words are
+`3 + 14x5 + 3 + 58x5 + 3 + 13x5 + 3 + 14x7` - three canonical sections and a
+copy section; group 0's canonical records include `A17AE7B4` (the engine's
+`world_view_proj`, offset 128 size 64). Groups 2 and 3 are `3 + n x 5 + 3 + m x
+7` words (1 + 7 and 9 + 3 records). Each later section's second word is the
+first header's `W1 + x_end` (16 + 176 = 192, 272 + 128 = 400, 16 + 80 = 96), so
+`W1` is an offset the sections share; the first header's third word is the
+record count (its fourth word is the first record's `kind`). Open: `W1`
+(16 / 272 / 416 / 304 measured) and the third section's `W2 = 0`, which breaks
+the `W1 + x_end` rule. The `mid` is therefore **not a new grammar**: it is
+`group_data.rs`'s canonical records and packed copies, so `derived_mid` should
+be the template's existing `VariableTable` / `rebuild` path fed from the
+compiled program's reflection, not a hand-built 180-byte constant.
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
