@@ -856,25 +856,28 @@ stage→resource set** (the root-signature order the community compiler's
 `shader_compiler` builds). Runs: `group_probe <engine_data>` (rebuilt group data
 10,725 B), or `decode-descriptors.ps1` over the miner's `groups.csv`.
 
-**The head's descriptor list derives (verified).** The env-gated test
-`the_derived_lists_match_a_built_section` now also builds each group's descriptor
-list from the union of that group's programs' bound cbuffers / SRVs / UAVs
-(samplers excluded) in **binding order**, and it matches all five shipped heads'
-lists **exactly**. So a derived head needs only the `flags` (the
-`engine_descriptor_flags` mined/kind values) and the `x` (the 24-per-cbuffer /
-8-per-other running offset) on top - what is left for the group template is the
-per-group head loop, the per-group `between`, and `mid` from the material table.
+**The group head fully derives (verified).** The env-gated test
+`the_derived_lists_match_a_built_section` builds each group's head from that
+group's programs and compares every field to the shipped one: over the standard's
+43 descriptors, **name order, `flags`, `x` and `y` all match exactly** (0
+mismatches). The rules:
 
-A field-level pass gives the remaining gap over the 43 descriptors: **name order
-0**, **flags 9**, **x 5** (it follows `flags`), **y 33**. The flags misses are
-names `engine_descriptor_flags` does not know: `global_environment_settings`
-(`0x101`), `linear_depth` and the material `_mi_*` textures (`0x3`), so it needs
-a **kind-based fallback** (texture `0x3`, material cbuffer `0x0`) plus the mined
-engine-cbuffer/engine-texture values. The `y` mask must be **0 for cbuffers**
-(the shipped cbuffers are all 0); for the SRV/UAV/texture resources the
-reflection-derived mask still disagrees with the shipped one except for
-`bones`/`idata`, so the mask's per-program bit assignment remains the open piece
-of `Y`.
+- **names / order**: the union of the group's programs' bound cbuffers / SRVs /
+  UAVs (samplers excluded), in binding order;
+- **`flags`**: the mined value for the engine's own names
+  (`engine_descriptor_flags`) OR-ed with the reflection kind's low bits (texture
+  `0x3`, structured SRV `0x4`, UAV `0x5`, raw UAV `0x7`); this needed one table
+  entry, `global_environment_settings` (`0xB3A2EB88`) at `0x101`;
+- **`x`**: the 24-per-cbuffer / 8-per-other running offset;
+- **`y`**: **two bits per pass** - bit `2k` when the resource is bound as an
+  **SRV** in pass `k` (the program pair `2k`/`2k+1` of the group), bit `2k+1`
+  when as a **UAV**; cbuffers take no bit. So `bones`/`idata` (SRV, all five
+  passes) are `0x155`, `global_uav_buffers` (UAV, all five) `0x2AA`,
+  `linear_depth` (SRV, pass 4) `0x100`, `global_texture2D` `1`,
+  `global_feedback_buffers` (UAV) `2`.
+
+So a per-group head is fully derivable. What is left for the group template is
+the per-group `between`/`mid` and dropping the carried heads.
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:

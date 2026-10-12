@@ -99,6 +99,10 @@ const IDATA: u32 = 0xF2DE_3925;
 /// murmur32 of `global_uav_buffers`: the engine's raw UAV array.
 const GLOBAL_UAV_BUFFERS: u32 = 0xA306_B24F;
 
+/// murmur32 of `global_environment_settings`: the engine's environment cube /
+/// settings constant buffer (a per-pass cbuffer, so flags `0x101`).
+const GLOBAL_ENVIRONMENT_SETTINGS: u32 = 0xB3A2_EB88;
+
 /// The group's descriptor list (`name -> index`). Every group must agree,
 /// because the program-to-group mapping is not decoded.
 fn descriptors(template: &GroupTemplate) -> Result<BTreeMap<u32, u32>> {
@@ -1041,6 +1045,7 @@ fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
 fn engine_descriptor_flags(name: u32) -> u32 {
     match name {
         GLOBAL_VIEWPORT => 0x0000_0101,
+        GLOBAL_ENVIRONMENT_SETTINGS => 0x0000_0101,
         C_INSTANCE_OFFSET | C_PER_OBJECT => 0x0000_0000,
         BONES | LAST_BONES => 0x0040_0004,
         IDATA => 0x0010_0004,
@@ -3530,6 +3535,10 @@ programs = []
             (0..template.groups.len())
                 .map(|_| std::collections::BTreeMap::new())
                 .collect();
+        let mut derived_kind: Vec<std::collections::BTreeMap<u32, u32>> =
+            (0..template.groups.len())
+                .map(|_| std::collections::BTreeMap::new())
+                .collect();
         let mut current = usize::MAX;
         let mut position = 0u32;
         for (index, program) in programs.iter().enumerate() {
@@ -3559,7 +3568,15 @@ programs = []
                 if !list.contains(&name) {
                     list.push(name);
                 }
-                *derived_y[group].entry(name).or_default() |= 1 << position;
+                derived_kind[group].entry(name).or_insert(binding.kind);
+                // The y mask: two bits per pass, bit 2k when the resource is
+                // bound as an SRV in pass k and bit 2k+1 when as a UAV (a
+                // cbuffer takes no bit).
+                if binding.kind != 0 {
+                    let uav = matches!(binding.kind, 4 | 6 | 8 | 9 | 10 | 11) as u32;
+                    *derived_y[group].entry(name).or_default() |=
+                        1 << (2 * (position / 2) + uav);
+                }
             }
             position += 1;
         }
@@ -3573,7 +3590,8 @@ programs = []
             }
             let mut x = 0u32;
             for record in &shipped {
-                let flags = engine_descriptor_flags(record[0]);
+                let kind = derived_kind[index].get(&record[0]).copied().unwrap_or(0);
+                let flags = engine_descriptor_flags(record[0]) | kind_low(kind);
                 if flags != record[1] {
                     if fields[0] < 6 {
                         println!(
@@ -3608,6 +3626,19 @@ programs = []
         );
 
         assert_eq!(mismatches, 0, "{mismatches} list mismatches");
+    }
+
+    /// A resource kind's low descriptor-flag bits (the engine's kind class: 0
+    /// material cbuffer, 3 texture, 4 structured SRV, 5 UAV, 7 raw UAV).
+    fn kind_low(kind: u32) -> u32 {
+        match kind {
+            1 => 0x1,
+            2 => 0x3,
+            4 | 6 | 9 | 10 | 11 => 0x5,
+            5 | 7 => 0x4,
+            8 => 0x7,
+            _ => 0x0,
+        }
     }
 
     /// A group head's descriptor records: after the query id and one word, a u32
