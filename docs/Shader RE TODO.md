@@ -856,6 +856,15 @@ stage→resource set** (the root-signature order the community compiler's
 `shader_compiler` builds). Runs: `group_probe <engine_data>` (rebuilt group data
 10,725 B), or `decode-descriptors.ps1` over the miner's `groups.csv`.
 
+**The head's descriptor list derives (verified).** The env-gated test
+`the_derived_lists_match_a_built_section` now also builds each group's descriptor
+list from the union of that group's programs' bound cbuffers / SRVs / UAVs
+(samplers excluded) in **binding order**, and it matches all five shipped heads'
+lists **exactly**. So a derived head needs only the `flags` (the
+`engine_descriptor_flags` mined/kind values) and the `x` (the 24-per-cbuffer /
+8-per-other running offset) on top - what is left for the group template is the
+per-group head loop, the per-group `between`, and `mid` from the material table.
+
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
 `TailLists::set_inputs` hashes each element's name upper cased, groups the
