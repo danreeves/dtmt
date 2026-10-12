@@ -1142,6 +1142,16 @@ offset (the channels' padded size + the relative one). The mined table is at
 needs re-keying by name and re-basing by the channel prefix before it can be a
 const.
 
+**The relative offsets are consistent (2026-10-12).** Re-basing confirms it: the
+272- and 304-byte cbuffers carry the *same* field set at a constant 32-byte
+shift - `view_proj` 32/64, `world_view_proj` 96/128, `world` 160/192, and the
+trailing `795CF4A7` 224/256, `999C5B7A` 240/272, `429C277D` 256/288 - so their
+offsets relative to the channel prefix are 0 / 64 / 128 / 192 / 208 / 224 in
+both. The prefix is the material's channels' padded extent (32 there, 64 for the
+416-byte `c_per_object`, which additionally carries `last_world` and `711B4ADC`).
+So a cbuffer is identified by its **field set**, not its size, and the const's
+offsets are the relative ones.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
