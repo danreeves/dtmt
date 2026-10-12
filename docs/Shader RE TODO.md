@@ -908,26 +908,29 @@ chars / 4,808 B, 23% (the program-block pool is the 23 KB of `tails`). Its
 grammar is now largely read:
 
 ```
-mid = { u32 A, u32 x_end, u32 run1_count, u32 5 }
-      run1_count x { u32 0, u32 name, u32 offset, u32 size, u32 kind }  (20 B)
-      { u32 A + x_end, u32 run2_count }
-      run2_count x { u32 variable, u32 a, u32 b, u32 offset, u32 kind,
-                     u32 cbuffer, u32 X }                              (28 B)
+mid = { u32 A, u32 x_end, u32 run0_count, u32 5 }
+      run0_count x { u32 0, u32 name, u32 offset, u32 size, u32 kind }  (20 B)
+      then a sequence of runs, each headed `{ u32 X, u32 count[, u32 ?] }`
+      + `count` records:
+        - variable run: 20-byte records, the run0 shape
+        - copy run    : 28-byte { variable, a, b, offset, kind, cbuffer, X' }
 ```
 
-`run1` is the group's **cbuffer variables** (name hash, packed offset, size,
-kind): group 0's are `2FADCC8C` (`bca`, offset 0 / size 4), `A17AE7B4` (the
-engine's `world_view_proj`, 128 / 64), `57CBAEC2`, `4D46AE3B`, `B8DADD64`,
-`711B4ADC` (each size 64). `A + x_end` opens the second section, whose records
-are the **packed copies** `{variable, a, b, offset, kind, cbuffer, X}` - the
-shape `derived_mid` emits per texture slot (`{bca, 5, 0, 0, 5, c_per_object,
-1}`), with a trailing `X` (1/2/4) where `derived_mid` writes a constant.
+`run0` and the later variable runs are the group's **cbuffer variables** (name
+hash, packed offset, size, kind): group 0's `A17AE7B4` is the engine's
+`world_view_proj` (offset 128, size 64). The copy run holds the **packed
+copies** `{variable, a, b, offset, kind, cbuffer, X'}` - the shape
+`derived_mid` emits per texture slot (`{bca, 5, 0, 0, 5, c_per_object, 1}`),
+with a trailing `X'` where `derived_mid` writes a constant.
 
-Groups **2 and 3 fit the whole model exactly**:
-`16 + run1_count x 20 + 8 + run2_count x 28` = 240 and 288 B (1x5 + 7 and
-9x5 + 3), and group 0's `run1` (14 records) fits; group 0's `run2`/`run3`
-boundaries are still open, as is `A` (16 for groups 0/1/3, **272** for group 2)
-and the `X` vocabulary.
+**Every standard group now walks exactly.** Group 0's 535 words split
+`4 + 14x5 + {192,58,0} + 58x5 + {0,13,5} + 13x5 + {608,14} + 14x7`; groups 2
+and 3 are `16 + run0 x 20 + 8 + copies x 28` = 240 and 288 B (1 + 7 and 9 + 3
+records). Group 0 has **three** variable runs (three cbuffers) where groups 2/3
+have one. The last header word `5` is constant (the pass count); `A` is 16 for
+groups 0/1/3 but **272** for group 2, and a run's `X` (192 = `A + x_end`, then
+`0`, then `608` for group 0's copy run) and a variable run's third header word
+are the fields still open.
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
