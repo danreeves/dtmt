@@ -1099,9 +1099,70 @@ fn derived_head(resources: &HashMap<Stage, StageResources>) -> Vec<u8> {
         }
         x += if flags & 0xFF <= 1 { 24 } else { 8 };
     }
-    out.extend_from_slice(&0x02u32.to_le_bytes());
-    // The material table's count, which `GroupData::build` rewrites.
+    // The trailer: the number of cbuffer descriptors, then the first table's
+    // record count (here the material table's, which `GroupData::build`
+    // rewrites; a group with an engine table takes the engine pool's).
+    let cbuffers = descriptors
+        .iter()
+        .filter(|(_, flags, _)| flags & 0xFF <= 1)
+        .count() as u32;
+    out.extend_from_slice(&cbuffers.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
+    out
+}
+
+/// A group's head, derived from its own programs: the descriptors are the
+/// group's programs' reflected bindings in first-binding order (samplers
+/// dropped) with the engine's flags and the per-pass `y` bits; the header word
+/// is the per-draw total rounded up to 16 plus the material cbuffers' compiled
+/// sizes; the trailer is the cbuffer-descriptor count and the first table's
+/// record count. Measured against the standard's five shipped groups.
+fn derived_head_for_group(
+    programs: &[StageResources],
+    material_count: usize,
+    engine_count: usize,
+    has_engine: bool,
+) -> Vec<u8> {
+    let bindings: Vec<Vec<dxc::BoundResource>> = programs
+        .iter()
+        .map(|resources| resources.bindings.clone())
+        .collect();
+    let descriptors = head_descriptors(&bindings);
+
+    // The material cbuffers' compiled sizes, by the hash a descriptor carries.
+    let mut sizes: HashMap<u32, u32> = HashMap::new();
+    for resources in programs {
+        for (name, size) in &resources.cbuffer_sizes {
+            sizes.insert(u32::from(murmur::Murmur32::hash(name.as_bytes())), *size);
+        }
+    }
+
+    let step = |flags: u32| if flags & 0xFF <= 1 { 24 } else { 8 };
+    let per_draw: u32 = descriptors.iter().map(|(_, flags, _)| step(*flags)).sum();
+    let material: u32 = descriptors
+        .iter()
+        .filter(|(_, flags, _)| flags & 0xFF == 0)
+        .filter_map(|(name, _, _)| sizes.get(name).copied())
+        .sum();
+    let header = per_draw.div_ceil(16) * 16 + material;
+    let cbuffers = descriptors
+        .iter()
+        .filter(|(_, flags, _)| flags & 0xFF <= 1)
+        .count();
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&header.to_le_bytes());
+    out.extend_from_slice(&(descriptors.len() as u32).to_le_bytes());
+    let mut x = 0u32;
+    for (name, flags, y) in &descriptors {
+        for word in [*name, *flags, x, *y] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        x += step(*flags);
+    }
+    out.extend_from_slice(&(cbuffers as u32).to_le_bytes());
+    let first_table = if has_engine { engine_count } else { material_count };
+    out.extend_from_slice(&(first_table as u32).to_le_bytes());
     out
 }
 
@@ -2267,15 +2328,27 @@ impl EngineData {
 
     fn derived_template(
         &self,
+        containers: &HashMap<Stage, Vec<u8>>,
         resources: &HashMap<Stage, StageResources>,
     ) -> Option<GroupTemplate> {
         let mut template = self.group_template.as_ref()?.clone();
+        let engine_count = template.engine.len();
         for (index, group) in template.groups.iter_mut().enumerate() {
             // A head that is just the query waits for its derived rest. A
             // group with no engine table legitimately has an empty `between`,
             // so it is only derived when the group carries the engine table.
             if group.head.len() == 4 {
-                group.head.extend_from_slice(&derived_head(resources));
+                // A group with its own programs derives its head from their
+                // reflections; a declaration-only group falls back to the
+                // shader-wide resources.
+                let programs = self.group_programs(containers, index);
+                let head = if programs.is_empty() {
+                    derived_head(resources)
+                } else {
+                    let material = self.material_tables.get(index).map_or(0, Vec::len);
+                    derived_head_for_group(&programs, material, engine_count, group.has_engine)
+                };
+                group.head.extend_from_slice(&head);
             }
             if group.between.is_empty() && group.has_engine {
                 group.between = derived_between();
@@ -2290,6 +2363,34 @@ impl EngineData {
             }
         }
         Some(template)
+    }
+
+    /// The reflections of a group's programs, in program order (vertex/pixel
+    /// pairs), picking each container the same way `build_device` does.
+    fn group_programs(
+        &self,
+        containers: &HashMap<Stage, Vec<u8>>,
+        group: usize,
+    ) -> Vec<StageResources> {
+        let mut out = Vec::new();
+        for (index, (stage, _)) in self.programs.iter().enumerate() {
+            if self.program_groups.get(index).copied().flatten() != Some(group) {
+                continue;
+            }
+            let carried = self
+                .program_containers
+                .get(index)
+                .copied()
+                .flatten()
+                .and_then(|container| self.containers.get(container));
+            let Some(container) = containers.get(stage).or(carried) else {
+                continue;
+            };
+            if let Ok(reflected) = StageResources::from_container(container) {
+                out.push(reflected);
+            }
+        }
+        out
     }
 
     pub fn build_device(
@@ -2651,7 +2752,7 @@ impl EngineData {
         };
         // The template first: the device's tails read its descriptor list, so
         // the derived head has to exist before the device is built.
-        let mut template = self.derived_template(resources);
+        let mut template = self.derived_template(containers, resources);
 
         // A group's query id comes from the contexts (the engine looks a group
         // up by it), so a from-scratch file - whose groups carry a zero
