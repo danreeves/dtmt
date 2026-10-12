@@ -24,18 +24,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         .ok_or("no template in the file")?;
 
     for (index, parts) in template.groups.iter_mut().enumerate() {
-        let mut channels: Vec<u32> = Vec::new();
+        // When the mid is already gone, the group's channels are already set:
+        // this pass only re-encodes the tails (the round trip through
+        // `to_text` does that).
         if let Some(copies) = mid_sections(&parts.mid).and_then(|mut sections| sections.pop()) {
+            let mut channels: Vec<u32> = Vec::new();
             for row in copies.records.chunks_exact(28) {
                 let hash = u32::from_le_bytes(row[0..4].try_into().unwrap());
                 if !channels.contains(&hash) {
                     channels.push(hash);
                 }
             }
+            println!("group {index}: channels {channels:08X?}");
+            parts.channels = channels;
+            parts.mid = Vec::new();
         }
-        println!("group {index}: channels {channels:08X?}");
-        parts.channels = channels;
-        parts.mid = Vec::new();
     }
 
     fs::write(&path, engine_data.to_text())?;

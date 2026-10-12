@@ -1324,8 +1324,25 @@ struct BlockDiff {
     /// absent when the block *is* the body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     head: Option<usize>,
+    /// The slice of the preamble's body the block carries verbatim: its start
+    /// and length. A block is `head + body[start..start+len] (patched) +
+    /// trailing`. The standard's blocks share one 348-byte run of the body's
+    /// records, so this is what stops twelve tails repeating it.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    body_start: u32,
+    /// The slice's length; absent means to the end of the body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    body_len: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     patches: Vec<PatchText>,
+    /// The bytes after the slice, which are per program.
+    #[serde(default, skip_serializing_if = "Hex::is_empty")]
+    trailing: Hex,
+}
+
+/// Serde skip for a zero `u32`.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// One patched byte of a block: its offset into the body and the value.
@@ -1357,41 +1374,69 @@ struct ProgramText {
     group: Option<usize>,
 }
 
-/// Writes a block as its own bytes, or - when that is smaller - as the
-/// preamble's body with the bytes that differ patched in.
+/// Writes a block as its own bytes, or - when that is smaller - as a slice of the
+/// preamble's body with the bytes that differ patched in and the program-specific
+/// bytes after it.
 ///
-/// The block is the body with a per-program header in front and a few fields
-/// patched (the UI shader's blocks are a 0- or 4-byte header and one patched
-/// byte), so the diff is usually a few bytes against the 550-byte body.
+/// The UI shader's blocks are the body with a 0- or 4-byte header and a patched
+/// byte; the standard's are a per-program head, a shared 348-byte run of the
+/// body's records and a per-program tail, so referencing the run instead of
+/// repeating it is what keeps twelve tails from carrying it twelve times.
 fn block_text(block: &[u8], preamble: &[u8], heads: &mut Vec<Hex>) -> BlockText {
     let body = preamble.get(12..).unwrap_or_default();
-    if body.is_empty() || block.len() < body.len() || block.len() - body.len() > 64 {
+    if body.is_empty() {
         return BlockText::Hex(block.to_vec().into());
     }
-    let header = block.len() - body.len();
-    let patches: Vec<PatchText> = (0..body.len())
-        .filter(|at| block[header + at] != body[*at])
-        .map(|at| PatchText {
-            offset: at as u32,
-            value: block[header + at] as u32,
+    // The longest run of the body that appears verbatim in the block.
+    let (mut start, mut at, mut len) = (0usize, 0usize, 0usize);
+    for body_at in 0..body.len() {
+        for block_at in 0..block.len() {
+            if body[body_at] != block[block_at] {
+                continue;
+            }
+            let mut run = 0;
+            while body_at + run < body.len()
+                && block_at + run < block.len()
+                && body[body_at + run] == block[block_at + run]
+            {
+                run += 1;
+            }
+            if run > len {
+                start = body_at;
+                at = block_at;
+                len = run;
+            }
+        }
+    }
+    let patches: Vec<PatchText> = (0..len)
+        .filter(|k| block[at + k] != body[start + k])
+        .map(|k| PatchText {
+            offset: (start + k) as u32,
+            value: block[at + k] as u32,
         })
         .collect();
-    // Each patch is a few characters, so a diff only pays off when it is small
-    // against the block.
-    if 5 * patches.len() + header >= block.len() {
+    // Each patch is a few characters, so a diff only pays when the patches plus
+    // the head and the trailing bytes are smaller than the block's own hex.
+    let trailing = block.len() - at - len;
+    if 5 * patches.len() + 2 * (at + trailing) >= 2 * block.len() {
         return BlockText::Hex(block.to_vec().into());
     }
     // The head goes into the file's shared pool: the tails repeat a handful of
     // them.
-    let head = (header != 0).then(|| match heads.iter().position(|other| other.0 == block[..header])
-    {
+    let head = (at != 0).then(|| match heads.iter().position(|other| other.0 == block[..at]) {
         Some(index) => index,
         None => {
-            heads.push(block[..header].to_vec().into());
+            heads.push(block[..at].to_vec().into());
             heads.len() - 1
         }
     });
-    BlockText::Body(BlockDiff { head, patches })
+    BlockText::Body(BlockDiff {
+        head,
+        body_start: start as u32,
+        body_len: Some(len as u32),
+        patches,
+        trailing: block[at + len..].to_vec().into(),
+    })
 }
 
 /// Reads a block written by [`block_text`].
@@ -1402,6 +1447,13 @@ fn block_bytes(spec: &BlockText, preamble: &[u8], heads: &[Hex]) -> Result<Vec<u
             let body = preamble
                 .get(12..)
                 .ok_or_else(|| color_eyre::eyre::eyre!("the preamble is too short to hold a body"))?;
+            let start = diff.body_start as usize;
+            let len = diff
+                .body_len
+                .map_or(body.len().saturating_sub(start), |len| len as usize);
+            let slice = body.get(start..start + len).ok_or_else(|| {
+                color_eyre::eyre::eyre!("a block's body slice is out of range")
+            })?;
             let mut block = match diff.head {
                 Some(index) => heads
                     .get(index)
@@ -1410,14 +1462,18 @@ fn block_bytes(spec: &BlockText, preamble: &[u8], heads: &[Hex]) -> Result<Vec<u
                 None => Vec::new(),
             };
             let header_len = block.len();
-            block.extend_from_slice(body);
+            block.extend_from_slice(slice);
             for patch in &diff.patches {
                 let value = u8::try_from(patch.value)
                     .map_err(|_| color_eyre::eyre::eyre!("a patch value is out of range"))?;
+                let offset = (patch.offset as usize)
+                    .checked_sub(start)
+                    .ok_or_else(|| color_eyre::eyre::eyre!("a patch is before the slice"))?;
                 *block
-                    .get_mut(header_len + patch.offset as usize)
+                    .get_mut(header_len + offset)
                     .ok_or_else(|| color_eyre::eyre::eyre!("a patch is out of range"))? = value;
             }
+            block.extend_from_slice(&diff.trailing.0);
             Ok(block)
         }
     }
