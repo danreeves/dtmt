@@ -1119,7 +1119,14 @@ name them at all. The material is `material_contexts = { surface_material =
 table's two rows are that template's own engine-provided textures - which the
 build's graph evaluation resolves, and which is why they have no dictionary name.
 So `material_records` has to reproduce the *object* table's rows (the resolved
-engine textures), not the declaration's channel clones.
+engine textures), not the declaration's channel clones. Dropping the pool and
+rebuilding grows the standard's section by only **112 bytes** (and leaves the UI
+base's section untouched), so the derived table is close to the object table - a
+row or two per group - rather than a wholesale mismatch.
+
+(A build's log reports the *section* size, which is 132 bytes below the data
+file's because the file also carries the 28-byte header and the material
+template; do not compare the two directly.)
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
