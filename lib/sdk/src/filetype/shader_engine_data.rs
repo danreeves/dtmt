@@ -1027,7 +1027,7 @@ pub fn head_descriptors(programs: &[Vec<dxc::BoundResource>]) -> Vec<(u32, u32, 
                 Some(slot) => slot,
                 None => {
                     let flags = match engine_descriptor_flags(hash) {
-                        0 => binding.kind,
+                        0 => engine_kind_flags(binding.kind),
                         flags => flags,
                     };
                     out.push((hash, flags, 0));
@@ -1245,6 +1245,22 @@ fn engine_descriptor_flags(name: u32) -> u32 {
         GLOBAL_TEXTURE2D => 0x0000_0103,
         GLOBAL_FEEDBACK_BUFFERS => 0x0000_0105,
         _ => 0x0000_0000,
+    }
+}
+
+/// The engine's descriptor flags for a resource the table does not know, from
+/// the reflection's binding kind. The engine renumbers the kinds: DXC's
+/// `TEXTURE` is `2` but the engine's texture flag is `3`, its `TBUFFER` /
+/// `STRUCTURED` / `BYTEADDRESS` SRVs are the one structured kind `4`, and its
+/// UAVs are `5` (structured) or `7` (raw).
+fn engine_kind_flags(kind: u32) -> u32 {
+    match kind {
+        0 => 0,
+        2 => 3,
+        1 | 5 | 7 => 4,
+        4 | 6 | 9 | 10 | 11 => 5,
+        8 => 7,
+        other => other,
     }
 }
 
@@ -3361,7 +3377,7 @@ mod tests {
         assert_eq!(descriptors[2].2, 0b0100);
         assert_eq!(descriptors[3].2, 0b1000);
         assert_eq!(descriptors[0].1, 0x0101); // the engine's mined flags
-        assert_eq!(descriptors[2].1, 2); // an unknown name takes its kind
+        assert_eq!(descriptors[2].1, 3); // an unknown texture is the engine's `3`
     }
 
     fn empty_engine_data() -> EngineData {
