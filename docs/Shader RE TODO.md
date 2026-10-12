@@ -113,6 +113,18 @@ the program list wrote every index even when it was the default `0` (`head = 0`,
 `tail = 0`, ...); they now skip it. Took the file from **12,266 -> 11,870 bytes**,
 byte-identical.
 
+**Pool references are compact, and two negative results (2026-10-12).** A shared
+front/back reference is written `head = "2:60"` (`node:len` / `node:start`) rather
+than a four-line table - **11,870 -> 11,552 bytes**, byte-identical. Two things
+that look derivable are not:
+
+- **the group heads** (the bulk of the group template): clearing them and
+  rebuilding fails with *`A7FF6329 is not in the group's descriptor list`* - the
+  rebuilt container's reflection loses a resource the shipped head names, so the
+  head stays carried until the reconstruction is lossless;
+- **a program's `job`**: the build path does not read `program_jobs`, but removing
+  the tags changes the built section's descriptor lists, so it is needed.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
