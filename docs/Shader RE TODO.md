@@ -1098,20 +1098,18 @@ engine data. Dropping the engine data's `materials` pool on top of that does
 *not* reproduce the section (+112 B), so the material table is still built
 differently - the next gap on the road to dropping the engine data.
 
-**The material table is the channels' records (2026-10-12).** The engine data's
-`materials` pool is `{kind, flags, <channel>, offset, size}` runs -
-`0F5DE278`, `bca`, `bca`, `orm`, `nm`, ... - i.e. precisely the channel records
-the `mid`'s first section begins with. So the material table and the `mid` share
-one source: **the material's channels**. The `--reconstruct` path emits `inputs`
-from the section's *object table* (`#78E25D0F`, `#9A531871`, neither of which is
-a channel). But the derivation is **already implemented**: `build.rs`'s
-`material_records` builds the table from the graph's sampled channels - `{5, 0,
+**The material table is the object table, not the channels (2026-10-12).** The
+engine data's `materials` pool holds `{5, 0, <texture>, offset, 4}` rows - group
+0's table is exactly two, `78E25D0F` at 0 and `9A531871` at 4 - and those are the
+same two hashes the `--reconstruct` path emits as its `inputs` (taken from the
+section's object table). `build.rs`'s `material_records`, however, builds the
+table the *other* way: per sampled channel (`bca`/`orm`/`nm`) it emits `{5, 0,
 <channel>, offset, 4}`, `{1, 0, <channel>, offset + 4, 8}`, `{1, 0, <channel>,
-offset + 16, 8}` per channel - then the engine's `view_proj` / `world_view_proj` /
-`world` rows at 64 bytes each, then the declaration's own variables. So the +112
-B is a detail of those records (the shipped table also carries `last_world`)
-rather than a missing input - and the same channel rows are what the `mid`'s
-first section starts with, so one fix serves both.
+offset + 16, 8}`, then the engine's `view_proj` / `world_view_proj` / `world` rows
+and the declaration's variables. So the +112 B is that difference - the shipped
+table is the object table (two slot rows), the graph-derived one the channels'
+clones - and it is the concrete mismatch to close: `material_records` should
+agree with the `inputs` the reconstruction already emits.
 
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
