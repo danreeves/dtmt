@@ -1162,6 +1162,17 @@ builder takes the head's cbuffer descriptors, drops `global_viewport` (which the
 share a 272-byte variant in other groups, so the name - not the size - has to be
 the key.
 
+**The interface sets are four, and one is shared (2026-10-12).** Re-basing the
+mined table (the prefix is the *minimum* offset in each cbuffer - `view_proj`'s)
+leaves four distinct field sets: `c_instance_offset`'s single `material_id` row;
+the 416-byte `c_per_object`'s five matrices (`view_proj`, `world_view_proj`,
+`world`, `last_world`, `711B4ADC`) plus `ed9d8188`/`b9d685cb`; the
+400-byte `global_environment_settings`' 58 fields; and a three-matrix set that
+`c_depth_only` **and** one `c_per_object` variant (272 bytes) both use. So a
+cbuffer's *name* does not map to one set - the set is chosen per group - which
+means the const should key on the set (or carry the set per group) rather than on
+the name alone.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
