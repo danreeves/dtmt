@@ -745,8 +745,12 @@ struct GroupTemplateText {
     /// that are six repeats of its six tails, so the list is derivable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     repeat: Option<usize>,
+    /// The group specs, and - when the list repeats specs - the index list that
+    /// names them. `groups` then holds only the distinct specs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     groups: Vec<GroupText>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pattern: Vec<usize>,
 }
 
 /// The bytes of a condition set: `u32 n`, then `n` 17-byte entries (`u32 hash`
@@ -858,7 +862,7 @@ fn derive_program_groups(engine_data: &mut EngineData, group_conditions: &[usize
 
 /// One group of the template: its query id (absent when the contexts carry it -
 /// they do, one to one and in the same order) and the parts it uses.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GroupText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2152,6 +2156,18 @@ impl EngineData {
                         })
                         .collect()
                 }
+                // A list written as a pool plus a pattern expands through it.
+                _ if !template.pattern.is_empty() => template
+                    .pattern
+                    .iter()
+                    .map(|index| {
+                        template.groups.get(*index).cloned().ok_or_else(|| {
+                            color_eyre::eyre::eyre!(
+                                "a group pattern names group #{index}, which is missing"
+                            )
+                        })
+                    })
+                    .collect::<Result<_>>()?,
                 _ => template.groups.clone(),
             };
             let mut group_tail_slots: Vec<usize> = Vec::with_capacity(expanded.len());
@@ -2477,6 +2493,25 @@ impl EngineData {
                 None => (None, groups),
             };
 
+            // A group list that repeats specs is written as the distinct specs
+            // plus a pattern naming them (the standard's five groups hold three).
+            let mut pattern: Vec<usize> = Vec::with_capacity(groups.len());
+            let mut pool: Vec<GroupText> = Vec::new();
+            for group in &groups {
+                pattern.push(match pool.iter().position(|other| other == group) {
+                    Some(index) => index,
+                    None => {
+                        pool.push(group.clone());
+                        pool.len() - 1
+                    }
+                });
+            }
+            let (groups, pattern) = if pool.len() < groups.len() {
+                (pool, pattern)
+            } else {
+                (groups, Vec::new())
+            };
+
             // A head that is only its query is derived at build time from the
             // group's programs' reflections, so a file whose heads all derive
             // carries no head pool.
@@ -2504,6 +2539,7 @@ impl EngineData {
                 tails,
                 repeat,
                 groups,
+                pattern,
             }
         });
 
