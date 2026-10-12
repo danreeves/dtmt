@@ -218,3 +218,43 @@ the worked example.
   step ranges and step meshes). The `bounding_volume` and `orientation` names are
   parsed but unused, and a step's `stream_offset` stays 0 because the compiler
   always writes inline vertex data.
+
+## Shipped sweep (2026-10-12)
+
+`examples/unit_probe.rs` walks a directory of shipped bundles, decompiles every
+`Unit` payload, recompiles it and compares the bytes. On **300** bundles
+(2,607 units):
+
+| Outcome | Count |
+|---------|-------|
+| decode rejected (skins / animations / streamed meshes) | 2,530 |
+| decoded | **77** |
+| of which recompiled | 77 |
+| of which **byte-identical to the shipped payload** | **0** |
+
+So the doc's earlier "four shipped static payloads round-trip at *identical
+size*" holds for size, but not for bytes: every rebuilt payload has the same
+length and differs in content. Two shapes of difference are visible:
+
+- **float precision** - e.g. `00970f393da1975b` differs at one byte
+  (`…ac 27 02 38` vs `…ab 27 02 38`), one ULP of the stored `f32`, i.e. the
+  value goes through text in the `.bsi`/`.unit` SJSON and back;
+- **a substituted value** - `004083ab7183d934` has `f32 0x3EB043E5` (`0.34424`)
+  at offset 128 in the shipped payload but `0x3E99999A` (`0.3`) in the rebuilt
+  one. Size is unchanged, so the field exists on both sides; something writes a
+  default where the shipped file has real data.
+
+Both are worth chasing because a payload that is not byte-exact cannot be trusted
+to be "the same resource", and the second one may be a plain bug.
+
+`bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
+`vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
+the same payload and gives field names to compare against.
+
+## Format variants still rejected
+
+Skins, animations, streamed meshes and actor/camera/light units make up the vast
+majority of shipped units (2,530 of 2,607 here). The Python reference above and
+the community `unit_v115` writer both decode several of them; `skin_data.py`,
+`animation.py`, `actor_resource.py`, `camera.py` and `light.py` there name the
+shape of each.

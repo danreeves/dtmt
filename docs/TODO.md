@@ -77,7 +77,7 @@ grammar - a custom base material can only use a shipped interface today.
 | Material | Partial | Base + instance round-trip byte-for-byte. Custom shaders work **against a shipped interface**; adding channels / our own cbuffers is blocked on the device block's record grammar. The community `material_v61` writer is a v61 reference. |
 | Shader section (`shader43`) | Partial (generating) | The `standard_base` family derives from source: its engine data is **9,556 B** (was 375,410), the resource lists, `mid`, groups, group heads, `between`, device-block body slices and heads/trailings all derive or pool, and the built material matches the shipped one but for two pre-existing material-size bytes (verified in game). Remaining: the per-program device **block grammar** (the head and trailing, 49% of the file), the carried **preamble**/`programs`/`materials`, and the enumerator. See `Shader RE TODO.md`. The community `shader_section` (version `0x2b`) decodes/encodes shipped sections exactly, and its `shader_compiler` gives the root-parameter numbering. A decompiler symbol map of `Darktide.exe` names the engine/D3D12 symbols; the device pass reader `stingray::D3D12ShaderPass::init` is at `0x1407f5f4x`–`0x1407f64xx` (found from its assert string; the map's own address for it is mis-attributed to ray tracing). |
 | Strings | Partial | The format is done; the bundle-property / variant interaction is not (upstream issue #3). |
-| Unit | Partial | Static payloads round-trip and spawn; skins, animations, streamed meshes and actor/camera/light units are rejected. The community `unit_v115` writer is a reference. |
+| Unit | Partial | Static payloads spawn, and skins / animations / streamed meshes / actor-camera-light units are rejected with clear errors. A shipped sweep (`examples/unit_probe.rs`; 2,607 units in 300 bundles) shows the size of the gap: only **77 decode**, and **none of the 77 round-trips byte-for-byte** - the rebuilt payload has the same length but differs, mostly by one ULP in float fields (one case `0.3442` -> `0.3`, i.e. a value we substitute). So the SJSON path is not yet byte-exact even for statics. The community `unit_v115` writer is a reference, and `bitsquid-blender-tools` (`stingray/unit/`, `index_stream.py`, `vertex_stream.py`) is a second one. |
 | Bones | Complete | The cooked **body** is decoded and compiled (`filetype/bones.rs`): a bundle variant stores the body alone — the community writer's 38-byte envelope is its *standalone* blob form, which the reader still accepts. **Verified against shipped data**: all 723 `bones` variants in 2,500 sampled game bundles decode, pass every joint-id check and round-trip byte-for-byte (`examples/bones_probe.rs`). |
 | Animation | None | The community `animation_writer` writes cooked clips (with a fitter). |
 | State Machine | None | The community `state_machine_writer` writes states, blends, layers and ragdoll states. |
@@ -147,4 +147,15 @@ has *not* cracked yet - a useful "still open" signal.
 
 - The VT2 SDK writer artifacts and the `.shader_library` decode - see
   `Shader RE TODO.md` ("The VT2 SDK is the writer's ground truth").
+- `C:\dev\bitsquid-blender-tools` - a Python read/write library for the Stingray
+  formats (`bitsquid/stingray/`: `unit/`, `bones.py`, `material.py`,
+  `mesh_geometry.py`, `mesh_object.py`, `animation.py`, `state_machine`, `level`,
+  …) plus its own `unpacking/dictionary.csv`. Its `stingray/resource_header.py`
+  names the 38-byte wrapper **`DTHeader`** (`{resource_type, name, unk1..unk3,
+  unk4, resource_len, unk5, stream_name_len}`) and says it is "found at the
+  beginning of most (all?) resource files" - i.e. the *standalone* resource form,
+  which is why a Darktide **bundle variant** carries only the body (see
+  `File Type - Bones.-.md`). Useful as a second opinion on field names and on the
+  formats DTMT has not started (skin data, scene graph, actor desc, camera, light,
+  ragdoll, mover, vertex streams).
 - Upstream issue tracker: <https://git.sclu1034.dev/bitsquid_dt/dtmt/issues>.
