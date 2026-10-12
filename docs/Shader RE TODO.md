@@ -3682,6 +3682,36 @@ Block notes from a byte-precise dump of the chain base (863 byte preamble):
    group data and conditions tree, wiring `Section::build` into `dtmt build`,
    and a new shader generated end to end and verified in game.
 
+### The Darktide.exe symbol map names the pass reader (2026-10-12)
+
+A decompiler-generated symbol map of `Darktide.exe` (`working_map_batch33.csv`:
+25,148 rows of `entry, source_file, line_start, line_end, mapping, confidence,
+recovered_name, …`) closes the gap the RTTI strip left — it resolves engine and
+D3D12 render-device symbols to source paths with confidences:
+
+| Address | Symbol | Source |
+|---------|--------|--------|
+| `0x1405d4ee0` | `stingray::Shader::initialize_resource_data` | `engine/renderer/resources/shader.cpp` |
+| `0x1405d7410` | `stingray::ShaderTemplate::initialize` | “ |
+| `0x1405c7910` | `stingray::shader_reflection::calc_rbuffer_size_and_offsets` | “ |
+| `0x1407d46b0` | `stingray::D3D12ShaderPass::init` | `d3d12_render_device/shader/d3d12_shader_pass.cpp` |
+| `0x1407d4420` | `stingray::decompress_oodle` | “ |
+| `0x1407d3a10`–`0x1407d4520` | unnamed helpers in the same TU | “ |
+
+`Shader::initialize_resource_data` and `ShaderTemplate::initialize` carry the
+`vt2_sdk_unique_high_donor_one_to_one_validated_source_family` mapping, i.e. they
+are byte-identical to the VT2 SDK **binaries** — but that SDK ships no engine
+sources at all (zero `.cpp`/`.h`), only its shader and `.texture_category` data,
+so the disassembly stays the reference. `D3D12ShaderPass::init` (RVA `0x7d46b0`,
+file offset `0x7d3cb0` in `.text` at `0x600`) is the device pass constructor: it
+builds arrays with **×20** and **×16** strides plus several vector-growth paths
+(`shl $0x5` for a 32-byte element), matching the suspected record sizes (20-byte
+`ConstantBufferBindInfo` / `ResourceBindInfo`, 20-byte
+`StreamOutDeclaration::Channel`, 16-byte `InstanceData::Variable`). Its
+`assert_source_path` confidence means the address comes from an assert compiled
+into that very file, so it is trustworthy. This is the function to read the block
+field order off, together with the four unnamed helpers just above it.
+
 ## Bounties
 
 `unknown.txt` (hashes seen in Darktide shader structures that the dictionary

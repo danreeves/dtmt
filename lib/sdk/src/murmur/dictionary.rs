@@ -130,7 +130,45 @@ impl Dictionary {
             entries.push(entry);
         }
 
-        Ok(Self { entries })
+        let mut dictionary = Self { entries };
+        dictionary.add_derived_texture_categories();
+        Ok(dictionary)
+    }
+
+    /// Registers the engine-id form of every texture category the dictionary
+    /// knows about.
+    ///
+    /// The CSV records categories in their bare form (`texture_categories/<leaf>`),
+    /// but a texture body stores the engine id of
+    /// `content/texture_categories/<leaf>` (murmur32). Without this the
+    /// `TextureCategory` group is empty and `lookup_short` never resolves a
+    /// shipped texture's category. Verified against shipped bodies: `BECF238C` is
+    /// `content/texture_categories/ui`, the most common category in the game.
+    pub fn add_derived_texture_categories(&mut self) {
+        let mut seen: std::collections::HashSet<String> = self
+            .entries
+            .iter()
+            .filter(|e| e.group == HashGroup::TextureCategory)
+            .map(|e| e.value.clone())
+            .collect();
+        let derived = self
+            .entries
+            .iter()
+            .filter(|e| e.value.starts_with("texture_categories/"))
+            .map(|e| format!("content/{}", e.value))
+            .filter(|value| seen.insert(value.clone()))
+            .collect::<Vec<_>>();
+
+        for value in derived {
+            let long = Murmur64::from(murmurhash64::hash(value.as_bytes(), SEED as u64));
+            let short = Murmur32::from(murmurhash64::hash32(value.as_bytes(), SEED));
+            self.entries.push(Entry {
+                value,
+                long,
+                short,
+                group: HashGroup::TextureCategory,
+            });
+        }
     }
 
     pub async fn to_csv<W>(&self, w: W) -> Result<()>
@@ -208,5 +246,41 @@ impl Dictionary {
 
     pub fn entries(&self) -> &Vec<Entry> {
         &self.entries
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_texture_category_engine_ids() {
+        let mut dict = Dictionary::new();
+        dict.add("texture_categories/ui", HashGroup::Filename);
+        dict.add("texture_categories/character_nm", HashGroup::Other);
+        // A non-category value must not be derived.
+        dict.add("units/foo", HashGroup::Filename);
+
+        dict.add_derived_texture_categories();
+
+        // `BECF238C` and `E4378318` are the hashes shipped texture bodies carry.
+        let ui = dict.lookup_short(Murmur32::from(0xbecf238c), HashGroup::TextureCategory);
+        assert_eq!(ui.map(String::as_str), Some("content/texture_categories/ui"));
+
+        let nm = dict.lookup_short(Murmur32::from(0xe4378318), HashGroup::TextureCategory);
+        assert_eq!(
+            nm.map(String::as_str),
+            Some("content/texture_categories/character_nm")
+        );
+
+        // Looking the same hash up in another group must still miss.
+        assert!(dict
+            .lookup_short(Murmur32::from(0xbecf238c), HashGroup::Filename)
+            .is_none());
+
+        // Deriving is idempotent.
+        let len = dict.len();
+        dict.add_derived_texture_categories();
+        assert_eq!(dict.len(), len);
     }
 }

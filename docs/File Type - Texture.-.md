@@ -248,22 +248,43 @@ entry. The reassembly is additionally exercised in game.
 
 ### 1.7 Category
 
-A `u32` murmur32 hash of an engine id, normally a
-`content/texture_categories/*` string. DTMT looks unknown hashes up in the
-dictionary; known ones are printed as strings, unknown ones as 8 uppercase hex
-digits.
+A `u32` murmur32 hash of the engine id of the category. A category is a
+`.texture_category` resource (a one-line `ui_name = "…"`) living under
+`texture_categories/`, and the engine id is
+**`murmur32("content/texture_categories/<leaf>")`** — the `content/` root prefix
+included. DTMT resolves it through the dictionary's `texture-category` group;
+unknown hashes print as 8 uppercase hex digits.
 
-Known values (from observed data and the engine's memory tree):
+Verified against 10,897 shipped texture bodies:
 
-| Hash | String |
-|------|--------|
-| `BECF238C` | `content/texture_categories/ui` |
-| `EB8156DA` | `content/texture_categories/loading` |
-| `E4378318` | `content/texture_categories/character_nm` |
-| `8B36AA40` | `content/texture_categories/character_orm` |
+| Hash | Category | Notes |
+|------|----------|-------|
+| `BECF238C` | `ui` | by far the most common (6,099 of the sample) |
+| `9E302B8B` | `environment_hm` | |
+| `3390ABA5` | `environment_nm` | |
+| `E514D1DC` | `environment_orm` | |
+| `8B36AA40` | `character_orm` | |
+| `E4378318` | `character_nm` | |
+| `447F3ADD` | `weapon_orm` | |
+| `B7BD70F3` | `weapon_hm` | |
+| `ACFE5D43` | `weapon_nm` | |
+| `E5A8544A` | `character_mask` | |
+| `EB398406` | `vfx_nm` | |
+| `B032BB5C` | `skydome` | |
 
-Status: the four mappings above are **Observed**. The complete set of categories
-is **Unknown**.
+All are `content/texture_categories/<leaf>`. The suffix vocabulary is the usual
+channel set (`df`, `dfa`, `dfa1`, `nm`, `orm`, `ao`, `ma`, `mae`, `gsm`, `hm`,
+`hma`, `scr`, `em`, `mask`), applied to `character`, `environment`, `weapon`,
+`vehicle`, `vfx`, … groups. `murmur32` is the same function `IdString32` uses, so
+a category written from an SJSON name round-trips.
+
+Status: the hash scheme is **Verified**. The **name set is data-driven** — one
+`.texture_category` resource per name, carried inside the shipped bundles but
+never present as a plain string — so only names the dictionary happens to know
+resolve (`Dictionary::add_derived_texture_categories` derives the engine-id form
+of every `texture_categories/<leaf>` row in `dictionary.csv`). Roughly twenty
+further hashes seen in shipped textures, including the three most common after
+`ui`, are still unnamed.
 
 ---
 
