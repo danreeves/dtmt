@@ -48,7 +48,7 @@ nothing known.
 | State Machine | None | The community `state_machine_writer` writes states, blends, layers and ragdoll states. |
 | Flow | None | The community `flow_resource` decodes/encodes a unit's compiled flow graph. |
 | Physics | None | The community compiler cooks PhysX collections/scenes. |
-| Particles | Limited | The effect header (lifetime, culling distance, flags), the effect variables and the system list are decoded and compiled (`filetype/particles.rs`); each system's component model is still opaque hex. The community `particles_resource` (version 102) decodes/encodes effects exactly and publishes a component schema. |
+| Particles | Limited | The effect header, the effect variables and each system header (name, capacity, channel layout, component counts) are decoded and compiled (`filetype/particles.rs`); a shipped effect round-trips byte-for-byte. The component bodies are still opaque hex; the community `particles_resource` (version 102) decodes them. |
 | Level | None | Nothing started. |
 | Sound (Wwise) | Limited | Bank / Event / Stream: the version and the post-processing. VT2's pipeline is the reference. |
 

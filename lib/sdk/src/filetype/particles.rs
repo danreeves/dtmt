@@ -1,11 +1,12 @@
 //! The `particles` resource: a compiled particle effect, version 102.
 //!
 //! This reads/writes the **effect header** - the lifetime, culling distance and
-//! flags, the effect variables, and the system list - and keeps each system's
-//! bytes opaque (the channel / initializer / simulator / visualizer component
-//! model is not decoded yet). The reference is the Darktide-Asset-Compiler's
-//! `stingray/particles/particles_resource.cpp`, which decodes every shipped
-//! effect exactly.
+//! flags, the effect variables - and each **system header** (its name, capacity,
+//! channel layout and the initializer / simulator / visualizer counts), keeping
+//! the component *bodies* opaque (the channel / initializer / simulator /
+//! visualizer model is not decoded yet). The reference is the
+//! Darktide-Asset-Compiler's `stingray/particles/particles_resource.cpp`, which
+//! decodes every shipped effect exactly.
 //!
 //! Effect header (offsets in the body):
 //!
@@ -23,20 +24,38 @@
 //! +0x28  u32  system count
 //! +0x2C  u32  variable names     # variable count entries
 //!        f32 x3 variable values  # variable count entries
-//!        systems                # system count entries, `0x240` bytes each
+//!        systems                # system count entries
 //! ```
 //!
-//! Each system carries its own byte length at `+0x23C`; the systems run to the
-//! end of the body.
-
-use std::io::Cursor;
+//! System header (offsets within a system; the whole system is `end` bytes):
+//!
+//! ```text
+//! +0x00  u32  name hash
+//! +0x04  u32  capacity
+//! +0x08  f32  min_capacity_scaling
+//! +0x0C  u32  channel count      # at most 16
+//! +0x10  u32  channel stride
+//! +0x14  u32  channel size x16   # the unused slots are 0
+//! +0x54  u32  0
+//! +0x58        header tail       # to 0x214, opaque
+//! +0x214 u32  initializer count
+//! +0x218 u32  initializers at    # 0x240
+//! +0x21C u32  simulator count
+//! +0x220 u32  simulator records at
+//! +0x224 u32  simulator data at
+//! +0x228 u32  unknown
+//! +0x22C u32  visualizer count
+//! +0x230 u32  visualizers at
+//! +0x234 u32  unknown
+//! +0x238 u32  unknown
+//! +0x23C u32  end (the system's length)
+//! ```
 
 use color_eyre::{Report, Result, eyre::bail};
 
-use crate::binary::sync::ReadExt;
 use crate::bundle::file::UserFile;
-use crate::{BundleFile, BundleFileType, BundleFileVariant};
 use crate::murmur::IdString64;
+use crate::{BundleFile, BundleFileType, BundleFileVariant};
 
 /// The version this reader models.
 pub const PARTICLES_VERSION: u32 = 102;
@@ -57,7 +76,35 @@ pub struct Variable {
     pub value: [f32; 3],
 }
 
-/// A compiled particle effect, with each system kept opaque.
+/// One particle system: its header read, its component bodies kept as hex.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct System {
+    /// The system's name hash, as `#<8 hex digits>`.
+    pub name: String,
+    pub capacity: u32,
+    pub min_capacity_scaling: f32,
+    /// The channel sizes, one per used channel.
+    pub channels: Vec<u32>,
+    pub channel_stride: u32,
+    /// The header bytes `0x58..0x214`, hex.
+    pub header: String,
+    pub initializers: u32,
+    pub simulators: u32,
+    pub visualizers: u32,
+    /// The unknown words at `0x228`/`0x234`/`0x238`, hex.
+    pub unknown: String,
+    /// The initializer block, hex.
+    pub initializer_data: String,
+    /// The simulator records, hex.
+    pub simulator_records: String,
+    /// The simulator data, hex.
+    pub simulator_data: String,
+    /// The visualizer block, hex.
+    pub visualizer_data: String,
+}
+
+/// A compiled particle effect.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Particles {
@@ -70,8 +117,7 @@ pub struct Particles {
     pub casts_shadows: bool,
     pub disable_culling: bool,
     pub variables: Vec<Variable>,
-    /// Each system's bytes as hex (the component model is not decoded yet).
-    pub systems: Vec<String>,
+    pub systems: Vec<System>,
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
@@ -119,6 +165,131 @@ fn push_u32(out: &mut Vec<u8>, value: u32) {
     out.extend_from_slice(&value.to_le_bytes());
 }
 
+/// Reads a name hash written as `#<8 hex digits>`.
+fn name_hash(text: &str) -> Result<u32> {
+    u32::from_str_radix(text.trim_start_matches('#'), 16)
+        .map_err(|_| color_eyre::eyre::eyre!("a particles name must be `#<8 hex>`"))
+}
+
+impl System {
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < SYSTEM_HEADER {
+            bail!("a particles system is shorter than its {SYSTEM_HEADER:#x} header");
+        }
+        let channels = u32_at(bytes, 0x0c)? as usize;
+        if channels > 16 {
+            bail!("a particles system has {channels} channels");
+        }
+        let mut sizes = Vec::with_capacity(channels);
+        for index in 0..16 {
+            let size = u32_at(bytes, 0x14 + 4 * index)?;
+            if index < channels {
+                sizes.push(size);
+            } else if size != 0 {
+                bail!("a particles system's unused channel slot {index} is not zero");
+            }
+        }
+        if u32_at(bytes, 0x54)? != 0 {
+            bail!("a particles system's header word 0x54 is set");
+        }
+
+        let initializers = u32_at(bytes, 0x214)?;
+        let initializer_at = u32_at(bytes, 0x218)? as usize;
+        let simulators = u32_at(bytes, 0x21c)?;
+        let records = u32_at(bytes, 0x220)? as usize;
+        let data = u32_at(bytes, 0x224)? as usize;
+        let visualizers = u32_at(bytes, 0x22c)?;
+        let visualizer_at = u32_at(bytes, 0x230)? as usize;
+        let end = u32_at(bytes, 0x23c)? as usize;
+        if initializer_at != SYSTEM_HEADER {
+            bail!("a particles system's initializers do not follow its header");
+        }
+        if end != bytes.len() {
+            bail!("a particles system's end is not its length");
+        }
+        if !(SYSTEM_HEADER <= records && records <= data && data <= visualizer_at && visualizer_at <= end)
+        {
+            bail!("a particles system's component offsets are out of order");
+        }
+        let slice = |from: usize, to: usize| hex(&bytes[from..to]);
+        let mut unknown = Vec::with_capacity(12);
+        for at in [0x228, 0x234, 0x238] {
+            unknown.extend_from_slice(&bytes[at..at + 4]);
+        }
+
+        Ok(Self {
+            name: format!("#{:08x}", u32_at(bytes, 0)?),
+            capacity: u32_at(bytes, 4)?,
+            min_capacity_scaling: f32_at(bytes, 8)?,
+            channels: sizes,
+            channel_stride: u32_at(bytes, 0x10)?,
+            header: slice(0x58, 0x214),
+            initializers,
+            simulators,
+            visualizers,
+            unknown: hex(&unknown),
+            initializer_data: slice(SYSTEM_HEADER, records),
+            simulator_records: slice(records, data),
+            simulator_data: slice(data, visualizer_at),
+            visualizer_data: slice(visualizer_at, end),
+        })
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>> {
+        let initializer_data = from_hex(&self.initializer_data)?;
+        let simulator_records = from_hex(&self.simulator_records)?;
+        let simulator_data = from_hex(&self.simulator_data)?;
+        let visualizer_data = from_hex(&self.visualizer_data)?;
+        let header = from_hex(&self.header)?;
+        if header.len() != 0x214 - 0x58 {
+            bail!("a particles system's header is not {} bytes", 0x214 - 0x58);
+        }
+        if self.channels.len() > 16 {
+            bail!("a particles system has too many channels");
+        }
+        if simulator_records.len() != 5 * self.simulators as usize {
+            bail!("a particles system's simulator records are not five bytes each");
+        }
+
+        let records = SYSTEM_HEADER + initializer_data.len();
+        let data = records + simulator_records.len();
+        let visualizer_at = data + simulator_data.len();
+        let end = visualizer_at + visualizer_data.len();
+
+        let mut out = vec![0u8; SYSTEM_HEADER];
+        out[0..4].copy_from_slice(&name_hash(&self.name)?.to_le_bytes());
+        out[4..8].copy_from_slice(&self.capacity.to_le_bytes());
+        out[8..12].copy_from_slice(&self.min_capacity_scaling.to_le_bytes());
+        out[0x0c..0x10].copy_from_slice(&(self.channels.len() as u32).to_le_bytes());
+        out[0x10..0x14].copy_from_slice(&self.channel_stride.to_le_bytes());
+        for (index, size) in self.channels.iter().enumerate() {
+            out[0x14 + 4 * index..0x18 + 4 * index].copy_from_slice(&size.to_le_bytes());
+        }
+        out[0x58..0x214].copy_from_slice(&header);
+        out[0x214..0x218].copy_from_slice(&self.initializers.to_le_bytes());
+        out[0x218..0x21c].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x21c..0x220].copy_from_slice(&self.simulators.to_le_bytes());
+        out[0x220..0x224].copy_from_slice(&(records as u32).to_le_bytes());
+        out[0x224..0x228].copy_from_slice(&(data as u32).to_le_bytes());
+        out[0x22c..0x230].copy_from_slice(&self.visualizers.to_le_bytes());
+        out[0x230..0x234].copy_from_slice(&(visualizer_at as u32).to_le_bytes());
+        out[0x23c..0x240].copy_from_slice(&(end as u32).to_le_bytes());
+        let unknown = from_hex(&self.unknown)?;
+        if unknown.len() != 12 {
+            bail!("a particles system's unknown words are not twelve bytes");
+        }
+        for (index, at) in [0x228usize, 0x234, 0x238].into_iter().enumerate() {
+            out[at..at + 4].copy_from_slice(&unknown[index * 4..index * 4 + 4]);
+        }
+
+        out.extend_from_slice(&initializer_data);
+        out.extend_from_slice(&simulator_records);
+        out.extend_from_slice(&simulator_data);
+        out.extend_from_slice(&visualizer_data);
+        Ok(out)
+    }
+}
+
 impl Particles {
     /// Reads an effect from its cooked body.
     pub fn from_binary(bytes: &[u8]) -> Result<Self> {
@@ -147,17 +318,14 @@ impl Particles {
             });
         }
 
-        let mut system_bytes = Vec::with_capacity(systems);
+        let mut system_list = Vec::with_capacity(systems);
         let mut at = EFFECT_HEADER + 16 * variables;
         for _ in 0..systems {
             let stride = u32_at(bytes, at + 0x23c)? as usize;
-            if stride < SYSTEM_HEADER {
-                bail!("a particles system is shorter than its {SYSTEM_HEADER:#x} header");
-            }
             let system = bytes
                 .get(at..at + stride)
                 .ok_or_else(|| color_eyre::eyre::eyre!("a particles system runs past the body"))?;
-            system_bytes.push(hex(system));
+            system_list.push(System::from_bytes(system)?);
             at += stride;
         }
         if at != bytes.len() {
@@ -174,7 +342,7 @@ impl Particles {
             casts_shadows: u32_at(bytes, 0x1c)? != 0,
             disable_culling: u32_at(bytes, 0x20)? != 0,
             variables: list,
-            systems: system_bytes,
+            systems: system_list,
         })
     }
 
@@ -193,9 +361,7 @@ impl Particles {
         push_u32(&mut out, self.variables.len() as u32);
         push_u32(&mut out, self.systems.len() as u32);
         for variable in &self.variables {
-            let name = u32::from_str_radix(variable.name.trim_start_matches('#'), 16)
-                .map_err(|_| color_eyre::eyre::eyre!("a particles variable name must be `#<hex>`"))?;
-            push_u32(&mut out, name);
+            push_u32(&mut out, name_hash(&variable.name)?);
         }
         for variable in &self.variables {
             for value in variable.value {
@@ -203,7 +369,7 @@ impl Particles {
             }
         }
         for system in &self.systems {
-            out.extend_from_slice(&from_hex(system)?);
+            out.extend_from_slice(&system.to_bytes()?);
         }
         Ok(out)
     }
@@ -216,7 +382,7 @@ impl Particles {
     /// Reads the effect from its SJSON.
     pub fn from_sjson(text: &str) -> Result<Self> {
         let effect: Self = serde_sjson::from_str(text).map_err(Report::new)?;
-        // Round-trip so a malformed system length is caught on load.
+        // Round-trip so a malformed region is caught on load.
         Self::from_binary(&effect.to_binary()?)
     }
 }
@@ -245,28 +411,43 @@ pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
 mod test {
     use super::*;
 
+    /// One system: two channels, no components, an all-zero header tail.
+    fn system(name: u32) -> Vec<u8> {
+        let mut out = vec![0u8; SYSTEM_HEADER];
+        out[0..4].copy_from_slice(&name.to_le_bytes());
+        out[4..8].copy_from_slice(&64u32.to_le_bytes()); // capacity
+        out[8..12].copy_from_slice(&0.5f32.to_le_bytes()); // min_capacity_scaling
+        out[0x0c..0x10].copy_from_slice(&2u32.to_le_bytes()); // channel count
+        out[0x10..0x14].copy_from_slice(&16u32.to_le_bytes()); // channel stride
+        out[0x14..0x18].copy_from_slice(&4u32.to_le_bytes()); // channel 0 size
+        out[0x18..0x1c].copy_from_slice(&12u32.to_le_bytes()); // channel 1 size
+        out[0x218..0x21c].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x220..0x224].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x224..0x228].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x230..0x234].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out[0x23c..0x240].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
+        out
+    }
+
     /// An effect with one variable and one system.
     fn sample() -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&PARTICLES_VERSION.to_le_bytes());
-        out.extend_from_slice(&1.5f32.to_le_bytes()); // life_time
-        out.extend_from_slice(&20.0f32.to_le_bytes()); // culling_distance
-        out.extend_from_slice(&1u32.to_le_bytes()); // use_random_seed
-        out.extend_from_slice(&0u32.to_le_bytes()); // flag_10
-        out.extend_from_slice(&7u32.to_le_bytes()); // field_14
-        out.extend_from_slice(&0.25f32.to_le_bytes()); // field_18
-        out.extend_from_slice(&1u32.to_le_bytes()); // casts_shadows
-        out.extend_from_slice(&0u32.to_le_bytes()); // disable_culling
+        out.extend_from_slice(&1.5f32.to_le_bytes());
+        out.extend_from_slice(&20.0f32.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
+        out.extend_from_slice(&7u32.to_le_bytes());
+        out.extend_from_slice(&0.25f32.to_le_bytes());
+        out.extend_from_slice(&1u32.to_le_bytes());
+        out.extend_from_slice(&0u32.to_le_bytes());
         out.extend_from_slice(&1u32.to_le_bytes()); // variable count
         out.extend_from_slice(&1u32.to_le_bytes()); // system count
-        out.extend_from_slice(&0xdead_beefu32.to_le_bytes()); // variable name
+        out.extend_from_slice(&0xdead_beefu32.to_le_bytes());
         for value in [0.1f32, 0.2, 0.3] {
             out.extend_from_slice(&value.to_le_bytes());
         }
-        // One system: `0x240` bytes with its stride at +0x23c.
-        let mut system = vec![0u8; SYSTEM_HEADER];
-        system[0x23c..0x240].copy_from_slice(&(SYSTEM_HEADER as u32).to_le_bytes());
-        out.extend_from_slice(&system);
+        out.extend_from_slice(&system(0x1234_5678));
         out
     }
 
@@ -275,10 +456,11 @@ mod test {
         let bytes = sample();
         let effect = Particles::from_binary(&bytes).expect("the sample parses");
         assert_eq!(effect.life_time, 1.5);
-        assert_eq!(effect.variables.len(), 1);
         assert_eq!(effect.variables[0].name, "#deadbeef");
-        assert_eq!(effect.variables[0].value, [0.1, 0.2, 0.3]);
-        assert_eq!(effect.systems.len(), 1);
+        assert_eq!(effect.systems[0].name, "#12345678");
+        assert_eq!(effect.systems[0].capacity, 64);
+        assert_eq!(effect.systems[0].channels, [4, 12]);
+        assert_eq!(effect.systems[0].channel_stride, 16);
         assert_eq!(effect.to_binary().unwrap(), bytes);
     }
 
