@@ -28,7 +28,10 @@ const ENVELOPE: usize = 38;
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bones {
-    /// The envelope's resource-name hash, as `#<16 hex digits>`.
+    /// The envelope's resource-name hash, as `#<16 hex digits>`. Written by the
+    /// decompiler; on compile it is replaced by the resource path's own hash, so
+    /// a hand-authored SJSON may omit it.
+    #[serde(default)]
     pub name: String,
     /// The joint names, in order.
     pub names: Vec<String>,
@@ -149,7 +152,11 @@ pub fn decompile(_ctx: &crate::Context, variants: &[BundleFileVariant]) -> Resul
 
 /// Compiles a bones SJSON into a bundle file `name`d after the resource path.
 pub fn compile(name: IdString64, bones_sjson: &str) -> Result<BundleFile> {
-    let bones = Bones::from_sjson(bones_sjson)?;
+    let mut bones = Bones::from_sjson(bones_sjson)?;
+    // The envelope carries the resource's own name hash, so the SJSON need not
+    // repeat it.
+    let name_hash: u64 = name.to_murmur64().into();
+    bones.name = format!("#{name_hash:016x}");
     let mut variant = BundleFileVariant::new();
     variant.set_data(bones.to_binary()?);
     let mut file = BundleFile::new(name, BundleFileType::Bones);
