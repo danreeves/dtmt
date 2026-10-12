@@ -235,6 +235,53 @@ pub fn channel_records(channels: &[u32]) -> Vec<u8> {
     out
 }
 
+/// The packed-copy rows for a group: every channel's rows re-emitted once per
+/// cbuffer that carries the channels, with `b` the copy set index and `x` the
+/// cbuffer's packed index. Each row is `{channel, a, b, offset, kind, cbuffer,
+/// x}` where `a` is the kind for a kind-5 row and the component's byte offset
+/// (0, 8, ...) for the float2 rows.
+pub fn packed_copies(cbuffers: &[u32], channels: &[u32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut set = 0u32;
+    for size in cbuffers {
+        // Only a cbuffer that carries the channels gets copies.
+        let Some((true, _)) = engine_cbuffer(*size) else {
+            continue;
+        };
+        let Some((hash, x)) = PACKED
+            .iter()
+            .find(|(packed, ..)| packed == size)
+            .map(|(_, hash, x)| (hash, x))
+        else {
+            continue;
+        };
+        let mut base = 0u32;
+        for channel in channels {
+            let rows = channel_rows(*channel);
+            let mut component = 0u32;
+            for (kind, offset, _) in rows {
+                let a = if *kind == 5 {
+                    5
+                } else {
+                    let a = component * 8;
+                    component += 1;
+                    a
+                };
+                for word in [*channel, a, set, base + offset, *kind, *hash, *x] {
+                    out.extend_from_slice(&word.to_le_bytes());
+                }
+            }
+            base += rows.iter().map(|(_, offset, size)| offset + size).max().unwrap_or(0);
+        }
+        set += 1;
+    }
+    out
+}
+
+/// The cbuffers that carry copies: `(compiled size, its hash, its packed index)`
+/// - the last word of every copy row. Measured on the standard.
+pub const PACKED: &[(u32, u32, u32)] = &[(416, 0xB563_9618, 2), (304, 0xCFB4_40F0, 4)];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +350,20 @@ mod tests {
         assert_eq!(row(0), [5, 0, 0x2FAD_CC8C, 0, 4]);
         assert_eq!(row(3), [1, 0, 0x8655_079C, 24, 8]);
         assert_eq!(row(6), [1, 0, 0xB45E_95F3, 48, 8]);
+    }
+
+    /// The packed copies: the channel rows once per channel-bearing cbuffer.
+    #[test]
+    fn the_copies_repeat_the_channels_per_cbuffer() {
+        let copies = packed_copies(&[16, 416, 400, 304], &[0x2FAD_CC8C, 0x8655_079C, 0xB45E_95F3]);
+        assert_eq!(copies.len(), 14 * 28);
+        let row = |i: usize| -> [u32; 7] {
+            std::array::from_fn(|w| {
+                u32::from_le_bytes(copies[i * 28 + w * 4..i * 28 + w * 4 + 4].try_into().unwrap())
+            })
+        };
+        assert_eq!(row(0), [0x2FAD_CC8C, 5, 0, 0, 5, 0xB563_9618, 2]);
+        assert_eq!(row(6), [0xB45E_95F3, 8, 0, 48, 1, 0xB563_9618, 2]);
+        assert_eq!(row(7), [0x2FAD_CC8C, 5, 1, 0, 5, 0xCFB4_40F0, 4]);
     }
 }
