@@ -132,6 +132,16 @@ The shared-front/back pool is near-optimal for the trailings: a pairwise
 longest-common-substring check (max 196 B, and every match a prefix or suffix)
 shows no long **middle** run left unshared, so the pool needs no third reference.
 
+**The head's descriptor flags are the engine's, not dxc's kinds (2026-10-12).**
+Dropping the carried heads and comparing the built material file against the
+shipped one (`ground-truth-material`) showed the derived heads differed in 7 bytes
+- each a descriptor's flags, where a texture was written as its dxc kind `2`
+instead of the engine's `3`. `engine_kind_flags` maps the kinds (texture `2 -> 3`,
+the structured SRVs `1/5/7 -> 4`, the UAVs to `5`/`7`). With that, the built file
+matches the shipped one except **two pre-existing bytes** (at group-data offsets
+10732 and 10924: a material record's `80`/`96` where we write `72`/`88`) - those
+were there before the heads derived and are a separate, still-open fidelity gap.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
