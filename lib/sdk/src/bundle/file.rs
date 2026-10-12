@@ -378,6 +378,8 @@ impl BundleFile {
             BundleFileType::Material => {
                 material::compile(name, sjson).wrap_err("Failed to compile Material file")
             }
+            BundleFileType::Bones => crate::filetype::bones::compile(name, sjson.as_ref())
+                .wrap_err("Failed to compile Bones file"),
             BundleFileType::Unknown(_) => {
                 eyre::bail!("Unknown file type. Cannot compile from SJSON");
             }
