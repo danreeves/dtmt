@@ -94,6 +94,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &template.engine,
             )?;
             println!("rebuilt group data: {} bytes", rebuilt.len());
+            if let Some(dump) = std::env::args().nth(2) {
+                fs::write(&dump, &rebuilt)?;
+                println!("wrote rebuilt group data to {dump}");
+            }
         }
         return Ok(());
     }

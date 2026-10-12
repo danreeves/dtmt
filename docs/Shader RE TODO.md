@@ -903,6 +903,24 @@ produces **180 bytes** for every standard group against the shipped
 **2140 / 2140 / 240 / 288 / 288**, with **0 leading bytes** agreeing, so the
 standard's `mid` is a per-group packed region `derived_mid` does not model.
 
+**The head's own shape**, read off the point of the byte dump below:
+`{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
+then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
+`{3, 69}`, `{2, 2}`, `{2, 2}` for the standard's five groups - a small count
+(plausibly the group's pass count) and then the **first table's record count**
+(the shared engine pool's 69 when the group has an engine table, else the
+material table's 2). So the header word is the only wholly unexplained word of
+a head.
+
+**The rebuilt group data's layout** (a byte dump of `GroupData::build`'s output
+for the standard, 10,725 B, matches the shipped blob): a `u32` group count,
+then per group `{u32 query id, head}` + the two record tables in
+`material_first` order (stride **20 bytes**, the 12-byte `between` between
+them) + `mid` + `tail`. Group 0 is: count 4 B, query 4 B, head 208 B, engine
+69 x 20 B, between 12 B, material 2 x 20 B, `mid` 2140 B, `tail` 97 B. The
+engine records are one shared 69-record pool; a group with `has_engine = false`
+writes only its material table.
+
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:
 `TailLists::set_inputs` hashes each element's name upper cased, groups the
