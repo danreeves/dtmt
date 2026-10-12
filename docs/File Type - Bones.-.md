@@ -74,6 +74,8 @@ stored in the SJSON - they are recomputed from the names.
 - `dtmt bundle extract --decompile` writes the SJSON for a bones entry.
 - `dtmt build` compiles a `.bones` SJSON listed in a package's `bones = [...]`
   into the cooked bundle.
+- `dtmt bundle inject <bundle> replace <resource path> <file.bones>` compiles a
+  source into an existing bundle.
 
 ## Gaps
 
