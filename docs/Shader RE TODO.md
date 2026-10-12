@@ -170,6 +170,16 @@ five groups hold only three distinct specs, so `to_text` writes the distinct spe
 and a `pattern` of indices when that is smaller (`group_pattern = [0 0 1 2 2]`),
 and the reader expands through it. Took the file from **9,763 -> 9,651 bytes**.
 
+**Two carried pieces that do not derive (2026-10-12).** Exercise both by hand:
+
+- the **preamble** (985 B, 10% of the file): deleting it and rebuilding changes the
+  section by 128 KB - the shipped preamble is a *different* engine block from the
+  toolchain's `shader_engine_block` template, so it is carried, not regenerated;
+- a program's **`job`**: deleting the tags rebuilds a section **127 KB smaller**
+  (the build compiles the declaration's jobs and frames each program with its
+  container), so it is load-bearing despite the build path not reading
+  `program_jobs` directly.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
