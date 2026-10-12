@@ -1065,6 +1065,20 @@ offset, size, kind), fixed across materials, and recordable once in code the way
 (minus `global_viewport`), each cbuffer's engine fields from the table, the
 material's channels packed first in `c_per_object`, and the packed copies.
 
+**Group 0's engine interface, read off (2026-10-12).** `group_probe` plus the
+dictionary give the table's shape. `W1=16` heads **`c_per_object`** (416 B): the
+material's channels at 0..56, then the engine's `view_proj` 64, `world_view_proj`
+128, `world` 192, `last_world` 256, `711b4adc` 320 (64 bytes each), `ed9d8188`
+384, `b9d685cb` 400. `W1=416` heads **`global_environment_settings`** (400 B):
+`emissive_intensity` 12, `global_roughness_multiplier` 16, `sun_enabled` 96,
+`sun_direction` 100, `sun_color` 112, `local_shadow_map_bias` 132,
+`sun_shadow_map_bias` 144, `ssm_shadow_map_bias` 160, `sun_shadows_enabled` 172,
+`ssm_enabled` 176, `skydome_u_offset` 180, `skydome_intensity` 184,
+`skydome_tint_color` 192, `skydome_flow_direction` 208, `skydome_flow_speed` 220,
+`skydome_flow_tiling` 224, ... `W1=400` heads **`c_depth_only`** (304 B). The
+engine's offsets are fixed - the material's channels occupy a fixed prefix - so
+the table is `(cbuffer, kind, hash, offset, size)` and records as one const.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
