@@ -33,6 +33,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::shader::{self, Stage};
 use super::shader_node::{ResourceDecl, StageResources};
+use super::shader_engine_interface;
 use crate::filetype::group_data::{Dependency, GroupData, GroupParts, GroupTemplate, Record};
 use crate::murmur;
 
@@ -1169,6 +1170,44 @@ fn derived_head_for_group(
     let first_table = if has_engine { engine_count } else { material_count };
     out.extend_from_slice(&(first_table as u32).to_le_bytes());
     out
+}
+
+/// A group's `mid`, from its own programs' reflections and the channels it
+/// carries: the cbuffers are the head's kind-0/1 descriptors minus the engine's
+/// `global_viewport` (which the `between` carries), their sizes from the
+/// reflections, and `x_end` the head's per-draw total.
+fn derived_group_mid(programs: &[StageResources], channels: &[u32]) -> Vec<u8> {
+    let bindings: Vec<Vec<dxc::BoundResource>> = programs
+        .iter()
+        .map(|program| program.bindings.clone())
+        .collect();
+    let descriptors = head_descriptors(&bindings);
+
+    let mut sizes: HashMap<u32, u32> = HashMap::new();
+    for program in programs {
+        for (name, size) in &program.cbuffer_sizes {
+            sizes.insert(u32::from(murmur::Murmur32::hash(name.as_bytes())), *size);
+        }
+    }
+
+    let mut cbuffers = Vec::new();
+    let mut x_end = 0u32;
+    for (name, flags, _) in &descriptors {
+        let step = if flags & 0xFF <= 1 { 24 } else { 8 };
+        x_end += step;
+        if flags & 0xFF <= 1 && *name != GLOBAL_VIEWPORT {
+            if let Some(size) = sizes.get(name) {
+                cbuffers.push(*size);
+            }
+        }
+    }
+
+    shader_engine_interface::derived_mid(
+        &cbuffers,
+        &shader_engine_interface::channel_records(channels),
+        &shader_engine_interface::packed_copies(&cbuffers, channels),
+        x_end,
+    )
 }
 
 /// The descriptor flags of the engine's own resources, mined from the shipped
@@ -2373,12 +2412,21 @@ impl EngineData {
                 group.between = derived_between();
             }
             if group.mid.is_empty() {
-                let records = self
-                    .material_tables
-                    .get(index)
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
-                group.mid = derived_mid(records);
+                // A group that carries its channels has no `mid` bytes: the
+                // build derives it from the channels, its programs' reflections
+                // and the head. Otherwise the material table's texture slots
+                // stand in (the UI base's path).
+                if group.channels.is_empty() {
+                    let records = self
+                        .material_tables
+                        .get(index)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    group.mid = derived_mid(records);
+                } else {
+                    let programs = self.group_programs(containers, index);
+                    group.mid = derived_group_mid(&programs, &group.channels);
+                }
             }
         }
         Some(template)
