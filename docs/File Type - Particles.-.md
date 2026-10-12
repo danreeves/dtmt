@@ -58,10 +58,10 @@ simulators, visualizers) is not decoded, so those bodies are hex; the community
 `particles_resource.{h,cpp}` decodes them and publishes the component schema, and
 is the reference to port next.
 
-**Verified on a shipped effect** (2026-10-12): `content/fx/particles/explosions/
-expeditions_explosion_trap` (22,838 B) decompiles (`life_time = 4`,
-`culling_distance = 30`, 1 variable, 24 systems with capacities 0..1000) and
-**recompiles byte-for-byte** (the re-injected body hashes identical), so the
+**Verified on shipped effects** (2026-10-12): six of the game's effects - from
+`lasgun_beam_yellow` (1,848 B) to `fire_grenade_player_initial_blast` (22,862 B)
+and `expeditions_explosion_trap` (22,838 B) - decompile and **recompile
+byte-for-byte** (each re-injected body hashes identical to the original), so the
 effect-header / variable / system-header walk matches the game's own resources.
 
 ## Reference
