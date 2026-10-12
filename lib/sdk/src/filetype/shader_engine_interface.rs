@@ -101,15 +101,94 @@ pub const ENGINE_CBUFFERS: &[(u32, u32, &[(u32, u32, u32, u32)])] = &[
 ];
 
 
-/// The engine cbuffer whose compiled `size` this is: its prefix (the material's
-/// channels' padded extent) and its fields, each `(kind, name hash, offset,
-/// size)` relative to that prefix. `None` when the size is not one of the
-/// engine's.
-pub fn engine_cbuffer(size: u32) -> Option<(u32, &'static [(u32, u32, u32, u32)])> {
+/// The engine cbuffer whose compiled `size` this is: whether it carries the
+/// material's channels (and so has a non-zero prefix), and its fields - each
+/// `(kind, name hash, offset, size)` relative to that prefix. `None` when the
+/// size is not one of the engine's.
+pub fn engine_cbuffer(size: u32) -> Option<(bool, &'static [(u32, u32, u32, u32)])> {
     ENGINE_CBUFFERS
         .iter()
         .find(|entry| entry.0 == size)
-        .map(|entry| (entry.1, entry.2))
+        .map(|entry| (entry.1 > 0, entry.2))
+}
+
+/// A group's `mid`: the sections that carry its cbuffers' fields, interleaved
+/// with the headers, ending with the packed copies.
+///
+/// `cbuffers` are the group's cbuffers' compiled sizes in the head's order
+/// (minus `global_viewport`); `channels` the material's channel records - the
+/// 20-byte rows the engine's channel table gives, at their absolute offsets in
+/// the cbuffer that carries them; `copies` the packed-copy records; `x_end` the
+/// head's per-draw total. The header before section `j` is `{the j-th cbuffer's
+/// size, W2, the section's record count}`, and the fields belong to the *next*
+/// cbuffer - so the first cbuffer's fields are never emitted, and the last
+/// section is the copies. The channel-bearing cbuffer's fields sit at
+/// `align16(the channels' extent) + the engine's relative offset`.
+pub fn derived_mid(cbuffers: &[u32], channels: &[u8], copies: &[u8], x_end: u32) -> Vec<u8> {
+    // The material's channels occupy a 16-aligned prefix of their cbuffer.
+    let extent = channels
+        .chunks_exact(20)
+        .map(|row| {
+            let offset = u32::from_le_bytes(row[12..16].try_into().unwrap());
+            let size = u32::from_le_bytes(row[16..20].try_into().unwrap());
+            offset + size
+        })
+        .max()
+        .unwrap_or(0);
+    let prefix = extent.div_ceil(16) * 16;
+
+    let records = |size: u32| -> Vec<u8> {
+        let mut out = Vec::new();
+        let Some((has_channels, fields)) = engine_cbuffer(size) else {
+            return out;
+        };
+        if has_channels {
+            out.extend_from_slice(channels);
+        }
+        for (kind, hash, offset, len) in fields {
+            for word in [*kind, 0, *hash, prefix + offset, *len] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        out
+    };
+
+    let n = cbuffers.len();
+    // The j-th section is the (j+1)-th cbuffer's fields; the last is the copies.
+    let sections: Vec<Vec<u8>> = (0..n)
+        .map(|j| {
+            if j + 1 < n {
+                records(cbuffers[j + 1])
+            } else {
+                copies.to_vec()
+            }
+        })
+        .collect();
+
+    let mut out = Vec::new();
+    let mut w2 = x_end;
+    for (j, section) in sections.iter().enumerate() {
+        let count = (section.len() / 20) as u32;
+        for word in [cbuffers[j], w2, count] {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+        out.extend_from_slice(section);
+        // A global cbuffer carries no packed copies, so its `W2` is zero and the
+        // running total does not advance.
+        w2 = if is_global(cbuffers[j]) {
+            0
+        } else {
+            cbuffers[j] + w2
+        };
+    }
+    out
+}
+
+/// Whether a cbuffer is one of the engine's globals, which carry no packed
+/// copies and so have a zero `W2` - measured on the standard, whose
+/// `global_environment_settings` (400 bytes) is the only one in group 0.
+fn is_global(size: u32) -> bool {
+    size == 400
 }
 
 #[cfg(test)]
@@ -120,10 +199,49 @@ mod tests {
     /// relative to the channels' prefix.
     #[test]
     fn the_engine_cbuffers_are_indexed_by_size() {
-        let (prefix, fields) = engine_cbuffer(416).expect("c_per_object");
-        assert_eq!(prefix, 64);
+        let (has_channels, fields) = engine_cbuffer(416).expect("c_per_object");
+        assert!(has_channels);
         assert_eq!(fields.len(), 7);
         assert_eq!(fields.first(), Some(&(4, 0x57CB_AEC2, 0, 64)));
+        assert_eq!(engine_cbuffer(400).map(|(channels, _)| channels), Some(false));
         assert!(engine_cbuffer(4096).is_none());
+    }
+
+    /// `derived_mid`'s first section, against the standard's group 0: the header
+    /// is `{16, x_end, 14}` and the engine rows follow the seven channel rows.
+    #[test]
+    fn the_first_mid_section_matches_the_standard() {
+        let row = |kind: u32, hash: u32, offset: u32, size: u32| {
+            let mut out = Vec::new();
+            for word in [kind, 0, hash, offset, size] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+            out
+        };
+        // bca keeps a kind-5 row, orm and nm only their two float2 rows.
+        let mut channels = Vec::new();
+        for (kind, hash, offset, size) in [
+            (5u32, 0x2FAD_CC8C, 0u32, 4u32),
+            (1, 0x2FAD_CC8C, 4, 8),
+            (1, 0x2FAD_CC8C, 16, 8),
+            (1, 0x8655_079C, 24, 8),
+            (1, 0x8655_079C, 32, 8),
+            (1, 0xB45E_95F3, 40, 8),
+            (1, 0xB45E_95F3, 48, 8),
+        ] {
+            channels.extend_from_slice(&row(kind, hash, offset, size));
+        }
+
+        let mid = derived_mid(&[16, 416], &channels, &[], 176);
+        assert_eq!(u32::from_le_bytes(mid[0..4].try_into().unwrap()), 16);
+        assert_eq!(u32::from_le_bytes(mid[4..8].try_into().unwrap()), 176);
+        assert_eq!(u32::from_le_bytes(mid[8..12].try_into().unwrap()), 14);
+        // The first engine row: `view_proj` at the channels' 16-aligned extent
+        // (56 -> 64).
+        let at = 12 + 7 * 20;
+        let engine: [u32; 5] = std::array::from_fn(|w| {
+            u32::from_le_bytes(mid[at + w * 4..at + w * 4 + 4].try_into().unwrap())
+        });
+        assert_eq!(engine, [4, 0, 0x57CB_AEC2, 64, 64]);
     }
 }
