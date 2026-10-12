@@ -1052,6 +1052,19 @@ offset, its field count} + its fields`, with the material's channels packed
 first in `c_per_object` - derivable from the group's cbuffers (the reflection),
 the material's channels (`.material`) and a recorded engine interface table.
 
+**That engine interface table is a fixed engine thing (2026-10-12).** Resolving
+group 0's `mid` sections 2 and 3 through `dictionary.csv` gives the engine's own
+fields - `fog_color`, `fog0_settings`, `sun_direction`, `sun_shadow_map_bias`,
+`skydome_flow_tiling`, `volumetric_phase`, `ssm_enabled`,
+`global_roughness_multiplier`, `wind_amount`, `world_interaction_window_size`,
+the view matrices, ... - with the material's channels (`bca`, `orm`, `nm`)
+interspersed. So the table is the engine's cbuffer layouts (name, cbuffer,
+offset, size, kind), fixed across materials, and recordable once in code the way
+`engine_descriptor_flags` already records the descriptor flags. With it,
+`derived_mid` has every input: the group's cbuffers in first-binding order
+(minus `global_viewport`), each cbuffer's engine fields from the table, the
+material's channels packed first in `c_per_object`, and the packed copies.
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
