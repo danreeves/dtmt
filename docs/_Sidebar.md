@@ -28,6 +28,7 @@
 [Status](File-Type-Status)<br>
 [Bundle](File+Type+-+Bundle.-)<br>
 [Bundle Database](File+Type+-+Bundle+Database.-)<br>
+[Bones](File+Type+-+Bones.-)<br>
 [Texture](File+Type+-+Texture.-)<br>
 [Material](File+Type+-+Material.-)<br>
 [Shader Node](File+Type+-+Shader+Node.-)<br>
