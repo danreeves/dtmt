@@ -26,18 +26,19 @@ as of 2026-10-12:
 
 - **`ui_default_base` (GUI / title): done.** No engine data - it builds from the
   declaration alone (section `CD9854D69AC9A5B7`), verified in game.
-- **`standard_base`: the `mid` derives and the blocks share their body.**
-  `standard_base.engine_data` is now **19,854 B** - down from 375,410 when the
-  section was captured, and from 42,091 - a **53% cut**. The programs' cbuffer and
+- **`standard_base`: the `mid` derives and the blocks share their body and tail.**
+  `standard_base.engine_data` is now **16,921 B** - down from 375,410 when the
+  section was captured, and from 42,091 - a **60% cut**. The programs' cbuffer and
   resource lists derive; the group **`mid`** does too (the file carries each
-  group's **channel list**); and the device **blocks** now reference the slice of
-  the preamble body they carry verbatim (a shared 393-byte run) instead of
-  repeating it, which alone removed 12.8 KB. Every step is confirmed by the built
+  group's **channel list**); and the device **blocks** now reference both the slice
+  of the preamble body they carry verbatim (a shared 393-byte run) and the shared
+  bytes after it (the pixel/vertex pair per permutation repeats a handful of
+  trailings), which together removed ~16 KB. Every step is confirmed by the built
   section being **byte-identical** and rendering in game. Still carried: the
   group template's heads/`between`/engine/materials, the
-  **contexts/conditions/preamble**, the per-program **block heads and tails** and
-  the **program list**. The remaining decode is the per-program block head/tail,
-  plus the enumerator and a lossless reconstruction.
+  **contexts/conditions/preamble**, the per-program **block head and the distinct
+  trailings** and the **program list**. The remaining decode is the per-program
+  block head/tail, plus the enumerator and a lossless reconstruction.
 - **Particle shaders: not started.** The `particles` file type decodes the
   particle **effect resource** (`filetype/particles.rs`), *not* a shader; no
   particle `.shader_node`/`.shader_source` work exists.

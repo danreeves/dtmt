@@ -42,6 +42,16 @@ the built section **byte-identical** (`578c983197da6b91`). The file now carries
 only the per-program device blocks. The UI-base family already shipped with no
 engine data.
 
+**The blocks now share their body and tail (2026-10-12).** Every pixel block is
+`head + the preamble body + trailing`. The middle - the body's records - is
+verbatim and in order in every pixel block, so `block_text` now stores the
+**longest run of the preamble body a block carries** as a *reference*
+(`body_start`/`body_len`) plus the bytes that differ as patches, and the bytes
+after the run as a pooled `trailing` index (a permutation's vertex and pixel
+blocks repeat a handful of trailings). Together that took the file from
+**42,091 -> 16,921 bytes** (a 60% cut from the capture) with the built section
+byte-identical. The body needs no new pool: the preamble already carries it.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
