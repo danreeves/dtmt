@@ -891,7 +891,10 @@ and `0x1A0`). It **tracks the descriptors' final `x`**: `header - x_end` is
 `736, 736, 288, 296, 296` across the five groups, so it is `x_end` plus a
 per-family/table constant (a size or offset). What is left for the group
 template is that header word, the per-group `mid`, and dropping the carried
-heads.
+heads. The `mid` is a different structure than the UI base's: `derived_mid`
+produces **180 bytes** for every standard group against the shipped
+**2140 / 2140 / 240 / 288 / 288**, with **0 leading bytes** agreeing, so the
+standard's `mid` is a per-group packed region `derived_mid` does not model.
 
 The structured reader round-trips every tail's rest byte for byte, and the
 input list is now generated from the compiled container:

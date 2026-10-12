@@ -3658,6 +3658,29 @@ programs = []
             }
         }
 
+        // The `mid` part is not derived yet: report the shipped and the
+        // `derived_mid` sizes, and how many leading bytes agree.
+        for (index, parts) in template.groups.iter().enumerate() {
+            let records = engine
+                .material_tables
+                .get(index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let candidate = derived_mid(records);
+            let agree = parts
+                .mid
+                .iter()
+                .zip(&candidate)
+                .take_while(|(a, b)| a == b)
+                .count();
+            println!(
+                "group {index} mid: shipped {} derived_mid {} ({} leading bytes agree)",
+                parts.mid.len(),
+                candidate.len(),
+                agree
+            );
+        }
+
         assert_eq!(mismatches, 0, "{mismatches} list mismatches");
     }
 
