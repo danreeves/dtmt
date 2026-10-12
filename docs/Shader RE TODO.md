@@ -903,6 +903,21 @@ produces **180 bytes** for every standard group against the shipped
 **2140 / 2140 / 240 / 288 / 288**, with **0 leading bytes** agreeing, so the
 standard's `mid` is a per-group packed region `derived_mid` does not model.
 
+The `mid` pool is the **biggest single piece of the carried file** - 9,648
+chars / 4,808 B, 23% (the program-block pool is the 23 KB of `tails`). Its
+shape is now read off group 0 (2,140 B = 535 words): a 4-word header
+`{16, x_end, 14, 5}` followed by **20-byte records** `{0u32, name, offset,
+size, kind}`. Group 0's first run is **14 records**, `[16, 296)`, and its names
+are the group's **cbuffer variables** - `2FADCC8C` (`bca`) at offset 0 size 4;
+`A17AE7B4` (the engine's `world_view_proj`) at 128 size 64; `57CBAEC2`,
+`4D46AE3B`, `B8DADD64`, `711B4ADC` at 64, 192, 256, 320, each size 64. So the
+`mid` is the group's **packed variable layout**: the second header word is the
+run's record count and `16` the header size, then the next run opens at byte
+296 with its own header. Open: the header's fourth word, the run boundary rule
+(the record offsets run `0..400` while `x_end` is only 176, so they are not the
+head's `x`), and the `size`/`kind` vocabulary (4, 8, 16, 64 and kinds
+0/1/3/4/5).
+
 **The head's own shape**, read off the point of the byte dump below:
 `{header word, descriptor count, count x 16-byte {name, flags, x, y} records,
 then two trailing words}`. The trailing pair is `{5, 69}`, `{5, 69}`,
