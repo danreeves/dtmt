@@ -95,13 +95,12 @@ pub struct System {
     pub initializer_padding: String,
     /// The simulator list.
     pub simulators: Vec<Simulator>,
-    pub visualizers: u32,
+    /// The visualizer list.
+    pub visualizers: Vec<Visualizer>,
     /// The unknown words at `0x228`/`0x234`/`0x238`, hex.
     pub unknown: String,
     /// The simulator data block, hex.
     pub simulator_data: String,
-    /// The visualizer block, hex.
-    pub visualizer_data: String,
 }
 
 /// One initializer: its op name and its operand bytes (kept opaque; the field
@@ -124,6 +123,23 @@ pub struct Simulator {
     pub kind: String,
     pub offset: u32,
 }
+
+/// One visualizer: its type name and its record bytes (kept opaque; the
+/// per-type field layouts are not modelled yet).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Visualizer {
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// The record bytes after the type word, hex.
+    pub data: String,
+}
+
+/// The visualizer type names, in the community's `kVisualizers` order plus gpu.
+const VISUALIZERS: [&str; 5] = ["billboard", "light", "mesh", "ribbon", "gpu"];
+
+/// The payload offset of each visualizer type's byte-size word.
+const VISUALIZER_SIZE_AT: [usize; 5] = [0xf4, 0xf8, 0xf8, 0xf0, 0xa0];
 
 /// The simulator op codes, in registry order (the community's
 /// `simulator_specs`).
@@ -391,6 +407,27 @@ impl System {
             });
         }
 
+        let mut visualizer_list = Vec::with_capacity(visualizers as usize);
+        let mut vis = visualizer_at;
+        for _ in 0..visualizers {
+            let kind = u32_at(bytes, vis)? as usize;
+            if kind > 4 {
+                bail!("a particles system has an unknown visualizer type {kind}");
+            }
+            let size = u32_at(bytes, vis + 4 + VISUALIZER_SIZE_AT[kind])? as usize;
+            let body = bytes
+                .get(vis + 4..vis + 4 + size)
+                .ok_or_else(|| color_eyre::eyre::eyre!("a visualizer runs past the system"))?;
+            visualizer_list.push(Visualizer {
+                kind: VISUALIZERS[kind].to_string(),
+                data: hex(body),
+            });
+            vis += 4 + size;
+        }
+        if vis != end {
+            bail!("a particles system's visualizers do not end at its end");
+        }
+
         Ok(Self {
             name: format!("#{:08x}", u32_at(bytes, 0)?),
             capacity: u32_at(bytes, 4)?,
@@ -401,16 +438,25 @@ impl System {
             initializers,
             initializer_padding,
             simulators: simulator_list,
-            visualizers,
+            visualizers: visualizer_list,
             unknown: hex(&unknown),
             simulator_data: slice(data, visualizer_at),
-            visualizer_data: slice(visualizer_at, end),
         })
     }
 
     fn to_bytes(&self) -> Result<Vec<u8>> {
         let simulator_data = from_hex(&self.simulator_data)?;
-        let visualizer_data = from_hex(&self.visualizer_data)?;
+        let mut visualizer_bytes = Vec::new();
+        for visualizer in &self.visualizers {
+            let kind = VISUALIZERS
+                .iter()
+                .position(|name| *name == visualizer.kind)
+                .ok_or_else(|| {
+                    color_eyre::eyre::eyre!("unknown visualizer type '{}'", visualizer.kind)
+                })?;
+            push_u32(&mut visualizer_bytes, kind as u32);
+            visualizer_bytes.extend_from_slice(&from_hex(&visualizer.data)?);
+        }
         let header = from_hex(&self.header)?;
         if header.len() != 0x214 - 0x58 {
             bail!("a particles system's header is not {} bytes", 0x214 - 0x58);
@@ -444,7 +490,7 @@ impl System {
         let records = SYSTEM_HEADER + initializer_bytes.len() + from_hex(&self.initializer_padding)?.len();
         let data = records + simulator_records.len();
         let visualizer_at = data + simulator_data.len();
-        let end = visualizer_at + visualizer_data.len();
+        let end = visualizer_at + visualizer_bytes.len();
 
         let mut out = vec![0u8; SYSTEM_HEADER];
         out[0..4].copy_from_slice(&name_hash(&self.name)?.to_le_bytes());
@@ -461,7 +507,7 @@ impl System {
         out[0x21c..0x220].copy_from_slice(&(self.simulators.len() as u32).to_le_bytes());
         out[0x220..0x224].copy_from_slice(&(records as u32).to_le_bytes());
         out[0x224..0x228].copy_from_slice(&(data as u32).to_le_bytes());
-        out[0x22c..0x230].copy_from_slice(&self.visualizers.to_le_bytes());
+        out[0x22c..0x230].copy_from_slice(&(self.visualizers.len() as u32).to_le_bytes());
         out[0x230..0x234].copy_from_slice(&(visualizer_at as u32).to_le_bytes());
         out[0x23c..0x240].copy_from_slice(&(end as u32).to_le_bytes());
         let unknown = from_hex(&self.unknown)?;
@@ -476,7 +522,7 @@ impl System {
         out.extend_from_slice(&from_hex(&self.initializer_padding)?);
         out.extend_from_slice(&simulator_records);
         out.extend_from_slice(&simulator_data);
-        out.extend_from_slice(&visualizer_data);
+        out.extend_from_slice(&visualizer_bytes);
         Ok(out)
     }
 }
