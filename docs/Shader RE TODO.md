@@ -102,6 +102,12 @@ cost more than the bytes they save). A plain blob still parses (`ChunkText` is a
 untagged `Plain(Hex) | Parts`), so an older pool migrates through `to_text`. Took
 the file from **12,911 -> 12,546 bytes**, byte-identical.
 
+**The block body slices pool too (2026-10-12).** Twelve of the standard's fourteen
+tails carry the same `(start = 1, len = 393)` slice of the preamble body, so the
+slice is a small `block_bodies` pool (`BodyText { start, len }`) the blocks index;
+the whole body is still the default (no index). Took the file from
+**12,546 -> 12,266 bytes**, byte-identical.
+
 **Next step: the enumerator for *any* family.** Today the six passes are declared
 by hand for the UI-base family; `examples/family_declaration.rs` generates such a
 declaration from a shipped section, and the same enumeration would build other
