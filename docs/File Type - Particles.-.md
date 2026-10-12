@@ -62,14 +62,15 @@ fields** (the per-op layouts), the **simulator data** block and the
 **visualizer** record bodies; the community `particles_resource.{h,cpp}` decodes
 those and is the reference to port next.
 
-**Verified on shipped effects** (2026-10-12): six of the game's effects - from
-`lasgun_beam_yellow` (1,848 B) to `fire_grenade_player_initial_blast` (22,862 B)
-and `expeditions_explosion_trap` (22,838 B) - decompile (initializer types
-`random_float` x160, `zero` x37, `position_sphere` x28; simulator types
-`age_age` x35, `burst_emitter` x30, `position_integrate` x19; visualizer types
-`billboard` x28, `light` x4, `mesh` x3, `gpu` x2) and **recompile
-byte-for-byte** (each re-injected body hashes identical to the original), so the
-whole container walk matches the game's own resources.
+**Verified on shipped effects** (2026-10-12): **25 of 25** sampled `content/fx/
+particles/...` resources - from `lasgun_beam_yellow` (1,848 B) to
+`fire_grenade_player_initial_blast` (22,862 B) and `expeditions_explosion_trap`
+(22,838 B) - decompile **and recompile byte-for-byte** (each re-injected body
+hashes identical to the original). Across them the types are initializers
+`random_float` x160, `zero` x37, `position_sphere` x28, ...; simulators
+`age_age` x35, `burst_emitter` x30, `position_integrate` x19, ...; visualizers
+`billboard` x28, `light` x4, `mesh` x3, `gpu` x2 - so the whole container walk
+matches the game's own resources.
 
 ## Reference
 
