@@ -14,7 +14,31 @@ Status of each statement:
 
 ## Format
 
-The resource is a **38-byte cooked-resource envelope** followed by the body:
+A bundle variant stores the **body alone**. None of **723** shipped `bones`
+variants (decoded from 2,500 sampled game bundles) carries an envelope: the
+resource's type and name live in the bundle file entry, and the variant's bytes
+open straight with the body's `joint count`.
+
+The body:
+
+```
+u32  joint count
+u32  lod count
+u32  joint id     x joint count
+u32  lod count    x lod count
+char joint name\0 x joint count
+```
+
+A joint's **id** is [`Murmur32`] of its name, which is the upper 32 bits of the
+seed-zero `Murmur64` the engine uses for an `IdString32`. The LOD counts are the
+number of joints in each LOD; the first is the full joint count and the counts
+are non-increasing. Status: **Verified against shipped data** - all 723 samples
+decode, every joint id checks out, and `to_binary` reproduces the input bytes
+exactly.
+
+The community writer's `stingray/cooked_resource.cpp` instead wraps the body in a
+**standalone 38-byte envelope** (which is what made the earlier reading assume an
+envelope):
 
 ```
 +0x00  u64  type hash       # 0x18DEAD01056B72E9 for `bones`
@@ -28,32 +52,15 @@ The resource is a **38-byte cooked-resource envelope** followed by the body:
        stream name          # `stream size` bytes
 ```
 
-The body (`body size` bytes):
-
-```
-u32  joint count
-u32  lod count
-u32  joint id     x joint count
-u32  lod count    x lod count
-char joint name\0 x joint count
-```
-
-A joint's **id** is [`Murmur32`] of its name, which is the upper 32 bits of the
-seed-zero `Murmur64` the engine uses for an `IdString32`. The LOD counts are the
-number of joints in each LOD; the first is the full joint count and the counts
-are non-increasing. Status: **Verified in code** (the reader checks every id
-against its name, and the tests round-trip the body).
-
-The layout is taken from the Darktide-Asset-Compiler's
-`stingray/bones/bones_writer.cpp` (`build_bones_body`) and
-`stingray/cooked_resource.cpp`, which write cooked bones the game loads.
+`Bones::from_binary` accepts that form too - it strips the envelope when one is
+present - so such a blob still loads, while `to_binary` always emits the bare body
+a bundle wants.
 
 ## SJSON form
 
 `DTMT decompiles` a variant to SJSON and `dtmt build` compiles it back:
 
 ```text
-name = #ab2ea126a37d8be7
 names = [
 	j_root
 	j_spine
@@ -65,9 +72,8 @@ lods = [
 ]
 ```
 
-`name` is the envelope's name hash; `dtmt build` replaces it with the resource
-path's own hash, so a hand-authored source may omit it. The joint ids are not
-stored in the SJSON - they are recomputed from the names.
+The joint ids are not stored in the SJSON - they are recomputed from the names -
+and neither is the resource name, which is the bundle entry's.
 
 ## Tooling
 
@@ -79,11 +85,9 @@ stored in the SJSON - they are recomputed from the names.
 
 ## Gaps
 
-- **Not yet checked against a game-shipped `.bones`.** The format is verified
-  against the community writer and the tests, but no shipped sample has been
-  decoded. The game's `bundle_database.data` can be explored -
-  `dtmt bundle db list-bundles` (16,102 bundles, names are resource paths) and
-  `dtmt bundle db list-files <db> <bundle>` - but the character bundles tried
-  (`…/third_person/base`, `…/third_person/npc`) carry materials and textures,
-  not the unit or its bones, so the bundle holding a `.bones` is still to be
-  located.
+- None outstanding on the format. It is verified against **723 shipped variants**
+  from 2,500 sampled game bundles (`examples/bones_probe.rs`): all decode, pass
+  every joint-id check and round-trip byte-for-byte. The earlier "38-byte
+  envelope" reading came from the community's *standalone* writer and does not
+  apply to a bundle variant - `Bones::from_binary` still accepts it so such blobs
+  load.
