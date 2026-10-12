@@ -899,13 +899,22 @@ and `0x1A0`). It **tracks the descriptors' final `x`**: `header - x_end` is
 per-family/table constant (a size or offset).
 
 **That constant is the sum of the sizes of the head's kind-0 (material)
-cbuffers**, which `cbuffer_sizes` now gives: groups 0/1 = `c_instance_offset` 16
-+ `c_per_object` 416 + `c_depth_only` 304 = **736**; group 2 = `c_per_object` 272
-+ `D0BA3B10` 16 = **288**; group 3 = 16 + 272 = **288**. Group 4's measured
-`296` is 8 above 288 - the one residual to chase (group 4's descriptor list is
-group 3's minus `bones`, so either the 8 is that descriptor or its last cbuffer
-is 280 rather than 272). The head's per-draw `x` itself allocates 24 per cbuffer
-regardless of the real size, so `x_end` and this sum are independent. What is
+cbuffers**, which `cbuffer_sizes` now gives, and `x_end` is the descriptors'
+per-draw total **rounded up to 16**:
+
+| group | per-draw total | rounded | header | sum of kind-0 cbuffers |
+| --- | --- | --- | --- | --- |
+| 0 | 168 + 8 = 176 | 176 | 912 | 16 + 416 + 304 = 736 |
+| 1 | 152 + 8 = 160 | 160 | 896 | 16 + 416 + 304 = 736 |
+| 2 | 120 + 8 = 128 | 128 | 416 | 272 + 16 = 288 |
+| 3 | 72 + 8 = 80 | 80 | 368 | 16 + 272 = 288 |
+| 4 | 64 + 8 = 72 | **80** | 368 | 16 + 272 = 288 |
+
+So **`header = round16(per-draw total) + sum`**, and all five groups fit. The
+rounding only bites group 4 (72 -> 80); the other four are already 16-aligned.
+The per-draw `x` allocates 24 per cbuffer regardless of the real size, so the two
+terms are independent - which is why the header word looked like "x_end plus a
+mystery constant". What is
 left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`

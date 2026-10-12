@@ -35,8 +35,9 @@ as of 2026-10-12:
   and the **program list**. The per-group **`mid` is now decoded** - sections of
   `{variable size, running offset, count}`, one per cbuffer variable, then the
   packed copies - and `lib/dxc` now **exposes each constant buffer's variables**
-  (`CbufferVariable`), so the mid can be built from them. The remaining blockers
-  (all in `Shader RE TODO.md`) are the head's **header word** and the
+  (`CbufferVariable`), so the mid can be built from them. The head's **header
+  word** is solved too: `round16(per-draw total) + the head's kind-0 cbuffer
+  sizes`. The one remaining blocker (all in `Shader RE TODO.md`) is the
   **program block grammar**.
 - **Particle shaders: not started.** The `particles` file type decodes the
   particle **effect resource** (`filetype/particles.rs`), *not* a shader; no
