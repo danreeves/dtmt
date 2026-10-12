@@ -896,7 +896,17 @@ value that rendered). It is not a function of the descriptor count (the two
 `0x170` heads have 6 and 5 records, while the two 10-record heads are `0x380`
 and `0x1A0`). It **tracks the descriptors' final `x`**: `header - x_end` is
 `736, 736, 288, 296, 296` across the five groups, so it is `x_end` plus a
-per-family/table constant (a size or offset). What is left for the group
+per-family/table constant (a size or offset).
+
+**That constant is the sum of the sizes of the head's kind-0 (material)
+cbuffers**, which `cbuffer_sizes` now gives: groups 0/1 = `c_instance_offset` 16
++ `c_per_object` 416 + `c_depth_only` 304 = **736**; group 2 = `c_per_object` 272
++ `D0BA3B10` 16 = **288**; group 3 = 16 + 272 = **288**. Group 4's measured
+`296` is 8 above 288 - the one residual to chase (group 4's descriptor list is
+group 3's minus `bones`, so either the 8 is that descriptor or its last cbuffer
+is 280 rather than 272). The head's per-draw `x` itself allocates 24 per cbuffer
+regardless of the real size, so `x_end` and this sum are independent. What is
+left for the group
 template is that header word, the per-group `mid`, and dropping the carried
 heads. The `mid` is a different structure than the UI base's: `derived_mid`
 produces **180 bytes** for every standard group against the shipped
