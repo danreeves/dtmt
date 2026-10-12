@@ -863,15 +863,15 @@ fn derive_program_groups(engine_data: &mut EngineData, group_conditions: &[usize
 struct GroupText {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     query: Option<Hex>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     head: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     between: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     mid: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     tail: usize,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     material: usize,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     material_first: bool,
@@ -894,6 +894,11 @@ fn default_true() -> bool {
 /// Whether a group carries the shared engine table.
 fn is_true(value: &bool) -> bool {
     *value
+}
+
+/// Serde skip for a zero index.
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
 }
 
 /// One distinct program tail: the block that closes it, and the lists only when
@@ -1524,6 +1529,7 @@ struct PatchText {
 struct ProgramText {
     #[serde(serialize_with = "serialize_quoted")]
     stage: String,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     tail: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     container: Option<usize>,
