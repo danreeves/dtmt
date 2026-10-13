@@ -319,6 +319,19 @@ round-trips byte-for-byte while yielding wrong values. What actually constrains 
 the stream's **`stride`**, which must equal the sum of its channels' element sizes -
 so that, not a passing round-trip, is what settles a new `(component, type)` arm.
 
+Reading the code confirms it rather than leaving it as an argument: `compile_stream`
+takes its width from the channel **name** (`POSITION` -> half4, ...) and writes
+`values / components` vertices, and the emission sets `components = values / vertices`,
+so the encoded byte count is `vertices x width(name)` and independent of what the
+decoder assumed. So a new `(component, type)` pair needs **three** things, and the
+decode arm is only the first: a **decode arm** (its width), a **name** for the
+component in the emission (`channel_name`, where `Cannot emit channel component 9` is
+raised), and a matching arm in `compile_stream`'s name -> component table so a mod can
+compile it back. The `(9, 8)` unit in the 400-bundle sample reached the *emission*
+once a decode arm existed, which is how that second requirement showed up. Settle the
+width from the channel's `stride` (`stride / vertices`), not from a passing
+round-trip.
+
 The earlier stream work stands too: `bitsquid/math_utils.py` confirms our HALF4
 (four halves, 8 bytes - its message says 12 but its check is `% 8`) and HALF2
 readings, its `octahedral_decode` matches ours, and NaN halves (`0xFE00`) map to 0.

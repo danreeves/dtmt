@@ -49,11 +49,13 @@ fn main() -> color_eyre::Result<()> {
             println!("{}  unit {name:016x}", path.display());
             for (i, variant) in file.variants().iter().enumerate() {
                 let payload = variant.data();
-                let Ok((unit_sjson, bsi_sjson)) = unit::decompile(payload) else {
-                    println!("  variant {i}: {} bytes - decode rejected", payload.len());
-                    continue;
-                };
-                let verdict = match unit::compile(
+                let (unit_sjson, bsi_sjson) = match unit::decompile(payload) {
+                    Ok(pair) => pair,
+                    Err(error) => {
+                        println!("  variant {i}: {} bytes - decode rejected: {error}", payload.len());
+                        continue;
+                    }
+                };                let verdict = match unit::compile(
                     file.base_name().clone(),
                     &unit_sjson,
                     bsi_sjson.as_bytes(),
