@@ -35,16 +35,26 @@ fn f32_at(b: &[u8], at: usize) -> f32 {
     f32::from_le_bytes(b[at..at + 4].try_into().unwrap())
 }
 
-/// One glyph, as stored: a box plus the words that follow it.
+/// One glyph, as stored: a box, the codepoint and the words that follow.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Glyph {
     pub index: u32,
+    /// The codepoint this glyph draws (`word1` of the record).
+    pub codepoint: u32,
     pub glyph_box: [f32; 4],
-    pub word1: u32,
     pub word2: u32,
     pub advance: [f32; 2],
     pub word3: u32,
     pub word4: u32,
+}
+
+/// A marker record, interleaved with the glyphs: a full-height box and a word
+/// that reads as a float.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Marker {
+    pub index: u32,
+    pub glyph_box: [f32; 4],
+    pub word: u32,
 }
 
 /// A parsed `slug` font.
@@ -54,8 +64,10 @@ pub struct SlugFont {
     pub kind: String,
     /// `HLF4`: the kerning pairs, `{u32, f32, u32, f32}` each.
     pub kerning: Vec<[f32; 4]>,
-    /// `16U2`: the glyphs.
+    /// `16U2`: the glyphs, each with its codepoint. The table interleaves marker
+    /// records, which are collected separately.
     pub glyphs: Vec<Glyph>,
+    pub markers: Vec<Marker>,
 }
 
 impl SlugFont {
@@ -128,21 +140,34 @@ impl SlugFont {
         }
 
         let mut glyphs = Vec::new();
+        let mut markers = Vec::new();
         for index in 0..glyph_count {
             let at = glyph_base + index * GLYPH_SIZE;
             if at + GLYPH_SIZE > b.len() {
                 break;
             }
+            let glyph_box = [
+                f32_at(b, at),
+                f32_at(b, at + 4),
+                f32_at(b, at + 8),
+                f32_at(b, at + 12),
+            ];
+            let word1 = u32_at(b, at + 16);
+            let word2 = u32_at(b, at + 20);
+            // A marker carries a full-height box and leaves `word2` at zero.
+            if word2 == 0 {
+                markers.push(Marker {
+                    index: index as u32,
+                    glyph_box,
+                    word: word1,
+                });
+                continue;
+            }
             glyphs.push(Glyph {
                 index: index as u32,
-                glyph_box: [
-                    f32_at(b, at),
-                    f32_at(b, at + 4),
-                    f32_at(b, at + 8),
-                    f32_at(b, at + 12),
-                ],
-                word1: u32_at(b, at + 16),
-                word2: u32_at(b, at + 20),
+                codepoint: word1,
+                glyph_box,
+                word2,
                 advance: [f32_at(b, at + 24), f32_at(b, at + 28)],
                 word3: u32_at(b, at + 32),
                 word4: u32_at(b, at + 36),
@@ -154,6 +179,7 @@ impl SlugFont {
             kind,
             kerning,
             glyphs,
+            markers,
         })
     }
 
@@ -210,6 +236,8 @@ mod test {
             b[g0 + i * 4..g0 + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
         b[g0 + 16..g0 + 20].copy_from_slice(&2555u32.to_le_bytes());
+        // A non-zero `word2` marks a glyph (zero would make it a marker).
+        b[g0 + 20..g0 + 24].copy_from_slice(&1835022u32.to_le_bytes());
         for (i, v) in [35.0f32, 42.5].iter().enumerate() {
             b[g0 + 24 + i * 4..g0 + 24 + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
@@ -226,10 +254,11 @@ mod test {
         assert_eq!(font.version, 0x760);
         assert_eq!(font.kind, "fnt");
         assert_eq!(font.kerning.len(), 1);
-        assert_eq!(font.glyphs.len(), 2);
-        assert_eq!(font.glyphs[0].word1, 2555);
+        assert_eq!(font.glyphs.len(), 1);
+        assert_eq!(font.markers.len(), 1);
+        assert_eq!(font.glyphs[0].codepoint, 2555);
         assert_eq!(font.glyphs[0].advance, [35.0, 42.5]);
-        assert_eq!(font.glyphs[1].glyph_box[3], 1.0);
+        assert_eq!(font.markers[0].glyph_box[3], 1.0);
     }
 
     #[test]
