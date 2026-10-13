@@ -311,10 +311,13 @@ Every one is an **optional** field: an authored `.unit`/`.bsi` omits them and ta
 the compiler's previous path, so the mod's bundles are byte-identical either way.
 
 One class was a decode gap rather than a dropped field: the DT-only **component 6,
-type 2** channel now decodes as `f32`s, beside component 6 type 18's four raw bytes,
-so the unit that used to fail with `Cannot decode channel component 6 type 2` parses
-(its element size is validated by the round-trip - a wrong width changes the byte
-count).
+type 2** channel now decodes as `f32`s, beside component 6 type 18's four raw bytes.
+**Caveat, and it applies to the remaining `(9, 8)` arm too:** the round-trip does
+*not* validate the chosen width. Decoding `N` bytes with width `W` and encoding the
+`N/W` values back at the same `W` is lossless for **any** `W`, so a wrong width still
+round-trips byte-for-byte while yielding wrong values. What actually constrains it is
+the stream's **`stride`**, which must equal the sum of its channels' element sizes -
+so that, not a passing round-trip, is what settles a new `(component, type)` arm.
 
 The earlier stream work stands too: `bitsquid/math_utils.py` confirms our HALF4
 (four halves, 8 bytes - its message says 12 but its check is `% 8`) and HALF2
