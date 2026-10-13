@@ -227,9 +227,30 @@ the worked example.
 
 | Outcome | Count |
 |---------|-------|
-| decode rejected (skins / animations / streamed meshes) | 2,498 |
+| decode rejected | 2,498 |
 | decoded | 168 |
 | of which **byte-identical to the shipped payload** | **168** |
+
+The rejections, by class:
+
+| Class | Units | What it needs |
+|-------|-------|---------------|
+| simple animations | 1,464 | the animation subsystem |
+| actors | 833 | the actor / light / camera descriptors |
+| skinned units | 116 | skin data (bones and weights per mesh) |
+| streamed geometry | 76 | the vertex bytes - which are not in the bundle at all |
+| unknown device blob not empty | 7 | **carried** verbatim as `device_blob` |
+| channel component 6 type 2 | 1 | **decoded** as `f32`s |
+| cameras and lights | 1 | the camera / light descriptors |
+
+**Streamed geometry is not a parsing gap.** Such a payload declares its streams -
+format, vertex count, stride - but stores no vertex bytes, and the bundle does not
+record them anywhere else either: across **3,000 bundles and 19,133 unit entries**,
+*no* unit variant is external and none names a data file
+(`examples/unit_stream_probe.rs`). The payload alone therefore cannot reproduce one,
+so the reader keeps refusing them on purpose: the guard is the honest answer, not a
+TODO. (Contrast a streamed *texture*, whose variant *is* external and names its
+`data/xx/<16 hex>.stream`.)
 
 So **every decodable shipped unit in the sample round-trips byte-for-byte**. The run
 of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
