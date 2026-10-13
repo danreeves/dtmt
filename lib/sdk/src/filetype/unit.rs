@@ -40,9 +40,13 @@ struct StepDef {
     visible_height_range: [f32; 2],
 }
 
-/// Renderable flags; the compiled form only needs the name and its geometry.
+/// Renderable flags; the compiled form needs the name and its geometry, plus the
+/// payload's own mesh-object flags when the source came from a decompile.
 #[derive(Debug, Deserialize)]
-struct RenderableDef {}
+struct RenderableDef {
+    #[serde(default)]
+    flags: Option<u32>,
+}
 
 #[derive(Debug, Deserialize)]
 struct CameraSettings {
@@ -1349,7 +1353,7 @@ struct UnitBlobs {
 /// hashes are written as `#HEX` tokens, which the compiler takes as hashes.
 fn unit_sjson(
     slots: &[(u32, u64)],
-    meshes: &[u32],
+    meshes: &[DecodedMesh],
     lods: &[DecodedLod],
     blobs: &UnitBlobs,
 ) -> String {
@@ -1370,7 +1374,7 @@ fn unit_sjson(
                     .meshes
                     .iter()
                     .filter_map(|mesh| meshes.get(*mesh as usize))
-                    .map(|mesh| format!("\"#{mesh:08X}\""))
+                    .map(|mesh| format!("\"#{:08X}\"", mesh.name))
                     .collect();
                 text.push_str(&format!(
                     "\t\t\t{{ renderables = [ {} ] visible_height_range = [ {} {} ] }}\n",
@@ -1386,7 +1390,8 @@ fn unit_sjson(
     text.push_str("renderables = {\n");
     for mesh in meshes {
         text.push_str(&format!(
-            "\t\"#{mesh:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true }}\n"
+            "\t\"#{:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true flags = {} }}\n",
+            mesh.name, mesh.unk4
         ));
     }
     text.push_str("}\n");
@@ -1748,9 +1753,8 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
 
-    let mesh_names: Vec<u32> = meshes.iter().map(|mesh| mesh.name).collect();
     Ok((
-        unit_sjson(&slots, &mesh_names, &lods, &blobs),
+        unit_sjson(&slots, &meshes, &lods, &blobs),
         bsi_sjson(&geometries, &meshes, &scene_graph)?,
     ))
 }
@@ -2000,8 +2004,14 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(*node_index as u32);
         w.u32((geometry_index + 1) as u32);
         w.u32(0); // skin index
-        // Render flags as they appear on shipped static props.
-        w.u32(0x000c_2001);
+        // The payload's own mesh-object flags when the source carries them,
+        // otherwise the value shipped static props use.
+        let flags = def
+            .renderables
+            .get(renderable)
+            .and_then(|renderable| renderable.flags)
+            .unwrap_or(0x000c_2001);
+        w.u32(flags);
         w.u32(3);
         w.u32(1);
         match geometry_at(*geometry_index)?.bounds {
@@ -2446,9 +2456,20 @@ renderables = {
 
     #[test]
     fn unit_sjson_uses_hash_names() {
+        let meshes = [DecodedMesh {
+            name: 0x553C_252C,
+            node_index: 0,
+            geometry_index: 1,
+            skin_index: 0,
+            unk4: 0x000c_2001,
+            unk5: 3,
+            unk6: 1,
+            bounds: [0.0; 10],
+            unk7: 0,
+        }];
         let text = unit_sjson(
             &[(0x44F4_A503, 0x1122_3344_5566_7788)],
-            &[0x553C_252C],
+            &meshes,
             &[],
             &UnitBlobs::default(),
         );
