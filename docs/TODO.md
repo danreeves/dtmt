@@ -116,6 +116,14 @@ A three-way header comparison (`slugfont`'s fresh output, the demo file, and a s
 
 What that gives: the two tiny records' **second word is a count, not a size** (`4FLH` 2/11/75, `2U61` 12/111/425 - they scale with the font), the first word `4096` is a fixed payload base; the **last** record's two words are an offset and a size whose sum is the file size exactly in all three files; `112` is constant across all three (a structural value); and **Darktide ships Slug version `0x0700` while the reference compiler emits `0x0760`**, so a shipped entry may not decode with the current library's layout - the demo file's `0x0760` is the closer reference for *structure*, and the shipped file for *fields*.
 
+Reading the region at that base (`4096`) shows the per-glyph tables directly:
+
+- the **demo** file holds **16-byte records**, `{u32, f32, u32, f32}` - e.g. `00 00 00 00 | 00 C0 0C 3F | 00 00 00 00 | 00 A0 25 3F` = two metrics (`0.549805`, `0.647461`) per glyph - so `4FLH` is a two-metric-per-glyph table with stride 16;
+- the **fresh and shipped** files instead open with a **4-byte ascending run** (`0x2CD, 0x2CE, 0x2CF …` = 717, 718, 719 … in the fresh; `0x20F, 0x210 …` = 527, 528 … in the shipped) - a **supported-codepoint list**, stride 4.
+- The shipped file is all-zero at `4096` and starts its run at `8192`, so its tables sit at a different base within the same region.
+
+Together with the field reading above, the record is `{tag, u32 base, u32 count}` with that tag's table laid out consecutively from the base - the two records sharing `4096` are one region, first table then second.
+
 The demo's header (177,872 bytes) shows the shape after the directory:
 
 ```
