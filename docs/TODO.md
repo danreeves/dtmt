@@ -124,6 +124,8 @@ Reading the region at that base (`4096`) shows the per-glyph tables directly:
 
 Together with the field reading above, the record is `{tag, u32 base, u32 count}` with that tag's table laid out consecutively from the base - the two records sharing `4096` are one region, first table then second.
 
+Measured run lengths: the **longest ascending `u32` run** in that region is **280 entries** in the fresh compile (first value `0x613` = 1,555) and **109** in the shipped entry (first `0x139` = 313). Note those do **not** equal the records' counts (`4FLH`/`2U61` = 11/111 fresh, 75/425 shipped), so the counts are a different per-font quantity than the codepoint-run length - something to keep in mind, not an equality to rely on.
+
 The demo's header (177,872 bytes) shows the shape after the directory:
 
 ```
