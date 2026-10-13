@@ -227,8 +227,8 @@ the worked example.
 
 | Outcome | Count |
 |---------|-------|
-| decode rejected (skins / animations / streamed meshes) | 2,506 |
-| decoded | 160 |
+| decode rejected (skins / animations / streamed meshes) | 2,498 |
+| decoded | 168 |
 | of which **byte-identical to the shipped payload** | **159** |
 
 So **every decodable static unit in the sample now round-trips byte-for-byte**. The
@@ -293,7 +293,11 @@ bundles (2,666 units, 2,588 rejected):
 | 833 | actors are not supported yet |
 | 116 | skinned units are not supported yet |
 | 76 | streamed geometry is not supported yet (a vertex stream has no data) |
-| 8 | `Cannot decode channel component 0 type 2` |
+
+The FLOAT3-POSITION channel (`component 0 type 2`, 8 units) now **decodes** too, taking
+the decodable count to **168** - but those eight do not round-trip yet: they differ in
+the tail (~205 bytes from the end), a field the extra units surfaced, so the
+byte-identical count stays at 159.
 
 The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
 component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its
@@ -306,7 +310,7 @@ exception rebuilds 64 bytes *shorter* (`19,283` vs `19,219`), a separate case st
 to look at. A new cheap case appeared with the extra units: `Cannot decode channel
 component 0 type 2` (8 units, a FLOAT3 POSITION).
 
-The next two cheapest are that channel (8) and streamed geometry (76 - it needs the
-`.stream` side file, which the texture reader already handles). The Python reference
-(`skin_data.py`, `animation.py`, `actor_resource.py`, `camera.py`, `light.py`,
-`scene_graph.py`) names the shape of the rest.
+The next cheapest are streamed geometry (76 - it needs the `.stream` side file, which
+the texture reader already handles) and the tail field the eight FLOAT3 units share.
+The Python reference (`skin_data.py`, `animation.py`, `actor_resource.py`,
+`camera.py`, `light.py`, `scene_graph.py`) names the shape of the rest.
