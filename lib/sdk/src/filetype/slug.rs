@@ -68,6 +68,9 @@ pub struct SlugFont {
     /// records, which are collected separately.
     pub glyphs: Vec<Glyph>,
     pub markers: Vec<Marker>,
+    /// The address the glyph table was located at. Absent when the file's layout
+    /// was not recognised, in which case no glyphs are reported.
+    pub glyph_table: Option<u32>,
 }
 
 impl SlugFont {
@@ -127,17 +130,24 @@ impl SlugFont {
             let y1 = f32_at(b, at + 12);
             x0.is_finite() && (-2.0..=2.0).contains(&x0) && y1 > 0.05 && y1 <= 2.0
         };
-        let mut glyph_base = default_base;
-        if !(0..4).all(|k| looks_like_glyph(glyph_base + k * GLYPH_SIZE)) {
+        let mut glyph_table = None;
+        if (0..4).all(|k| looks_like_glyph(default_base + k * GLYPH_SIZE)) {
+            glyph_table = Some(default_base as u32);
+        } else {
             let mut at = region;
             while at + 5 * GLYPH_SIZE <= b.len() {
                 if (0..4).all(|k| looks_like_glyph(at + k * GLYPH_SIZE)) {
-                    glyph_base = at;
+                    glyph_table = Some(at as u32);
                     break;
                 }
                 at += GLYPH_SIZE;
             }
         }
+        // When neither the default base nor the scan fits, the table is left
+        // unlocated and its records are not reported as glyphs.
+        let glyph_base = glyph_table.map(|at| at as usize).unwrap_or(default_base);
+        // Unlocated table: report no records rather than guess at them.
+        let glyph_count = if glyph_table.is_some() { glyph_count } else { 0 };
 
         let mut glyphs = Vec::new();
         let mut markers = Vec::new();
@@ -166,7 +176,13 @@ impl SlugFont {
                 });
                 continue;
             }
-            let plausible = glyph_box[2] > glyph_box[0] || glyph_box[3] > 0.0;
+            // A glyph's box must be a *real* box, not the denormal floats an
+            // ascending-id table reads as: 386, 387 … are `5.4e-43`-ish, so a
+            // width or height of at least half a percent is what separates the
+            // two. (`word2 != 0` alone is not enough - an id run passes it.)
+            let width = glyph_box[2] - glyph_box[0];
+            let height = glyph_box[3] - glyph_box[1];
+            let plausible = width >= 0.005 || height >= 0.005;
             if !plausible {
                 continue;
             }
@@ -187,6 +203,7 @@ impl SlugFont {
             kerning,
             glyphs,
             markers,
+            glyph_table,
         })
     }
 
@@ -231,8 +248,9 @@ mod test {
             b[at + 4..at + 8].copy_from_slice(&(*base as u32).to_le_bytes());
             b[at + 8..at + 12].copy_from_slice(&(*count as u32).to_le_bytes());
         }
-        // Make the table area large enough for 1 kerning pair + 2 glyphs.
-        b.resize(0x1000 + 16 + 2 * GLYPH_SIZE + 16, 0);
+        // Make the table area large enough for 1 kerning pair + 4 records (a
+        // located table needs four plausible records in a row).
+        b.resize(0x1000 + 16 + 4 * GLYPH_SIZE, 0);
         // The kerning pair.
         for (i, v) in [1.0f32, 0.5, 2.0, 0.25].iter().enumerate() {
             b[0x1000 + i * 4..0x1000 + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
@@ -252,6 +270,13 @@ mod test {
         for (i, v) in [0.0f32, 0.0, 0.55, 1.0].iter().enumerate() {
             b[g1 + i * 4..g1 + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
+        // Two more marker records, so the table is locatable.
+        for (k, w) in [(2usize, 0.6f32), (3, 0.65)] {
+            let at = g0 + k * GLYPH_SIZE;
+            for (i, v) in [0.0f32, 0.0, w, 1.0].iter().enumerate() {
+                b[at + i * 4..at + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
         b
     }
 
@@ -263,6 +288,7 @@ mod test {
         assert_eq!(font.kerning.len(), 1);
         assert_eq!(font.glyphs.len(), 1);
         assert_eq!(font.markers.len(), 1);
+        assert_eq!(font.glyph_table, Some(0x1000 + 16));
         assert_eq!(font.glyphs[0].codepoint, 2555);
         assert_eq!(font.glyphs[0].advance, [35.0, 42.5]);
         assert_eq!(font.markers[0].glyph_box[3], 1.0);
