@@ -46,6 +46,12 @@ struct StepDef {
 struct RenderableDef {
     #[serde(default)]
     flags: Option<u32>,
+    /// The mesh object's two words after its flags. Read and dropped before, then
+    /// written as the compiler's `3`/`1`.
+    #[serde(default)]
+    unk5: Option<u32>,
+    #[serde(default)]
+    unk6: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1442,8 +1448,8 @@ fn unit_sjson(
     text.push_str("renderables = {\n");
     for mesh in meshes {
         text.push_str(&format!(
-            "\t\"#{:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true flags = {} }}\n",
-            mesh.name, mesh.unk4
+            "\t\"#{:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true flags = {} unk5 = {} unk6 = {} }}\n",
+            mesh.name, mesh.unk4, mesh.unk5, mesh.unk6
         ));
     }
     text.push_str("}\n");
@@ -2088,9 +2094,19 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
             .get(renderable)
             .and_then(|renderable| renderable.flags)
             .unwrap_or(0x000c_2001);
+        let unk5 = def
+            .renderables
+            .get(renderable)
+            .and_then(|renderable| renderable.unk5)
+            .unwrap_or(3);
+        let unk6 = def
+            .renderables
+            .get(renderable)
+            .and_then(|renderable| renderable.unk6)
+            .unwrap_or(1);
         w.u32(flags);
-        w.u32(3);
-        w.u32(1);
+        w.u32(unk5);
+        w.u32(unk6);
         match geometry_at(*geometry_index)?.bounds {
             // The mesh object's bounds are the geometry's own (baked at cook
             // time), so a decompiled geometry's `bounds` serve both.
