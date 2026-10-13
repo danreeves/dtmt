@@ -102,7 +102,18 @@ Two details confirmed with it: the 4CC tags are stored **little-endian** (`COMP`
 
 The `oodle::decompress` wrapper needs the **exact** raw size and that table's values are all below the 2.7 MB chunk, so the size is elsewhere. A first attempt with a generous 32 MB buffer (the wrapper ignores Oodle's returned length, so the padding can be trimmed) **fails on both `COMP` chunks**, so they are *not* Oodle despite the tag; **zlib, plain deflate and gzip fail too** on the demo's chunks.
 
-That points back at the record fields: for the demo's `consola.slug` the two `PMOC` records are `(44,896, 49,152)` and `(83,792, 94,080)`, and `44,896 + 49,152 = 94,048` **overlaps** the second record's offset (`83,792`), while for the *last* record of both files `a + b` equals the file size exactly. So `{tag, u32, u32}` holds, but the two words are not simply offset/size for every record - one of them is probably a size that pairs with the next record's offset (i.e. the first word is the *end* of the range, or a raw size). Next: settle that from the demo file (177 KB, so every trial is cheap) and re-try the decompressors over the corrected spans.
+The demo's header (177,872 bytes) shows the shape after the directory:
+
+```
+ 32  4FLH (4096, 2)   PMOC (44896, 49152)
+ 56  2U61 (4096, 12)  PMOC (83792, 94080)
+ 80  u32 count = 14, then 14 u32 values: 112, 1, 432, 496, 357, 1520, 0 ...
+144  47216, 47280, 49008, 0   then zeros up to the first chunk at 4096
+```
+
+So `{magic, version, kind, flags, 16 zero bytes, 4 chunk records, u32 count + values, a small group}` and then the payload starts at offset `4096`. The shipped file has the same shape with `count = 11` and larger values (112, 256, 368, 880, 4,978, 92,016, 729,200, 749,232, 756,464, 759,152).
+
+The two *tiny* records still look odd - `4FLH` and `2U61` share the offset `4096` in both files - so the first word is an offset for the `COMP` records (their ranges are consistent with the file size) but not obviously for those two. Next: settle one record's semantics by following the values (the demo's `47216/47280/49008` sit inside the first `COMP` range) and re-try decompression over the corrected spans.
 | Sound (Wwise) | Limited | Bank / Event / Stream: the version and the post-processing. VT2's pipeline is the reference. |
 
 ## Community references (re-check these)
