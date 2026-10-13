@@ -96,7 +96,9 @@ The directory is a list of **12-byte records** (`{4CC tag, u32, u32}`) at offset
 | 3 | `16U2` | `0x1000`, `0x1A9` | `0x1000`, `0xC` |
 | 4 | `COMP` | `0x2BF168`, `0x294D00` | `0x14750`, `0x16F80` |
 
-The two `COMP` chunks are the bulk (~1.9 M + ~2.9 M of the 5.6 M file), so the font body is **compressed inside the `slug`** - Oodle, which DTMT already links - and the other two chunks are a fraction of that. Decoding those two chunk kinds is the next step.
+The two `COMP` chunks are the bulk (~1.9 M + ~2.9 M of the 5.6 M file), so the font body is **compressed inside the `slug`** - Oodle, which DTMT already links - and the other two chunks are a fraction of that. `examples/slug_oodle.rs` walks the directory and tries Oodle on the `COMP` chunks.
+
+Two details confirmed with it: the 4CC tags are stored **little-endian** (`COMP` reads back as `PMOC`), and the last record's `offset + size` equals the file size exactly (`2,879,848 + 2,706,688 = 5,586,536`), so `{tag, u32 offset, u32 size}` is right. The `oodle::decompress` wrapper needs the **exact** raw size - which the directory does not carry - so the next step is to find where that size lives (the header after the directory, or the `HLF4`/`16U2` chunks) and then decode both chunk kinds.
 | Sound (Wwise) | Limited | Bank / Event / Stream: the version and the post-processing. VT2's pipeline is the reference. |
 
 ## Community references (re-check these)
