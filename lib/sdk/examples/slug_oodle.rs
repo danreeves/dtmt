@@ -34,18 +34,24 @@ fn main() -> color_eyre::Result<()> {
         }
         let chunk = &bytes[*offset..*offset + *size];
         println!("COMP at {offset} ({size} bytes): first 8 {:#04x?}", &chunk[..8]);
-        for shift in 22..=27u32 {
-            let raw = 1usize << shift;
-            if let Ok(out) = oodle::decompress(
-                chunk.to_vec(),
-                raw,
-                oodle::OodleLZ_FuzzSafe::No,
-                oodle::OodleLZ_CheckCRC::No,
-            ) {
-                println!("  raw {raw}: OK, {} bytes -> {:02x?}", out.len(), &out[..out.len().min(16)]);
-                std::fs::write(format!("{path}.{offset}.raw"), &out)?;
-                break;
+        // The wrapper ignores Oodle's returned size, so pass a generous buffer and
+        // trim the zero padding to recover the decompressed length.
+        let raw = 32usize << 20;
+        match oodle::decompress(
+            chunk.to_vec(),
+            raw,
+            oodle::OodleLZ_FuzzSafe::No,
+            oodle::OodleLZ_CheckCRC::No,
+        ) {
+            Ok(out) => {
+                let len = out.iter().rposition(|b| *b != 0).map(|i| i + 1).unwrap_or(0);
+                println!(
+                    "  raw {raw}: OK, {len} non-padding bytes -> {:02x?}",
+                    &out[..out.len().min(16)]
+                );
+                std::fs::write(format!("{path}.{offset}.raw"), &out[..len])?;
             }
+            Err(e) => println!("  raw {raw}: {e}"),
         }
     }
     let mut _drain = std::io::empty();
