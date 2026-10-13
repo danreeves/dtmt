@@ -137,6 +137,10 @@ struct UnitDef {
     flow_dynamic: Option<String>,
     #[serde(default)]
     physics: Option<String>,
+    /// The unit's default material hash, as stored in the payload. A decompiled
+    /// unit carries it; an authored one gets the compiler's zero.
+    #[serde(default)]
+    default_material: Option<u64>,
     #[serde(default)]
     trailer: Option<String>,
 }
@@ -1355,6 +1359,7 @@ fn unit_sjson(
     slots: &[(u32, u64)],
     meshes: &[DecodedMesh],
     lods: &[DecodedLod],
+    default_material: u64,
     blobs: &UnitBlobs,
 ) -> String {
     let mut text = String::from("materials = {\n");
@@ -1362,6 +1367,9 @@ fn unit_sjson(
         text.push_str(&format!("\t\"#{slot:08X}\" = \"#{resource:016X}\"\n"));
     }
     text.push_str("}\n");
+    if default_material != 0 {
+        text.push_str(&format!("default_material = {default_material}\n"));
+    }
     if !lods.is_empty() {
         text.push_str("lod = [\n");
         for lod in lods {
@@ -1710,7 +1718,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     let flow_dynamic = reader.byte_array()?;
     let _triangle_finder = reader.byte_array()?;
     let physics = reader.byte_array()?;
-    let _default_material = reader.u64()?;
+    let default_material = reader.u64()?;
     let mut slots = Vec::new();
     for _ in 0..reader.u32()? {
         slots.push((reader.u32()?, reader.u64()?));
@@ -1754,7 +1762,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     };
 
     Ok((
-        unit_sjson(&slots, &meshes, &lods, &blobs),
+        unit_sjson(&slots, &meshes, &lods, default_material, &blobs),
         bsi_sjson(&geometries, &meshes, &scene_graph)?,
     ))
 }
@@ -2124,7 +2132,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.byte_array(&[0u8; 4]);
     w.byte_array(&decode_blob(&def.physics, &[])?);
     // Default material and the material list.
-    w.u64(0);
+    w.u64(def.default_material.unwrap_or(0));
     w.u32(slots.len() as u32);
     for (slot, resource) in &slots {
         w.u32(*slot);
@@ -2471,6 +2479,7 @@ renderables = {
             &[(0x44F4_A503, 0x1122_3344_5566_7788)],
             &meshes,
             &[],
+            0,
             &UnitBlobs::default(),
         );
         assert!(
