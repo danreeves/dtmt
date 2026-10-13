@@ -229,16 +229,17 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,588 |
 | decoded | 78 |
-| of which **byte-identical to the shipped payload** | **47** |
+| of which **byte-identical to the shipped payload** | **78** |
 
-The first run, before the fixes below, was **0** byte-identical. In order: the
-geometry-bounds fix took it to 2; carrying those bounds into the mesh objects and
-the LOD union took it to 17; rounding the `f32` -> half conversion through
-nearest-even (it truncated) took it to 20; carrying a decompiled mesh-geometry
-record **verbatim** (`raw`) took it to 25; carrying each mesh object's **render
-flags** (hardcoded `0x000C2001`; shipped units use `0x000C2003` and up) took it to
-43; and carrying the unit's **default material** hash (read then dropped) took it to
-47.
+So **every decodable static unit in the sample now round-trips byte-for-byte**. The
+run of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
+objects and the LOD union (-> 17); the `f32` -> half conversion rounding to
+nearest-even (-> 20); a decompiled mesh-geometry record carried **verbatim** (`raw`)
+(-> 25); each mesh object's **render flags** (hardcoded `0x000C2001`; shipped units
+use `0x000C2003` and up) (-> 43); the unit's **default material** hash, read then
+dropped (-> 47); and finally the whole **LOD-object section** carried verbatim - its
+records hold an `unk2` hash, `unk4`/`unk5` and a stream mesh order that the compiler
+did not model, which was costing exactly four bytes per unit (-> 78).
 
 ### Node order was the first cause (fixed)
 
@@ -257,79 +258,29 @@ back.
 
 ### What still differs
 
-The payload's **bounding volumes** are carried now. They are baked at cook time
-from the *source* mesh, so they are not the min/max of the stored half-float
-vertices and recomputing them always drifted. `BsiGeometry` has an optional
-`bounds` (the ten words the payload stores: min, max and four bounding-sphere
-values) which the decompiler fills, and the compiler reuses for the geometry
-itself, for the mesh objects (whose bounds are the same values) and for the LOD
-union. That is what took the sample from 0 to 17 byte-identical.
+Nothing, for the units that decode: all **78** static units in the sample round-trip
+byte-for-byte. The pattern that closed the last several classes is worth naming - the
+decompiler read a field and then **dropped** it, while the compiler wrote a hardcoded
+default, so the payload could never match:
 
-The `BsiNode` scene graph also carries the payload's own `index`, `rotation`,
-`scale` and `world`, so the compiler restores the file's flat node order and
-writes the engine's TRS and world matrices back instead of a folded
-`rotation x scale` and a recomputed world.
+| Field | Was | Now |
+|-------|-----|-----|
+| mesh-geometry record | re-encoded (drops POSITION `w`, re-rounds octahedral normals) | carried verbatim as `raw` |
+| mesh-object render flags | hardcoded `0x000C2001` | carried as `flags` on the renderable |
+| default material | read, dropped, written as `0` | carried as `default_material` |
+| triangle-finder blob | read, dropped, written as four zero bytes | carried as `triangle_finder` |
+| LOD-object section | partially modelled (no `unk2`/`unk4`/`unk5`/order) | carried verbatim as `lod_raw` |
 
-An authored `.bsi` omits every one of those optional fields and keeps the previous
-behaviour - the mod's bundles are byte-identical either way.
+Every one is an **optional** field: an authored `.unit`/`.bsi` omits them and takes
+the compiler's previous path, so the mod's bundles are byte-identical either way.
 
-The remaining 58 differ later in the payload. The half-float class is closed - the
-`f32` -> half helper rounded by *truncating*, which put a one-ULP difference
-(`0x37A6` vs `0x37A5`) between a rebuilt stream and the shipped one; it now rounds
-to nearest, ties to even, like the engine's conversion.
-
-What is left is inside the **vertex streams**. `bitsquid/math_utils.py` confirms our
-reading of the two channel types (`process_half4`: four halves, 8 bytes per element
-- its message says 12 but its check is `% 8`; `process_half2`: two halves) and its
-`octahedral_decode` matches `oct_decode`, with one addition: it maps **NaN halves**
-(`0xFE00` and friends) to 0, which DTMT now does too.
-
-Two losses in that path were identified and are now **bypassed** rather than fixed:
-
-- `decode_stream` **drops the POSITION `w` component** and the compiler writes `1.0`
-  back. Shipped `w` halves are not `1.0` (the sample has `0x0002`), so every
-  position element's fourth half differs - the `00 3C 02 00` vs `00 3C 00 3C` pair
-  at offset 2292. The value is unused by the renderer, but it is stored;
-- a stream value can come back **complemented**: the sample's `0x33E5` (`0.24670`)
-  becomes `0x3A07` (`0.75342`), and those sum to 1.0001, i.e. the octahedral
-  coordinate's **sign / fold branch** flips (`2u-1` is `-0.5066` shipped and
-  `+0.5068` rebuilt), so `oct_decode`/`oct_encode` do not reproduce the engine's
-  branch choice on a borderline (near `z = 0`) normal.
-
-Both are sidestepped by one mechanism: a decompiled geometry carries its
-**mesh-geometry record verbatim** as `raw` (hex), and `write_mesh_geometry` writes
-those bytes straight out, keeping the readable `streams`/`data` for authoring. That
-took the sweep from 20 to 25.
-
-The remaining 31 differ later still, and the probe now lists them smallest-first.
-They share one signature: **every rebuilt unit is exactly four bytes longer than the
-shipped one** (one is sixteen bytes longer), and the first difference sits ~210 bytes
-from the end. So one **structural** field in the tail is written too long, not just a
-value.
-
-For the smallest failure (1,558 bytes, first diff at 1,348) the two problems are in
-one record at ~1408-1440:
-
-```
-shipped  E3 6C EF 41  98 B2 B2 BF 22 58 72 C0 00 00 20 C1 16 93 20 42  03 20 0C 00 ...
-ours     E3 6C EF 41  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  01 00 00 00 ...
-```
-
-i.e. after the name hash the shipped carries **four floats** (and then the render
-flags `0x000C2003`), where our record has small index words; and from ~1456 the
-rebuilt payload is the shipped one shifted by four bytes, so the extra field is
-inside this record. That is a mesh-object / LOD variant whose layout we mis-model
-(the decoder reads it without complaint, so the shift is silent).
-`bitsquid/stingray/lod_object_data.py` and `mesh_geometry.py` are the reference for
-its field list.
-
-`examples/unit_probe.rs` takes a third argument: given a directory it dumps every
-decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
-can be picked out and diffed (the sample above is dump `1`).
-
-`bitsquid-blender-tools` (`bitsquid/stingray/unit/`, `index_stream.py`,
-`vertex_stream.py`, `lod_object_data.py`, `scene_graph.py`) is a Python reader for
-the same payload and gives field names to compare against.
+The earlier stream work stands too: `bitsquid/math_utils.py` confirms our HALF4
+(four halves, 8 bytes - its message says 12 but its check is `% 8`) and HALF2
+readings, its `octahedral_decode` matches ours, and NaN halves (`0xFE00`) map to 0.
+The `f32` -> half conversion now rounds to nearest, ties to even (it truncated, which
+cost one ULP per stream value). The `BsiNode` scene graph carries the payload's own
+`index`, `rotation`, `scale` and `world`, so the file's flat node order and the
+engine's TRS/world matrices come back exactly.
 
 ## Format variants still rejected
 
