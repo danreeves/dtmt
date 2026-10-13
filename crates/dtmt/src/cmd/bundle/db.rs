@@ -88,6 +88,11 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
                         let extension = file.extension.ext_name();
                         println!("{}.{}", name.display(), extension);
                     }
+                } else if database.bundles().contains_key(&hash) {
+                    tracing::info!(
+                        "Bundle {} is in the database but carries no file list",
+                        bundle
+                    );
                 } else {
                     tracing::info!("Bundle {} not found in the database", bundle);
                 }
@@ -165,6 +170,17 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             }
 
             if !found {
+                // The database's file index is partial, so a miss is not proof
+                // that no bundle holds the file.
+                let unlisted = database
+                    .bundles()
+                    .len()
+                    .saturating_sub(database.files().len());
+                tracing::info!(
+                    "No bundle in the file index contains that name. {unlisted} of the {} \
+                     bundles carry no file list, so this is not conclusive.",
+                    database.bundles().len()
+                );
                 std::process::exit(1);
             }
 

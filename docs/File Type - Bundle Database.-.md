@@ -96,3 +96,24 @@ uint64_t calc_hash(const std::vector<uint64_t>& list) {
     return k;
 }
 ```
+## What the shipped database actually holds (measured 2026-10-13)
+
+`examples/db_probe.rs` reads the game's `bundle_database.data` and reports what DTMT parses. The reader agrees with the template above - every file-list key is also a bundle key, so the two sections line up - and the `contents` section turns out to be **partial**:
+
+| | |
+|---|---|
+| bundles | **16,102** |
+| bundles with a file list (`contents`) | **11,017** |
+| bundles **without** a file list | **5,085** |
+| file entries in the index | **957,805** |
+| file-list keys not in the bundle list | 0 |
+
+So about a third of the bundles have no file list at all, and `find-file` / `list-files` are only conclusive for the 11,017 that do. That is data, not a parsing fault - and it is why a name can look missing while the bundle itself is present:
+
+```
+content/ui/fonts/noto_sans_jp_black (1470e02569a61694) -> not in the file index
+content/ui/fonts/mono_tide_regular   (780d2c1d6198922c) -> 9ba626afa44a3aa3
+packages/ui/fonts/slug_ja            (e108d1bab1b6fd74) -> 9ba626afa44a3aa3
+```
+
+The CJK fonts' own bundle (`packages/ui/fonts/slug_ja`) is one of the 5,085 with no list, so its resources cannot be found there; the Latin fonts sit in `packages/boot`, which *is* listed. Both CLI commands now say which of the two cases they hit instead of reporting a flat "not found".
