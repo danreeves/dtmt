@@ -187,6 +187,9 @@ struct UnitDef {
     /// unknown `u32` list beside them.
     #[serde(default)]
     actors_raw: Option<String>,
+    /// The camera and light lists verbatim.
+    #[serde(default)]
+    cameras_raw: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1502,6 +1505,8 @@ struct UnitBlobs {
     animation_groups_raw: Option<String>,
     /// The actor sections verbatim.
     actors_raw: Option<String>,
+    /// The camera and light lists verbatim.
+    cameras_raw: Option<String>,
     trailer: Option<String>,
 }
 
@@ -1593,6 +1598,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.actors_raw {
         text.push_str(&format!("actors_raw = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.cameras_raw {
+        text.push_str(&format!("cameras_raw = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1908,9 +1916,14 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     }
     let unk9 = reader.u32_array()?;
     let actors_raw = reader.data[actors_start..reader.at].to_vec();
-    if reader.u32()? != 0 || reader.u32()? != 0 {
-        bail!("cameras and lights are not supported yet");
-    }
+    // Cameras and lights, both fixed-size records (`CameraDT` 32 bytes and
+    // `LightDT` 160), so a decompiled payload carries the two lists verbatim.
+    let cameras_start = reader.at;
+    let cameras = reader.u32()? as usize;
+    reader.skip(cameras * 32)?;
+    let lights = reader.u32()? as usize;
+    reader.skip(lights * 160)?;
+    let cameras_raw = reader.data[cameras_start..reader.at].to_vec();
     let device_blob = reader.byte_array()?;
     let lod_start = reader.at;
     let lods = parse_lod_objects(&mut reader)?;
@@ -1990,6 +2003,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         animation_groups_raw: (groups > 0).then(|| hex_encode(&animation_groups_raw)),
         actors_raw: (actor_count > 0 || actors_2 > 0 || !unk9.is_empty())
             .then(|| hex_encode(&actors_raw)),
+        cameras_raw: (cameras > 0 || lights > 0).then(|| hex_encode(&cameras_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2310,9 +2324,14 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(0);
         w.u32_array(&[]);
     }
-    // Cameras and lights.
-    w.u32(0);
-    w.u32(0);
+    // Cameras and lights. A decompiled unit carries them verbatim; an authored
+    // one writes them empty.
+    if let Some(hex) = &def.cameras_raw {
+        w.bytes(&hex_decode(hex)?);
+    } else {
+        w.u32(0);
+        w.u32(0);
+    }
     // Unknown device blob.
     if let Some(hex) = &def.device_blob {
         // A decompiled unit carries the blob verbatim.
