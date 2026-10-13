@@ -154,13 +154,20 @@ impl SlugFont {
             ];
             let word1 = u32_at(b, at + 16);
             let word2 = u32_at(b, at + 20);
-            // A marker carries a full-height box and leaves `word2` at zero.
+            // A marker carries a full-height box and leaves `word2` at zero; a
+            // glyph has a non-zero `word2` *and* a plausible box. Anything else
+            // (e.g. a table of ascending ids) is neither, so it is left out
+            // rather than mis-reported as a glyph.
             if word2 == 0 {
                 markers.push(Marker {
                     index: index as u32,
                     glyph_box,
                     word: word1,
                 });
+                continue;
+            }
+            let plausible = glyph_box[2] > glyph_box[0] || glyph_box[3] > 0.0;
+            if !plausible {
                 continue;
             }
             glyphs.push(Glyph {
