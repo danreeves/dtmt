@@ -141,6 +141,11 @@ struct UnitDef {
     /// authored one gets the compiler's four zero bytes.
     #[serde(default)]
     triangle_finder: Option<String>,
+    /// The LOD-object section verbatim, so a decompile reproduces the fields the
+    /// compiler does not model. An authored unit omits it and the LODs are
+    /// compiled from `lod`.
+    #[serde(default)]
+    lod_raw: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1355,6 +1360,10 @@ struct UnitBlobs {
     flow_dynamic: Option<String>,
     triangle_finder: Option<String>,
     physics: Option<String>,
+    /// The whole LOD-object section verbatim. Its records carry fields the
+    /// compiler does not model (an `unk2` hash, `unk4`/`unk5`, a stream mesh
+    /// order), so a decompiled unit carries the bytes instead.
+    lod_raw: Option<String>,
     trailer: Option<String>,
 }
 
@@ -1419,6 +1428,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.triangle_finder {
         text.push_str(&format!("triangle_finder = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.lod_raw {
+        text.push_str(&format!("lod_raw = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1706,7 +1718,9 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     if reader.byte_array()?.len() != 0 {
         bail!("an unknown device blob is not empty");
     }
+    let lod_start = reader.at;
     let lods = parse_lod_objects(&mut reader)?;
+    let lod_raw = reader.data[lod_start..reader.at].to_vec();
     // Terrains, unknowns, joints and movers.
     if reader.u32()? != 0
         || reader.u32()? != 0
@@ -1766,6 +1780,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         flow: (!flow.is_empty()).then(|| hex_encode(&flow)),
         flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
         triangle_finder: (triangle_finder != [0u8; 4]).then(|| hex_encode(&triangle_finder)),
+        lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2058,6 +2073,11 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.byte_array(&[]);
 
     // LOD objects.
+    if let Some(hex) = &def.lod_raw {
+        // A decompiled unit carries the whole section verbatim: the records hold
+        // fields the compiler does not model.
+        w.bytes(&hex_decode(hex)?);
+    } else {
     w.u32(def.lod.len() as u32);
     for lod in &def.lod {
         w.u32(u32::from(hash32_token(&lod.name)));
@@ -2115,6 +2135,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.bool(false);
         let _ = lod.bounding_volume;
         let _ = lod.orientation;
+    }
     }
 
     // Terrains, unknown lists, joints, movers.
