@@ -44,11 +44,16 @@ fn main() -> color_eyre::Result<()> {
         if name != "16U2" {
             continue;
         }
-        println!("glyphs ({count}), first {show}:");
+        // The glyph table's base differs between Slug versions (`record base + 64`
+        // for `0x0760`, `92,288` in a shipped `0x0700` entry), so an explicit base
+        // can be given as the third argument.
+        let glyph_base: usize = std::env::args()
+            .nth(3)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(base + 64);
+        println!("glyphs ({count}) at {glyph_base}, first {show}:");
         for g in 0..(*count).min(show) {
-            // The tables are laid out from the region base: HLF4 first (16-byte
-            // records), then a 32-byte header and the 64-byte glyph records.
-            let at = base + 64 + g * 64;
+            let at = glyph_base + g * 64;
             if at + 64 > b.len() {
                 break;
             }
