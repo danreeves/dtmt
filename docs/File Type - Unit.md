@@ -227,9 +227,9 @@ the worked example.
 
 | Outcome | Count |
 |---------|-------|
-| decode rejected (skins / animations / streamed meshes) | 2,534 |
-| decoded | 132 |
-| of which **byte-identical to the shipped payload** | **131** |
+| decode rejected (skins / animations / streamed meshes) | 2,506 |
+| decoded | 160 |
+| of which **byte-identical to the shipped payload** | **159** |
 
 So **every decodable static unit in the sample now round-trips byte-for-byte**. The
 run of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
@@ -292,17 +292,21 @@ bundles (2,666 units, 2,588 rejected):
 | 1,464 | simple animations are not supported yet |
 | 833 | actors are not supported yet |
 | 116 | skinned units are not supported yet |
-| 73 | streamed geometry is not supported yet (a vertex stream has no data) |
-| 32 | visibility groups are not supported yet |
+| 76 | streamed geometry is not supported yet (a vertex stream has no data) |
+| 8 | `Cannot decode channel component 0 type 2` |
 
 The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
 component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its
 `ChannelTypeDT::UNKNOWN_1` (four raw bytes per element), so it decodes as raw bytes
-and re-encodes as four `u8`s. That raised the decodable count from 78 to **132**,
-of which **131** round-trip byte-for-byte - the one exception rebuilds 64 bytes
-*shorter* (`19,283` vs `19,219`), a separate case still to look at.
+and re-encodes as four `u8`s. **Visibility groups are done too** - the reference
+(`unit/dt.py`) gives the shape, `{u32 count}` then `count x {u32 name, u32_array
+members}`, which is parsed and carried verbatim. Together those raised the decodable
+count from 78 to **160**, of which **159** round-trip byte-for-byte. The one
+exception rebuilds 64 bytes *shorter* (`19,283` vs `19,219`), a separate case still
+to look at. A new cheap case appeared with the extra units: `Cannot decode channel
+component 0 type 2` (8 units, a FLOAT3 POSITION).
 
-The next two cheapest are visibility groups (32) and streamed geometry (73 - it needs
-the `.stream` side file, which the texture reader already handles). The Python
-reference (`skin_data.py`, `animation.py`, `actor_resource.py`, `camera.py`,
-`light.py`, `scene_graph.py`) names the shape of the rest.
+The next two cheapest are that channel (8) and streamed geometry (76 - it needs the
+`.stream` side file, which the texture reader already handles). The Python reference
+(`skin_data.py`, `animation.py`, `actor_resource.py`, `camera.py`, `light.py`,
+`scene_graph.py`) names the shape of the rest.
