@@ -934,6 +934,11 @@ fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
         (7, 19) => Ok(data.iter().map(|byte| *byte as f32).collect()),
         // The DT-only component 6, type 18: four raw bytes per element.
         (6, 18) => Ok(data.iter().map(|byte| *byte as f32).collect()),
+        // POSITION as three `f32`s (`ChannelTypeDT::FLOAT3`).
+        (0, 2) => Ok(data
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()),
         (component, kind) => bail!("Cannot decode channel component {component} type {kind}"),
     }
 }
@@ -1490,6 +1495,8 @@ fn channel_type(kind: u32) -> Result<&'static str> {
         17 => "CT_HALF4",
         15 => "CT_HALF2",
         19 => "CT_UBYTE4",
+        // `ChannelTypeDT::FLOAT3`: three `f32`s per element.
+        2 => "CT_FLOAT3",
         // `ChannelTypeDT::UNKNOWN_1`: four raw bytes per element.
         18 => "CT_UBYTE4_NORM",
         other => bail!("Cannot emit channel type {other}"),
