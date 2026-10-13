@@ -85,6 +85,7 @@ grammar - a custom base material can only use a shipped interface today.
 | Physics | None | The community compiler cooks PhysX collections/scenes. |
 | Particles | Limited | The effect header, the effect variables and each system header (name, capacity, channel layout, component counts) are decoded and compiled (`filetype/particles.rs`); a shipped effect round-trips byte-for-byte. The component bodies are still opaque hex; the community `particles_resource` (version 102) decodes them. |
 | Level | None | Nothing started. |
+| Font (`.slug`) | None | **Custom fonts.** A Darktide font is a **material in the `.slug` format**, not a `font` bundle file: no `font` (`9EFE0A916AAE7880`), `slug` (`A27B4D04A9BA6F9E`) or `slug_album` (`E9FC9EA7042E5EC0`) entry appears in ~1,700 sampled bundles, so the glyph atlas, the metrics and the slug parameters all live in the material's payload. DTMT has no `slug` support, so a mod cannot ship its own font yet. Next step: decompile a shipped UI font's material (atlas texture reference + glyph metrics + slug parameters) and compile one back, then exercise it in game (the pumpkin harness can drive a UI text element). |
 | Sound (Wwise) | Limited | Bank / Event / Stream: the version and the post-processing. VT2's pipeline is the reference. |
 
 ## Community references (re-check these)
