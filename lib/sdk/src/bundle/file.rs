@@ -501,6 +501,9 @@ impl BundleFile {
                 BundleFileType::Package => package::decompile(ctx, name.clone(), data),
                 BundleFileType::Texture => texture::decompile(ctx, name.clone(), variant).await,
                 BundleFileType::Material => material::decompile(ctx, name.clone(), variant).await,
+                BundleFileType::Slug => {
+                    crate::filetype::slug::decompile(ctx, std::slice::from_ref(variant))
+                }
                 _ => {
                     tracing::debug!("Can't decompile, unknown file type");
                     Ok(vec![UserFile::with_name(data.to_vec(), name.clone())])

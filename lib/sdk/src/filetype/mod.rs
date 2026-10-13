@@ -17,6 +17,7 @@ pub mod shader_engine_data;
 pub mod shader_engine_interface;
 pub mod shader_graph;
 pub mod shader_source;
+pub mod slug;
 pub mod strings;
 pub mod texture;
 pub mod unit;
