@@ -227,9 +227,9 @@ the worked example.
 
 | Outcome | Count |
 |---------|-------|
-| decode rejected (skins / animations / streamed meshes) | 2,588 |
-| decoded | 78 |
-| of which **byte-identical to the shipped payload** | **78** |
+| decode rejected (skins / animations / streamed meshes) | 2,534 |
+| decoded | 132 |
+| of which **byte-identical to the shipped payload** | **131** |
 
 So **every decodable static unit in the sample now round-trips byte-for-byte**. The
 run of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
@@ -293,11 +293,16 @@ bundles (2,666 units, 2,588 rejected):
 | 833 | actors are not supported yet |
 | 116 | skinned units are not supported yet |
 | 73 | streamed geometry is not supported yet (a vertex stream has no data) |
-| 54 | `Cannot decode channel component 6 type 18` |
 | 32 | visibility groups are not supported yet |
 
-The two cheapest are the last ones: the channel decode is one missing
-`decode_stream` case (component 6, type 18), and visibility groups are a small
-section. The Python reference (`skin_data.py`, `animation.py`, `actor_resource.py`,
-`camera.py`, `light.py`, `scene_graph.py`) names the shape of the rest; streamed
-geometry needs the `.stream` side file, which the texture reader already handles.
+The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
+component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its
+`ChannelTypeDT::UNKNOWN_1` (four raw bytes per element), so it decodes as raw bytes
+and re-encodes as four `u8`s. That raised the decodable count from 78 to **132**,
+of which **131** round-trip byte-for-byte - the one exception rebuilds 64 bytes
+*shorter* (`19,283` vs `19,219`), a separate case still to look at.
+
+The next two cheapest are visibility groups (32) and streamed geometry (73 - it needs
+the `.stream` side file, which the texture reader already handles). The Python
+reference (`skin_data.py`, `animation.py`, `actor_resource.py`, `camera.py`,
+`light.py`, `scene_graph.py`) names the shape of the rest.
