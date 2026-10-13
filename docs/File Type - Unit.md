@@ -305,10 +305,23 @@ The remaining 31 differ later still, and the probe now lists them smallest-first
 They share one signature: **every rebuilt unit is exactly four bytes longer than the
 shipped one** (one is sixteen bytes longer), and the first difference sits ~210 bytes
 from the end. So one **structural** field in the tail is written too long, not just a
-value. The triangle-finder blob is now carried too (it was read and dropped); these
-units' values already matched the compiler's default, so the extra four bytes are
-elsewhere in the tail - the LOD / mesh-object / actors region.
-`bitsquid/stingray/lod_object_data.py` and `vertex_stream.py` are the reference.
+value.
+
+For the smallest failure (1,558 bytes, first diff at 1,348) the two problems are in
+one record at ~1408-1440:
+
+```
+shipped  E3 6C EF 41  98 B2 B2 BF 22 58 72 C0 00 00 20 C1 16 93 20 42  03 20 0C 00 ...
+ours     E3 6C EF 41  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  01 00 00 00 ...
+```
+
+i.e. after the name hash the shipped carries **four floats** (and then the render
+flags `0x000C2003`), where our record has small index words; and from ~1456 the
+rebuilt payload is the shipped one shifted by four bytes, so the extra field is
+inside this record. That is a mesh-object / LOD variant whose layout we mis-model
+(the decoder reads it without complaint, so the shift is silent).
+`bitsquid/stingray/lod_object_data.py` and `mesh_geometry.py` are the reference for
+its field list.
 
 `examples/unit_probe.rs` takes a third argument: given a directory it dumps every
 decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
