@@ -296,8 +296,12 @@ bundles (2,666 units, 2,588 rejected):
 
 The FLOAT3-POSITION channel (`component 0 type 2`, 8 units) now **decodes** too, taking
 the decodable count to **168** - but those eight do not round-trip yet: they differ in
-the tail (~205 bytes from the end), a field the extra units surfaced, so the
-byte-identical count stays at 159.
+the tail, so the byte-identical count stays at 159. The difference is a **single
+word**: for the 2,594-byte units (bundles `012a19dd517fcdd1`, `0353dbb043a83dce`,
+`0481165f02da3625`) offset 2388 holds `0x00000300` (`768`) in the rebuild and `0` in
+the shipped file, with every neighbouring word equal - the same "read a field, write a
+computed value" shape as the earlier carries. (`0x00000400`, `0x00000100`,
+`0x000000C0`, `0x00000040` sit around it, so it reads like a size/offset word.)
 
 The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
 component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its

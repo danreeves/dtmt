@@ -25,7 +25,7 @@ fn main() -> color_eyre::Result<()> {
     let mut shown_decode = 0usize;
     let mut shown_other = 0usize;
     let mut dumped = 0usize;
-    let mut failures: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    let mut failures: Vec<(usize, usize, Option<usize>, String)> = Vec::new();
     let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let dump_dir = std::env::args().nth(3);
 
@@ -96,7 +96,7 @@ fn main() -> color_eyre::Result<()> {
                                         .iter()
                                         .zip(other.iter())
                                         .position(|(a, b)| a != b);
-                                    failures.push((payload.len(), other.len(), at));
+                                    failures.push((payload.len(), other.len(), at, name.clone()));
                                     if shown_other < 4 {
                                         shown_other += 1;
                                         println!(
@@ -148,8 +148,8 @@ fn main() -> color_eyre::Result<()> {
     );
     failures.sort();
     println!("--- {} differing units, smallest first:", failures.len());
-    for (original, rebuilt, at) in failures.iter().take(15) {
-        println!("    original={original} rebuilt={rebuilt} first_diff_at={at:?}");
+    for (original, rebuilt, at, bundle) in failures.iter().take(15) {
+        println!("    original={original} rebuilt={rebuilt} first_diff_at={at:?} bundle={bundle}");
     }
     println!("--- decode rejections by reason:");
     let mut reasons: Vec<_> = reasons.into_iter().collect();
