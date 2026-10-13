@@ -98,7 +98,9 @@ The directory is a list of **12-byte records** (`{4CC tag, u32, u32}`) at offset
 
 The two `COMP` chunks are the bulk (~1.9 M + ~2.9 M of the 5.6 M file), so the font body is **compressed inside the `slug`** - Oodle, which DTMT already links - and the other two chunks are a fraction of that. `examples/slug_oodle.rs` walks the directory and tries Oodle on the `COMP` chunks.
 
-Two details confirmed with it: the 4CC tags are stored **little-endian** (`COMP` reads back as `PMOC`), and the last record's `offset + size` equals the file size exactly (`2,879,848 + 2,706,688 = 5,586,536`), so `{tag, u32 offset, u32 size}` is right. The `oodle::decompress` wrapper needs the **exact** raw size - which the directory does not carry - so the next step is to find where that size lives (the header after the directory, or the `HLF4`/`16U2` chunks) and then decode both chunk kinds.
+Two details confirmed with it: the 4CC tags are stored **little-endian** (`COMP` reads back as `PMOC`), and the last record's `offset + size` equals the file size exactly (`2,879,848 + 2,706,688 = 5,586,536`), so `{tag, u32 offset, u32 size}` is right - and the directory is just those **four** records (`32..80`); the 12-byte stride past that is already the next structure, which is a table of **11 values** starting at `80`: `112, 256, 368, 880, 4,978, 92,016, 729,200, 749,232, 756,464, 759,152, 0`. The `HLF4`/`16U2` regions at offset `4,096` are almost entirely zero (a lone `0xCA` at `4,168`), so those two chunks look like small tables rather than data.
+
+The `oodle::decompress` wrapper needs the **exact** raw size and that table's values are all below the 2.7 MB chunk, so the size is elsewhere. Next: either call Oodle's raw entry point (which *returns* the decompressed length) instead of the length-checked wrapper, or derive the size from the table's differences, then decode both chunk kinds and validate against the demo's `consola.slug`.
 | Sound (Wwise) | Limited | Bank / Event / Stream: the version and the post-processing. VT2's pipeline is the reference. |
 
 ## Community references (re-check these)
