@@ -104,7 +104,7 @@ The `oodle::decompress` wrapper needs the **exact** raw size and that table's va
 
 A three-way header comparison (`slugfont`'s fresh output, the demo file, and a shipped entry) settles several fields - and shows one important version difference:
 
-| field | fresh (2621? see below) | demo `consola` | shipped `slug_ja` |
+| field | fresh `slugfont` run | demo `consola` | shipped `slug_ja` |
 |-------|------|------|------|
 | version | `0x0760` | `0x0760` | **`0x0700`** |
 | `4FLH` | `(4096, 11)` | `(4096, 2)` | `(4096, 75)` |
