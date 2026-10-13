@@ -1,24 +1,31 @@
-//! Find a shipped `unit` by its name hash and dump its decompiled `.unit`/`.bsi`
-//! SJSON, for inspecting a payload the sweep reports as a failure.
+//! Locate a shipped `unit` by its name hash (or every unit in a bundle) and
+//! report the sweep's verdict while dumping its decompiled `.unit`/`.bsi` SJSON,
+//! for inspecting a payload the sweep flags.
 //!
-//! Usage: `unit_find <bundle dir> <hex hash> [out dir]`
+//! Usage: `unit_find <bundle file or dir> [name hash] [out dir]`
 
 use sdk::filetype::unit;
 use sdk::{Bundle, BundleFileType, Context};
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    let dir = std::env::args().nth(1).expect("usage: unit_find <dir> <hex hash> [out]");
-    let wanted = std::env::args().nth(2).expect("the unit's name hash, in hex");
+    let path_arg = std::env::args().nth(1).expect("usage: unit_find <bundle|dir> [hash] [out]");
+    let wanted: Option<u64> = std::env::args()
+        .nth(2)
+        .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
     let out = std::env::args().nth(3);
-    let wanted = u64::from_str_radix(wanted.trim_start_matches("0x"), 16)?;
 
     let ctx = Context::new();
-    let mut entries: Vec<_> = std::fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| p.is_file())
-        .collect();
+    let root = std::path::Path::new(&path_arg);
+    let mut entries: Vec<std::path::PathBuf> = if root.is_file() {
+        vec![root.to_path_buf()]
+    } else {
+        std::fs::read_dir(root)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_file())
+            .collect()
+    };
     entries.sort();
 
     for path in entries {
@@ -31,32 +38,51 @@ fn main() -> color_eyre::Result<()> {
                 continue;
             }
             let name = u64::from(file.base_name().to_murmur64());
-            if name != wanted {
+            if wanted.is_some_and(|wanted| wanted != name) {
                 continue;
             }
-            println!("found in {}", path.display());
+            println!("{}  unit {name:016x}", path.display());
             for (i, variant) in file.variants().iter().enumerate() {
                 let payload = variant.data();
-                println!("  variant {i}: {} bytes", payload.len());
-                match unit::decompile(payload) {
-                    Ok((unit_sjson, bsi_sjson)) => {
-                        println!(
-                            "  decompiled: .unit {} chars, .bsi {} chars",
-                            unit_sjson.len(),
-                            bsi_sjson.len()
-                        );
-                        if let Some(out) = &out {
-                            let dir = std::path::Path::new(out);
-                            std::fs::create_dir_all(dir)?;
-                            let stem = format!("{name:016x}");
-                            std::fs::write(dir.join(format!("{stem}.unit")), &unit_sjson)?;
-                            std::fs::write(dir.join(format!("{stem}.bsi")), &bsi_sjson)?;
-                            println!("  wrote {}/{stem}.unit and .bsi", dir.display());
+                let Ok((unit_sjson, bsi_sjson)) = unit::decompile(payload) else {
+                    println!("  variant {i}: {} bytes - decode rejected", payload.len());
+                    continue;
+                };
+                let verdict = match unit::compile(
+                    file.base_name().clone(),
+                    &unit_sjson,
+                    bsi_sjson.as_bytes(),
+                ) {
+                    Ok(rebuilt) => {
+                        let rebuilt = rebuilt.variants().first().map(|v| v.data()).unwrap_or(&[]);
+                        if rebuilt == payload {
+                            "round-trips byte-for-byte".to_string()
+                        } else {
+                            let at = payload
+                                .iter()
+                                .zip(rebuilt.iter())
+                                .position(|(a, b)| a != b);
+                            format!(
+                                "DIFFERENT: orig {} rebuilt {} first_diff_at {at:?}",
+                                payload.len(),
+                                rebuilt.len()
+                            )
                         }
-                        // The recompile path needs the encoded BSI bytes, which the
-                        // sweep's own probe assembles; here the SJSON is the point.
                     }
-                    Err(error) => println!("  decompile failed: {error:?}"),
+                    Err(error) => format!("RECOMPILE-FAIL: {error:?}"),
+                };
+                println!(
+                    "  variant {i}: {} bytes, .unit {} chars, .bsi {} chars - {verdict}",
+                    payload.len(),
+                    unit_sjson.len(),
+                    bsi_sjson.len()
+                );
+                if let Some(out) = &out {
+                    let dir = std::path::Path::new(out);
+                    std::fs::create_dir_all(dir)?;
+                    let stem = format!("{name:016x}_{i}");
+                    std::fs::write(dir.join(format!("{stem}.unit")), &unit_sjson)?;
+                    std::fs::write(dir.join(format!("{stem}.bsi")), &bsi_sjson)?;
                 }
             }
         }
