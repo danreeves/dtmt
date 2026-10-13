@@ -167,6 +167,18 @@ struct UnitDef {
     /// objects. A decompiled unit carries it; an authored one writes an empty one.
     #[serde(default)]
     device_blob: Option<String>,
+    /// The skin section verbatim (`u32` count then `SkinData` records): inverse
+    /// bind matrices, node indices and one index array per set. Read and dropped
+    /// before, so a skinned unit was refused outright.
+    #[serde(default)]
+    skins_raw: Option<String>,
+    /// The simple-animation blob verbatim (`stingray::SimpleAnimation`).
+    #[serde(default)]
+    simple_animation: Option<String>,
+    /// The simple-animation group list verbatim (`u32` count then
+    /// `{IdString32 name, u32 array}` records).
+    #[serde(default)]
+    animation_groups_raw: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1037,6 +1049,16 @@ impl<'a> Reader<'a> {
         let count = self.u32()? as usize;
         (0..count).map(|_| self.u32()).collect()
     }
+
+    /// Advances past `n` bytes, for a section a decompiled payload carries
+    /// verbatim rather than models.
+    fn skip(&mut self, n: usize) -> Result<()> {
+        if self.at + n > self.data.len() {
+            bail!("payload ends inside a skipped section at {}", self.at);
+        }
+        self.at += n;
+        Ok(())
+    }
 }
 
 /// One compiled vertex stream, kept packed for a byte-exact rewrite.
@@ -1425,6 +1447,12 @@ struct UnitBlobs {
     /// The unknown device blob between the camera/light counts and the LOD
     /// objects; a decompiled unit carries it, an authored one writes an empty one.
     device_blob: Option<String>,
+    /// The skin section verbatim.
+    skins_raw: Option<String>,
+    /// The simple-animation blob verbatim.
+    simple_animation: Option<String>,
+    /// The simple-animation group list verbatim.
+    animation_groups_raw: Option<String>,
     trailer: Option<String>,
 }
 
@@ -1504,6 +1532,15 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.device_blob {
         text.push_str(&format!("device_blob = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.skins_raw {
+        text.push_str(&format!("skins_raw = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.simple_animation {
+        text.push_str(&format!("simple_animation = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.animation_groups_raw {
+        text.push_str(&format!("animation_groups_raw = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1777,15 +1814,31 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     for _ in 0..reader.u32()? {
         geometries.push(parse_mesh_geometry(&mut reader)?);
     }
-    if reader.u32()? != 0 {
-        bail!("skinned units are not supported yet");
+    // Skins, the simple-animation blob and its groups. All three are fully
+    // length-prefixed - `bitsquid-blender-tools`' `stingray/unit/dt.py` gives the
+    // shapes (`SkinData` is inverse bind matrices, node indices, then one index
+    // array per set; a group is an `IdString32` name and a `u32` array) - so a
+    // decompiled payload carries them verbatim instead of refusing the unit.
+    let skins_start = reader.at;
+    let skins = reader.u32()?;
+    for _ in 0..skins {
+        let matrices = reader.u32()? as usize;
+        reader.skip(matrices * 64)?;
+        reader.u32_array()?;
+        let sets = reader.u32()?;
+        for _ in 0..sets {
+            reader.u32_array()?;
+        }
     }
-    if reader.byte_array()?.len() != 0 {
-        bail!("simple animations are not supported yet");
+    let skins_raw = reader.data[skins_start..reader.at].to_vec();
+    let simple_animation = reader.byte_array()?;
+    let groups_start = reader.at;
+    let groups = reader.u32()?;
+    for _ in 0..groups {
+        reader.u32()?; // the group's name, an `IdString32`
+        reader.u32_array()?;
     }
-    if reader.u32()? != 0 {
-        bail!("animation groups are not supported yet");
-    }
+    let animation_groups_raw = reader.data[groups_start..reader.at].to_vec();
     let scene_graph = parse_scene_graph(&mut reader)?;
     let meshes = parse_mesh_objects(&mut reader)?;
     if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32_array()?.len() != 0 {
@@ -1868,6 +1921,9 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         animation_bones: animation_bones.then_some(true),
         lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
         device_blob: (!device_blob.is_empty()).then(|| hex_encode(&device_blob)),
+        skins_raw: (skins > 0).then(|| hex_encode(&skins_raw)),
+        simple_animation: (!simple_animation.is_empty()).then(|| hex_encode(&simple_animation)),
+        animation_groups_raw: (groups > 0).then(|| hex_encode(&animation_groups_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2070,10 +2126,23 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         write_mesh_geometry(&mut w, geometry, &slot_ids)?;
     }
 
-    // Skins, simple animation and groups.
-    w.u32(0);
-    w.byte_array(&[]);
-    w.u32(0);
+    // Skins, simple animation and groups. A decompiled unit carries each section
+    // verbatim; an authored one writes them empty.
+    if let Some(hex) = &def.skins_raw {
+        w.bytes(&hex_decode(hex)?);
+    } else {
+        w.u32(0);
+    }
+    if let Some(hex) = &def.simple_animation {
+        w.byte_array(&hex_decode(hex)?);
+    } else {
+        w.byte_array(&[]);
+    }
+    if let Some(hex) = &def.animation_groups_raw {
+        w.bytes(&hex_decode(hex)?);
+    } else {
+        w.u32(0);
+    }
 
     // Scene graph: local TRS per node, then world matrices, then parents, then names.
     w.u32(flat.len() as u32);
