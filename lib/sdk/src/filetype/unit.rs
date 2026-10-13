@@ -183,6 +183,10 @@ struct UnitDef {
     /// `{IdString32 name, u32 array}` records).
     #[serde(default)]
     animation_groups_raw: Option<String>,
+    /// The actor sections verbatim: the actor list, the second actor list and the
+    /// unknown `u32` list beside them.
+    #[serde(default)]
+    actors_raw: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1065,6 +1069,45 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Walks one `ActorResourceDT` record without modelling it, from
+/// `bitsquid-blender-tools`' `stingray/actor_resource.py`: a name, template and
+/// node, a mass, a shape list, six callbacks and four flags. The shape union is
+/// `ShapeType`, and every member is fixed size - a mesh or convex shape
+/// serializes no payload at all (the pointer is not written).
+fn skip_actor(reader: &mut Reader) -> Result<()> {
+    reader.u32()?; // name
+    reader.u32()?; // actor template
+    reader.u32()?; // node
+    reader.f32()?; // mass
+    let shapes = reader.u32()?;
+    for _ in 0..shapes {
+        let kind = reader.u32()?;
+        reader.u32()?; // material
+        reader.u32()?; // shape template
+        reader.skip(64)?; // local transform
+        reader.byte_array()?; // shape data
+        reader.u32()?; // shape node
+        reader.u32()?; // an unknown name
+        let payload = match kind {
+            0 => 4,     // sphere: a radius
+            1 => 12,    // box: half extents
+            2 => 8,     // capsule: a radius and a height
+            3 | 4 => 0, // mesh and convex: no payload
+            5 => 21,    // height field: two counts, three scales and a flag
+            6 => 12,    // plane: a normal
+            other => bail!("unknown actor shape type {other}"),
+        };
+        reader.skip(payload)?;
+    }
+    for _ in 0..6 {
+        reader.u32()?; // the touch and trigger callbacks
+    }
+    for _ in 0..4 {
+        reader.bool()?; // the four flags
+    }
+    Ok(())
+}
+
 /// One compiled vertex stream, kept packed for a byte-exact rewrite.
 struct DecodedStream {
     data: Vec<u8>,
@@ -1457,6 +1500,8 @@ struct UnitBlobs {
     simple_animation: Option<String>,
     /// The simple-animation group list verbatim.
     animation_groups_raw: Option<String>,
+    /// The actor sections verbatim.
+    actors_raw: Option<String>,
     trailer: Option<String>,
 }
 
@@ -1545,6 +1590,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.animation_groups_raw {
         text.push_str(&format!("animation_groups_raw = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.actors_raw {
+        text.push_str(&format!("actors_raw = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1845,9 +1893,21 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     let animation_groups_raw = reader.data[groups_start..reader.at].to_vec();
     let scene_graph = parse_scene_graph(&mut reader)?;
     let meshes = parse_mesh_objects(&mut reader)?;
-    if reader.u32()? != 0 || reader.u32()? != 0 || reader.u32_array()?.len() != 0 {
-        bail!("actors are not supported yet");
+    // Actors, and the second actor list and unknown list beside them. An actor
+    // record is walkable - `bitsquid-blender-tools`' `stingray/actor_resource.py`
+    // gives the shape union, whose members are all fixed size - so a decompiled
+    // payload carries the three sections verbatim instead of refusing the unit.
+    let actors_start = reader.at;
+    let actor_count = reader.u32()?;
+    for _ in 0..actor_count {
+        skip_actor(&mut reader)?;
     }
+    let actors_2 = reader.u32()?;
+    for _ in 0..actors_2 {
+        skip_actor(&mut reader)?;
+    }
+    let unk9 = reader.u32_array()?;
+    let actors_raw = reader.data[actors_start..reader.at].to_vec();
     if reader.u32()? != 0 || reader.u32()? != 0 {
         bail!("cameras and lights are not supported yet");
     }
@@ -1928,6 +1988,8 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         skins_raw: (skins > 0).then(|| hex_encode(&skins_raw)),
         simple_animation: (!simple_animation.is_empty()).then(|| hex_encode(&simple_animation)),
         animation_groups_raw: (groups > 0).then(|| hex_encode(&animation_groups_raw)),
+        actors_raw: (actor_count > 0 || actors_2 > 0 || !unk9.is_empty())
+            .then(|| hex_encode(&actors_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2239,10 +2301,15 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(0); // unknown
     }
 
-    // Actors, actors2 and an unknown list.
-    w.u32(0);
-    w.u32(0);
-    w.u32_array(&[]);
+    // Actors, actors2 and an unknown list. A decompiled unit carries them
+    // verbatim; an authored one writes them empty.
+    if let Some(hex) = &def.actors_raw {
+        w.bytes(&hex_decode(hex)?);
+    } else {
+        w.u32(0);
+        w.u32(0);
+        w.u32_array(&[]);
+    }
     // Cameras and lights.
     w.u32(0);
     w.u32(0);
