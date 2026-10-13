@@ -229,13 +229,16 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,588 |
 | decoded | 78 |
-| of which **byte-identical to the shipped payload** | **25** |
+| of which **byte-identical to the shipped payload** | **47** |
 
-The first run, before the fixes below, was **0** byte-identical; the geometry-bounds
-fix took it to 2, carrying the bounds through to the mesh objects and the LOD union
-took it to 17, rounding the `f32` -> half conversion through nearest-even (it
-truncated) took it to 20, and carrying a decompiled mesh-geometry record **verbatim**
-(`raw`, which sidesteps the re-encode entirely) took it to 25.
+The first run, before the fixes below, was **0** byte-identical. In order: the
+geometry-bounds fix took it to 2; carrying those bounds into the mesh objects and
+the LOD union took it to 17; rounding the `f32` -> half conversion through
+nearest-even (it truncated) took it to 20; carrying a decompiled mesh-geometry
+record **verbatim** (`raw`) took it to 25; carrying each mesh object's **render
+flags** (hardcoded `0x000C2001`; shipped units use `0x000C2003` and up) took it to
+43; and carrying the unit's **default material** hash (read then dropped) took it to
+47.
 
 ### Node order was the first cause (fixed)
 
@@ -298,11 +301,13 @@ Both are sidestepped by one mechanism: a decompiled geometry carries its
 those bytes straight out, keeping the readable `streams`/`data` for authoring. That
 took the sweep from 20 to 25.
 
-The remaining 53 differ later still, in narrow one-byte ways - e.g. `03 20` vs
-`01 20` near offset 406,116 of a 406,601-byte unit, a single flag bit - so the next
-frontier is the LOD / mesh-object / actors tail rather than the streams.
-`bitsquid/stingray/vertex_stream.py`, `mesh_geometry.py` and `lod_object_data.py`
-are the reference.
+The remaining 31 differ later still. The samples show another **eight-byte field**
+straight after the material list (`01 00 00 00 10 c1 5b 0c` then `90 e6 f0 83 37 50
+a7 24`, which we write as zeros), and one unit comes out **four bytes longer** than
+shipped (`1,290,718` vs `1,290,722`), so at least one more section has a structural
+difference, not just a value. The LOD / mesh-object / actors tail is still the
+frontier; `bitsquid/stingray/lod_object_data.py` and `vertex_stream.py` are the
+reference.
 
 `examples/unit_probe.rs` takes a third argument: given a directory it dumps every
 decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
