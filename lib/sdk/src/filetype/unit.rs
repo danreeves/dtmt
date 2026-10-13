@@ -151,6 +151,13 @@ struct UnitDef {
     /// authored one writes an empty list.
     #[serde(default)]
     visibility_groups: Option<String>,
+    /// The animation state-machine blob. A decompiled unit carries it; an
+    /// authored one writes an empty array.
+    #[serde(default)]
+    animation_state_machine: Option<String>,
+    /// The animation "bones" flag beside it.
+    #[serde(default)]
+    animation_bones: Option<bool>,
     /// The LOD-object section verbatim, so a decompile reproduces the fields the
     /// compiler does not model. An authored unit omits it and the LODs are
     /// compiled from `lod`.
@@ -1395,6 +1402,12 @@ struct UnitBlobs {
     triangle_finder: Option<String>,
     /// The visibility-group section verbatim (`{count, {name, members}...}`).
     visibility_groups: Option<String>,
+    /// The animation state-machine blob. Read and dropped before; shipped
+    /// payloads use it (a unit's resource path lands here), so a decompiled unit
+    /// carries it.
+    animation_state_machine: Option<String>,
+    /// The animation "bones" flag beside it, likewise read and dropped.
+    animation_bones: Option<bool>,
     physics: Option<String>,
     /// The whole LOD-object section verbatim. Its records carry fields the
     /// compiler does not model (an `unk2` hash, `unk4`/`unk5`, a stream mesh
@@ -1467,6 +1480,12 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.visibility_groups {
         text.push_str(&format!("visibility_groups = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.animation_state_machine {
+        text.push_str(&format!("animation_state_machine = \"{data}\"\n"));
+    }
+    if blobs.animation_bones.is_some() {
+        text.push_str("animation_bones = true\n");
     }
     if let Some(data) = &blobs.lod_raw {
         text.push_str(&format!("lod_raw = \"{data}\"\n"));
@@ -1775,8 +1794,8 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     {
         bail!("terrains, joints or movers are not supported yet");
     }
-    let _animation_bones = reader.bool()?;
-    let _animation_state_machine = reader.byte_array()?;
+    let animation_bones = reader.bool()?;
+    let animation_state_machine = reader.byte_array()?;
     let dynamic_data = reader.byte_array()?;
     // Visibility groups: a count, then `{name, members}` records. Carried
     // verbatim, like the LOD section.
@@ -1831,6 +1850,9 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
         triangle_finder: (triangle_finder != [0u8; 4]).then(|| hex_encode(&triangle_finder)),
         visibility_groups: (!visibility_groups.is_empty()).then(|| hex_encode(&visibility_groups)),
+        animation_state_machine: (!animation_state_machine.is_empty())
+            .then(|| hex_encode(&animation_state_machine)),
+        animation_bones: animation_bones.then_some(true),
         lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
@@ -2208,8 +2230,8 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     // Animation bones flag, animation state machine, dynamic data. The
     // `ffffffff 00000000` sentinel matches shipped inline units; decompiled
     // units write their own blob instead.
-    w.bool(false);
-    w.byte_array(&[]);
+    w.bool(def.animation_bones.unwrap_or(false));
+    w.byte_array(&decode_blob(&def.animation_state_machine, &[])?);
     w.byte_array(&decode_blob(
         &def.dynamic_data,
         &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
