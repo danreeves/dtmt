@@ -300,8 +300,15 @@ the tail, so the byte-identical count stays at 159. The difference is a **single
 word**: for the 2,594-byte units (bundles `012a19dd517fcdd1`, `0353dbb043a83dce`,
 `0481165f02da3625`) offset 2388 holds `0x00000300` (`768`) in the rebuild and `0` in
 the shipped file, with every neighbouring word equal - the same "read a field, write a
-computed value" shape as the earlier carries. (`0x00000400`, `0x00000100`,
-`0x000000C0`, `0x00000040` sit around it, so it reads like a size/offset word.)
+computed value" shape as the earlier carries.
+
+The words around it are `0x00400000`, `0x00000300`, `0x00000100`, `0`, `0x000000C0`,
+`0x000000C0`, `0`, `0x00000040`, `0x00000040` - i.e. a `3` and a `1` in the *second
+byte* of their words (`0x300` / `0x100`), where the shipped has `0` / `1`. That is the
+shape of the compiler's hardcoded mesh-object triple
+(`w.u32(flags); w.u32(3); w.u32(1);`), so the mesh-object record is the place to
+compare next: dump that unit's mesh-object region and diff it word by word against the
+compiler's writes.
 
 The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
 component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its
