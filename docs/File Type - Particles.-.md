@@ -76,3 +76,45 @@ matches the game's own resources.
 
 `C:\dev\Darktide-Asset-Compiler` (`github.com/fviuff/Darktide-Asset-Compiler`),
 `src/stingray/particles/particles_resource.{h,cpp}`; see `TODO.md`.
+
+## Decoding the component bodies
+
+What is still opaque is the *inside* of a component: an initializer's operand
+bytes, a simulator's data block and a visualizer's record are all kept as hex.
+The containers already walk and round-trip, so this is the next layer.
+
+The reference is **declarative data, not code**, which is what makes it portable:
+`particles_resource.cpp` holds
+
+```cpp
+struct OpSpec { const char* name; Layout layout; std::uint32_t state = 0; };
+initializer_specs()   // 25 ops
+simulator_specs()     // ~30 ops
+```
+
+where a `Layout` is a list of named fields over a small vocabulary - `CH` (a
+channel reference), `U` / `I` / `F` (u32 / i32 / f32), `V3` (three floats), `C`
+(a curve), `B` / `B32` (byte and 32-bit bools), `STATE` and `SELF` (runtime
+scratch, with the op's byte count as the spec's `state`), and `Bytes{size}` - and
+one generic reader walks a layout by name (`read_initializer` /
+`read_simulator` / the visualizer records), with a matching writer for the
+compile direction.
+
+So the port is: the field vocabulary as an enum, the `OpSpec` tables as Rust
+data, and one reader plus one writer that walk them. The invariant to keep is the
+one the container walk already meets - **a shipped effect must still round-trip
+byte-for-byte** - which makes each op safe to land on its own.
+
+Order the work by the occurrence tallies above rather than by opcode:
+
+1. **initializers** - `random_float` (160), `zero` (37), `position_sphere` (28),
+   then `velocity_cone`, `position_box`, `random_int`, `copy`; these use only
+   `CH` / `U` / `I` / `F` / `V3`, plus `spline_control_points` for the one
+   `Bytes{0x40}` case.
+2. **simulators** - `age_age` (35), `burst_emitter` (30), `position_integrate`
+   (19), then the ones needing `STATE` / `SELF` (`rate_emitter`, `local_space`,
+   `grid_collision`), whose runtime scratch sizes are the spec's `state`.
+3. **visualizers** - `billboard` (28), `light` (4), `mesh` (3), `gpu` (2).
+
+Curves (`C`) and gradients are their own sub-format inside a field, so they are
+worth doing once rather than per-op.
