@@ -102,6 +102,20 @@ Two details confirmed with it: the 4CC tags are stored **little-endian** (`COMP`
 
 The `oodle::decompress` wrapper needs the **exact** raw size and that table's values are all below the 2.7 MB chunk, so the size is elsewhere. A first attempt with a generous 32 MB buffer **fails**, and **zlib, plain deflate and gzip fail too** - because the chunks are **not compressed at all**. Their contents are structured tables: the demo's first `PMOC` chunk holds clean `f32` values (`0x3F0CC000` = `0.549805`, `0x3F31E000` = `0.694824`), i.e. Slug metrics. So the 4CC reading is wrong somewhere, and no decompression is needed - the tables can be read directly.
 
+A three-way header comparison (`slugfont`'s fresh output, the demo file, and a shipped entry) settles several fields - and shows one important version difference:
+
+| field | fresh (2621? see below) | demo `consola` | shipped `slug_ja` |
+|-------|------|------|------|
+| version | `0x0760` | `0x0760` | **`0x0700`** |
+| `4FLH` | `(4096, 11)` | `(4096, 2)` | `(4096, 75)` |
+| `PMOC` #1 | `(287944, 1180096)` | `(44896, 49152)` | `(1945500, 761152)` |
+| `2U61` | `(4096, 111)` | `(4096, 12)` | `(4096, 425)` |
+| `PMOC` #2 | `(705040, 1468096)` | `(83792, 94080)` | `(2879848, 2706688)` |
+| at 80 | count 14: `112, 256, 432, 944, 2911, 25520` | 14: `112, 1, 432, 496, 357, 1520` | 11: `112, 256, 368, 880, 4978, 92016` |
+| at 144 | `1068016, 1177392, 1179952` | `47216, 47280, 49008` | `749232, 756464, 759152` |
+
+What that gives: the two tiny records' **second word is a count, not a size** (`4FLH` 2/11/75, `2U61` 12/111/425 - they scale with the font), the first word `4096` is a fixed payload base; the **last** record's two words are an offset and a size whose sum is the file size exactly in all three files; `112` is constant across all three (a structural value); and **Darktide ships Slug version `0x0700` while the reference compiler emits `0x0760`**, so a shipped entry may not decode with the current library's layout - the demo file's `0x0760` is the closer reference for *structure*, and the shipped file for *fields*.
+
 The demo's header (177,872 bytes) shows the shape after the directory:
 
 ```
