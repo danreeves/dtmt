@@ -137,6 +137,10 @@ struct UnitDef {
     flow_dynamic: Option<String>,
     #[serde(default)]
     physics: Option<String>,
+    /// The mesh geometry triangle-finder blob. A decompiled unit carries it; an
+    /// authored one gets the compiler's four zero bytes.
+    #[serde(default)]
+    triangle_finder: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1349,6 +1353,7 @@ struct UnitBlobs {
     dynamic_data: Option<String>,
     flow: Option<String>,
     flow_dynamic: Option<String>,
+    triangle_finder: Option<String>,
     physics: Option<String>,
     trailer: Option<String>,
 }
@@ -1411,6 +1416,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.flow_dynamic {
         text.push_str(&format!("flow_dynamic = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.triangle_finder {
+        text.push_str(&format!("triangle_finder = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1716,7 +1724,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     }
     let flow = reader.byte_array()?;
     let flow_dynamic = reader.byte_array()?;
-    let _triangle_finder = reader.byte_array()?;
+    let triangle_finder = reader.byte_array()?;
     let physics = reader.byte_array()?;
     let default_material = reader.u64()?;
     let mut slots = Vec::new();
@@ -1757,6 +1765,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         dynamic_data: (dynamic_data != sentinel).then(|| hex_encode(&dynamic_data)),
         flow: (!flow.is_empty()).then(|| hex_encode(&flow)),
         flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
+        triangle_finder: (triangle_finder != [0u8; 4]).then(|| hex_encode(&triangle_finder)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2129,7 +2138,7 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.byte_array(&decode_blob(&def.flow, &[])?);
     w.byte_array(&decode_blob(&def.flow_dynamic, &[])?);
     // Mesh geometry triangle finder and physics scene data.
-    w.byte_array(&[0u8; 4]);
+    w.byte_array(&decode_blob(&def.triangle_finder, &[0u8; 4])?);
     w.byte_array(&decode_blob(&def.physics, &[])?);
     // Default material and the material list.
     w.u64(def.default_material.unwrap_or(0));

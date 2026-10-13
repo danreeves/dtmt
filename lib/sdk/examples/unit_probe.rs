@@ -25,6 +25,7 @@ fn main() -> color_eyre::Result<()> {
     let mut shown_decode = 0usize;
     let mut shown_other = 0usize;
     let mut dumped = 0usize;
+    let mut failures: Vec<(usize, usize, Option<usize>)> = Vec::new();
     let dump_dir = std::env::args().nth(3);
 
     // The first argument may be a single bundle file instead of a directory.
@@ -89,13 +90,14 @@ fn main() -> color_eyre::Result<()> {
                                     round_trip += 1;
                                 } else {
                                     mismatch += 1;
+                                    let other = rebuilt.variants().first().map(|v| v.data()).unwrap_or(&[]);
+                                    let at = payload
+                                        .iter()
+                                        .zip(other.iter())
+                                        .position(|(a, b)| a != b);
+                                    failures.push((payload.len(), other.len(), at));
                                     if shown_other < 4 {
                                         shown_other += 1;
-                                        let other = rebuilt.variants().first().map(|v| v.data()).unwrap_or(&[]);
-                                        let at = payload
-                                            .iter()
-                                            .zip(other.iter())
-                                            .position(|(a, b)| a != b);
                                         println!(
                                             "DIFF {name}  original={} rebuilt={} first_diff_at={at:?}",
                                             payload.len(),
@@ -142,5 +144,10 @@ fn main() -> color_eyre::Result<()> {
          rebuilt_but_different={mismatch} recompile_failed={recompiled_failed} decode_failed={decode_failed}",
         entries.len()
     );
+    failures.sort();
+    println!("--- {} differing units, smallest first:", failures.len());
+    for (original, rebuilt, at) in failures.iter().take(15) {
+        println!("    original={original} rebuilt={rebuilt} first_diff_at={at:?}");
+    }
     Ok(())
 }
