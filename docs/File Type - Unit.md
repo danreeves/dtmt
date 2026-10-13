@@ -235,13 +235,22 @@ The rejections, by class:
 
 | Class | Units | What it needs |
 |-------|-------|---------------|
-| simple animations | 1,464 | the animation subsystem |
-| actors | 833 | the actor / light / camera descriptors |
-| skinned units | 116 | skin data (bones and weights per mesh) |
-| streamed geometry | 76 | the vertex bytes - which are not in the bundle at all |
+| simple animations | 1,464 | **carried** verbatim (`simple_animation`, `animation_groups_raw`) |
+| actors | 833 | **carried** verbatim (`actors_raw`) - the record is walkable |
+| skinned units | 116 | **carried** verbatim (`skins_raw`) |
+| streamed geometry | 76 | nothing - the bytes are in no bundle (see below) |
 | unknown device blob not empty | 7 | **carried** verbatim as `device_blob` |
 | channel component 6 type 2 | 1 | **decoded** as `f32`s |
-| cameras and lights | 1 | the camera / light descriptors |
+| cameras and lights | 1 | **carried** verbatim (`cameras_raw`) |
+
+Carrying those four sections took the same sample to **508 decoded**, and the
+rejections *re-distributed* rather than shrank, because a payload that used to bail
+at the animation or skin section now parses further: actors 1,926, streamed geometry
+211, cameras and lights 20, and one channel `(9, 8)` still to decode. Of the 508,
+491 round-tripped at first - the other 17 were **not** carry bugs but two gaps in the
+vendored SJSON reader, both since fixed: a plain **`u64` above `i64::MAX`** (any
+64-bit name hash with the top bit set, e.g. `default_material`) and the word
+**`inf`** for a non-finite float.
 
 **Streamed geometry is not a parsing gap.** Such a payload declares its streams -
 format, vertex count, stride - but stores no vertex bytes, and the bundle does not
@@ -293,6 +302,10 @@ default, so the payload could never match:
 | triangle-finder blob | read, dropped, written as four zero bytes | carried as `triangle_finder` |
 | LOD-object section | partially modelled (no `unk2`/`unk4`/`unk5`/order) | carried verbatim as `lod_raw` |
 | unknown device blob (after the camera/light counts) | rejected the whole unit (`an unknown device blob is not empty`) | carried verbatim as `device_blob` |
+| skin section | rejected the whole unit (`skinned units are not supported yet`) | carried verbatim as `skins_raw` |
+| simple-animation blob | rejected the whole unit (`simple animations are not supported yet`) | carried verbatim as `simple_animation` |
+| simple-animation groups | rejected the whole unit (`animation groups are not supported yet`) | carried verbatim as `animation_groups_raw` |
+| actor / camera / light sections | rejected the whole unit (`actors are not supported yet`, `cameras and lights are not supported yet`) | carried verbatim as `actors_raw` / `cameras_raw` |
 
 Every one is an **optional** field: an authored `.unit`/`.bsi` omits them and takes
 the compiler's previous path, so the mod's bundles are byte-identical either way.
