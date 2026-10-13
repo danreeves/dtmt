@@ -75,9 +75,12 @@ pub(crate) async fn run(ctx: sdk::Context, matches: &ArgMatches) -> Result<()> {
             let index = database.files();
 
             if let Some(bundle) = sub_matches.get_one::<String>("bundle") {
-                let hash = u64::from_str_radix(bundle, 16)
-                    .map(Murmur64::from)
-                    .wrap_err("Invalid hex sequence")?;
+                // Accept either a hex bundle hash or a resource name, as the
+                // help says - a name hashes to its bundle id.
+                let hash = match u64::from_str_radix(bundle, 16).map(Murmur64::from) {
+                    Ok(hash) => hash,
+                    Err(_) => Murmur64::hash(bundle),
+                };
 
                 if let Some(files) = index.get(&hash) {
                     for file in files {
