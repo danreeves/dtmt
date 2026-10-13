@@ -26,6 +26,7 @@ fn main() -> color_eyre::Result<()> {
     let mut shown_other = 0usize;
     let mut dumped = 0usize;
     let mut failures: Vec<(usize, usize, Option<usize>)> = Vec::new();
+    let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     let dump_dir = std::env::args().nth(3);
 
     // The first argument may be a single bundle file instead of a directory.
@@ -129,6 +130,7 @@ fn main() -> color_eyre::Result<()> {
                     }
                     Err(e) => {
                         decode_failed += 1;
+                        *reasons.entry(e.to_string()).or_insert(0usize) += 1;
                         if shown_decode < 8 {
                             shown_decode += 1;
                             println!("DECODE-FAIL {name}  {e}");
@@ -148,6 +150,12 @@ fn main() -> color_eyre::Result<()> {
     println!("--- {} differing units, smallest first:", failures.len());
     for (original, rebuilt, at) in failures.iter().take(15) {
         println!("    original={original} rebuilt={rebuilt} first_diff_at={at:?}");
+    }
+    println!("--- decode rejections by reason:");
+    let mut reasons: Vec<_> = reasons.into_iter().collect();
+    reasons.sort_by(|a, b| b.1.cmp(&a.1));
+    for (reason, count) in reasons {
+        println!("    {count:5}  {reason}");
     }
     Ok(())
 }

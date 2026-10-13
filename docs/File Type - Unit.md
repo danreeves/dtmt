@@ -284,8 +284,20 @@ engine's TRS/world matrices come back exactly.
 
 ## Format variants still rejected
 
-Skins, animations, streamed meshes and actor/camera/light units make up the vast
-majority of shipped units (2,530 of 2,607 here). The Python reference above and
-the community `unit_v115` writer both decode several of them; `skin_data.py`,
-`animation.py`, `actor_resource.py`, `camera.py` and `light.py` there name the
-shape of each.
+The probe now tallies the reasons, which gives the work order. Over the same 400
+bundles (2,666 units, 2,588 rejected):
+
+| Count | Reason |
+|-------|--------|
+| 1,464 | simple animations are not supported yet |
+| 833 | actors are not supported yet |
+| 116 | skinned units are not supported yet |
+| 73 | streamed geometry is not supported yet (a vertex stream has no data) |
+| 54 | `Cannot decode channel component 6 type 18` |
+| 32 | visibility groups are not supported yet |
+
+The two cheapest are the last ones: the channel decode is one missing
+`decode_stream` case (component 6, type 18), and visibility groups are a small
+section. The Python reference (`skin_data.py`, `animation.py`, `actor_resource.py`,
+`camera.py`, `light.py`, `scene_graph.py`) names the shape of the rest; streamed
+geometry needs the `.stream` side file, which the texture reader already handles.
