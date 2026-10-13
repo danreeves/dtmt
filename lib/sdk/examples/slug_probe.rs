@@ -1,42 +1,64 @@
-//! Dump the raw data of every `Slug` entry in a bundle, for comparing a shipped
-//! Darktide font against the Slug library's demo files.
+//! Dump a `.slug` font: header, chunk records and the tables they point at.
 //!
-//! Usage: `slug_probe <bundle> <out dir>`
+//! Usage: `slug_probe <file.slug> [glyphs]`
 
-use sdk::{Bundle, BundleFileType, Context};
+fn u32(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+fn f32(b: &[u8], at: usize) -> f32 {
+    f32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+fn tag(b: &[u8], at: usize) -> String {
+    // The 4CC is stored little-endian, so "COMP" reads back as "PMOC".
+    b[at..at + 4].iter().rev().map(|c| *c as char).collect()
+}
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
-    let bundle_path = std::env::args().nth(1).expect("usage: slug_probe <bundle> <out dir>");
-    let out = std::env::args().nth(2).expect("usage: slug_probe <bundle> <out dir>");
-    std::fs::create_dir_all(&out)?;
+    let path = std::env::args().nth(1).expect("usage: slug_probe <file.slug> [glyphs]");
+    let show: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(3);
+    let b = std::fs::read(&path)?;
 
-    let ctx = Context::new();
-    let bytes = std::fs::read(&bundle_path)?;
-    let name = std::path::Path::new(&bundle_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let bundle = Bundle::from_binary(&ctx, name, &bytes[..])?;
+    println!(
+        "{path}: {} bytes, magic {:?}, version {:#06x}, kind {:?}",
+        b.len(),
+        String::from_utf8_lossy(&b[0..4]),
+        u32(&b, 4),
+        String::from_utf8_lossy(&b[8..12])
+    );
 
-    for file in bundle.files() {
-        if file.file_type() != BundleFileType::Slug {
+    let records: Vec<(String, usize, usize)> = (0..4)
+        .map(|i| {
+            let at = 32 + i * 12;
+            (tag(&b, at), u32(&b, at + 4) as usize, u32(&b, at + 8) as usize)
+        })
+        .collect();
+    for (name, base, count) in &records {
+        println!("  {name:5} base {base:>9}  count {count}");
+    }
+
+    // `2U61` is the glyph table: 64-byte records from its base.
+    for (name, base, count) in &records {
+        if name != "16U2" {
             continue;
         }
-        for (index, variant) in file.variants().iter().enumerate() {
-            let data = variant.data();
-            let path = std::path::Path::new(&out).join(format!("{:016X}_{index}.slug", file.base_name().to_murmur64()));
-            std::fs::write(&path, data)?;
-            let head: String = data.iter().take(64).map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(" ");
-            let asc: String = data
-                .iter()
-                .take(32)
-                .map(|b| if (0x20..0x7f).contains(b) { *b as char } else { '.' })
-                .collect();
+        println!("glyphs ({count}), first {show}:");
+        for g in 0..(*count).min(show) {
+            // The tables are laid out from the region base: HLF4 first (16-byte
+            // records), then a 32-byte header and the 64-byte glyph records.
+            let at = base + 64 + g * 64;
+            if at + 64 > b.len() {
+                break;
+            }
+            let glyph_box = [f32(&b, at), f32(&b, at + 4), f32(&b, at + 8), f32(&b, at + 12)];
             println!(
-                "{:016X} variant {index}: {} bytes\n  head {head}\n  asc  {asc}",
-                file.base_name().to_murmur64(),
-                data.len()
+                "  {g:>4}  box {:>10.4} {:>10.4} {:>10.4} {:>10.4}  u32 {:>6} {:>10}  f32 {:>10.4} {:>10.4}  u32 {:>10} {:>6}",
+                glyph_box[0], glyph_box[1], glyph_box[2], glyph_box[3],
+                u32(&b, at + 16), u32(&b, at + 20),
+                f32(&b, at + 24), f32(&b, at + 28),
+                u32(&b, at + 32), u32(&b, at + 36),
             );
         }
     }
