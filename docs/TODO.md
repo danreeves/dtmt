@@ -124,7 +124,14 @@ Reading the region at that base (`4096`) shows the per-glyph tables directly:
 
 Together with the field reading above, the record is `{tag, u32 base, u32 count}` with that tag's table laid out consecutively from the base - the two records sharing `4096` are one region, first table then second.
 
-Measured run lengths: the **longest ascending `u32` run** in that region is **280 entries** in the fresh compile (first value `0x613` = 1,555) and **109** in the shipped entry (first `0x139` = 313). Note those do **not** equal the records' counts (`4FLH`/`2U61` = 11/111 fresh, 75/425 shipped), so the counts are a different per-font quantity than the codepoint-run length - something to keep in mind, not an equality to rely on.
+Measured run lengths: the **longest ascending `u32` run** in that region is **280 entries** in the fresh compile (first value `0x613` = 1,555) and **109** in the shipped entry (first `0x139` = 313).
+
+**The two record counts are the table's entry counts and the tables are now read.** Walking the demo from `4096`:
+
+- `4FLH` count **2** sits at `4096..4128` - two **16-byte** records `{u32, f32, u32, f32}` (the two metric pairs `0.549805`/`0.647461`), i.e. two **kerning/ligature pairs**;
+- `2U61` count **12** follows at `4128` - twelve **64-byte glyph records**, each a glyph box (four `f32`: `0.0800781, -0.00878906, 0.479981, 0.646973`), then a `u32` and a packed pair (`0x001C000E` = 14 and 28), then two advances (`35.0085`, `42.6984`), and so on.
+
+So `examples/slugfont`'s `consola.slug` is a **12-glyph subset build** (hence 177 KB), `2U61` is the **glyph count** and `4FLH` the **kerning count**, and a glyph is a 64-byte record - which is the shape to read in a shipped entry, where the counts are 75 and 425. Note those do **not** equal the records' counts (`4FLH`/`2U61` = 11/111 fresh, 75/425 shipped), so the counts are a different per-font quantity than the codepoint-run length - something to keep in mind, not an equality to rely on.
 
 The demo's header (177,872 bytes) shows the shape after the directory:
 
