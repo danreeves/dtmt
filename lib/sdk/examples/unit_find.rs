@@ -14,6 +14,10 @@ fn main() -> color_eyre::Result<()> {
         .nth(2)
         .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
     let out = std::env::args().nth(3);
+    let limit: usize = std::env::args()
+        .nth(4)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(usize::MAX);
 
     let ctx = Context::new();
     let root = std::path::Path::new(&path_arg);
@@ -27,6 +31,7 @@ fn main() -> color_eyre::Result<()> {
             .collect()
     };
     entries.sort();
+    entries.truncate(limit);
 
     for path in entries {
         let Ok(bin) = std::fs::read(&path) else { continue };
