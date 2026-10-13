@@ -229,17 +229,18 @@ the worked example.
 |---------|-------|
 | decode rejected (skins / animations / streamed meshes) | 2,498 |
 | decoded | 168 |
-| of which **byte-identical to the shipped payload** | **167** |
+| of which **byte-identical to the shipped payload** | **168** |
 
-So **every decodable static unit in the sample now round-trips byte-for-byte**. The
-run of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
+So **every decodable shipped unit in the sample round-trips byte-for-byte**. The run
+of fixes, in order: geometry bounds (0 -> 2); those bounds carried into the mesh
 objects and the LOD union (-> 17); the `f32` -> half conversion rounding to
 nearest-even (-> 20); a decompiled mesh-geometry record carried **verbatim** (`raw`)
-(-> 25); each mesh object's **render flags** (hardcoded `0x000C2001`; shipped units
-use `0x000C2003` and up) (-> 43); the unit's **default material** hash, read then
-dropped (-> 47); and finally the whole **LOD-object section** carried verbatim - its
-records hold an `unk2` hash, `unk4`/`unk5` and a stream mesh order that the compiler
-did not model, which was costing exactly four bytes per unit (-> 78).
+(-> 25); each mesh object's **render flags** (hardcoded `0x000C2001`) (-> 43); the
+unit's **default material** hash (-> 47); the whole **LOD-object section** verbatim
+(-> 78); the DT-only **component 6** channel (-> 132); the **visibility-group**
+section (-> 160); the mesh object's two words after its flags (-> 167); and finally
+the **animation-bones flag** and the **animation state-machine** blob, which is where
+a unit's own resource path is stored (-> 168).
 
 ### Node order was the first cause (fixed)
 
