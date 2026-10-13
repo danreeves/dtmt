@@ -52,6 +52,10 @@ struct RenderableDef {
     unk5: Option<u32>,
     #[serde(default)]
     unk6: Option<u32>,
+    /// The mesh object's skin index. Read and dropped before, then written as the
+    /// compiler's `0`; a skinned unit needs the payload's own value.
+    #[serde(default)]
+    skin: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1501,8 +1505,8 @@ fn unit_sjson(
     text.push_str("renderables = {\n");
     for mesh in meshes {
         text.push_str(&format!(
-            "\t\"#{:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true flags = {} unk5 = {} unk6 = {} }}\n",
-            mesh.name, mesh.unk4, mesh.unk5, mesh.unk6
+            "\t\"#{:08X}\" = {{ culling = \"bounding_volume\" shadow_caster = true viewport_visible = true flags = {} unk5 = {} unk6 = {} skin = {} }}\n",
+            mesh.name, mesh.unk4, mesh.unk5, mesh.unk6, mesh.skin_index
         ));
     }
     text.push_str("}\n");
@@ -2191,7 +2195,14 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(u32::from(hash32_token(renderable)));
         w.u32(*node_index as u32);
         w.u32((geometry_index + 1) as u32);
-        w.u32(0); // skin index
+        // The payload's own skin index when the source carries one; the
+        // compiler's `0` otherwise.
+        let skin = def
+            .renderables
+            .get(renderable)
+            .and_then(|renderable| renderable.skin)
+            .unwrap_or(0);
+        w.u32(skin);
         // The payload's own mesh-object flags when the source carries them,
         // otherwise the value shipped static props use.
         let flags = def
