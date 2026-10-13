@@ -301,13 +301,14 @@ Both are sidestepped by one mechanism: a decompiled geometry carries its
 those bytes straight out, keeping the readable `streams`/`data` for authoring. That
 took the sweep from 20 to 25.
 
-The remaining 31 differ later still. The samples show another **eight-byte field**
-straight after the material list (`01 00 00 00 10 c1 5b 0c` then `90 e6 f0 83 37 50
-a7 24`, which we write as zeros), and one unit comes out **four bytes longer** than
-shipped (`1,290,718` vs `1,290,722`), so at least one more section has a structural
-difference, not just a value. The LOD / mesh-object / actors tail is still the
-frontier; `bitsquid/stingray/lod_object_data.py` and `vertex_stream.py` are the
-reference.
+The remaining 31 differ later still, and the probe now lists them smallest-first.
+They share one signature: **every rebuilt unit is exactly four bytes longer than the
+shipped one** (one is sixteen bytes longer), and the first difference sits ~210 bytes
+from the end. So one **structural** field in the tail is written too long, not just a
+value. The triangle-finder blob is now carried too (it was read and dropped); these
+units' values already matched the compiler's default, so the extra four bytes are
+elsewhere in the tail - the LOD / mesh-object / actors region.
+`bitsquid/stingray/lod_object_data.py` and `vertex_stream.py` are the reference.
 
 `examples/unit_probe.rs` takes a third argument: given a directory it dumps every
 decoded unit's `orig.bin`, `rebuilt.bin` and both SJSONs under it, so a failing unit
