@@ -141,6 +141,10 @@ struct UnitDef {
     /// authored one gets the compiler's four zero bytes.
     #[serde(default)]
     triangle_finder: Option<String>,
+    /// The visibility-group section verbatim. A decompiled unit carries it; an
+    /// authored one writes an empty list.
+    #[serde(default)]
+    visibility_groups: Option<String>,
     /// The LOD-object section verbatim, so a decompile reproduces the fields the
     /// compiler does not model. An authored unit omits it and the LODs are
     /// compiled from `lod`.
@@ -1378,6 +1382,8 @@ struct UnitBlobs {
     flow: Option<String>,
     flow_dynamic: Option<String>,
     triangle_finder: Option<String>,
+    /// The visibility-group section verbatim (`{count, {name, members}...}`).
+    visibility_groups: Option<String>,
     physics: Option<String>,
     /// The whole LOD-object section verbatim. Its records carry fields the
     /// compiler does not model (an `unk2` hash, `unk4`/`unk5`, a stream mesh
@@ -1447,6 +1453,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.triangle_finder {
         text.push_str(&format!("triangle_finder = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.visibility_groups {
+        text.push_str(&format!("visibility_groups = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.lod_raw {
         text.push_str(&format!("lod_raw = \"{data}\"\n"));
@@ -1756,9 +1765,14 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     let _animation_bones = reader.bool()?;
     let _animation_state_machine = reader.byte_array()?;
     let dynamic_data = reader.byte_array()?;
-    if reader.u32()? != 0 {
-        bail!("visibility groups are not supported yet");
+    // Visibility groups: a count, then `{name, members}` records. Carried
+    // verbatim, like the LOD section.
+    let visibility_start = reader.at;
+    for _ in 0..reader.u32()? {
+        let _name = reader.u32()?;
+        let _members = reader.u32_array()?;
     }
+    let visibility_groups = reader.data[visibility_start..reader.at].to_vec();
     let flow = reader.byte_array()?;
     let flow_dynamic = reader.byte_array()?;
     let triangle_finder = reader.byte_array()?;
@@ -1803,6 +1817,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         flow: (!flow.is_empty()).then(|| hex_encode(&flow)),
         flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
         triangle_finder: (triangle_finder != [0u8; 4]).then(|| hex_encode(&triangle_finder)),
+        visibility_groups: (!visibility_groups.is_empty()).then(|| hex_encode(&visibility_groups)),
         lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
@@ -2177,7 +2192,10 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0],
     )?);
     // Visibility groups.
-    w.u32(0);
+    match &def.visibility_groups {
+        Some(hex) => w.bytes(&hex_decode(hex)?),
+        None => w.u32(0),
+    }
     // Flow and flow dynamic data.
     w.byte_array(&decode_blob(&def.flow, &[])?);
     w.byte_array(&decode_blob(&def.flow_dynamic, &[])?);
