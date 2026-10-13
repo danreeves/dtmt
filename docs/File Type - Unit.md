@@ -299,8 +299,24 @@ the decodable count to **168**. Their one-word difference was the mesh object's 
 words after its flags (offset 2388: `0x00000300` where the shipped has `0`): the
 decoder read them and the compiler wrote a hardcoded `3`/`1`. Carrying them as `unk5`/
 `unk6` on the renderable took the sweep to **167/168**. The one unit left rebuilds
-**64 bytes shorter** than shipped (`19,283` vs `19,219`), a structural case still to
-look at.
+**64 bytes shorter** than shipped (`19,283` vs `19,219`, bundle `04263426f2c0df58`).
+Its difference is confined to `19,114..19,214` - everything before matches - and the
+shipped bytes there hold an **inline string**:
+
+```
+19,104  shipped  ... 00 00 01 40 00 00 00 63 6f 6e 74 65 6e 74 2f 77 65 61 70 ...
+19,104  ours     ... 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 08 ...
+        string   content/weapons/player/attachments/trinket_hooks/trinket_hook_04
+```
+
+So the shipped payload appends the unit's **resource path as a string** where our
+build writes a byte array (a `08` length byte) and then the dynamic-data sentinel.
+The unit's own `.unit` SJSON carries a 28-byte `trailer` (the compiler default), so
+our reader consumed the string in one of the modelled tail fields *before* `rest()` -
+the `unknown 18` byte array and the `skeleton name` are the prime suspects, since both
+are written empty/zero by the compiler. Walking the shipped tail with the crate's own
+`trailer_sections_are_as_expected` test (which names every field in order) is the next
+step.
 
 The channel case (`Cannot decode channel component 6 type 18`, 54 units) is **done**:
 component 6 is the DT-only `VertexComponentDT::UNKNOWN` and type 18 its
