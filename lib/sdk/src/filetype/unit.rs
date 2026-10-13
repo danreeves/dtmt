@@ -432,6 +432,7 @@ fn compile_stream(
         "TEXCOORD" => 5,
         "BLENDINDICES" => 7,
         "BLENDWEIGHTS" => 8,
+        "UNKNOWN" => 6,
         // The compiled Darktide vertex declaration has no tangent or binormal
         // component, and shipped units do not carry them either, so streams
         // that only VT2-style sources export are skipped.
@@ -527,6 +528,22 @@ fn compile_stream(
             Ok(Some(VertexFormat {
                 component,
                 kind: 19,
+                stride: 4,
+                data: out,
+                vertices: size,
+            }))
+        }
+        // The DT-only component 6, type 18: four raw bytes per element.
+        "UNKNOWN" => {
+            let mut out = Vec::with_capacity(size as usize * 4);
+            for chunk in data.chunks_exact(components) {
+                for value in chunk {
+                    out.push(*value as u8);
+                }
+            }
+            Ok(Some(VertexFormat {
+                component,
+                kind: 18,
                 stride: 4,
                 data: out,
                 vertices: size,
@@ -911,6 +928,8 @@ fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
         // COLOR and BLENDINDICES: bytes.
         (4, 19) => Ok(data.iter().map(|byte| *byte as f32 / 255.0).collect()),
         (7, 19) => Ok(data.iter().map(|byte| *byte as f32).collect()),
+        // The DT-only component 6, type 18: four raw bytes per element.
+        (6, 18) => Ok(data.iter().map(|byte| *byte as f32).collect()),
         (component, kind) => bail!("Cannot decode channel component {component} type {kind}"),
     }
 }
@@ -1451,6 +1470,8 @@ fn channel_name(component: u32) -> Result<&'static str> {
         5 => "TEXCOORD",
         7 => "BLENDINDICES",
         8 => "BLENDWEIGHTS",
+        // The DT-only component 6 (`VertexComponentDT::UNKNOWN`).
+        6 => "UNKNOWN",
         other => bail!("Cannot emit channel component {other}"),
     })
 }
@@ -1460,6 +1481,8 @@ fn channel_type(kind: u32) -> Result<&'static str> {
         17 => "CT_HALF4",
         15 => "CT_HALF2",
         19 => "CT_UBYTE4",
+        // `ChannelTypeDT::UNKNOWN_1`: four raw bytes per element.
+        18 => "CT_UBYTE4_NORM",
         other => bail!("Cannot emit channel type {other}"),
     })
 }
