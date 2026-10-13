@@ -122,5 +122,11 @@ always set when the variant is external and never when it is not. A data-file na
 the named file is auxiliary) — which is why a streamed texture is `external=false`
 *and* carries a `data/xx/<16 hex>.stream` name.
 
-`FileHeader.unknown_2` (always `1`) is the only header field left without a tested
-meaning.
+`FileHeader.unknown_2` (the per-variant byte between the size word and the data-file
+name length) is a **constant `1`**: across a 3,000-bundle sample all **176,465**
+variants carry it (`examples/bundle_header_probe.rs`) - the same sample in which
+`props` takes only `00000000`/`00000004` (118,075 / 58,390, matching `external`
+exactly). It carries no information, so DTMT's writer now emits the variant's **own**
+value - a fresh variant starts at `1`, a read one keeps what it read - instead of a
+hard `1`. That is byte-neutral (all 8 data files of a rebuilt mod hash identically)
+and closes the last "read a field, write a default" hole in the bundle writer.

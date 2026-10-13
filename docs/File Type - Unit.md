@@ -271,9 +271,16 @@ default, so the payload could never match:
 | default material | read, dropped, written as `0` | carried as `default_material` |
 | triangle-finder blob | read, dropped, written as four zero bytes | carried as `triangle_finder` |
 | LOD-object section | partially modelled (no `unk2`/`unk4`/`unk5`/order) | carried verbatim as `lod_raw` |
+| unknown device blob (after the camera/light counts) | rejected the whole unit (`an unknown device blob is not empty`) | carried verbatim as `device_blob` |
 
 Every one is an **optional** field: an authored `.unit`/`.bsi` omits them and takes
 the compiler's previous path, so the mod's bundles are byte-identical either way.
+
+One class was a decode gap rather than a dropped field: the DT-only **component 6,
+type 2** channel now decodes as `f32`s, beside component 6 type 18's four raw bytes,
+so the unit that used to fail with `Cannot decode channel component 6 type 2` parses
+(its element size is validated by the round-trip - a wrong width changes the byte
+count).
 
 The earlier stream work stands too: `bitsquid/math_utils.py` confirms our HALF4
 (four halves, 8 bytes - its message says 12 but its check is `% 8`) and HALF2

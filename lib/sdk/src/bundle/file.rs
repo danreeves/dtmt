@@ -52,7 +52,10 @@ impl BundleFileVariant {
             data_file_name_len: 0,
             external_data: None,
             external: false,
-            unknown_1: 0,
+            // The per-variant header byte is `1` in all 176,465 variants of a
+            // 3,000-bundle sample (`examples/bundle_header_probe.rs`), so a
+            // fresh variant carries the same value and a read one keeps its own.
+            unknown_1: 1,
         }
     }
 
@@ -348,11 +351,11 @@ impl BundleFile {
 
             if self.props.contains(Properties::DATA) {
                 w.write_u32(len_data_file_name as u32)?;
-                w.write_u8(1)?;
+                w.write_u8(variant.unknown_1())?;
                 w.write_u32(0)?;
             } else {
                 w.write_u32(variant.size() as u32)?;
-                w.write_u8(1)?;
+                w.write_u8(variant.unknown_1())?;
                 w.write_u32(len_data_file_name as u32)?;
             }
         }

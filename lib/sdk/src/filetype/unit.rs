@@ -163,6 +163,10 @@ struct UnitDef {
     /// compiled from `lod`.
     #[serde(default)]
     lod_raw: Option<String>,
+    /// The unknown device blob between the camera/light counts and the LOD
+    /// objects. A decompiled unit carries it; an authored one writes an empty one.
+    #[serde(default)]
+    device_blob: Option<String>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -947,6 +951,11 @@ fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
         (7, 19) => Ok(data.iter().map(|byte| *byte as f32).collect()),
         // The DT-only component 6, type 18: four raw bytes per element.
         (6, 18) => Ok(data.iter().map(|byte| *byte as f32).collect()),
+        // The DT-only component 6, type 2: `f32`s, like POSITION's `FLOAT3`.
+        (6, 2) => Ok(data
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()),
         // POSITION as three `f32`s (`ChannelTypeDT::FLOAT3`).
         (0, 2) => Ok(data
             .chunks_exact(4)
@@ -1413,6 +1422,9 @@ struct UnitBlobs {
     /// compiler does not model (an `unk2` hash, `unk4`/`unk5`, a stream mesh
     /// order), so a decompiled unit carries the bytes instead.
     lod_raw: Option<String>,
+    /// The unknown device blob between the camera/light counts and the LOD
+    /// objects; a decompiled unit carries it, an authored one writes an empty one.
+    device_blob: Option<String>,
     trailer: Option<String>,
 }
 
@@ -1489,6 +1501,9 @@ fn unit_sjson(
     }
     if let Some(data) = &blobs.lod_raw {
         text.push_str(&format!("lod_raw = \"{data}\"\n"));
+    }
+    if let Some(data) = &blobs.device_blob {
+        text.push_str(&format!("device_blob = \"{data}\"\n"));
     }
     if let Some(data) = &blobs.physics {
         text.push_str(&format!("physics = \"{data}\"\n"));
@@ -1779,9 +1794,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     if reader.u32()? != 0 || reader.u32()? != 0 {
         bail!("cameras and lights are not supported yet");
     }
-    if reader.byte_array()?.len() != 0 {
-        bail!("an unknown device blob is not empty");
-    }
+    let device_blob = reader.byte_array()?;
     let lod_start = reader.at;
     let lods = parse_lod_objects(&mut reader)?;
     let lod_raw = reader.data[lod_start..reader.at].to_vec();
@@ -1854,6 +1867,7 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
             .then(|| hex_encode(&animation_state_machine)),
         animation_bones: animation_bones.then_some(true),
         lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
+        device_blob: (!device_blob.is_empty()).then(|| hex_encode(&device_blob)),
         physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
@@ -2152,8 +2166,13 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     // Cameras and lights.
     w.u32(0);
     w.u32(0);
-    // Unknown byte array.
-    w.byte_array(&[]);
+    // Unknown device blob.
+    if let Some(hex) = &def.device_blob {
+        // A decompiled unit carries the blob verbatim.
+        w.byte_array(&hex_decode(hex)?);
+    } else {
+        w.byte_array(&[]);
+    }
 
     // LOD objects.
     if let Some(hex) = &def.lod_raw {
