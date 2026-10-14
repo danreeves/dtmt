@@ -1,0 +1,169 @@
+//! The `mouse_cursor` resource: a small bitmap with two cursor fields.
+//!
+//! ```text
+//! 0   u32   width
+//! 4   u32   height
+//! 8   u32   unknown_8    9 in both shipped cursors
+//! 12  u32   unknown_12   9 in both shipped cursors
+//! 16  u32   byte count   the pixel data's length
+//! 20  [u8]  the pixels, four bytes each
+//! ```
+//!
+//! Only **two** of these ship. The size word closes arithmetically - `20 + it` is
+//! the whole resource - and that is the check [`MouseCursor::from_binary`] makes,
+//! exactly as `wwise_dep` does with its name length. The second relation,
+//! `byte count == width * height * 4`, holds for the sampled cursor but is *not*
+//! required: two files cannot establish it as an invariant, so the probe reports it
+//! instead. The two middle words are the ones a cursor would naturally carry - a
+//! hotspot - but that is a guess and they are named by their offsets rather than
+//! guessed at.
+//!
+//! No community tool writes this type, so the cooked-resource envelope is not
+//! accepted: a shipped variant is the bare body.
+
+use color_eyre::{Result, eyre::bail};
+
+use crate::bundle::file::{BundleFile, UserFile};
+use crate::bundle::filetype::BundleFileType;
+use crate::murmur::IdString64;
+use crate::{BundleFileVariant, Context};
+
+/// The type id, for callers that need to recognise the payload.
+pub const MOUSE_CURSOR_TYPE: u64 = 0xb277_b11f_e4a6_1d37;
+
+/// The header's length; the pixels follow immediately.
+const HEADER: usize = 20;
+
+fn u32_at(b: &[u8], at: usize) -> u32 {
+    u32::from_le_bytes(b[at..at + 4].try_into().unwrap())
+}
+
+/// A cursor bitmap.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MouseCursor {
+    /// The bitmap's width in pixels.
+    pub width: u32,
+    /// The bitmap's height in pixels.
+    pub height: u32,
+    /// Unread field at offset 8.
+    pub unknown_8: u32,
+    /// Unread field at offset 12.
+    pub unknown_12: u32,
+    /// The pixels, four bytes each.
+    pub pixels: Vec<u8>,
+}
+
+impl MouseCursor {
+    /// Reads a cursor from its cooked bytes.
+    pub fn from_binary(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < HEADER {
+            bail!("a mouse_cursor is shorter than its {HEADER}-byte header");
+        }
+        let len = u32_at(bytes, 16) as usize;
+        // The declared length is the whole pixel field, so the resource's size
+        // follows from it - the invariant the shipped cursors satisfy.
+        if HEADER + len != bytes.len() {
+            bail!(
+                "a mouse_cursor declares {len} pixel bytes but is {} bytes",
+                bytes.len()
+            );
+        }
+        Ok(Self {
+            width: u32_at(bytes, 0),
+            height: u32_at(bytes, 4),
+            unknown_8: u32_at(bytes, 8),
+            unknown_12: u32_at(bytes, 12),
+            pixels: bytes[HEADER..].to_vec(),
+        })
+    }
+
+    /// Writes the cursor back, deriving the byte count from the pixels.
+    pub fn to_binary(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(HEADER + self.pixels.len());
+        out.extend_from_slice(&self.width.to_le_bytes());
+        out.extend_from_slice(&self.height.to_le_bytes());
+        out.extend_from_slice(&self.unknown_8.to_le_bytes());
+        out.extend_from_slice(&self.unknown_12.to_le_bytes());
+        out.extend_from_slice(&(self.pixels.len() as u32).to_le_bytes());
+        out.extend_from_slice(&self.pixels);
+        Ok(out)
+    }
+
+    /// The resource as SJSON.
+    pub fn to_sjson(&self) -> Result<String> {
+        serde_sjson::to_string(self).map_err(color_eyre::Report::new)
+    }
+
+    /// Reads the resource from its SJSON.
+    pub fn from_sjson(text: &str) -> Result<Self> {
+        serde_sjson::from_str(text).map_err(color_eyre::Report::new)
+    }
+}
+
+/// Decompiles a `mouse_cursor` variant to its SJSON.
+#[tracing::instrument(skip_all, fields(variants = variants.len()))]
+pub fn decompile(_ctx: &Context, variants: &[BundleFileVariant]) -> Result<Vec<UserFile>> {
+    let Some(variant) = variants.first() else {
+        bail!("a mouse_cursor resource needs a variant");
+    };
+    let cursor = MouseCursor::from_binary(variant.data())?;
+    Ok(vec![UserFile::new(cursor.to_sjson()?.into_bytes())])
+}
+
+/// Compiles a `mouse_cursor` SJSON into a bundle file `name`d after the resource path.
+pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
+    let cursor = MouseCursor::from_sjson(sjson)?;
+    let mut variant = BundleFileVariant::new();
+    variant.set_data(cursor.to_binary()?);
+    let mut file = BundleFile::new(name, BundleFileType::MouseCursor);
+    file.add_variant(variant);
+    Ok(file)
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// A cursor shaped like the shipped one: 40 by 40, 9 and 9, white-opaque pixels.
+    fn shipped_shaped() -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(6420);
+        bytes.extend_from_slice(&40u32.to_le_bytes());
+        bytes.extend_from_slice(&40u32.to_le_bytes());
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&(40u32 * 40 * 4).to_le_bytes());
+        for _ in 0..40 * 40 {
+            bytes.extend_from_slice(&[0xff, 0xff, 0xff, 0x00]);
+        }
+        bytes
+    }
+
+    #[test]
+    fn a_shipped_shaped_cursor_round_trips() {
+        let bytes = shipped_shaped();
+        assert_eq!(bytes.len(), 6420, "the shipped size");
+        let cursor = MouseCursor::from_binary(&bytes).expect("the sample parses");
+        assert_eq!(cursor.width, 40);
+        assert_eq!(cursor.height, 40);
+        assert_eq!(cursor.unknown_8, 9);
+        assert_eq!(cursor.unknown_12, 9);
+        assert_eq!(cursor.pixels.len(), 6400);
+        assert_eq!(cursor.to_binary().unwrap(), bytes, "byte-for-byte");
+        // And through the SJSON a build uses.
+        let sjson = cursor.to_sjson().unwrap();
+        assert_eq!(MouseCursor::from_sjson(&sjson).unwrap(), cursor);
+    }
+
+    #[test]
+    fn a_byte_count_that_lies_is_rejected() {
+        let mut bytes = shipped_shaped();
+        bytes[16] ^= 0xFF;
+        assert!(MouseCursor::from_binary(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_truncated_header_is_rejected() {
+        assert!(MouseCursor::from_binary(&[40, 0, 0, 0]).is_err());
+    }
+}

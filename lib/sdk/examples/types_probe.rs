@@ -1,4 +1,4 @@
-//! Census the file types a Darktide install actually ships.
+//! Census the file types a Darktide install actually ships, and dump samples.
 //!
 //! Every type DTMT names is checked against every file in every bundle, so the
 //! output says both what exists and - more usefully - what does not. A type with a
@@ -6,21 +6,66 @@
 //! knows and Darktide never uses, and it cannot be derived from data that does not
 //! exist; that is a different verdict from "not read yet".
 //!
-//! Usage: `types_probe <bundle dir> [max bundles]`
+//! An optional comma-separated list of type ids dumps the first samples of each, so
+//! several small types can be surveyed in one pass.
+//!
+//! Usage: `types_probe <bundle dir> [max bundles] [id,id,...]`
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use sdk::{Bundle, BundleFileType, Context};
+
+fn dump(label: &str, data: &[u8]) {
+    println!("--- {label}  ({} B)", data.len());
+    for row in (0..data.len().min(64)).step_by(16) {
+        let end = (row + 16).min(data.len());
+        let bytes = &data[row..end];
+        let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        let words: Vec<String> = bytes
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()).to_string())
+            .collect();
+        let floats: Vec<String> = bytes
+            .chunks_exact(4)
+            .map(|c| format!("{:.3}", f32::from_le_bytes(c.try_into().unwrap())))
+            .collect();
+        let text: String = bytes
+            .iter()
+            .map(|b| {
+                if (0x20..0x7f).contains(b) {
+                    *b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        println!("  {row:04x}  {}  |{text}|", hex.join(" "));
+        if !words.is_empty() {
+            println!("        u32 [{}]  f32 [{}]", words.join(", "), floats.join(", "));
+        }
+    }
+}
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let arg = std::env::args()
         .nth(1)
-        .expect("usage: types_probe <bundle dir> [max bundles]");
+        .expect("usage: types_probe <bundle dir> [max bundles] [id,id,...]");
     let limit: usize = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(usize::MAX);
+    let wanted: Vec<u64> = std::env::args()
+        .nth(3)
+        .map(|s| {
+            s.split(',')
+                .map(|part| {
+                    u64::from_str_radix(part.trim().trim_start_matches("0x"), 16)
+                        .expect("the ids must be hex")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
     let ctx = Context::new();
     // A bundle's name is its 16-hex-digit hash; everything else in the directory is
@@ -41,9 +86,10 @@ fn main() -> color_eyre::Result<()> {
 
     let mut bundles = 0usize;
     let mut files = 0usize;
+    let mut variants = 0usize;
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
-    let mut variants = 0usize;
+    let mut dumped: BTreeSet<u64> = BTreeSet::new();
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else {
@@ -57,6 +103,7 @@ fn main() -> color_eyre::Result<()> {
             files += 1;
             variants += file.variants().len();
             let kind = file.file_type();
+            let id = u64::from(kind);
             match kind {
                 BundleFileType::Unknown(hash) => {
                     *unknown.entry(format!("{hash:016X}")).or_default() += 1;
@@ -64,6 +111,12 @@ fn main() -> color_eyre::Result<()> {
                 known => {
                     *counts.entry(known.ext_name()).or_default() += 1;
                 }
+            }
+            if wanted.contains(&id) && dumped.insert(id) {
+                dump(
+                    &format!("{} ({id:016X})", kind.ext_name()),
+                    file.variants()[0].data(),
+                );
             }
         }
     }

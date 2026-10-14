@@ -403,6 +403,10 @@ impl BundleFile {
                 .wrap_err("Failed to compile Animation file"),
             BundleFileType::Ies => crate::filetype::ies::compile(name, sjson.as_ref())
                 .wrap_err("Failed to compile Ies file"),
+            BundleFileType::MouseCursor => {
+                crate::filetype::mouse_cursor::compile(name, sjson.as_ref())
+                    .wrap_err("Failed to compile MouseCursor file")
+            }
             BundleFileType::WwiseDep => crate::filetype::wwise::compile(name, sjson.as_ref())
                 .wrap_err("Failed to compile Wwise dependency file"),
             BundleFileType::Particles => {
@@ -523,6 +527,9 @@ impl BundleFile {
                 }
                 BundleFileType::Ies => {
                     crate::filetype::ies::decompile(ctx, std::slice::from_ref(variant))
+                }
+                BundleFileType::MouseCursor => {
+                    crate::filetype::mouse_cursor::decompile(ctx, std::slice::from_ref(variant))
                 }
                 BundleFileType::WwiseDep => {
                     crate::filetype::wwise::decompile(ctx, std::slice::from_ref(variant))

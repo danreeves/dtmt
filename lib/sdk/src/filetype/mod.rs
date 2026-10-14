@@ -6,6 +6,7 @@ pub mod group_data;
 pub mod ies;
 pub mod lua;
 pub mod material;
+pub mod mouse_cursor;
 pub mod package;
 pub mod particles;
 pub mod permutation;
