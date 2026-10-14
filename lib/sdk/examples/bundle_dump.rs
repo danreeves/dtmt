@@ -15,8 +15,17 @@ fn main() {
         let name_hash = f.base_name().to_murmur64();
         let resolved = ctx.lookup_hash(name_hash, HashGroup::Filename);
         for v in f.variants() {
+            // A variant indexes the bundle's `PropertyArray` (issue #3); when that
+            // entry is set, it names the variant - a language, typically.
+            let property = v.property() as usize;
+            let property_name = bundle
+                .properties()
+                .get(property)
+                .filter(|id| u64::from(**id) != 0)
+                .map(|id| ctx.lookup_hash(*id, HashGroup::Other).display().to_string())
+                .unwrap_or_else(|| "-".to_string());
             println!(
-                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?} dfn_len={}",
+                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?} dfn_len={} variant={property} ({property_name})",
                 resolved.display(),
                 f.props().bits(),
                 v.external(),

@@ -288,6 +288,12 @@ impl Bundle {
         Ok(w.into_inner())
     }
 
+    /// The `PropertyArray`: the 32 variant names the engine shares across every
+    /// bundle (upstream issue #3). A file variant indexes into it.
+    pub fn properties(&self) -> &[Murmur64; 32] {
+        &self.properties
+    }
+
     pub fn name(&self) -> &IdString64 {
         &self.name
     }
