@@ -139,6 +139,10 @@ pub struct Simulator {
     #[serde(rename = "type")]
     pub kind: String,
     pub offset: u32,
+    /// A readable view of the simulator's data, when the reference gives its op a
+    /// layout this reader models. The data block itself stays authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<indexmap::IndexMap<String, FieldValue>>,
 }
 
 /// One visualizer: its type name and its record bytes (kept opaque; the
@@ -524,6 +528,113 @@ pub const INITIALIZER_FIELD_NAMES: &[&[&str]] = &[
     &["channel"],
 ];
 
+/// The reference's simulator layouts that use only the field kinds this reader
+/// models (`CH`, `U`, `I`, `F`, `V3`), with their field names. The ones that also
+/// carry `STATE`/`SELF` scratch or a `C` curve are left out - they need the runtime
+/// sizes and the curve sub-format - and fall back to the opaque data block.
+pub const SIMULATOR_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[
+    (
+        "age_age",
+        &[InitializerField::Channel, InitializerField::Channel],
+        &["age", "life"],
+    ),
+    (
+        "position_integrate",
+        &[InitializerField::Channel, InitializerField::Channel],
+        &["position", "velocity"],
+    ),
+    (
+        "velocity_accelerate",
+        &[InitializerField::Channel, InitializerField::Vec3],
+        &["velocity", "acceleration"],
+    ),
+    (
+        "plane_collision",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+        ],
+        &["position", "velocity", "offset", "restitution", "friction"],
+    ),
+    (
+        "rate_spawn",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::U32,
+            InitializerField::Channel,
+            InitializerField::F32,
+        ],
+        &[
+            "position",
+            "spawn",
+            "particles_per_second",
+            "target_system",
+            "velocity",
+            "inherit_velocity",
+        ],
+    ),
+    (
+        "trail_spawn",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::U32,
+            InitializerField::Channel,
+            InitializerField::F32,
+        ],
+        &[
+            "position",
+            "last_position",
+            "particles_per_meter",
+            "target_system",
+            "velocity",
+            "inherit_velocity",
+        ],
+    ),
+    (
+        "ray",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::U32,
+            InitializerField::U32,
+        ],
+        &["position", "velocity", "size_y", "start_variable", "end_variable"],
+    ),
+    (
+        "copy_variable_to_float",
+        &[
+            InitializerField::Channel,
+            InitializerField::U32,
+            InitializerField::U32,
+        ],
+        &["destination", "variable", "component"],
+    ),
+    (
+        "scale_float",
+        &[InitializerField::Channel, InitializerField::Channel],
+        &["destination", "scale_by"],
+    ),
+    (
+        "query_collision",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::U32,
+        ],
+        &["position", "velocity", "normal", "offset", "queries_per_frame"],
+    ),
+];
+
 /// A readable view of one initializer's operands, from the layout the reference
 /// gives that op: one `"kind = value"` per field. `data` stays authoritative, so
 /// this is descriptive only, and the three variable-length ops have no layout to
@@ -533,11 +644,29 @@ fn describe_initializer(
     operand: &[u8],
 ) -> Option<indexmap::IndexMap<String, FieldValue>> {
     let (_, layout) = INITIALIZER_LAYOUTS.get(op)?;
+    let names = INITIALIZER_FIELD_NAMES.get(op).copied().unwrap_or(&[]);
+    Some(describe_fields(layout, names, operand))
+}
+
+/// A readable view of a simulator's data, when the reference gives its op a layout
+/// this reader models.
+fn describe_simulator(kind: &str, data: &[u8]) -> Option<indexmap::IndexMap<String, FieldValue>> {
+    let (_, layout, names) = SIMULATOR_FIELDS.iter().find(|(name, _, _)| *name == kind)?;
+    Some(describe_fields(layout, names, data))
+}
+
+/// The shared field walk: read each field of `layout` from `data`, naming it from
+/// `names` where the reference gives a name and by its kind otherwise.
+fn describe_fields(
+    layout: &[InitializerField],
+    names: &[&str],
+    data: &[u8],
+) -> indexmap::IndexMap<String, FieldValue> {
     let mut out = indexmap::IndexMap::with_capacity(layout.len());
     let mut at = 0usize;
     for (index, field) in layout.iter().enumerate() {
         let width = field.size();
-        let Some(bytes) = operand.get(at..at + width) else {
+        let Some(bytes) = data.get(at..at + width) else {
             break;
         };
         let (kind_label, value) = match field {
@@ -568,15 +697,11 @@ fn describe_initializer(
             InitializerField::Bytes(_) => ("bytes", FieldValue::U32(width as u32)),
         };
         // The reference's field name when it has one, the kind otherwise.
-        let label = INITIALIZER_FIELD_NAMES
-            .get(op)
-            .and_then(|names| names.get(index))
-            .copied()
-            .unwrap_or(kind_label);
+        let label = names.get(index).copied().unwrap_or(kind_label);
         out.insert(label.to_string(), value);
         at += width;
     }
-    Some(out)
+    out
 }
 
 /// Rebuild an initializer's operands from its typed fields, using the op's layout
@@ -757,12 +882,19 @@ impl System {
                     .try_into()
                     .unwrap(),
             );
+            let kind = SIMULATORS
+                .get(op)
+                .ok_or_else(|| color_eyre::eyre::eyre!("unknown simulator op {op}"))?
+                .to_string();
+            // The op's fields sit at its offset into the system's data block.
+            let fields = describe_simulator(
+                &kind,
+                bytes.get(data + offset as usize..).unwrap_or(&[]),
+            );
             simulator_list.push(Simulator {
-                kind: SIMULATORS
-                    .get(op)
-                    .ok_or_else(|| color_eyre::eyre::eyre!("unknown simulator op {op}"))?
-                    .to_string(),
+                kind,
                 offset,
+                fields,
             });
         }
 
