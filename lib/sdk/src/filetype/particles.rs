@@ -866,6 +866,79 @@ pub const VISUALIZER_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[(
             "field_84",
         ],
     ),
+    (
+        // `before` reaches the channel block at 0x20 with no pad (8+4+4+8+4+4), the
+        // four-word header sits at 0xec, and its `size` word lands at 0xf8 - which is
+        // exactly `kSizeAt[2]`. `material_count` is the word at `p + 0x0c` that sizes
+        // the 16-byte material entries after the tail; those are count-driven, so the
+        // view stops at `field_fc`.
+        "mesh",
+        &[
+            InitializerField::Id64, // unit
+            InitializerField::U32,  // field_08
+            InitializerField::U32,  // material_count, at 0x0c
+            InitializerField::Id64, // field_10
+            InitializerField::U32,  // the constant before flag_1c
+            InitializerField::U32,  // flag_1c, ending at the channel block
+            InitializerField::Bytes(204),
+            InitializerField::U32, // vertex stride
+            InitializerField::U32, // writers
+            InitializerField::U32, // first
+            InitializerField::U32, // size, at 0xf8
+            InitializerField::U32, // field_fc
+        ],
+        &[
+            "unit",
+            "field_08",
+            "material_count",
+            "field_10",
+            "const_18",
+            "flag_1c",
+            "channels",
+            "stride",
+            "writers",
+            "first",
+            "size",
+            "field_fc",
+        ],
+    ),
+    (
+        // `before` reaches the channel block at 0x18 with no pad (4+4+8+4+4), the
+        // four-word header sits at 0xe4, and its `size` word lands at 0xf0 - exactly
+        // `kSizeAt[3]`. The tail's middle word is a channel reference (`CH`), so it
+        // reads as a `u32` named for the reference's field.
+        "ribbon",
+        &[
+            InitializerField::U32,  // hash
+            InitializerField::U32,  // const
+            InitializerField::Id64, // material
+            InitializerField::U32,  // the constant before field_14
+            InitializerField::U32,  // field_14, ending at the channel block
+            InitializerField::Bytes(204),
+            InitializerField::U32, // vertex stride
+            InitializerField::U32, // writers
+            InitializerField::U32, // first
+            InitializerField::U32, // size, at 0xf0
+            InitializerField::Bytes(4),
+            InitializerField::U32, // leap_number, a channel reference
+            InitializerField::Bytes(4),
+        ],
+        &[
+            "hash",
+            "const_4",
+            "material",
+            "const_14",
+            "field_14",
+            "channels",
+            "stride",
+            "writers",
+            "first",
+            "size",
+            "pad_f8",
+            "leap_number",
+            "pad_100",
+        ],
+    ),
 ];
 
 /// A readable view of a visualizer's record, for the types whose leading fields the
