@@ -159,6 +159,20 @@ pub struct Visualizer {
     /// gives them. The record itself stays authoritative.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fields: Option<indexmap::IndexMap<String, FieldValue>>,
+    /// The vertex channels a visualizer declares, decoded from the descriptor block.
+    /// Their type sizes must sum to the record's `stride`, which is what makes this
+    /// checkable against the payload rather than merely readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<Vec<Channel>>,
+}
+
+/// One vertex channel descriptor: a component, its type and its set.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Channel {
+    pub component: String,
+    pub kind: String,
+    pub set: u32,
 }
 
 /// The visualizer type names, in the community's `kVisualizers` order plus gpu.
@@ -948,6 +962,82 @@ fn describe_visualizer(kind: &str, data: &[u8]) -> Option<indexmap::IndexMap<Str
     Some(describe_fields(layout, names, data))
 }
 
+/// The component names the reference gives (`component_name`): only these six are
+/// meaningful in a vertex declaration.
+fn vertex_component(component: u32) -> Option<&'static str> {
+    Some(match component {
+        0 => "position",
+        2 => "tangent",
+        3 => "binormal",
+        5 => "texcoord",
+        6 => "color",
+        _ => return None,
+    })
+}
+
+/// The channel types and their widths (`kVertexTypes` / `kVertexTypeSize`).
+fn vertex_type(kind: u32) -> Option<(&'static str, usize)> {
+    Some(match kind {
+        0 => ("float1", 4),
+        1 => ("float2", 8),
+        2 => ("float3", 12),
+        3 => ("float4", 16),
+        4 => ("ubyte4", 4),
+        _ => return None,
+    })
+}
+
+/// Decode a visualizer's vertex channels: a `u32` count then ten 20-byte slots, of
+/// which the first `count` are used. Each is `component, type, set` followed by two
+/// words the reference requires to be zero, and the used slots' widths must sum to
+/// the record's `stride` - so a mis-read descriptor shows up rather than passing.
+fn describe_channels(kind: &str, data: &[u8]) -> Option<Vec<Channel>> {
+    let (_, layout, _) = VISUALIZER_FIELDS.iter().find(|(name, _, _)| *name == kind)?;
+    // The block starts where the layout's 204-byte field does; its offset is the
+    // `channels_at` the reference names.
+    let mut at = 0usize;
+    let mut block = None;
+    for field in layout.iter() {
+        if matches!(field, InitializerField::Bytes(204)) {
+            block = Some(at);
+            break;
+        }
+        at += field.size();
+    }
+    let at = block?;
+    let count = *data.get(at..at + 4)?.first_chunk::<4>()?;
+    let count = u32::from_le_bytes(count) as usize;
+    if count == 0 || count > 10 {
+        return None;
+    }
+    let mut channels = Vec::with_capacity(count);
+    let mut stride = 0usize;
+    for index in 0..count {
+        let slot = data.get(at + 4 + 0x14 * index..at + 4 + 0x14 * index + 0x14)?;
+        let word = |n: usize| u32::from_le_bytes(slot[n * 4..n * 4 + 4].try_into().unwrap());
+        if word(3) != 0 || word(4) != 0 {
+            return None;
+        }
+        let component = vertex_component(word(0))?;
+        let (kind, width) = vertex_type(word(1))?;
+        channels.push(Channel {
+            component: component.to_string(),
+            kind: kind.to_string(),
+            set: word(2),
+        });
+        stride += width;
+    }
+    // The declared stride in the record must be the sum of the channel widths.
+    let stride_word = match kind {
+        "billboard" => 0xe8,
+        "mesh" => 0xec,
+        "ribbon" => 0xe4,
+        _ => return Some(channels),
+    };
+    let declared = u32::from_le_bytes(data.get(stride_word..stride_word + 4)?.try_into().unwrap());
+    (declared as usize == stride).then_some(channels)
+}
+
 /// A readable view of a simulator's data, when the reference gives its op a layout
 /// this reader models.
 fn describe_simulator(kind: &str, data: &[u8]) -> Option<indexmap::IndexMap<String, FieldValue>> {
@@ -1254,10 +1344,12 @@ impl System {
                 .ok_or_else(|| color_eyre::eyre::eyre!("a visualizer runs past the system"))?;
             let kind = VISUALIZERS[kind].to_string();
             let fields = describe_visualizer(&kind, body);
+            let channels = describe_channels(&kind, body);
             visualizer_list.push(Visualizer {
                 kind,
                 data: hex(body),
                 fields,
+                channels,
             });
             vis += 4 + size;
         }
