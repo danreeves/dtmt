@@ -23,5 +23,6 @@ pub mod shader_source;
 pub mod slug;
 pub mod strings;
 pub mod texture;
+pub mod theme;
 pub mod unit;
 pub mod wwise;

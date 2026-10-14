@@ -17,7 +17,7 @@ use sdk::{Bundle, BundleFileType, Context};
 
 fn dump(label: &str, data: &[u8]) {
     println!("--- {label}  ({} B)", data.len());
-    for row in (0..data.len().min(64)).step_by(16) {
+    for row in (0..data.len().min(512)).step_by(16) {
         let end = (row + 16).min(data.len());
         let bytes = &data[row..end];
         let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
@@ -89,7 +89,7 @@ fn main() -> color_eyre::Result<()> {
     let mut variants = 0usize;
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut unknown: BTreeMap<String, usize> = BTreeMap::new();
-    let mut dumped: BTreeSet<u64> = BTreeSet::new();
+    let mut dumped: BTreeMap<u64, usize> = BTreeMap::new();
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else {
@@ -112,11 +112,15 @@ fn main() -> color_eyre::Result<()> {
                     *counts.entry(known.ext_name()).or_default() += 1;
                 }
             }
-            if wanted.contains(&id) && dumped.insert(id) {
-                dump(
-                    &format!("{} ({id:016X})", kind.ext_name()),
-                    file.variants()[0].data(),
-                );
+            if wanted.contains(&id) {
+                let seen = dumped.entry(id).or_insert(0);
+                if *seen < 2 {
+                    *seen += 1;
+                    dump(
+                        &format!("{} ({id:016X})", kind.ext_name()),
+                        file.variants()[0].data(),
+                    );
+                }
             }
         }
     }
