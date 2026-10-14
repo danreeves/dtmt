@@ -43,6 +43,12 @@ fn main() -> color_eyre::Result<()> {
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(usize::MAX);
+    // An optional type id, so the probe can look at any type and not just the one
+    // that motivated it.
+    let filter: Option<u64> = std::env::args().nth(3).map(|s| {
+        u64::from_str_radix(s.trim_start_matches("0x"), 16)
+            .expect("the type filter must be a hex id")
+    });
 
     let ctx = Context::new();
     let root = std::path::Path::new(&arg);
@@ -81,7 +87,12 @@ fn main() -> color_eyre::Result<()> {
         };
         bundles += 1;
         for file in bundle.files() {
-            if file.file_type() != BundleFileType::AnimationCurves {
+            let kind = file.file_type();
+            let wanted = match filter {
+                Some(id) => u64::from(kind) == id,
+                None => kind == BundleFileType::AnimationCurves,
+            };
+            if !wanted {
                 continue;
             }
             found += 1;
@@ -98,7 +109,7 @@ fn main() -> color_eyre::Result<()> {
     }
 
     println!(
-        "animation_curves: {found} found in {bundles} bundles ({named} with a real name)"
+        "{found} files of the wanted type in {bundles} bundles ({named} with a real name)"
     );
     println!("  distinct sizes (up to 10): {:?}", sizes.keys().take(10).collect::<Vec<_>>());
     for (name, data) in &samples {

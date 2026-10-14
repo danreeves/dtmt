@@ -89,6 +89,7 @@ make_enum! {
     Bik,                      0xaa5965f03029fa18, "bik";
     Bk2,                      0x5ee65304478f8db5, "bk2";
     BlendSet,                 0xe301e8af94e3b5a3, "blend_set";
+    BlobAggFile,              0x23ee957dd4b1bb94, "blob_agg_file";
     Bones,                    0x18dead01056b72e9, "bones";
     Chroma,                   0xb7893adf7567506a, "chroma";
     CommonPackage,            0xfe9754bd19814a47, "common_package";
