@@ -2,6 +2,7 @@ pub mod animation;
 pub mod bones;
 pub mod condition;
 pub mod condition_tree;
+pub mod flow;
 pub mod group_data;
 pub mod ies;
 pub mod lua;
