@@ -112,12 +112,23 @@ pub struct Initializer {
     /// The operand bytes, hex. Authoritative: the compiler writes these back
     /// verbatim, so `decoded` can never disturb the round-trip.
     pub data: String,
-    /// A readable view of the operand's fields, one `"name = value"` per field of
-    /// the op's layout (the reference's `OpSpec`). Absent for the three
-    /// variable-length ops, whose layout is decided at read time, and not consulted
-    /// when compiling.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub decoded: Vec<String>,
+    /// The operand's fields by the reference's names (`min`, `max`, `radius_min`,
+    /// ...), typed so an authored value can be written back. `data` stays
+    /// authoritative - the compiler writes it verbatim - so this is descriptive for
+    /// now, and absent for the three variable-length ops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<indexmap::IndexMap<String, FieldValue>>,
+}
+
+/// One decoded initializer field. Untagged, so it writes as a bare SJSON value: a
+/// number, or a list for a vector.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum FieldValue {
+    U32(u32),
+    I32(i32),
+    F32(f32),
+    Vec3([f32; 3]),
 }
 
 /// One simulator: its op name and the offset of its data in the system's data
@@ -517,11 +528,12 @@ pub const INITIALIZER_FIELD_NAMES: &[&[&str]] = &[
 /// gives that op: one `"kind = value"` per field. `data` stays authoritative, so
 /// this is descriptive only, and the three variable-length ops have no layout to
 /// read.
-fn describe_initializer(op: usize, operand: &[u8]) -> Vec<String> {
-    let Some((_, layout)) = INITIALIZER_LAYOUTS.get(op) else {
-        return Vec::new();
-    };
-    let mut out = Vec::with_capacity(layout.len());
+fn describe_initializer(
+    op: usize,
+    operand: &[u8],
+) -> Option<indexmap::IndexMap<String, FieldValue>> {
+    let (_, layout) = INITIALIZER_LAYOUTS.get(op)?;
+    let mut out = indexmap::IndexMap::with_capacity(layout.len());
     let mut at = 0usize;
     for (index, field) in layout.iter().enumerate() {
         let width = field.size();
@@ -531,33 +543,29 @@ fn describe_initializer(op: usize, operand: &[u8]) -> Vec<String> {
         let (kind_label, value) = match field {
             InitializerField::Channel => (
                 "channel",
-                format!("{}", u32::from_le_bytes(bytes.try_into().unwrap())),
+                FieldValue::U32(u32::from_le_bytes(bytes.try_into().unwrap())),
             ),
             InitializerField::U32 => (
                 "u32",
-                format!("{}", u32::from_le_bytes(bytes.try_into().unwrap())),
+                FieldValue::U32(u32::from_le_bytes(bytes.try_into().unwrap())),
             ),
             InitializerField::I32 => (
                 "i32",
-                format!("{}", i32::from_le_bytes(bytes.try_into().unwrap())),
+                FieldValue::I32(i32::from_le_bytes(bytes.try_into().unwrap())),
             ),
             InitializerField::F32 => (
                 "f32",
-                format!("{}", f32::from_le_bytes(bytes.try_into().unwrap())),
+                FieldValue::F32(f32::from_le_bytes(bytes.try_into().unwrap())),
             ),
             InitializerField::Vec3 => (
                 "vec3",
-                (0..3)
-                    .map(|i| {
-                        format!(
-                            "{}",
-                            f32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap())
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
+                FieldValue::Vec3([
+                    f32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+                    f32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+                ]),
             ),
-            InitializerField::Bytes(size) => ("bytes", format!("{size}")),
+            InitializerField::Bytes(_) => ("bytes", FieldValue::U32(width as u32)),
         };
         // The reference's field name when it has one, the kind otherwise.
         let label = INITIALIZER_FIELD_NAMES
@@ -565,10 +573,10 @@ fn describe_initializer(op: usize, operand: &[u8]) -> Vec<String> {
             .and_then(|names| names.get(index))
             .copied()
             .unwrap_or(kind_label);
-        out.push(format!("{label} = {value}"));
+        out.insert(label.to_string(), value);
         at += width;
     }
-    out
+    Some(out)
 }
 
 fn initializer_size(op: usize, bytes: &[u8], at: usize) -> Result<usize> {
@@ -644,7 +652,7 @@ impl System {
                     .ok_or_else(|| color_eyre::eyre::eyre!("unknown initializer op {op}"))?
                     .to_string(),
                 data: hex(operand),
-                decoded: describe_initializer(op, operand),
+                fields: describe_initializer(op, operand),
             });
             at += 4 + size;
         }
@@ -1008,11 +1016,14 @@ mod test {
         assert_eq!(effect.systems[0].initializers.len(), 1);
         assert_eq!(effect.systems[0].initializers[0].kind, "random_float");
         assert_eq!(effect.systems[0].initializers[0].data, "000000000000000000000000");
-        // The readable view is derived from the op's layout, one entry per field.
-        assert_eq!(
-            effect.systems[0].initializers[0].decoded,
-            ["channel = 0", "min = 0", "max = 0"]
-        );
+        // The typed view is derived from the op's layout, under the reference's names.
+        let fields = effect.systems[0].initializers[0]
+            .fields
+            .as_ref()
+            .expect("the layout gives the fields");
+        assert_eq!(fields["channel"], FieldValue::U32(0));
+        assert_eq!(fields["min"], FieldValue::F32(0.0));
+        assert_eq!(fields["max"], FieldValue::F32(0.0));
         assert_eq!(effect.to_binary().unwrap(), bytes);
     }
 

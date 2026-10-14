@@ -159,3 +159,16 @@ field-by-field to the layouts by the test, so it cannot drift. `data` remains
 authoritative - the compiler writes it back verbatim - so the round-trip is
 untouched either way. The remaining step on this item is teaching the compiler to
 *accept* authored fields, so an effect becomes editable rather than only readable.
+**Typed since (2026-10-14):** the view is now a typed map rather than a list of
+strings, because strings cannot be written back - `fields = { channel = 40 min = 1.2
+max = 2 }`, using `FieldValue` (`U32` / `I32` / `F32` / `Vec3`, untagged so it
+writes as a bare SJSON value).
+
+Two caveats to settle *before* the compiler is made to trust `fields`, both visible
+in a shipped effect's dump and both harmless while `data` is authoritative:
+
+- an `f32` prints widened (`1.2000000476837158`) - exact, but verbose;
+- an integer-valued float prints as an integer (`max = 2`), and because the untagged
+  enum tries `U32` before `F32` it would read back as the *integer* variant. Either
+  order the variants by field kind (the layout knows which), or make the value
+  tagged.
