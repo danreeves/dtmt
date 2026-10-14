@@ -733,6 +733,19 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                 return sdk::filetype::bones::compile(name, &bones_sjson);
             }
 
+            // A `.mouse_cursor` is compiled from its SJSON: the size, the
+            // hotspot and the pixels, with the byte count derived on write.
+            if file_type == BundleFileType::MouseCursor {
+                let cursor_sjson = fs::read_to_string(&path)
+                    .await
+                    .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+                let name = apply_name_override(
+                    name_overrides,
+                    path.with_extension("").to_slash_lossy().to_string(),
+                );
+                return sdk::filetype::mouse_cursor::compile(name, &cursor_sjson);
+            }
+
             // A `slug` is a compiled font and is not authored here: the Slug
             // library's own `slugfont` compiles it from a `.ttf`, and a project
             // ships that output verbatim. So it is packed as the bytes it is,

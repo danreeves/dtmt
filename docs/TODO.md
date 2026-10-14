@@ -228,3 +228,69 @@ has *not* cracked yet - a useful "still open" signal.
   formats DTMT has not started (skin data, scene graph, actor desc, camera, light,
   ragdoll, mover, vertex streams).
 - Upstream issue tracker: <https://git.sclu1034.dev/bitsquid_dt/dtmt/issues>.
+
+### Custom fonts under new names, and a compiled cursor (2026-10-14)
+
+**A font is not a material.** Read from the decompiled tree (`C:\dev\Darktide-Source-Code`),
+not guessed: the glyphs are a `slug` bundle entry, and the *fill* is a material.
+
+- `scripts/managers/ui/ui_font_settings.lua` gives every text style a `font_type` (a font
+  name), a `font_size` and often a `material` (the gradient the glyphs are filled with);
+- `scripts/managers/ui/ui_fonts_definitions.lua` is the registry: `base_path =
+  "content/ui/fonts/"`, `custom_font = "darktide_custom_regular"`, the `fonts` table, and
+  `locale_specific_fonts`;
+- `scripts/managers/ui/ui_font_manager.lua` (`Managers.font`) builds per name a
+  `path = {base_path..name, <locale fallback>, base_path..custom_font}` - **a fallback
+  chain**, so a name whose resource is missing renders silently in
+  `darktide_custom_regular`;
+- `scripts/managers/ui/ui_fonts.lua` reads `style.font_type` live; its
+  `font_options_by_style` cache keys only alignment, not the font;
+- the title screen's text style is `table.clone(UIFontSettings.body)`
+  (`title_view_definitions.lua`) and the widget is `title_text`.
+
+So a custom font under a **new** name needs four things, in order:
+
+1. the slug at its own path, e.g. `content/ui/fonts/jokerman.slug` - no rename, no
+   `name_overrides` - listed as `slug = [...]`;
+2. the name added to `FontDefinitions.fonts`;
+3. the manager's definitions **rebuilt**: they are built once in `init`, before a mod
+   loads, so `Managers.font:data_by_type(name)` is nil until `_setup_font_definitions` runs
+   again;
+4. a style pointed at it - and this is what cost three attempts: the draw goes through the
+   widget's **passes**, so the font must be set on the pass' style
+   (`widget.style[pass.style_id]`), not on `widget.style` alone. Same place the background
+   material is set.
+
+Verified in game: the title screen's `Press [SPACE] to continue` renders in Jokerman
+(`docs/evidence/custom-font-title-jokerman.png`), with `PUMPKIN_OK` and the font deployed.
+Deployment needs the bundle database to map the name to the mod's bundle, which
+`dtmm --deploy` does and `dtmt build --deploy` does not; check with
+`dtmt bundle db find-file <game>/bundle/bundle_database.data <path>`, which answers
+`df068cf42886090b` for `content/ui/fonts/jokerman`.
+
+**Corrections.** The earlier "Comic Sans" claim in this file and in `File-Type-Status.md` is
+retracted: the two frames it compared held *different sentences*, so the same glyphs were
+read as two typefaces, and SlugDemo ships no Comic Sans at all (its fonts are arial, chalk,
+consola, gillbd, jokerman, math5b, minion, notocjk, royal, scratch, seguiemj, story, times,
+timesbd, timesi, twemoji, webs, wildwood). A hash check in that note was also
+mis-transcribed. Note too that a mod which holds the title screen never quits the game, and
+a force-killed game truncates its console log - which reads as `NO_LOAD` for a mod that
+loaded perfectly well.
+
+### `mouse_cursor`: the hotspot is named, and the type now compiles (2026-10-14)
+
+The community runtime `C:\dev\darktide-simple-assets-runtime` settles the two words this
+reader carried as `unknown_8`/`unknown_12`: its `compileMouseCursor` writes exactly
+`{width, height, hotspotX, hotspotY, byteCount}` over a PNG decoded BGRA **bottom row
+first**, and `PrepareMouseCursor` registers it as a `mouse_cursor` resource. So the fields
+are the **hotspot** - 9,9 on both shipped 40x40 cursors, a plausible arrow tip - and they are
+no longer named by their offsets. `dtmt build` also compiles the type now (a
+`mouse_cursor = [...]` entry, the byte count derived on write); snoopymod ships
+`content/ui/cursors/snoopy_cursor`, which lands in the bundle as
+`39F37B460A54F6E8.mouse_cursor: 4 kB (4116)` - 20 + 32x32x4 exactly.
+
+Worth recording for whoever wants a *visible* custom cursor: the in-game pointer is drawn
+by a UI element as a **material**, not as this type -
+`constant_element_software_cursor_definitions.lua` names
+`content/ui/materials/cursors/cursor_idle` and `cursor_click`. The `mouse_cursor` resource
+is the engine's own cursor, so overriding the *visible* one means replacing those materials.

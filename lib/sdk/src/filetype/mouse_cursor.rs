@@ -1,12 +1,12 @@
-//! The `mouse_cursor` resource: a small bitmap with two cursor fields.
+//! The `mouse_cursor` resource: a small bitmap with a hotspot.
 //!
 //! ```text
 //! 0   u32   width
 //! 4   u32   height
-//! 8   u32   unknown_8    9 in both shipped cursors
-//! 12  u32   unknown_12   9 in both shipped cursors
-//! 16  u32   byte count   the pixel data's length
-//! 20  [u8]  the pixels, four bytes each
+//! 8   u32   hotspot_x     9 in both shipped cursors
+//! 12  u32   hotspot_y     9 in both shipped cursors
+//! 16  u32   byte count    the pixel data's length
+//! 20  [u8]  the pixels, four bytes each, BGRA, bottom row first
 //! ```
 //!
 //! Only **two** of these ship. The size word closes arithmetically - `20 + it` is
@@ -14,9 +14,13 @@
 //! exactly as `wwise_dep` does with its name length. The second relation,
 //! `byte count == width * height * 4`, holds for the sampled cursor but is *not*
 //! required: two files cannot establish it as an invariant, so the probe reports it
-//! instead. The two middle words are the ones a cursor would naturally carry - a
-//! hotspot - but that is a guess and they are named by their offsets rather than
-//! guessed at.
+//! instead.
+//!
+//! The two middle words were carried as `unknown_8`/`unknown_12` until the
+//! community runtime `darktide-simple-assets-runtime` named them: its
+//! `compileMouseCursor` writes exactly `{width, height, hotspotX, hotspotY,
+//! byteCount}` over a PNG decoded BGRA **bottom row first**. The shipped 9/9 on a
+//! 40x40 cursor is a plausible arrow tip, so the names are no longer a guess.
 //!
 //! No community tool writes this type, so the cooked-resource envelope is not
 //! accepted: a shipped variant is the bare body.
@@ -46,10 +50,10 @@ pub struct MouseCursor {
     pub width: u32,
     /// The bitmap's height in pixels.
     pub height: u32,
-    /// Unread field at offset 8.
-    pub unknown_8: u32,
-    /// Unread field at offset 12.
-    pub unknown_12: u32,
+    /// The hotspot's x, in pixels from the left.
+    pub hotspot_x: u32,
+    /// The hotspot's y, in pixels from the top.
+    pub hotspot_y: u32,
     /// The pixels, four bytes each.
     pub pixels: Vec<u8>,
 }
@@ -72,8 +76,8 @@ impl MouseCursor {
         Ok(Self {
             width: u32_at(bytes, 0),
             height: u32_at(bytes, 4),
-            unknown_8: u32_at(bytes, 8),
-            unknown_12: u32_at(bytes, 12),
+            hotspot_x: u32_at(bytes, 8),
+            hotspot_y: u32_at(bytes, 12),
             pixels: bytes[HEADER..].to_vec(),
         })
     }
@@ -83,8 +87,8 @@ impl MouseCursor {
         let mut out = Vec::with_capacity(HEADER + self.pixels.len());
         out.extend_from_slice(&self.width.to_le_bytes());
         out.extend_from_slice(&self.height.to_le_bytes());
-        out.extend_from_slice(&self.unknown_8.to_le_bytes());
-        out.extend_from_slice(&self.unknown_12.to_le_bytes());
+        out.extend_from_slice(&self.hotspot_x.to_le_bytes());
+        out.extend_from_slice(&self.hotspot_y.to_le_bytes());
         out.extend_from_slice(&(self.pixels.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.pixels);
         Ok(out)
@@ -146,8 +150,8 @@ mod test {
         let cursor = MouseCursor::from_binary(&bytes).expect("the sample parses");
         assert_eq!(cursor.width, 40);
         assert_eq!(cursor.height, 40);
-        assert_eq!(cursor.unknown_8, 9);
-        assert_eq!(cursor.unknown_12, 9);
+        assert_eq!(cursor.hotspot_x, 9);
+        assert_eq!(cursor.hotspot_y, 9);
         assert_eq!(cursor.pixels.len(), 6400);
         assert_eq!(cursor.to_binary().unwrap(), bytes, "byte-for-byte");
         // And through the SJSON a build uses.
