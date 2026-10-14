@@ -179,14 +179,14 @@ struct UnitDef {
     /// bind matrices, node indices and one index array per set. Read and dropped
     /// before, so a skinned unit was refused outright.
     #[serde(default)]
-    skins_raw: Option<String>,
+    skins: Option<Skins>,
     /// The simple-animation blob verbatim (`stingray::SimpleAnimation`).
     #[serde(default)]
     simple_animation: Option<String>,
     /// The simple-animation group list verbatim (`u32` count then
     /// `{IdString32 name, u32 array}` records).
     #[serde(default)]
-    animation_groups_raw: Option<String>,
+    animation_groups: Option<AnimationGroups>,
     /// The actor sections verbatim: the actor list, the second actor list and the
     /// unknown `u32` list beside them.
     #[serde(default)]
@@ -1109,6 +1109,77 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// One `SkinData` record, from `bitsquid-blender-tools`' `stingray/skin_data.py`:
+/// the inverse bind matrices, the joint node indices, and one index array per matrix
+/// set. The walk used to skip exactly these before carrying the section as hex.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkinData {
+    /// The inverse bind matrices, sixteen floats each.
+    inv_bind_matrices: Vec<[f32; 16]>,
+    node_indices: Vec<u32>,
+    matrix_index_sets: Vec<Vec<u32>>,
+}
+
+/// The skin records a unit carries.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Skins {
+    records: Vec<SkinData>,
+}
+
+/// One simple-animation group: an `IdString32` name and a `u32` array.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnimationGroup {
+    name: u32,
+    data: Vec<u32>,
+}
+
+/// The simple-animation groups a unit carries.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnimationGroups {
+    groups: Vec<AnimationGroup>,
+}
+
+fn read_skin(reader: &mut Reader) -> Result<SkinData> {
+    let count = reader.u32()? as usize;
+    let mut inv_bind_matrices = Vec::with_capacity(count.min(4096));
+    for _ in 0..count {
+        let mut matrix = [0.0f32; 16];
+        for value in &mut matrix {
+            *value = reader.f32()?;
+        }
+        inv_bind_matrices.push(matrix);
+    }
+    let node_indices = reader.u32_array()?;
+    let sets = reader.u32()?;
+    let mut matrix_index_sets = Vec::with_capacity((sets as usize).min(4096));
+    for _ in 0..sets {
+        matrix_index_sets.push(reader.u32_array()?);
+    }
+    Ok(SkinData {
+        inv_bind_matrices,
+        node_indices,
+        matrix_index_sets,
+    })
+}
+
+fn write_skin(w: &mut Writer, skin: &SkinData) {
+    w.u32(skin.inv_bind_matrices.len() as u32);
+    for matrix in &skin.inv_bind_matrices {
+        for value in matrix {
+            w.f32(*value);
+        }
+    }
+    w.u32_array(&skin.node_indices);
+    w.u32(skin.matrix_index_sets.len() as u32);
+    for set in &skin.matrix_index_sets {
+        w.u32_array(set);
+    }
+}
+
 /// One `CameraDT` record, from `bitsquid-blender-tools`' `stingray/camera.py`: a
 /// name, a word, two ranges, two floats, two `u16`s and a word. That is **32 bytes**,
 /// which is exactly the stride the walk used to skip.
@@ -1949,11 +2020,11 @@ struct UnitBlobs {
     /// objects; a decompiled unit carries it, an authored one writes an empty one.
     device_blob: Option<String>,
     /// The skin section verbatim.
-    skins_raw: Option<String>,
+    skins: Option<Skins>,
     /// The simple-animation blob verbatim.
     simple_animation: Option<String>,
     /// The simple-animation group list verbatim.
-    animation_groups_raw: Option<String>,
+    animation_groups: Option<AnimationGroups>,
     /// The actor sections verbatim.
     actors: Option<Actors>,
     /// The camera and light lists verbatim.
@@ -2037,14 +2108,17 @@ fn unit_sjson(
     if let Some(data) = &blobs.device_blob {
         text.push_str(&format!("device_blob = \"{data}\"\n"));
     }
-    if let Some(data) = &blobs.skins_raw {
-        text.push_str(&format!("skins_raw = \"{data}\"\n"));
+    if let Some(skins) = &blobs.skins {
+        text.push_str(&format!("skins = {{\n{}}}\n", serde_sjson::to_string(skins)?));
     }
     if let Some(data) = &blobs.simple_animation {
         text.push_str(&format!("simple_animation = \"{data}\"\n"));
     }
-    if let Some(data) = &blobs.animation_groups_raw {
-        text.push_str(&format!("animation_groups_raw = \"{data}\"\n"));
+    if let Some(groups) = &blobs.animation_groups {
+        text.push_str(&format!(
+            "animation_groups = {{\n{}}}\n",
+            serde_sjson::to_string(groups)?
+        ));
     }
     if let Some(actors) = &blobs.actors {
         // The serialiser writes a nested struct without braces, so they are added
@@ -2337,31 +2411,31 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     for _ in 0..reader.u32()? {
         geometries.push(parse_mesh_geometry(&mut reader)?);
     }
-    // Skins, the simple-animation blob and its groups. All three are fully
-    // length-prefixed - `bitsquid-blender-tools`' `stingray/unit/dt.py` gives the
-    // shapes (`SkinData` is inverse bind matrices, node indices, then one index
-    // array per set; a group is an `IdString32` name and a `u32` array) - so a
-    // decompiled payload carries them verbatim instead of refusing the unit.
-    let skins_start = reader.at;
-    let skins = reader.u32()?;
-    for _ in 0..skins {
-        let matrices = reader.u32()? as usize;
-        reader.skip(matrices * 64)?;
-        reader.u32_array()?;
-        let sets = reader.u32()?;
-        for _ in 0..sets {
-            reader.u32_array()?;
-        }
+    // Skins and the animation groups are read now rather than walked and carried:
+    // `bitsquid-blender-tools`' `stingray/skin_data.py` gives a `SkinData` - inverse
+    // bind matrices, node indices and one index array per set - and `simple_animation.py`
+    // gives a group as an `IdString32` name and a `u32` array. The simple-animation
+    // blob between them stays a blob, which is what the reference does with it too.
+    let skin_count = reader.u32()?;
+    let mut skin_list = Vec::with_capacity((skin_count as usize).min(4096));
+    for _ in 0..skin_count {
+        skin_list.push(read_skin(&mut reader)?);
     }
-    let skins_raw = reader.data[skins_start..reader.at].to_vec();
+    let skins = (!skin_list.is_empty()).then_some(Skins {
+        records: skin_list,
+    });
     let simple_animation = reader.byte_array()?;
-    let groups_start = reader.at;
-    let groups = reader.u32()?;
-    for _ in 0..groups {
-        reader.u32()?; // the group's name, an `IdString32`
-        reader.u32_array()?;
+    let group_count = reader.u32()?;
+    let mut group_list = Vec::with_capacity((group_count as usize).min(4096));
+    for _ in 0..group_count {
+        group_list.push(AnimationGroup {
+            name: reader.u32()?,
+            data: reader.u32_array()?,
+        });
     }
-    let animation_groups_raw = reader.data[groups_start..reader.at].to_vec();
+    let animation_groups = (!group_list.is_empty()).then_some(AnimationGroups {
+        groups: group_list,
+    });
     let scene_graph = parse_scene_graph(&mut reader)?;
     let meshes = parse_mesh_objects(&mut reader)?;
     // Actors, and the second actor list and unknown list beside them. An actor is
@@ -2483,9 +2557,9 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         animation_bones: animation_bones.then_some(true),
         lod_raw: (!lod_raw.is_empty()).then(|| hex_encode(&lod_raw)),
         device_blob: (!device_blob.is_empty()).then(|| hex_encode(&device_blob)),
-        skins_raw: (skins > 0).then(|| hex_encode(&skins_raw)),
+        skins,
         simple_animation: (!simple_animation.is_empty()).then(|| hex_encode(&simple_animation)),
-        animation_groups_raw: (groups > 0).then(|| hex_encode(&animation_groups_raw)),
+        animation_groups,
         actors: {
             let keep = actor_count > 0 || actors_2 > 0 || !actors.unknown.is_empty();
             keep.then_some(actors)
@@ -2698,22 +2772,32 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         write_mesh_geometry(&mut w, geometry, &slot_ids)?;
     }
 
-    // Skins, simple animation and groups. A decompiled unit carries each section
-    // verbatim; an authored one writes them empty.
-    if let Some(hex) = &def.skins_raw {
-        w.bytes(&hex_decode(hex)?);
-    } else {
-        w.u32(0);
+    // Skins, the simple-animation blob and the groups. The skins and the groups are
+    // written from what was read; the blob between them is written verbatim, as the
+    // reference leaves it opaque too.
+    match &def.skins {
+        Some(skins) => {
+            w.u32(skins.records.len() as u32);
+            for skin in &skins.records {
+                write_skin(&mut w, skin);
+            }
+        }
+        None => w.u32(0),
     }
     if let Some(hex) = &def.simple_animation {
         w.byte_array(&hex_decode(hex)?);
     } else {
         w.byte_array(&[]);
     }
-    if let Some(hex) = &def.animation_groups_raw {
-        w.bytes(&hex_decode(hex)?);
-    } else {
-        w.u32(0);
+    match &def.animation_groups {
+        Some(groups) => {
+            w.u32(groups.groups.len() as u32);
+            for group in &groups.groups {
+                w.u32(group.name);
+                w.u32_array(&group.data);
+            }
+        }
+        None => w.u32(0),
     }
 
     // Scene graph: local TRS per node, then world matrices, then parents, then names.
