@@ -282,7 +282,7 @@ mod test {
         };
 
         let from_texture = source(Some("a/texture"), None)
-            .compile(IdString64::from("cursors/test"), Some(&image))
+            .compile(IdString64::from("cursors/test".to_string()), Some(&image))
             .expect("the image compiles");
         // The same cursor written out: BGRA, bottom row first.
         let written = source(

@@ -357,3 +357,41 @@ and the cursor source names it.
 
 Verified in game: `Window.set_cursor("content/ui/cursors/link_select")` renders that cursor,
 with the mod printing `cursor 'content/ui/cursors/link_select' set`.
+
+## Wwise: what is left, and the VT2 source reference (2026-10-14)
+
+Five types are recognised and none is *decoded*: `wwise_bank` (a `.bnk`), `wwise_dep`,
+`wwise_event`, `wwise_metadata` and `wwise_stream` (an `.ogg`). Handling them as opaque blobs
+already lets a mod replace a bank or a stream wholesale, so this is a decoding gap, not a
+shipping one - but it is the one sound workstream left.
+
+**Solved so far.** `wwise_dep` is read, written and round-tripped: `u32 version` (29 in every
+sample, so it is a constant rather than a size), `u32 length` (the bank path's length
+*including* its NUL) and then that path - `29, 21, "wwise/world_sound_fx\0"`. And
+`wwise_event` is **not** a small engine structure: probing 300 bundles found 606 of them, each
+beginning `1d 00 00 00` (version 29 again) and then the bytes `42 4b 48 44` = `BKHD`, Wwise's
+bank-header chunk - so an event resource *embeds a bank*.
+
+**The VT2 source reference** is a mod that ships all four, and its *sources* are readable where
+Darktide's are cooked:
+
+    C:\dev\vmb\mods\CustomCursors\wwise\mods\CustomCursors\
+      project.wwise_metadata          327 B   text:  aux_buses = [] / banks = { YoshiTongue = { ... events = [ ... ] } }
+      YoshiTongue.wwise_bank        35635 B   binary: u32 1, "win32" padded, then BKHD... (the raw bank)
+      YoshiTongue.wwise_bank_metadata  21 B   text:  events = [ "mlem" ]
+      YoshiTongue.wwise_dep           130 B   text:  win32 = { banks = [ "wwise/mods/CustomCursors/YoshiTongue" ... ] }
+
+That answers what the three unresolved types are *for*, at least in the VT2 pipeline:
+
+- a **bank** source is a small wrapper - a version word and a platform tag - around the raw
+  Wwise bank, so a `.bnk` stays opaque and only the wrapper is Stingray's;
+- a **bank metadata** source names the *events* a bank provides (`events = [ "mlem" ]`), which
+  is the same fact Darktide's `wwise_event` embeds as a whole bank - so the two games moved
+  the same information into different types;
+- a **dep** source is a per-platform bank list, cooked into the `{version, length, path}` form
+  that Darktide ships, which is why the shipped dep carries exactly one path.
+
+**Next.** (1) read the Darktide `wwise_event` wrapper around its embedded `BKHD` - the header
+between the version word and the chunk - and see whether it is the same wrapper VT2's bank
+source carries; (2) decode `wwise_metadata` (a shipped type with zero instances, so its only
+reference is this VT2 shape); (3) leave the `.bnk` and the `.ogg` opaque, as Wwise's own.
