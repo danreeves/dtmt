@@ -154,6 +154,10 @@ pub struct Visualizer {
     pub kind: String,
     /// The record bytes after the type word, hex.
     pub data: String,
+    /// A readable view of the record's leading fields, for the types the reference
+    /// gives them. The record itself stays authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<indexmap::IndexMap<String, FieldValue>>,
 }
 
 /// The visualizer type names, in the community's `kVisualizers` order plus gpu.
@@ -728,6 +732,39 @@ fn describe_initializer(
     Some(describe_fields(layout, names, operand))
 }
 
+/// The reference's visualizer layouts that begin at the record's own start, with
+/// their field names. The fields it places by payload offset (`field_e8`,
+/// `billboard`'s block at 0x1c) need those pads resolved first, and the channel block
+/// and writers tail that follow the fields are their own job.
+pub const VISUALIZER_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[(
+    "light",
+    &[
+        InitializerField::U32,
+        InitializerField::U32,
+        InitializerField::F32,
+        InitializerField::F32,
+        InitializerField::F32,
+        InitializerField::F32,
+        InitializerField::F32,
+    ],
+    &[
+        "light_type",
+        "flags",
+        "falloff_start",
+        "falloff_end",
+        "spot_angle_start",
+        "spot_angle_end",
+        "volumetric_intensity",
+    ],
+)];
+
+/// A readable view of a visualizer's record, for the types whose leading fields the
+/// reference gives.
+fn describe_visualizer(kind: &str, data: &[u8]) -> Option<indexmap::IndexMap<String, FieldValue>> {
+    let (_, layout, names) = VISUALIZER_FIELDS.iter().find(|(name, _, _)| *name == kind)?;
+    Some(describe_fields(layout, names, data))
+}
+
 /// A readable view of a simulator's data, when the reference gives its op a layout
 /// this reader models.
 fn describe_simulator(kind: &str, data: &[u8]) -> Option<indexmap::IndexMap<String, FieldValue>> {
@@ -1018,9 +1055,12 @@ impl System {
             let body = bytes
                 .get(vis + 4..vis + 4 + size)
                 .ok_or_else(|| color_eyre::eyre::eyre!("a visualizer runs past the system"))?;
+            let kind = VISUALIZERS[kind].to_string();
+            let fields = describe_visualizer(&kind, body);
             visualizer_list.push(Visualizer {
-                kind: VISUALIZERS[kind].to_string(),
+                kind,
                 data: hex(body),
+                fields,
             });
             vis += 4 + size;
         }
