@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod bones;
 pub mod condition;
 pub mod condition_tree;
