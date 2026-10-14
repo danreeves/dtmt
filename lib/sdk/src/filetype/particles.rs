@@ -981,16 +981,30 @@ impl System {
                 .get(op)
                 .ok_or_else(|| color_eyre::eyre::eyre!("unknown simulator op {op}"))?
                 .to_string();
-            // The op's fields sit at its offset into the system's data block.
-            let fields = describe_simulator(
-                &kind,
-                bytes.get(data + offset as usize..).unwrap_or(&[]),
-            );
             simulator_list.push(Simulator {
                 kind,
                 offset,
-                fields,
+                // Filled below, once every offset is known, so the span bounds it.
+                fields: None,
             });
+        }
+
+        // A simulator's data runs from its offset to the next one (or the end of the
+        // block): the layouts name a leading prefix, and bounding each slice by its
+        // span is what stops a layout reading the next simulator's bytes.
+        let mut offsets: Vec<usize> = simulator_list.iter().map(|s| s.offset as usize).collect();
+        offsets.sort_unstable();
+        let block_len = visualizer_at.saturating_sub(data);
+        for simulator in simulator_list.iter_mut() {
+            let start = simulator.offset as usize;
+            let end = offsets
+                .iter()
+                .copied()
+                .find(|offset| *offset > start)
+                .unwrap_or(block_len)
+                .min(block_len);
+            let span = bytes.get(data + start..data + end).unwrap_or(&[]);
+            simulator.fields = describe_simulator(&simulator.kind, span);
         }
 
         let mut visualizer_list = Vec::with_capacity(visualizers as usize);
