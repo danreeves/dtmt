@@ -21,3 +21,4 @@ pub mod slug;
 pub mod strings;
 pub mod texture;
 pub mod unit;
+pub mod wwise;

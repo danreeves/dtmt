@@ -385,6 +385,8 @@ impl BundleFile {
             }
             BundleFileType::Bones => crate::filetype::bones::compile(name, sjson.as_ref())
                 .wrap_err("Failed to compile Bones file"),
+            BundleFileType::WwiseDep => crate::filetype::wwise::compile(name, sjson.as_ref())
+                .wrap_err("Failed to compile Wwise dependency file"),
             BundleFileType::Particles => {
                 crate::filetype::particles::compile(name, sjson.as_ref())
                     .wrap_err("Failed to compile Particles file")
@@ -497,6 +499,9 @@ impl BundleFile {
                 BundleFileType::Lua => lua::decompile(ctx, data).await,
                 BundleFileType::Bones => {
                     crate::filetype::bones::decompile(ctx, std::slice::from_ref(variant))
+                }
+                BundleFileType::WwiseDep => {
+                    crate::filetype::wwise::decompile(ctx, std::slice::from_ref(variant))
                 }
                 BundleFileType::Particles => {
                     crate::filetype::particles::decompile(ctx, std::slice::from_ref(variant))
