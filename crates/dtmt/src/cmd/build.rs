@@ -677,6 +677,36 @@ fn apply_name_override(name_overrides: &HashMap<String, String>, name: String) -
     }
 }
 
+/// The decoded image behind a texture resource: the PNG its `.texture` source
+/// names, or a PNG beside the texture's own name. A `.dds` source is refused
+/// with a message rather than mis-read - there is no DDS pixel decoder yet.
+async fn read_texture_image(root: &std::path::Path, texture: &str) -> Result<sdk::png::Image> {
+    let source_path = root.join(format!("{texture}.texture"));
+    let image_name = match fs::read_to_string(&source_path).await {
+        Ok(text) => texture_image_name(&text).unwrap_or_else(|| texture.to_string()),
+        Err(_) => texture.to_string(),
+    };
+
+    let png_path = root.join(format!("{image_name}.png"));
+    let bytes = fs::read(&png_path).await.wrap_err_with(|| {
+        format!(
+            "cursor texture '{texture}' has no PNG at '{}'; a .dds source needs a DDS pixel \
+             decoder, which this build does not have",
+            png_path.display()
+        )
+    })?;
+
+    sdk::png::decode(&bytes)
+        .wrap_err_with(|| format!("Failed to decode the PNG '{}'", png_path.display()))
+}
+
+/// The `input.filename` a texture source names, if it has one.
+fn texture_image_name(text: &str) -> Option<String> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("filename = "))
+        .map(|value| value.trim().trim_matches('"').to_string())
+}
+
 /// Iterate over the paths in the given `Package` and
 /// compile each file by its file type.
 #[tracing::instrument(skip_all)]
@@ -734,16 +764,25 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
             }
 
             // A `.mouse_cursor` is compiled from its SJSON: the size, the
-            // hotspot and the pixels, with the byte count derived on write.
+            // hotspot and the pixels, with the byte count derived on write. A
+            // source that names a texture instead takes both the pixels and the
+            // size from that texture's image - a PNG, so a project can keep PNG
+            // sources in its repository rather than a binary image.
             if file_type == BundleFileType::MouseCursor {
                 let cursor_sjson = fs::read_to_string(&path)
                     .await
                     .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
+                let source =
+                    sdk::filetype::mouse_cursor::MouseCursorSource::from_sjson(&cursor_sjson)?;
+                let image = match &source.texture {
+                    Some(texture) => Some(read_texture_image((&**root).as_path(), texture).await?),
+                    None => None,
+                };
                 let name = apply_name_override(
                     name_overrides,
                     path.with_extension("").to_slash_lossy().to_string(),
                 );
-                return sdk::filetype::mouse_cursor::compile(name, &cursor_sjson);
+                return source.compile(name, image.as_ref());
             }
 
             // A `slug` is a compiled font and is not authored here: the Slug

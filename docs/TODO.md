@@ -325,3 +325,35 @@ made of **materials** - `content/ui/materials/cursors/cursor_idle` and `cursor_c
 engine's own cursor, which is the window's and so is not in a `PrintWindow` capture. A mod
 that wants the pointer visibly changed overrides those two materials; this resource is the
 one the engine uses.
+
+### A PNG reader, and cursors that name a texture (2026-10-14)
+
+**A PNG source, with no new dependency.** `lib/sdk/src/png.rs` reads what a source image
+needs - 8-bit greyscale, RGB, greyscale+alpha, RGBA and palette with `tRNS`, non-interlaced,
+and all five row filters - and refuses anything else by name rather than decoding it wrongly.
+The inflation is `flate2`, which the texture reader already used, so the crate list does not
+change. Output is tightly packed RGBA.
+
+**A `mouse_cursor` source may name a texture instead of carrying pixels.** The authored form
+the game's own tooling uses is one line:
+
+    texture = "textures/mods/CustomCursors/Yoshi"
+
+`MouseCursorSource` accepts that, and the *size comes from the image* rather than being
+repeated - which is what the fields are for: `width`/`height`/`hotspot_x`/`hotspot_y`/`pixels`
+are still written out for the embedded form, and `hotspot_x`/`hotspot_y` are read for both.
+`dtmt build` resolves the name to the PNG its `.texture` source's `input.filename` points at
+(so a project keeps PNGs, not DDS), decodes it, and writes the engine's own layout: **BGRA,
+bottom row first**, with the byte count derived. A `.dds` source is refused with a message,
+because there is still no DDS *pixel* decoder - only the header work.
+
+Verified: a 32x32 PNG and the same pixels written out both cook to `20 + 32*32*4 = 4116`, and
+a test pins the row order and the channel order (`a_texture_backed_cursor_matches_the_written_pixels`).
+
+**Converting a Windows `.cur`.** `LINK SELECT.cur` is `{reserved, type 2, count}` then one
+16-byte directory entry - 32x32, **hotspot (0,0)**, 4264 bytes at offset 22 - then a 32-bit
+BMP/DIB. The hotspot and the size are the two things to carry over; the image becomes a PNG
+and the cursor source names it.
+
+Verified in game: `Window.set_cursor("content/ui/cursors/link_select")` renders that cursor,
+with the mod printing `cursor 'content/ui/cursors/link_select' set`.

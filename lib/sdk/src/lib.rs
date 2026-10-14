@@ -5,6 +5,7 @@ mod bundle;
 mod context;
 pub mod filetype;
 pub mod murmur;
+pub mod png;
 
 pub use binary::{FromBinary, ToBinary};
 pub use bundle::database::BundleDatabase;
