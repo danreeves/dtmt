@@ -3848,15 +3848,22 @@ section header, with `count` constant at **73 records**. Good `{240, 64, 73}`, b
 
 And 240 is exactly the **derived material table's extent**: the last derived variable sits at 224
 with size 16 (`build.rs` names the table: the engine's matrices at 32/96/160, the declaration's own
-from 224), while **1792 is the compiled `c_per_object`'s size** - the very pair this build already
-*warns* about:
+from 224).
 
-    the derived material table is 240 bytes; the compiled c_per_object is 1792
+**The first guess at 1792 was wrong, and the build itself says so.** The mismatch warning this
+section should have produced does fire - but for the other material:
 
-So the smoking gun is a warning where it needs to be an error, and the section carries the compiled
-flat-array total where the derived layout belongs - the reconstructed source declares `c_per_object`
-as a flat array, and its reflection gives the array's total rather than the layout the engine reads,
-which `build.rs` states in as many words.
+    the derived material table is 200 bytes; the compiled c_per_object is 416
 
-Next: find where a declaration-only material's template is fetched from, and why that fetch yields
-the compiled total. `DTMT_MID_PROBE` is left in place as the instrument.
+That is `standard_base`'s pair, and it is the *only* warning the build logs. So for
+`ui_default_base` the derived extent and the compiled `c_per_object` **agree at 240**, and 1792 is
+neither of them: not the derived extent, not the compiled size, and not one of the engine's cbuffer
+sizes (16, 192, 256, 304, 320, 336, 400, 416).
+
+What is left is a strong arithmetic lead: **1792 = 1776 + 16**, and 1776 is exactly the pixel stage's
+`global_viewport` extent in the mod's own source - two pads, three matrices and `float4 _global[97]`,
+`32 + 192 + 1552`. So a `global_viewport` field looks like it is leaking into the rows whose extent
+`derived_mid` turns into `prefix` (`align16` of the rows' extent), which would also explain a header
+whose first word is that extent and whose record count (73) is unchanged. That is the next thing to
+measure, together with where a declaration-only material's template is fetched from.
+`DTMT_MID_PROBE` is left in place as the instrument.
