@@ -45,6 +45,7 @@ fn main() -> color_eyre::Result<()> {
     let mut names: BTreeMap<String, usize> = BTreeMap::new();
     let mut shapes: BTreeMap<String, usize> = BTreeMap::new();
     let mut word_counts: BTreeMap<usize, usize> = BTreeMap::new();
+    let mut shown = 0usize;
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else {
@@ -60,9 +61,27 @@ fn main() -> color_eyre::Result<()> {
             }
             found += 1;
             let data = file.variants()[0].data();
+            let data = file.variants()[0].data();
             let theme = match Theme::from_binary(data) {
                 Ok(theme) => theme,
                 Err(e) => {
+                    if shown < 3 {
+                        shown += 1;
+                        let head: Vec<u32> = (0..(data.len() / 4).min(12))
+                            .map(|i| u32::from_le_bytes(data[i * 4..i * 4 + 4].try_into().unwrap()))
+                            .collect();
+                        let tail: Vec<String> = data[data.len().saturating_sub(48)..]
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect();
+                        println!(
+                            "DIAG {}  {} B  head {:?}",
+                            file.base_name().display(),
+                            data.len(),
+                            head
+                        );
+                        println!("     tail {}", tail.join(" "));
+                    }
                     *reasons.entry(e.to_string()).or_default() += 1;
                     continue;
                 }
