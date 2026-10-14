@@ -203,3 +203,31 @@ The remaining unknown for the simulator table is `STATE` / `SELF`: `STATE` is th
 per-op runtime scratch the reference's spec records as its `state` field
 (`rate_emitter` 12, `burst_emitter` 8, `local_space` 0x44, ...), and `SELF` is a
 self-reference. Those few ops stay on the opaque data block until they are settled.
+## Visualizers
+
+Their records are the last opaque part, and they differ structurally from the
+initializers and simulators - which is why they are not just another row in the same
+table. The reference keeps four specs in `kVisualizers`, plus a `gpu_layout()`:
+
+| visualizer | channel block at | fields before it | fields after it |
+|---|---|---|---|
+| `billboard` | `0x1c` | hash, material, sort, mode | - |
+| `light` | `0x00` | - | light_type, flags, falloff/spot angles, volumetric_intensity |
+| `mesh` | `0x20` | unit, material_count, ..., flag_1c | - |
+| `ribbon` | `0x18` | hash, material, field_14 | - |
+
+Three things make this harder than the earlier slices:
+
+- the `before` / `after` fields are addressed by **payload-absolute offsets**
+  (`field_08`, `field_1c`, `field_f8`), so a sequential walker needs the `PAD(n)`
+  entries the reference itself uses, computed from those offsets, rather than a plain
+  field list;
+- between them sits a **block of up to 10 vertex channels** - `kVertexTypeSize` is
+  `{4, 8, 12, 16, 4}` for `float1`..`ubyte4` - followed by the vertex stride;
+- after the payload size come the **writer list** (and, for a mesh, material
+  entries), which is a variable-length tail.
+
+So a visualizer wants the same three-part shape as the reference (`before`,
+channels, `after`) plus a tail, not the flat layout the initializers and simulators
+use. The widths needed to compute the pads are already known - `kCurve` 0x54, and
+`kSizeAt = {0xf4, 0xf8, 0xf8, 0xf0, 0xa0}` for the payload sizes by type.
