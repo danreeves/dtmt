@@ -179,3 +179,11 @@ it reproduces the bytes for **every** fixed layout. The authored `data` remains 
 fallback for an op with no layout and for `spline_control_points`, whose block is
 opaque to the view (it emits only the size). So a `max = 2` can now be edited to
 `max = 5` and compiled - the effect is editable, not just readable.
+**Validated at scale (2026-10-14).** `examples/particles_probe.rs` decompiles every
+effect in a bundle (or a directory of them), recompiles it and compares the bytes.
+Over **400 bundles it finds 150 effects and all 150 are byte-identical**, in about
+eight seconds. Because the compile path now prefers `fields`, those 150 had their
+operands rebuilt by `encode_initializer` from the typed view and the ported layouts -
+so the layouts, the names and the encoder are validated *together* on real data, not
+just by the table-driven test. It is cheap enough to re-run, so it is the regression
+guard for the simulator and visualizer work that follows.
