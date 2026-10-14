@@ -301,6 +301,153 @@ fn name_hash(text: &str) -> Result<u32> {
 
 /// The operand size of an initializer, from its op (the variable ops read a
 /// count out of the operand).
+/// The operand fields of one initializer, from the community compiler's
+/// declarative spec (`particles_resource.cpp`'s `initializer_specs`): a channel
+/// reference, a scalar, a three-float vector, or a fixed byte block. The names
+/// are the reference's, and the *order and widths* are checked against
+/// `INITIALIZER_SIZES` - the table the reader already uses and the shipped
+/// round-trips already validate - by the test below.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InitializerField {
+    /// A channel reference, `CH` in the reference.
+    Channel,
+    /// An unsigned `u32`.
+    U32,
+    /// A signed `i32`.
+    I32,
+    /// A float.
+    F32,
+    /// Three floats.
+    Vec3,
+    /// A fixed block of bytes.
+    Bytes(usize),
+}
+
+impl InitializerField {
+    fn size(self) -> usize {
+        match self {
+            Self::Channel | Self::U32 | Self::I32 | Self::F32 => 4,
+            Self::Vec3 => 12,
+            Self::Bytes(size) => size,
+        }
+    }
+}
+
+/// The initializer operand layouts in opcode order. The three variable-length
+/// ops (`position_mesh`, `position_mesh_skinned`, `vector_language_program`) are
+/// empty, since the reader sizes those from their own contents.
+pub const INITIALIZER_LAYOUTS: &[(&str, &[InitializerField])] = &[
+    ("zero", &[InitializerField::Channel, InitializerField::U32]),
+    (
+        "random_float",
+        &[InitializerField::Channel, InitializerField::F32, InitializerField::F32],
+    ),
+    (
+        "velocity_cone",
+        &[
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::Vec3,
+        ],
+    ),
+    (
+        "position_sphere",
+        &[InitializerField::Channel, InitializerField::F32, InitializerField::F32],
+    ),
+    (
+        "position_box",
+        &[InitializerField::Channel, InitializerField::Vec3, InitializerField::Vec3],
+    ),
+    (
+        "random_int",
+        &[InitializerField::Channel, InitializerField::I32, InitializerField::I32],
+    ),
+    ("zero_velocity", &[InitializerField::Channel]),
+    (
+        "copy",
+        &[InitializerField::Channel, InitializerField::Channel, InitializerField::U32],
+    ),
+    (
+        "velocity_box",
+        &[InitializerField::Channel, InitializerField::Vec3, InitializerField::Vec3],
+    ),
+    (
+        "normal_box",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Vec3,
+            InitializerField::Vec3,
+        ],
+    ),
+    (
+        "tangent_box",
+        &[InitializerField::Channel, InitializerField::Vec3, InitializerField::Vec3],
+    ),
+    (
+        "position_cylinder",
+        &[
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::I32,
+            InitializerField::I32,
+            InitializerField::I32,
+        ],
+    ),
+    (
+        "velocity_cylinder",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+        ],
+    ),
+    ("position_mesh", &[]),
+    ("position_mesh_skinned", &[]),
+    ("float", &[InitializerField::Channel, InitializerField::F32]),
+    ("vector", &[InitializerField::Channel, InitializerField::Vec3]),
+    ("vector_language_program", &[]),
+    ("leap_number", &[InitializerField::Channel]),
+    ("initializer_13", &[InitializerField::Channel]),
+    ("spline_control_points", &[InitializerField::Bytes(0x40)]),
+    (
+        "multiply_by_variable",
+        &[
+            InitializerField::Channel,
+            InitializerField::U32,
+            InitializerField::U32,
+        ],
+    ),
+    (
+        "rotation_align_to_local",
+        &[InitializerField::Channel, InitializerField::Channel],
+    ),
+    (
+        "runtime_position_mesh",
+        &[
+            InitializerField::Channel,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+            InitializerField::F32,
+        ],
+    ),
+    ("initializer_18", &[InitializerField::Channel]),
+];
+
 fn initializer_size(op: usize, bytes: &[u8], at: usize) -> Result<usize> {
     match op {
         0x0d => Ok(0x18 + 24 * u32_at(bytes, at + 0x14)? as usize),
@@ -647,6 +794,29 @@ pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// The ported initializer layouts must agree with `INITIALIZER_SIZES` - the
+    /// table the reader walks and the byte-identical shipped round-trips already
+    /// validate - so this pins the field *order and widths* the reference gives,
+    /// independently of the field *names*.
+    #[test]
+    fn initializer_layouts_match_their_sizes() {
+        assert_eq!(INITIALIZER_LAYOUTS.len(), INITIALIZER_SIZES.len());
+        for (op, (name, fields)) in INITIALIZER_LAYOUTS.iter().enumerate() {
+            let sum: usize = fields.iter().map(|field| field.size()).sum();
+            assert_eq!(
+                sum, INITIALIZER_SIZES[op],
+                "op {op} ({name}) layout sums to {sum}"
+            );
+            // Only the three variable-length ops have an empty layout, and they
+            // are exactly the ones the size table marks with a zero.
+            assert_eq!(
+                fields.is_empty(),
+                INITIALIZER_SIZES[op] == 0,
+                "op {op} ({name})"
+            );
+        }
+    }
 
     /// One system: two channels, one `random_float` initializer.
     fn system(name: u32) -> Vec<u8> {
