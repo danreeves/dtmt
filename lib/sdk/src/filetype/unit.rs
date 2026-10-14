@@ -477,6 +477,7 @@ fn compile_stream(
         "BLENDINDICES" => 7,
         "BLENDWEIGHTS" => 8,
         "UNKNOWN" => 6,
+        "NEW_DT" => 9,
         // The compiled Darktide vertex declaration has no tangent or binormal
         // component, and shipped units do not carry them either, so streams
         // that only VT2-style sources export are skipped.
@@ -589,6 +590,23 @@ fn compile_stream(
                 component,
                 kind: 18,
                 stride: 4,
+                data: out,
+                vertices: size,
+            }))
+        }
+        // The DT-only component 9 as `SHORT4`: four signed 16-bit values, the
+        // eight-byte stride channel type 8 carries in shipped units.
+        "NEW_DT" => {
+            let mut out = Vec::with_capacity(size as usize * 8);
+            for chunk in data.chunks_exact(components) {
+                for value in &chunk[..4] {
+                    out.extend_from_slice(&(*value as i16).to_le_bytes());
+                }
+            }
+            Ok(Some(VertexFormat {
+                component,
+                kind: 8,
+                stride: 8,
                 data: out,
                 vertices: size,
             }))
@@ -983,6 +1001,21 @@ fn decode_stream(component: u32, kind: u32, data: &[u8]) -> Result<Vec<f32>> {
         (0, 2) => Ok(data
             .chunks_exact(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()),
+        // The DT-only component 9 (`VertexComponentDT::NEW_DT`) with channel type 8,
+        // which is `SHORT4`: four signed 16-bit values per element. The community
+        // reader flags type 8 as "not sure if HALF4 or SHORT4; stride 8" - and 17 is
+        // already HALF4, so the numbering settles it on SHORT4.
+        // The DT-only component 9 (`VertexComponentDT::NEW_DT`) with channel type 8,
+        // which is `SHORT4`: four signed 16-bit values per element. The community
+        // reader flags type 8 as "not sure if HALF4 or SHORT4; stride 8", and the
+        // numbering settles it - 17 is already HALF4 - which the shipped data
+        // confirms: the first element's words are `0x386c 0x389a 0x38a4 0x5b61`, and
+        // read as halves they would be `236.1`, impossible for the channel, while as
+        // shorts they are ordinary small integers.
+        (9, 8) => Ok(data
+            .chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32)
             .collect()),
         (component, kind) => bail!("Cannot decode channel component {component} type {kind}"),
     }
@@ -1621,6 +1654,8 @@ fn channel_name(component: u32) -> Result<&'static str> {
         5 => "TEXCOORD",
         7 => "BLENDINDICES",
         8 => "BLENDWEIGHTS",
+        // The DT-only component 9 (`VertexComponentDT::NEW_DT`).
+        9 => "NEW_DT",
         // The DT-only component 6 (`VertexComponentDT::UNKNOWN`).
         6 => "UNKNOWN",
         other => bail!("Cannot emit channel component {other}"),
@@ -1636,6 +1671,8 @@ fn channel_type(kind: u32) -> Result<&'static str> {
         2 => "CT_FLOAT3",
         // `ChannelTypeDT::UNKNOWN_1`: four raw bytes per element.
         18 => "CT_UBYTE4_NORM",
+        // `ChannelType::SHORT4`: four signed 16-bit values per element.
+        8 => "CT_SHORT4",
         other => bail!("Cannot emit channel type {other}"),
     })
 }
