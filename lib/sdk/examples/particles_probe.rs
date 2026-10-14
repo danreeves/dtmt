@@ -36,6 +36,10 @@ fn main() -> color_eyre::Result<()> {
     let mut identical = 0usize;
     let mut differing = 0usize;
     let mut failed = 0usize;
+    // Which visualizer types appear, and whether the view named their fields.
+    let mut visualizers: std::collections::BTreeMap<(String, bool), usize> = Default::default();
+    let mut simulators_named = 0usize;
+    let mut simulators_total = 0usize;
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else { continue };
@@ -66,6 +70,21 @@ fn main() -> color_eyre::Result<()> {
                     continue;
                 }
             };
+            if let Ok(effect) = sdk::filetype::particles::Particles::from_sjson(sjson) {
+                for system in &effect.systems {
+                    for simulator in &system.simulators {
+                        simulators_total += 1;
+                        if simulator.fields.is_some() {
+                            simulators_named += 1;
+                        }
+                    }
+                    for visualizer in &system.visualizers {
+                        *visualizers
+                            .entry((visualizer.kind.clone(), visualizer.fields.is_some()))
+                            .or_default() += 1;
+                    }
+                }
+            }
             match sdk::filetype::particles::compile(file.base_name().clone(), sjson) {
                 Ok(rebuilt) => {
                     let rebuilt = rebuilt.variants().first().map(|v| v.data()).unwrap_or(&[]);
@@ -94,5 +113,10 @@ fn main() -> color_eyre::Result<()> {
         "scanned {bundles} bundles: effects={effects} byte_identical={identical} \
          differing={differing} failed={failed}"
     );
+    println!("simulators with a named view: {simulators_named} of {simulators_total}");
+    println!("visualizers (type, fields named) -> count:");
+    for ((kind, named), count) in &visualizers {
+        println!("  {kind:12} named={named:<5} {count}");
+    }
     Ok(())
 }
