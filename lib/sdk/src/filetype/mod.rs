@@ -21,6 +21,7 @@ pub mod shader_engine_interface;
 pub mod shader_graph;
 pub mod shader_source;
 pub mod slug;
+pub mod state_machine;
 pub mod strings;
 pub mod texture;
 pub mod theme;
