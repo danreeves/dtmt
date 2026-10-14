@@ -57,11 +57,27 @@ pub struct Marker {
     pub word: u32,
 }
 
+/// One record of the index at `0x20`: a `4CC` and its two words.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SlugRecord {
+    pub tag: String,
+    /// The record's first word.
+    pub base: u32,
+    /// The record's second word.
+    pub count: u32,
+}
+
 /// A parsed `slug` font.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SlugFont {
     pub version: u32,
     pub kind: String,
+    /// The four records at `0x20`, in order. They were read and dropped before,
+    /// and they are the file's index: they are also what tells a `fnt` from an
+    /// `alb`, since a font names `HLF4` (kerning) and `16U2` (glyphs) while every
+    /// shipped `slug_album` carries `HLF4`, `COMP`, `16U2`, `COMP` and its last
+    /// `COMP` region ends exactly on the file size.
+    pub records: Vec<SlugRecord>,
     /// `HLF4`: the kerning pairs, `{u32, f32, u32, f32}` each.
     pub kerning: Vec<[f32; 4]>,
     /// `16U2`: the glyphs, each with its codepoint. The table interleaves marker
@@ -200,6 +216,14 @@ impl SlugFont {
         Ok(Self {
             version,
             kind,
+            records: records
+                .iter()
+                .map(|(tag, base, count)| SlugRecord {
+                    tag: tag.clone(),
+                    base: *base as u32,
+                    count: *count as u32,
+                })
+                .collect(),
             kerning,
             glyphs,
             markers,
@@ -289,6 +313,9 @@ mod test {
         assert_eq!(font.glyphs.len(), 1);
         assert_eq!(font.markers.len(), 1);
         assert_eq!(font.glyph_table, Some(0x1000 + 16));
+        assert_eq!(font.records.len(), 4, "the index at 0x20 is kept");
+        assert_eq!(font.records[0].tag, "HLF4");
+        assert_eq!(font.records[2].tag, "16U2");
         assert_eq!(font.glyphs[0].codepoint, 2555);
         assert_eq!(font.glyphs[0].advance, [35.0, 42.5]);
         assert_eq!(font.markers[0].glyph_box[3], 1.0);

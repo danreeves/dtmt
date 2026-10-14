@@ -540,7 +540,12 @@ impl BundleFile {
                 BundleFileType::Package => package::decompile(ctx, name.clone(), data),
                 BundleFileType::Texture => texture::decompile(ctx, name.clone(), variant).await,
                 BundleFileType::Material => material::decompile(ctx, name.clone(), variant).await,
-                BundleFileType::Slug => {
+                // A `slug_album` is the same `guls` container with the kind `alb`
+                // rather than `fnt`, so the reader takes it too. What it does *not*
+                // report is glyphs: an album's `16U2` count is 1, so the glyph-table
+                // heuristic (four plausible records in a row) never locates one, and
+                // the album's payload is the `COMP` regions.
+                BundleFileType::Slug | BundleFileType::SlugAlbum => {
                     crate::filetype::slug::decompile(ctx, std::slice::from_ref(variant))
                 }
                 _ => {
