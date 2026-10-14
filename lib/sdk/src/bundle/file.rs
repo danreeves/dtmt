@@ -219,6 +219,10 @@ pub struct BundleFile {
     name: IdString64,
     variants: Vec<BundleFileVariant>,
     props: Properties,
+    /// The file-header word between the variant count and the variant headers. It was
+    /// read and dropped, then written as a hardcoded `0`; upstream issue #3 puts the
+    /// variant index somewhere in this neighbourhood, so it is kept now.
+    header_word: u32,
 }
 
 impl BundleFile {
@@ -228,7 +232,16 @@ impl BundleFile {
             name: name.into(),
             variants: Vec::new(),
             props: Properties::empty(),
+            // What a fresh file writes where a read one keeps its own word.
+            header_word: 0,
         }
+    }
+
+    /// The file-header word kept from the payload. Upstream issue #3 suggests the
+    /// variant index lives in this neighbourhood; it used to be dropped and written
+    /// back as `0`.
+    pub fn header_word(&self) -> u32 {
+        self.header_word
     }
 
     pub fn add_variant(&mut self, variant: BundleFileVariant) {
@@ -259,7 +272,7 @@ impl BundleFile {
         let header_count = r.read_u32()? as usize;
         tracing::trace!(header_count);
         let mut headers = Vec::with_capacity(header_count);
-        r.skip_u32(0)?;
+        let header_word = r.read_u32()?;
 
         for i in 0..header_count {
             let span = tracing::debug_span!("Read file header", i);
@@ -329,6 +342,7 @@ impl BundleFile {
             file_type,
             name,
             props,
+            header_word,
         })
     }
 
@@ -341,7 +355,7 @@ impl BundleFile {
         w.write_u32(self.variants.len() as u32)?;
 
         // TODO: Figure out what this is
-        w.write_u32(0x0)?;
+        w.write_u32(self.header_word)?;
 
         for variant in self.variants.iter() {
             w.write_u32(variant.property())?;

@@ -14,6 +14,7 @@ fn main() {
         let ty = u64::from(f.file_type().hash());
         let name_hash = f.base_name().to_murmur64();
         let resolved = ctx.lookup_hash(name_hash, HashGroup::Filename);
+        let header_word = f.header_word();
         for v in f.variants() {
             // A variant indexes the bundle's `PropertyArray` (issue #3); when that
             // entry is set, it names the variant - a language, typically.
@@ -25,7 +26,7 @@ fn main() {
                 .map(|id| ctx.lookup_hash(*id, HashGroup::Other).display().to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?} dfn_len={} variant={property} ({property_name})",
+                "{ty:016x} {name_hash:016x} {} props={:08x} external={} size={} dfn={:?} dfn_len={} header_word={header_word} variant={property} ({property_name})",
                 resolved.display(),
                 f.props().bits(),
                 v.external(),
