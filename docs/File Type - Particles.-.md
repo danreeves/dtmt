@@ -187,3 +187,19 @@ operands rebuilt by `encode_initializer` from the typed view and the ported layo
 so the layouts, the names and the encoder are validated *together* on real data, not
 just by the table-driven test. It is cheap enough to re-run, so it is the regression
 guard for the simulator and visualizer work that follows.
+**Curves and gradients are fixed size.** The reference defines
+
+```cpp
+constexpr std::size_t kCurve = 0x54, kGradient = 0xa4;
+```
+
+so a `C` field is 84 bytes and a gradient 164 - which is what makes any layout
+containing one *walkable* at all: the curve's contents stay opaque, but its width is
+known, so the fields after it can still be reached and named. That is the cheapest
+way to bring in the simulator ops that were left out for carrying a curve
+(`position_integrate_scaled`, `integrate_float_scaled`, `spiral`).
+
+The remaining unknown for the simulator table is `STATE` / `SELF`: `STATE` is the
+per-op runtime scratch the reference's spec records as its `state` field
+(`rate_emitter` 12, `burst_emitter` 8, `local_space` 0x44, ...), and `SELF` is a
+self-reference. Those few ops stay on the opaque data block until they are settled.
