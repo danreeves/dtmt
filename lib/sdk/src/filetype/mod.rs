@@ -3,6 +3,7 @@ pub mod bones;
 pub mod condition;
 pub mod condition_tree;
 pub mod group_data;
+pub mod ies;
 pub mod lua;
 pub mod material;
 pub mod package;
