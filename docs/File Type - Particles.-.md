@@ -265,3 +265,19 @@ which is a better fit than "the layout disagrees with the block". It has a pract
 consequence: `describe_simulator` should be **bounded by the span**, not by the end of
 the data block, so a layout can never read the next simulator's bytes. That belongs
 with the visualizer work, which restructures this area anyway.
+**The visualizer record's size is already known.** Reading the parse shows more is
+modelled than the name suggests: it reads a size word at a per-type offset
+(`VISUALIZER_SIZE_AT`, the reference's `kSizeAt = {
+0xf4, 0xf8, 0xf8, 0xf0, 0xa0}`), slices the record body with it, and walks to the
+next record - so a visualizer's *shape* is already handled and only its *fields* are
+opaque. That makes this a smaller job than "port the visualizers".
+
+The fields are **record-relative**. `light` has no `before` fields and its `after`
+fields start at 0, so its first seven - `light_type`, `flags`, `falloff_start`,
+`falloff_end`, `spot_angle_start`, `spot_angle_end`, `volumetric_intensity` - are a
+plain 28-byte run that the existing layout machinery can name as-is. The eighth,
+`field_e8`, sits at 0xe8: the reference expresses that gap by *naming the offset*
+rather than padding, so naming it needs the pad resolved first - and the same is true
+of `billboard`'s `before`, which must reach its channel block at 0x1c. After the
+fields come the channel block (up to 10 entries, `kVertexTypeSize = {4, 8, 12, 16,
+4}`) and the writers tail.
