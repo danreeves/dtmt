@@ -3781,3 +3781,43 @@ the game bundle) before trusting it.
 - Game data: the install's `bundle/data` directory.
 - Miner output: `materials.csv`, `variables.csv`, `groups.csv`, `defaults.csv`,
   `contexts.csv`, `conditions.csv`, `tails.csv`, `known.txt`, `unknown.txt`.
+
+### The generated section differs from the deployed one in two words per record, and that crashes the game (2026-10-14)
+
+Rebuilding `snoopymod` today produces a shader section that **crashes the game** on
+the title screen, and the crash is a resource handle of zero:
+
+    Trying to bind to a slot of type '3', name '#ID[3afc636c]' using a uninitialized value 0
+    Assertion failed `value != 0 && value != 0x66666666` at
+    runtime/d3d12_render_device/shader/d3d12_resource_binder.cpp:564
+    in `stingray::d3d12_resource_binder::validate_resource_handle`
+
+**It is not the deployment.** Three routes were tried: `dtmt build --deploy --force`,
+and a full DTMM install of the packaged zip (which *does* patch the bundle database)
+both crash identically, while restoring the previously-deployed build gives
+`PUMPKIN_OK` in the same session with everything else unchanged. The mod's font
+override is exonerated too - a `.slug` is byte-passed and the crash does not move.
+
+**The diff is small, and it is a repeating record.** Both sections are 421,684 bytes
+and only **108 bytes differ**, in the same 3-byte pattern each time:
+
+    good  f0 00 00 00 | 40 00 00 00        (240, 64)
+    bad   00 07 00 00 | 00 00 00 00        (1792, 0)
+
+The first occurrence is at offset 684 and the next are **1,838 bytes apart** (684,
+2522, 4360, 6198, 8036, 9874, ...), so this is one pair of words inside a
+fixed-stride record. In every occurrence the **second word is zero in the build that
+crashes** - which is exactly what the assertion reports, `using a uninitialized value
+0` - and the first is 1,792 where the working section carries 240.
+
+So this is the concrete form of "**the resource records: names yes, index/set/binding
+not yet**" above, and it is a shipping defect rather than a curiosity: today's
+`dtmt build` produces a mod that cannot load the title screen. The next step is to
+read offset 684 in both files - what the 1,838-byte record around it holds, and which
+of the two words is the set and which the binding - and to establish whether 240/64 is
+a carried engine value that the generator is recomputing as 1,792/0.
+
+Reproduce with `docs/scripts/capture-screen.ps1` (the HWND-based harnesses get no
+window handle during boot, so they cannot photograph this surface at all), and note
+that the working section and the broken one are both preserved: the working one is
+deployed, the broken one is `out/data/4c/4cc21b79457af061`.
