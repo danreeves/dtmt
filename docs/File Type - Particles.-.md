@@ -231,3 +231,20 @@ So a visualizer wants the same three-part shape as the reference (`before`,
 channels, `after`) plus a tail, not the flat layout the initializers and simulators
 use. The widths needed to compute the pads are already known - `kCurve` 0x54, and
 `kSizeAt = {0xf4, 0xf8, 0xf8, 0xf0, 0xa0}` for the payload sizes by type.
+**The simulator offsets are an independent check on the layout sizes.** They ascend
+through the data block, so each simulator's span is the next one's offset minus its
+own. For `fire_lingering_edge` that gives:
+
+| span | bytes | against the layout |
+|---|---|---|
+| `age_age` 0 -> 8 | 8 | 8: two channels - exact |
+| `integrate_float_scaled` 204 -> 304 | 100 | 100: four channels + a curve - exact |
+| `position_integrate_scaled` 96 -> 204 | 108 | 105 + alignment |
+| `burst_emitter` 8 -> 96 | 88 | **nothing**, with a `state` of 8 |
+
+So the offsets corroborate the layouts where they can be checked - which is a second
+line of evidence beyond "the fields looked plausible". The exception is
+`burst_emitter`, whose block is far larger than its (empty) layout, suggesting its
+data carries runtime state beyond the fields. That is worth settling *before* the
+`STATE` / `SELF` ops are ported, since it is the one place where the block and the
+layout visibly disagree.
