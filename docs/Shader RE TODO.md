@@ -3913,3 +3913,36 @@ when the disk was cleared, which is why this fix went looking for them:
 
 Same screen, and `[SPACE] Next` and `READING DATA FROM DISK` are identical in both - internal controls
 that did not change - while the quote line is plainly a different typeface.
+
+### Adding a variable: a node material's `inputs` are inert (2026-10-14)
+
+Reading the derivation rather than probing it - `material_records` in `crates/dtmt/src/cmd/build.rs`
+picks the table's variables from the **graph's exports** when the material has an evaluation, and
+from the node's own `variables` only when it has none:
+
+```rust
+let variables = match evaluation {
+    Some(evaluation) => evaluation.exports...,   // a graph material
+    None            => node.variables...,        // a plain declaration
+};
+```
+
+`compile_declaration` is called with `Some(&evaluation)` whenever the node resolves to a graph, so
+for snoopymod's UI base - a `.shader_node` whose code block is empty - **adding an `inputs` entry
+changes nothing at all**. A build confirmed it: the generated section stayed byte-identical
+(`CD9854D69AC9A5B7`, 421,684 B). The `base_color` input it already declares is likewise *not* in the
+table: the UI base's 240-byte table is its texture slots plus the engine's three matrices and no
+declaration variable.
+
+An input also only becomes a variable when it is *enabled*: `shader_node.rs` gives an input the flag
+its `type` names, or `None` when `is_required = true`, so an optional input with no flags is inert
+for a second reason.
+
+**So the next experiment must use the path the code reads**: give the material a `shader` graph whose
+exports name the new variable (the `Some(evaluation)` branch), or add it to a *plain* declaration's
+`inputs` (the `None` branch). Cloning a record into the engine data - what the "Next action" above
+proposes - is moot, because that file no longer exists.
+
+This also explains the standing note in `File Type - Material.-.md` that adding variables was
+"deployed/implemented and awaiting in-game observation": what is implemented is the *graph export*
+path, and the observation has to go through it.
