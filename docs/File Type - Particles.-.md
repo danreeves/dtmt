@@ -138,3 +138,21 @@ Order the work by the occurrence tallies above rather than by opcode:
 
 Curves (`C`) and gradients are their own sub-format inside a field, so they are
 worth doing once rather than per-op.
+**Validated on a shipped effect (2026-10-14).** `content/fx/particles/liquid_area/
+fire_lingering_edge.particles` decompiles with the readable view filled in, and the
+values are semantically right - which is the evidence the ported layout is correct,
+not merely self-consistent:
+
+```
+type = random_float
+data    = 280000009A99993F00000040
+decoded = [ "channel = 40", "f32 = 1.2", "f32 = 2" ]        # a random float's min/max
+type = random_float
+data    = 2C00000000000000DB0FC940
+decoded = [ "channel = 44", "f32 = 0", "f32 = 6.2831855" ]  # 0 .. 2*pi radians
+```
+
+The labels are the field *kinds* (`channel`, `f32`, `vec3`), not yet the reference's
+names (`min`, `max`, `radius`); taking those from `OpSpec` is the next refinement.
+`data` remains authoritative - the compiler writes it back verbatim - so the
+round-trip is untouched either way.
