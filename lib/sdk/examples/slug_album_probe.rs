@@ -20,6 +20,25 @@ fn tag(b: &[u8], at: usize) -> String {
     b[at..at + 4].iter().rev().map(|c| *c as char).collect()
 }
 
+fn dump(data: &[u8]) {
+    for row in (0..data.len().min(1024)).step_by(16) {
+        let end = (row + 16).min(data.len());
+        let bytes = &data[row..end];
+        let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        let text: String = bytes
+            .iter()
+            .map(|b| {
+                if (0x20..0x7f).contains(b) {
+                    *b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        println!("  {row:04x}  {:<47}  |{text}|", hex.join(" "));
+    }
+}
+
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
     let arg = std::env::args()
@@ -43,6 +62,9 @@ fn main() -> color_eyre::Result<()> {
     let mut slugs = 0usize;
     let mut albums = 0usize;
     let mut album_reads = 0usize;
+    // The first album is hexdumped whole: its `COMP` regions are the payload the
+    // reader does not touch, and inspecting them needs no bundle lookup.
+    let mut dumped_an_album = false;
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else {
@@ -81,6 +103,11 @@ fn main() -> color_eyre::Result<()> {
                     u32_at(data, at + 4),
                     u32_at(data, at + 8)
                 ));
+            }
+            if !dumped_an_album {
+                dumped_an_album = true;
+                println!("whole first album ({} bytes):", data.len());
+                dump(data);
             }
             let read = SlugFont::parse(data);
             match read {
