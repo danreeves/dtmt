@@ -103,21 +103,31 @@ pub struct Binding {
 #[serde(deny_unknown_fields)]
 pub struct PhysicsScene {
     /// The header's first word, 41200 in the reference's output.
+    #[serde(default)]
     pub version: u32,
     /// The header's second word.
+    #[serde(default)]
     pub unknown_1: u32,
     /// The free-joint lookup table's count; the table's offset is derived.
+    #[serde(default)]
     pub free_joint_count: u32,
     /// The header's sixteen floats, a root transform that is identity when the body
     /// poses are already in unit coordinates.
+    #[serde(default)]
     pub root_transform: [f32; 16],
     /// The first PhysX collection, hex-encoded.
+    #[serde(default)]
     pub dependencies: String,
     /// The second PhysX collection, hex-encoded.
+    #[serde(default)]
     pub objects: String,
+    #[serde(default)]
     pub bodies: Vec<Body>,
+    #[serde(default)]
     pub shapes: Vec<ShapeBinding>,
+    #[serde(default)]
     pub templates: Vec<Binding>,
+    #[serde(default)]
     pub materials: Vec<Binding>,
 }
 

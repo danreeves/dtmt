@@ -20,6 +20,7 @@ use serde::Deserialize;
 
 use crate::murmur::{IdString64, Murmur32, Murmur64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant};
+use super::physics_scene::PhysicsScene;
 
 /// The compiled unit payload begins with this version word.
 pub const UNIT_VERSION: u32 = 0x73;
@@ -145,8 +146,9 @@ struct UnitDef {
     flow: Option<String>,
     #[serde(default)]
     flow_dynamic: Option<String>,
+    /// The physics scene the unit carries, decoded rather than carried as a blob.
     #[serde(default)]
-    physics: Option<String>,
+    physics: Option<PhysicsScene>,
     /// The mesh geometry triangle-finder blob. A decompiled unit carries it; an
     /// authored one gets the compiler's four zero bytes.
     #[serde(default)]
@@ -1522,7 +1524,7 @@ struct UnitBlobs {
     animation_state_machine: Option<String>,
     /// The animation "bones" flag beside it, likewise read and dropped.
     animation_bones: Option<bool>,
-    physics: Option<String>,
+    physics: Option<PhysicsScene>,
     /// The whole LOD-object section verbatim. Its records carry fields the
     /// compiler does not model (an `unk2` hash, `unk4`/`unk5`, a stream mesh
     /// order), so a decompiled unit carries the bytes instead.
@@ -1551,7 +1553,7 @@ fn unit_sjson(
     lods: &[DecodedLod],
     default_material: u64,
     blobs: &UnitBlobs,
-) -> String {
+) -> Result<String> {
     let mut text = String::from("materials = {\n");
     for (slot, resource) in slots {
         text.push_str(&format!("\t\"#{slot:08X}\" = \"#{resource:016X}\"\n"));
@@ -1635,13 +1637,20 @@ fn unit_sjson(
     if let Some(data) = &blobs.cameras_raw {
         text.push_str(&format!("cameras_raw = \"{data}\"\n"));
     }
-    if let Some(data) = &blobs.physics {
-        text.push_str(&format!("physics = \"{data}\"\n"));
+    if let Some(scene) = &blobs.physics {
+        // A nested object rather than a blob: a decompiled unit then reads as its
+        // bodies, shapes, templates and materials, and serde parses it back.
+        // The serialiser writes a nested struct without braces, so they are added
+        // here rather than left to it.
+        text.push_str(&format!(
+            "physics = {{\n{}}}\n",
+            serde_sjson::to_string(scene)?
+        ));
     }
     if let Some(data) = &blobs.trailer {
         text.push_str(&format!("trailer = \"{data}\"\n"));
     }
-    text
+    Ok(text)
 }
 
 /// Component and channel-type names for the emitted `.bsi`, matching the
@@ -2041,12 +2050,14 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         actors_raw: (actor_count > 0 || actors_2 > 0 || !unk9.is_empty())
             .then(|| hex_encode(&actors_raw)),
         cameras_raw: (cameras > 0 || lights > 0).then(|| hex_encode(&cameras_raw)),
-        physics: (!physics.is_empty()).then(|| hex_encode(&physics)),
+        physics: (!physics.is_empty())
+            .then(|| PhysicsScene::from_binary(&physics))
+            .transpose()?,
         trailer: (trailer != default_trailer).then(|| hex_encode(&trailer)),
     };
 
     Ok((
-        unit_sjson(&slots, &meshes, &lods, default_material, &blobs),
+        unit_sjson(&slots, &meshes, &lods, default_material, &blobs)?,
         bsi_sjson(&geometries, &meshes, &scene_graph)?,
     ))
 }
@@ -2468,7 +2479,10 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
     w.byte_array(&decode_blob(&def.flow_dynamic, &[])?);
     // Mesh geometry triangle finder and physics scene data.
     w.byte_array(&decode_blob(&def.triangle_finder, &[0u8; 4])?);
-    w.byte_array(&decode_blob(&def.physics, &[])?);
+    w.byte_array(&match &def.physics {
+        Some(scene) => scene.to_binary()?,
+        None => Vec::new(),
+    });
     // Default material and the material list.
     w.u64(def.default_material.unwrap_or(0));
     w.u32(slots.len() as u32);
@@ -2819,7 +2833,8 @@ renderables = {
             &[],
             0,
             &UnitBlobs::default(),
-        );
+        )
+        .unwrap();
         assert!(
             text.contains("\"#44F4A503\" = \"#1122334455667788\""),
             "{text}"
@@ -3119,7 +3134,7 @@ renderables = {
     fn opaque_payload_sections_round_trip() {
         let unit = format!(
             "{UNIT}\ndynamic_data = \"0102030405060708\"\nflow = \"AABB\"\n\
-             flow_dynamic = \"CCDD\"\nphysics = \"EEFF\"\ntrailer = \"0A0B0C\"\n"
+             flow_dynamic = \"CCDD\"\nphysics = {{ version = 41200 }}\ntrailer = \"0A0B0C\"\n"
         );
         let name = resource_name("units/mods/test/opaque");
         let file = compile(name.clone(), &unit, BSI.as_bytes()).unwrap();
@@ -3133,7 +3148,10 @@ renderables = {
         );
         assert!(unit_text.contains("flow = \"AABB\""), "{unit_text}");
         assert!(unit_text.contains("flow_dynamic = \"CCDD\""), "{unit_text}");
-        assert!(unit_text.contains("physics = \"EEFF\""), "{unit_text}");
+        assert!(
+            unit_text.contains("physics = {") && unit_text.contains("version = 41200"),
+            "the physics scene is a nested object now, not a blob: {unit_text}"
+        );
         assert!(unit_text.contains("trailer = \"0A0B0C\""), "{unit_text}");
 
         // The decompiled pair recompiles with the opaque sections intact.

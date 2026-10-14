@@ -1,39 +1,18 @@
-//! Probe the physics scenes units carry.
+//! Probe the physics scene a unit carries, through the unit's own round trip.
 //!
-//! A unit's `physics` field is the native physics scene. This decompiles units,
-//! pulls that field out of the resulting SJSON, decodes it with
-//! `filetype::physics_scene` and re-encodes it, so the headline number is how many
-//! shipped scenes round-trip byte-for-byte.
+//! The scene is a nested object in the unit SJSON now, so the check that matters is
+//! the whole unit path rather than the scene alone: decompile a unit, recompile it
+//! from that text, and compare the payload. A scene that does not survive its SJSON
+//! spelling - or a spelling the parser does not accept - shows up here as a
+//! difference or an error.
 //!
-//! Usage: `physics_probe <bundle dir> [max bundles]`  (default 120 bundles, since
-//! decompiling units is the expensive part)
+//! Usage: `physics_probe <bundle dir> [max bundles]`
 
 use std::collections::BTreeMap;
 
-use sdk::filetype::physics_scene::PhysicsScene;
+use sdk::filetype::unit;
+use sdk::murmur::{IdString64, Murmur64};
 use sdk::{Bundle, BundleFileType, Context};
-
-/// The `physics = "<hex>"` line a decompiled unit carries.
-fn physics_hex(text: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(text);
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("physics = \"") {
-            return rest.strip_suffix('"').map(str::to_string);
-        }
-    }
-    None
-}
-
-fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok())
-        .collect()
-}
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -43,9 +22,12 @@ fn main() -> color_eyre::Result<()> {
     let limit: usize = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
-        .unwrap_or(120);
+        .unwrap_or(usize::MAX);
 
     let ctx = Context::new();
+    // The name only labels the compiled file; the payload is what is compared.
+    let name = IdString64::from(Murmur64::hash(b"units/probe/physics"));
+
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&arg)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -64,10 +46,8 @@ fn main() -> color_eyre::Result<()> {
     let mut units = 0usize;
     let mut with_physics = 0usize;
     let mut ok = 0usize;
-    let mut sjson_ok = 0usize;
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     let mut bodies = 0usize;
-    let mut shapes = 0usize;
     let mut shown = 0usize;
 
     for path in &entries {
@@ -83,49 +63,42 @@ fn main() -> color_eyre::Result<()> {
                 continue;
             }
             units += 1;
-            let Ok((unit_sjson, _bsi)) = sdk::filetype::unit::decompile(file.variants()[0].data()) else {
+            let data = file.variants()[0].data();
+            let Ok((text, bsi)) = unit::decompile(data) else {
                 continue;
             };
-            let Some(hex) = physics_hex(unit_sjson.as_bytes()) else {
+            if !text.contains("physics = {") {
                 continue;
-            };
+            }
             with_physics += 1;
-            let Some(bytes) = unhex(&hex) else {
-                *reasons.entry("the physics field is not hex".to_string()).or_default() += 1;
-                continue;
-            };
-            let scene = match PhysicsScene::from_binary(&bytes) {
-                Ok(scene) => scene,
+            bodies += text.matches("name_hash").count();
+            match unit::compile(name.clone(), &text, bsi.as_bytes()) {
+                Ok(compiled) => {
+                    if compiled.variants()[0].data() == data {
+                        ok += 1;
+                    } else {
+                        if shown < 4 {
+                            shown += 1;
+                            println!("DIFFERENT {}", file.base_name().display());
+                        }
+                        *reasons.entry("re-encoded differently".to_string()).or_default() += 1;
+                    }
+                }
                 Err(e) => {
-                    if shown < 5 {
+                    if shown < 4 {
                         shown += 1;
-                        println!("DECODE-FAIL {}  {} B  {e}", file.base_name().display(), bytes.len());
+                        println!("RECOMPILE-FAIL {}  {e}", file.base_name().display());
                     }
                     *reasons.entry(e.to_string()).or_default() += 1;
-                    continue;
                 }
-            };
-            bodies += scene.bodies.len();
-            shapes += scene.shapes.len();
-            if scene.to_binary()? == bytes {
-                ok += 1;
-            } else {
-                *reasons.entry("re-encoded differently".to_string()).or_default() += 1;
-            }
-            if scene
-                .to_sjson()
-                .and_then(|text| PhysicsScene::from_sjson(&text))
-                .and_then(|read| read.to_binary())
-                .is_ok_and(|round| round == bytes)
-            {
-                sjson_ok += 1;
             }
         }
     }
 
-    println!("physics: {with_physics} units with a physics scene, out of {units} units in {bundles} bundles");
-    println!("  {ok} byte-identical, {sjson_ok} byte-identical through SJSON");
-    println!("  {bodies} bodies, {shapes} shape bindings");
+    println!(
+        "physics: {with_physics} units carrying a scene, out of {units} units in {bundles} bundles"
+    );
+    println!("  {ok} byte-identical through the unit SJSON, {bodies} body records");
     for (reason, count) in reasons.iter().take(6) {
         println!("  {count:5}  {reason}");
     }
