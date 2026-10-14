@@ -3867,3 +3867,49 @@ What is left is a strong arithmetic lead: **1792 = 1776 + 16**, and 1776 is exac
 whose first word is that extent and whose record count (73) is unchanged. That is the next thing to
 measure, together with where a declaration-only material's template is fetched from.
 `DTMT_MID_PROBE` is left in place as the instrument.
+
+### The `between` describes the *second* table, and the UI base runs material-then-engine - fixed (2026-10-14)
+
+**The defect is fixed, and the proof is byte-exact.** The generated section now equals the
+previously-deployed working one byte for byte (`CD9854D69AC9A5B7`, 421,684 B); before the fix it
+differed in 108 bytes. The pumpkin test passes with the fix *and* with the font override deployed
+(`PUMPKIN_OK`, deployed section `CD9854D6...`), where before the same build crashed on the title
+screen in `validate_resource_handle`.
+
+The 108 bytes were the **`between`** of every UI-base group - a `{size, second, count}` header that
+the repo's own `group_parts` probe reports as a *gap*, with the count constant at 73. The working
+section carries `{240, 64, 73}`; the broken build wrote `{1792, 0, 73}`.
+
+Two measured facts give the rule:
+
+    standard:  engine_len=69  engine_size=1776  material_len=2  material_size=16
+    UI base:   engine_len=73  engine_size=1792  material_len=7  material_size=240
+
+So the working UI base value is `{material_size, 64, engine_len}` - the *material* table's extent, the
+head's per-draw total, and the *engine* table's record count - while the standard's is
+`{engine_size, 0, material count}` = `{1776, 0, 2}`. **The `between` is the *second* table's header,
+and the two families order their tables oppositely** (`GroupParts::material_first`: the UI base runs
+material-then-engine, the standard engine-then-material). `derived_between` applied the engine-first
+pair to both, which is why a UI-base group carried 1792.
+
+The per-draw total is the descriptors' own allocation - 24 bytes per constant buffer, 8 per other
+resource - and the UI base's four descriptors (`c_per_object`, `global_viewport` and two textures)
+give 24 + 24 + 8 + 8 = **64**, which is also what its head's shipped `header` word adds to the
+material table's 240 to make `0x130`. That the head is `{query, header, count, {name, flags, x, y} x
+count, ...}` - the query word *first* - is what a first attempt at this got wrong, and it is why the
+first fix produced 40 rather than 64.
+
+Two things in the note above are corrected here: the words are **not** a `derived_mid` output (that
+function runs only for the standard family, five groups in all), and 1792 is **not** the compiled
+`c_per_object` (the mismatch warning fires for `standard_base` alone, 200 vs 416).
+
+**Evidence, kept in the repository so it cannot be lost again** - the earlier screenshots were deleted
+when the disk was cleared, which is why this fix went looking for them:
+
+- `docs/evidence/font-slug-loading-comic-sans.png` - the loading screen with the mod's Comic Sans
+  `.slug` deployed: `Welcome the judgement of the Emperor`, in a rounded proportional face;
+- `docs/evidence/font-baseline-loading-shipped.png` - the same screen from a run with **no** font
+  override: `Let not thy hate be conquered by fear`, in the game's own narrow monospace face.
+
+Same screen, and `[SPACE] Next` and `READING DATA FROM DISK` are identical in both - internal controls
+that did not change - while the quote line is plainly a different typeface.

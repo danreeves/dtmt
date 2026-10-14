@@ -1210,15 +1210,6 @@ fn derived_group_mid(programs: &[StageResources], channels: &[u32]) -> Vec<u8> {
         }
     }
 
-    if std::env::var_os("DTMT_MID_PROBE").is_some() {
-        eprintln!(
-            "MIDPROBE descriptors={} x_end={} cbuffers={:?}",
-            descriptors.len(),
-            x_end,
-            cbuffers
-        );
-    }
-
     shader_engine_interface::derived_mid(
         &cbuffers,
         &shader_engine_interface::channel_records(channels),
@@ -1262,13 +1253,48 @@ fn engine_kind_flags(kind: u32) -> u32 {
     }
 }
 
-/// The engine's `between` bytes: the engine table's byte size, a zero word, and
-/// the table's count word, which [`GroupData::build`] rewrites.
-fn derived_between(engine_size: u32) -> Vec<u8> {
-    let mut out = engine_size.to_le_bytes().to_vec();
-    out.extend_from_slice(&0u32.to_le_bytes());
+/// The engine's `between` bytes: the **first** table's byte size, the second
+/// word, and the second table's count word, which [`GroupData::build`]
+/// rewrites.
+///
+/// The `between` is the *second* table's header, so which table it describes
+/// depends on the group's order - and shaders differ in it (`GroupParts`
+/// `material_first`). An engine-first group (the standard family) describes the
+/// material table: `{table_size(engine), 0, material count}`, measured
+/// `{1776, 0, 2}`. A material-first group (the UI base) describes the engine
+/// table: `{table_size(material), the head's per-draw total, engine count}`,
+/// measured `{240, 64, 73}` - 240 the material table's extent, 64 the per-draw
+/// total (`c_per_object` 24 + `global_viewport` 24 + two resources at 8 each,
+/// the same 64 the shipped head's `header` word adds to 240 to give `0x130`),
+/// 73 the engine table's record count. Writing the engine-first pair for both
+/// is what put 1792 in a UI base group.
+fn derived_between(size: u32, second: u32) -> Vec<u8> {
+    let mut out = size.to_le_bytes().to_vec();
+    out.extend_from_slice(&second.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
     out
+}
+
+/// The head's per-draw total: the sum of the descriptors' steps (24 for a
+/// constant buffer, 8 for anything else), which is what the descriptors' `x`
+/// allocates. The head is `{query, header, count, {name, flags, x, y} x count,
+/// {cbuffer count, engine record count}}` - the query word first, which is what
+/// a head that is "just the query" is.
+fn head_x_end(head: &[u8]) -> u32 {
+    let count = head
+        .get(8..12)
+        .map(|word| u32::from_le_bytes(word.try_into().unwrap()) as usize)
+        .unwrap_or(0);
+    let mut x = 0u32;
+    for index in 0..count {
+        let at = 12 + index * 16;
+        let Some(flags) = head.get(at + 4..at + 8) else {
+            break;
+        };
+        let flags = u32::from_le_bytes(flags.try_into().unwrap());
+        x += if flags & 0xFF <= 1 { 24 } else { 8 };
+    }
+    x
 }
 
 /// The engine's packed copies for a group, from its material table: one
@@ -2830,7 +2856,19 @@ impl EngineData {
                 group.head.extend_from_slice(&head);
             }
             if group.between.is_empty() && group.has_engine {
-                group.between = derived_between(engine_size);
+                // The `between` is the *second* table's header: a material-first
+                // group's is the engine table's, so it carries the material
+                // table's size and the head's per-draw total.
+                group.between = if group.material_first {
+                    let material = self
+                        .material_tables
+                        .get(index)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]);
+                    derived_between(table_size(material), head_x_end(&group.head))
+                } else {
+                    derived_between(engine_size, 0)
+                };
             }
             if group.mid.is_empty() {
                 // A group that carries its channels has no `mid` bytes: the
@@ -4493,6 +4531,47 @@ programs = []
             8 => 0x7,
             _ => 0x0,
         }
+    }
+
+    /// The `between` is the *second* table's header, so its words depend on the
+    /// group's order - and the two shipped families pin both cases.
+    #[test]
+    fn a_between_describes_the_second_table() {
+        // The standard family runs engine-then-material, so the material table
+        // is second: the engine table's size (1776 = 0x6F0), a zero, then the
+        // count `GroupData::build` rewrites. The shipped bytes are `{1776, 0, 2}`.
+        assert_eq!(
+            derived_between(1776, 0),
+            [0xF0u8, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        // The UI base runs material-then-engine, so the engine table is second:
+        // the material table's extent (240), the head's per-draw total (64),
+        // then the engine table's record count. Shipped: `{240, 64, 73}`.
+        assert_eq!(
+            derived_between(240, 64),
+            [0xF0u8, 0, 0, 0, 0x40, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    /// The head's per-draw total: 24 bytes per constant buffer and 8 per other
+    /// resource. The UI base's four descriptors are `c_per_object` (kind 0),
+    /// `global_viewport` (0x101) and two textures, so 24 + 24 + 8 + 8 = 64 -
+    /// which is what its `between` carries and what its head's `0x130` header
+    /// word adds to the material table's 240.
+    #[test]
+    fn a_head_x_end_allocates_24_per_cbuffer_and_8_for_the_rest() {
+        let mut head = Vec::new();
+        head.extend_from_slice(&0u32.to_le_bytes()); // the query id
+        head.extend_from_slice(&0x130u32.to_le_bytes()); // the head's header word
+        head.extend_from_slice(&4u32.to_le_bytes()); // four descriptors
+        for (flags, x) in [(0u32, 0u32), (0x101, 24), (0x103, 48), (0x103, 56)] {
+            for word in [0x3AFC_636Cu32, flags, x, 0] {
+                head.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        assert_eq!(head_x_end(&head), 64);
+        // A head that is only its query allocates nothing.
+        assert_eq!(head_x_end(&0u32.to_le_bytes()), 0);
     }
 
     /// A group head's descriptor records: after the query id and one word, a u32
