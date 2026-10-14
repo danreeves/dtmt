@@ -86,7 +86,12 @@ fn main() -> color_eyre::Result<()> {
                     continue;
                 }
             };
-            *names.entry(theme.name.clone()).or_default() += 1;
+            for name in &theme.names {
+                *names.entry(name.clone()).or_default() += 1;
+            }
+            if theme.names.is_empty() {
+                *names.entry("<none>".to_string()).or_default() += 1;
+            }
             *word_counts.entry(theme.words.len()).or_default() += 1;
             *shapes
                 .entry(format!(
