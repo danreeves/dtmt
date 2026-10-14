@@ -123,11 +123,11 @@ pub fn decompile(_ctx: &Context, variants: &[BundleFileVariant]) -> Result<Vec<U
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MouseCursorSource {
-    /// The texture resource whose image is the cursor. Required when the pixels
-    /// are not written out.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub texture: Option<String>,
-    /// The bitmap's width: required with `pixels`, taken from the image otherwise.
+    /// The texture resource whose image is the cursor. Both the pixels and the
+    /// size come from it, so neither is written out here.
+    pub texture: String,
+    /// The bitmap's width, when the source wants to *assert* it - it must match
+    /// the image. Omit it and the image decides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     /// The bitmap's height, on the same terms as `width`.
@@ -139,10 +139,6 @@ pub struct MouseCursorSource {
     /// The hotspot's y, in pixels. Zero when the source does not say.
     #[serde(default)]
     pub hotspot_y: u32,
-    /// The pixels, four bytes each, when they are written out rather than taken
-    /// from a texture.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pixels: Option<Vec<u8>>,
 }
 
 impl MouseCursorSource {
@@ -151,49 +147,43 @@ impl MouseCursorSource {
         serde_sjson::from_str(text).map_err(color_eyre::Report::new)
     }
 
-    /// The cursor this source describes. `image` is the decoded texture and is
-    /// required exactly when the source names one.
+    /// The cursor this source describes, from the decoded texture it names.
     ///
     /// The pixels are written **BGRA with the bottom row first**, which is what
     /// the engine's own cursors carry and what the community runtime's
-    /// `compileMouseCursor` writes from a decoded image.
-    pub fn compile(&self, name: IdString64, image: Option<&crate::png::Image>) -> Result<BundleFile> {
-        let (width, height, pixels) = match (&self.pixels, image) {
-            (Some(pixels), _) => {
-                let width = self
-                    .width
-                    .ok_or_else(|| color_eyre::eyre::eyre!("a cursor with pixels needs a width"))?;
-                let height = self
-                    .height
-                    .ok_or_else(|| color_eyre::eyre::eyre!("a cursor with pixels needs a height"))?;
-                let wanted = width as usize * height as usize * 4;
-                if pixels.len() != wanted {
-                    bail!(
-                        "a cursor declares {width}x{height}, which is {wanted} bytes, but carries \
-                         {} bytes of pixels",
-                        pixels.len()
-                    );
-                }
-                (width, height, pixels.clone())
+    /// `compileMouseCursor` writes from a decoded image. `width` and `height`
+    /// are assertions when the source states them; the image is the truth.
+    pub fn compile(&self, name: IdString64, image: &crate::png::Image) -> Result<BundleFile> {
+        if let Some(width) = self.width
+            && width != image.width
+        {
+            bail!(
+                "a cursor asserts a width of {width}, but the texture '{}' is {} wide",
+                self.texture,
+                image.width
+            );
+        }
+        if let Some(height) = self.height
+            && height != image.height
+        {
+            bail!(
+                "a cursor asserts a height of {height}, but the texture '{}' is {} high",
+                self.texture,
+                image.height
+            );
+        }
+
+        let stride = image.width as usize * 4;
+        let mut pixels = Vec::with_capacity(image.rgba.len());
+        for row in (0..image.height as usize).rev() {
+            for pixel in image.rgba[row * stride..row * stride + stride].chunks_exact(4) {
+                pixels.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
             }
-            (None, Some(image)) => {
-                let stride = image.width as usize * 4;
-                let mut pixels = Vec::with_capacity(image.rgba.len());
-                for row in (0..image.height as usize).rev() {
-                    for pixel in image.rgba[row * stride..row * stride + stride].chunks_exact(4) {
-                        pixels.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
-                    }
-                }
-                (image.width, image.height, pixels)
-            }
-            (None, None) => {
-                bail!("a cursor names a texture, but no image was resolved for it")
-            }
-        };
+        }
 
         let cursor = MouseCursor {
-            width,
-            height,
+            width: image.width,
+            height: image.height,
             hotspot_x: self.hotspot_x,
             hotspot_y: self.hotspot_y,
             pixels,
@@ -204,13 +194,6 @@ impl MouseCursorSource {
         file.add_variant(variant);
         Ok(file)
     }
-}
-
-/// Compiles a `mouse_cursor` SJSON into a bundle file `name`d after the resource
-/// path. A source that names a texture needs [`MouseCursorSource::compile`] with
-/// the decoded image instead, which the build calls.
-pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
-    MouseCursorSource::from_sjson(sjson)?.compile(name, None)
 }
 
 #[cfg(test)]
@@ -259,58 +242,74 @@ mod test {
         assert!(MouseCursor::from_binary(&[40, 0, 0, 0]).is_err());
     }
 
-    /// A texture-backed cursor and the written-out form of the same cursor must
-    /// produce the same bytes. The image's rows differ, so a wrong row order
-    /// fails, and the channels are BGRA, so a wrong order fails too.
+    /// The cooked bytes are the engine's layout: the 20-byte header, then the
+    /// pixels BGRA with the bottom row first. The image's rows differ, so a
+    /// wrong row order fails; the channels are checked by value.
     #[test]
-    fn a_texture_backed_cursor_matches_the_written_pixels() {
+    fn a_texture_backed_cursor_writes_bgra_bottom_row_first() {
         let image = crate::png::Image {
             width: 2,
             height: 2,
             rgba: vec![
-                1, 2, 3, 4, 5, 6, 7, 8, // top row
-                9, 10, 11, 12, 13, 14, 15, 16, // bottom row
+                1, 2, 3, 4, 5, 6, 7, 8, // the top row
+                9, 10, 11, 12, 13, 14, 15, 16, // the bottom row
             ],
         };
-        let source = |texture: Option<&str>, pixels: Option<Vec<u8>>| MouseCursorSource {
-            texture: texture.map(str::to_string),
-            width: pixels.as_ref().map(|_| 2),
-            height: pixels.as_ref().map(|_| 2),
+        let source = MouseCursorSource {
+            texture: "a/texture".to_string(),
+            width: None,
+            height: None,
             hotspot_x: 1,
             hotspot_y: 2,
-            pixels,
         };
 
-        let from_texture = source(Some("a/texture"), None)
-            .compile(IdString64::from("cursors/test".to_string()), Some(&image))
+        let file = source
+            .compile(IdString64::from("cursors/test".to_string()), &image)
             .expect("the image compiles");
-        // The same cursor written out: BGRA, bottom row first.
-        let written = source(
-            None,
-            Some(vec![
-                11, 10, 9, 12, 15, 14, 13, 16, // the bottom row comes first
-                3, 2, 1, 4, 7, 6, 5, 8,
-            ]),
-        )
-        .compile(IdString64::from("cursors/test".to_string()), None)
-        .expect("the pixels compile");
 
-        assert_eq!(
-            from_texture.variants()[0].data(),
-            written.variants()[0].data()
+        let mut wanted = Vec::new();
+        for word in [2u32, 2, 1, 2, 16] {
+            wanted.extend_from_slice(&word.to_le_bytes());
+        }
+        // The bottom row first, each pixel B, G, R, A.
+        for pixel in [
+            [11u8, 10, 9, 12],
+            [15, 14, 13, 16],
+            [3, 2, 1, 4],
+            [7, 6, 5, 8],
+        ] {
+            wanted.extend_from_slice(&pixel);
+        }
+        assert_eq!(file.variants()[0].data(), wanted.as_slice());
+    }
+
+    /// A source that asserts a size it does not have is refused, rather than
+    /// quietly cooked at the image's size.
+    #[test]
+    fn a_size_that_does_not_match_the_texture_is_refused() {
+        let image = crate::png::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 16],
+        };
+        let source = MouseCursorSource {
+            texture: "a/texture".to_string(),
+            width: Some(32),
+            height: Some(32),
+            hotspot_x: 0,
+            hotspot_y: 0,
+        };
+        assert!(
+            source
+                .compile(IdString64::from("cursors/test".to_string()), &image)
+                .is_err()
         );
     }
 
+    /// The pixels come only from a texture, so a source has no field for them.
     #[test]
-    fn a_texture_without_an_image_is_refused() {
-        let source = MouseCursorSource {
-            texture: Some("a/texture".to_string()),
-            width: None,
-            height: None,
-            hotspot_x: 0,
-            hotspot_y: 0,
-            pixels: None,
-        };
-        assert!(source.compile(IdString64::from("cursors/test".to_string()), None).is_err());
+    fn a_source_that_writes_out_pixels_is_refused() {
+        let text = "texture = \"a/texture\"\npixels = [\n  1\n  2\n]\n";
+        assert!(MouseCursorSource::from_sjson(text).is_err());
     }
 }

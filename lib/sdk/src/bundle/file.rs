@@ -403,10 +403,13 @@ impl BundleFile {
                 .wrap_err("Failed to compile Animation file"),
             BundleFileType::Ies => crate::filetype::ies::compile(name, sjson.as_ref())
                 .wrap_err("Failed to compile Ies file"),
-            BundleFileType::MouseCursor => {
-                crate::filetype::mouse_cursor::compile(name, sjson.as_ref())
-                    .wrap_err("Failed to compile MouseCursor file")
-            }
+            // A `mouse_cursor` names a texture and takes its pixels from that
+            // texture's image, so it is compiled by the build, which can resolve
+            // the texture; its SJSON alone says nothing about the pixels.
+            BundleFileType::MouseCursor => color_eyre::eyre::bail!(
+                "a mouse_cursor is compiled by `dtmt build`, which resolves the texture its \
+                 source names - there is nothing to compile from its SJSON alone"
+            ),
             BundleFileType::WwiseDep => crate::filetype::wwise::compile(name, sjson.as_ref())
                 .wrap_err("Failed to compile Wwise dependency file"),
             BundleFileType::Particles => {

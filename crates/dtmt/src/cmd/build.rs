@@ -774,15 +774,12 @@ async fn compile_package_files(pkg: &Package, cfg: &ModConfig) -> Result<Vec<Bun
                     .wrap_err_with(|| format!("Failed to read file '{}'", path.display()))?;
                 let source =
                     sdk::filetype::mouse_cursor::MouseCursorSource::from_sjson(&cursor_sjson)?;
-                let image = match &source.texture {
-                    Some(texture) => Some(read_texture_image((&**root).as_path(), texture).await?),
-                    None => None,
-                };
+                let image = read_texture_image((&**root).as_path(), &source.texture).await?;
                 let name = apply_name_override(
                     name_overrides,
                     path.with_extension("").to_slash_lossy().to_string(),
                 );
-                return source.compile(name, image.as_ref());
+                return source.compile(name, &image);
             }
 
             // A `slug` is a compiled font and is not authored here: the Slug
