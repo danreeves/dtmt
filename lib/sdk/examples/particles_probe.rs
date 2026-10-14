@@ -40,6 +40,7 @@ fn main() -> color_eyre::Result<()> {
     let mut visualizers: std::collections::BTreeMap<(String, bool), usize> = Default::default();
     let mut simulators_named = 0usize;
     let mut simulators_total = 0usize;
+    let mut shown_materials = 0usize;
 
     for path in &entries {
         let Ok(bin) = std::fs::read(path) else { continue };
@@ -82,6 +83,22 @@ fn main() -> color_eyre::Result<()> {
                         *visualizers
                             .entry((visualizer.kind.clone(), visualizer.fields.is_some()))
                             .or_default() += 1;
+                        // A few mesh material bindings, so their ids can be resolved
+                        // against the dictionary.
+                        if let Some(materials) = &visualizer.materials {
+                            for material in materials {
+                                if shown_materials >= 6 {
+                                    break;
+                                }
+                                println!(
+                                    "MESH-MATERIAL {}  slot={:016x} material={:016x}",
+                                    file.base_name().display(),
+                                    material.slot,
+                                    material.material
+                                );
+                                shown_materials += 1;
+                            }
+                        }
                     }
                 }
             }

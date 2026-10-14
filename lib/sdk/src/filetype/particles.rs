@@ -164,6 +164,31 @@ pub struct Visualizer {
     /// checkable against the payload rather than merely readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channels: Option<Vec<Channel>>,
+    /// The materials a `mesh` visualizer binds - `count` 16-byte entries after the
+    /// tail, where `count` is the record's own `material_count` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materials: Option<Vec<MaterialRef>>,
+}
+
+/// Decode a `mesh` visualizer's material entries: the count at `0x0c`, then `count`
+/// 16-byte `{slot, material}` pairs starting at `0x100` (the tail's end). Bounded by
+/// the record, so a count that runs past it is refused rather than read.
+fn describe_mesh_materials(kind: &str, data: &[u8]) -> Option<Vec<MaterialRef>> {
+    if kind != "mesh" {
+        return None;
+    }
+    let count = u32::from_le_bytes(data.get(0x0c..0x10)?.try_into().unwrap()) as usize;
+    if count == 0 {
+        return None;
+    }
+    let mut materials = Vec::with_capacity(count);
+    for index in 0..count {
+        let at = 0x100 + 16 * index;
+        let slot = u64::from_le_bytes(data.get(at..at + 8)?.try_into().unwrap());
+        let material = u64::from_le_bytes(data.get(at + 8..at + 16)?.try_into().unwrap());
+        materials.push(MaterialRef { slot, material });
+    }
+    Some(materials)
 }
 
 /// One vertex channel descriptor: a component, its type and its set.
@@ -173,6 +198,14 @@ pub struct Channel {
     pub component: String,
     pub kind: String,
     pub set: u32,
+}
+
+/// One material a `mesh` visualizer binds: the slot and the material's 64-bit id.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaterialRef {
+    pub slot: u64,
+    pub material: u64,
 }
 
 /// The visualizer type names, in the community's `kVisualizers` order plus gpu.
@@ -1345,11 +1378,13 @@ impl System {
             let kind = VISUALIZERS[kind].to_string();
             let fields = describe_visualizer(&kind, body);
             let channels = describe_channels(&kind, body);
+            let materials = describe_mesh_materials(&kind, body);
             visualizer_list.push(Visualizer {
                 kind,
                 data: hex(body),
                 fields,
                 channels,
+                materials,
             });
             vis += 4 + size;
         }

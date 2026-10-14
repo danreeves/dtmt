@@ -346,3 +346,12 @@ place. For `gpu` it is at 0xa0, and the fields reach it exactly:
 So the field *names* the reference gives (which encode their offsets) confirm `ID` = 4
 and `RES` = 8 for a third time, and they also show the layout is self-consistent with
 the size-word location - which is what makes `gpu` mechanical.
+**The mesh material entries: partly validated (2026-10-14).** The probe prints them
+now, and the *slot* field resolves: `093fc9345f166874` is `lambert1` and
+`130f2a9240fb2cb3` is `decal` - Maya-style **material slot names**, which is exactly
+what a mesh particle's slots should hold, so the field split is right. The *material*
+ids (`3dcbbdf39b71af73`, `decf50c97efd035a`, `db91c504109c760c`) are **not** in the
+dictionary, unlike the billboard's, which resolved to a `.material` shipped in its
+own bundle. So the binding list is decoded and bounded, and its slot half is
+confirmed, but the material half is inconclusive rather than verified - either those
+mesh materials are unnamed resources or their names are simply not in the dictionary.
