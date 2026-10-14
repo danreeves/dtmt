@@ -294,3 +294,34 @@ by a UI element as a **material**, not as this type -
 `constant_element_software_cursor_definitions.lua` names
 `content/ui/materials/cursors/cursor_idle` and `cursor_click`. The `mouse_cursor` resource
 is the engine's own cursor, so overriding the *visible* one means replacing those materials.
+
+### Setting the cursor from Lua: `Window.set_cursor`, and the shipped cursor names (2026-10-14)
+
+The cursor is set from Lua, by the window, not by `Application`:
+
+    -- scripts/game_states/boot/boot_state_resolve_parameters.lua
+    Window.set_cursor("content/ui/textures/cursors/mouse_cursor_idle")
+
+And that path is a **`mouse_cursor` resource**, not a texture - the two shipped cursors
+(40x40, hotspot 9,9) are exactly this pair, which is why they are two:
+
+    content/ui/textures/cursors/mouse_cursor_idle   -> bundle 9ba626afa44a3aa3
+    content/ui/textures/cursors/mouse_cursor_click  -> bundle 9ba626afa44a3aa3
+
+So the engine cursor is a resource the game asks for **by name**, and a mod can ship its own
+under a **new** name and point the game at it - no override needed:
+
+    Window.set_cursor("content/ui/cursors/snoopy_cursor")
+
+Verified in game (a full log, because the mod quits the game itself): `PUMPKIN_OK` with
+`snoopymod` printing `cursor 'content/ui/cursors/snoopy_cursor' set`, alongside the Jokerman
+font and the fixed shader section. The resource lands in the mod's bundle as
+`39F37B460A54F6E8.mouse_cursor: 4 kB (4116)` (20 + 32x32x4), and the database answers
+`df068cf42886090b` for it, which is what makes the new name resolvable.
+
+**To see a custom cursor on screen**, note that the pointer the game *draws* is a UI element
+made of **materials** - `content/ui/materials/cursors/cursor_idle` and `cursor_click`
+(`constant_element_software_cursor_definitions.lua`) - while `Window.set_cursor` sets the
+engine's own cursor, which is the window's and so is not in a `PrintWindow` capture. A mod
+that wants the pointer visibly changed overrides those two materials; this resource is the
+one the engine uses.
