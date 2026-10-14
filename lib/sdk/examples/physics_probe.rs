@@ -45,6 +45,7 @@ fn main() -> color_eyre::Result<()> {
     let mut bundles = 0usize;
     let mut units = 0usize;
     let mut with_physics = 0usize;
+    let mut with_flow = 0usize;
     let mut ok = 0usize;
     let mut reasons: BTreeMap<String, usize> = BTreeMap::new();
     let mut bodies = 0usize;
@@ -67,6 +68,9 @@ fn main() -> color_eyre::Result<()> {
             let Ok((text, bsi)) = unit::decompile(data) else {
                 continue;
             };
+            if text.contains("flow = {") {
+                with_flow += 1;
+            }
             if !text.contains("physics = {") {
                 continue;
             }
@@ -96,7 +100,7 @@ fn main() -> color_eyre::Result<()> {
     }
 
     println!(
-        "physics: {with_physics} units carrying a scene, out of {units} units in {bundles} bundles"
+        "units: {units} in {bundles} bundles; {with_flow} carry a flow graph, {with_physics} carry a physics scene"
     );
     println!("  {ok} byte-identical through the unit SJSON, {bodies} body records");
     for (reason, count) in reasons.iter().take(6) {

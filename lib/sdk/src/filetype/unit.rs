@@ -20,6 +20,7 @@ use serde::Deserialize;
 
 use crate::murmur::{IdString64, Murmur32, Murmur64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant};
+use super::flow::Flow;
 use super::physics_scene::PhysicsScene;
 
 /// The compiled unit payload begins with this version word.
@@ -142,10 +143,11 @@ struct UnitDef {
     /// `#`). Mod authored units omit them and get the compiler's defaults.
     #[serde(default)]
     dynamic_data: Option<String>,
+    /// The compiled flow graph, with the dynamic data it draws on. A unit carries
+    /// those as two byte arrays; together they are exactly a `flow` resource, so the
+    /// reader takes the pair and the writer splits it again.
     #[serde(default)]
-    flow: Option<String>,
-    #[serde(default)]
-    flow_dynamic: Option<String>,
+    flow: Option<Flow>,
     /// The physics scene the unit carries, decoded rather than carried as a blob.
     #[serde(default)]
     physics: Option<PhysicsScene>,
@@ -1513,8 +1515,7 @@ fn write_decoded_lods(w: &mut Writer, lods: &[DecodedLod]) {
 #[derive(Default)]
 struct UnitBlobs {
     dynamic_data: Option<String>,
-    flow: Option<String>,
-    flow_dynamic: Option<String>,
+    flow: Option<Flow>,
     triangle_finder: Option<String>,
     /// The visibility-group section verbatim (`{count, {name, members}...}`).
     visibility_groups: Option<String>,
@@ -1598,11 +1599,10 @@ fn unit_sjson(
     if let Some(data) = &blobs.dynamic_data {
         text.push_str(&format!("dynamic_data = \"{data}\"\n"));
     }
-    if let Some(data) = &blobs.flow {
-        text.push_str(&format!("flow = \"{data}\"\n"));
-    }
-    if let Some(data) = &blobs.flow_dynamic {
-        text.push_str(&format!("flow_dynamic = \"{data}\"\n"));
+    if let Some(flow) = &blobs.flow {
+        // As with the physics scene, the serialiser writes a nested struct without
+        // braces, so they are added here; the dynamic data rides inside the graph.
+        text.push_str(&format!("flow = {{\n{}}}\n", serde_sjson::to_string(flow)?));
     }
     if let Some(data) = &blobs.triangle_finder {
         text.push_str(&format!("triangle_finder = \"{data}\"\n"));
@@ -2035,8 +2035,16 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     };
     let blobs = UnitBlobs {
         dynamic_data: (dynamic_data != sentinel).then(|| hex_encode(&dynamic_data)),
-        flow: (!flow.is_empty()).then(|| hex_encode(&flow)),
-        flow_dynamic: (!flow_dynamic.is_empty()).then(|| hex_encode(&flow_dynamic)),
+        flow: (!flow.is_empty())
+            .then(|| {
+                // A unit carries the graph and its dynamic data separately, and
+                // together they are exactly a `flow` resource, so they are read as
+                // one.
+                let mut combined = flow.clone();
+                combined.extend_from_slice(&flow_dynamic);
+                Flow::from_binary(&combined)
+            })
+            .transpose()?,
         triangle_finder: (triangle_finder != [0u8; 4]).then(|| hex_encode(&triangle_finder)),
         visibility_groups: (!visibility_groups.is_empty()).then(|| hex_encode(&visibility_groups)),
         animation_state_machine: (!animation_state_machine.is_empty())
@@ -2474,9 +2482,13 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         Some(hex) => w.bytes(&hex_decode(hex)?),
         None => w.u32(0),
     }
-    // Flow and flow dynamic data.
-    w.byte_array(&decode_blob(&def.flow, &[])?);
-    w.byte_array(&decode_blob(&def.flow_dynamic, &[])?);
+    // Flow graph and its dynamic data: one resource split at the graph's own size.
+    let (graph, dynamic) = match &def.flow {
+        Some(flow) => flow.to_parts()?,
+        None => (Vec::new(), Vec::new()),
+    };
+    w.byte_array(&graph);
+    w.byte_array(&dynamic);
     // Mesh geometry triangle finder and physics scene data.
     w.byte_array(&decode_blob(&def.triangle_finder, &[0u8; 4])?);
     w.byte_array(&match &def.physics {
@@ -3133,8 +3145,8 @@ renderables = {
     #[test]
     fn opaque_payload_sections_round_trip() {
         let unit = format!(
-            "{UNIT}\ndynamic_data = \"0102030405060708\"\nflow = \"AABB\"\n\
-             flow_dynamic = \"CCDD\"\nphysics = {{ version = 41200 }}\ntrailer = \"0A0B0C\"\n"
+            "{UNIT}\ndynamic_data = \"0102030405060708\"\nflow = {{}}\n\
+             physics = {{ version = 41200 }}\ntrailer = \"0A0B0C\"\n"
         );
         let name = resource_name("units/mods/test/opaque");
         let file = compile(name.clone(), &unit, BSI.as_bytes()).unwrap();
@@ -3146,8 +3158,7 @@ renderables = {
             unit_text.contains("dynamic_data = \"0102030405060708\""),
             "{unit_text}"
         );
-        assert!(unit_text.contains("flow = \"AABB\""), "{unit_text}");
-        assert!(unit_text.contains("flow_dynamic = \"CCDD\""), "{unit_text}");
+        assert!(unit_text.contains("flow = {"), "{unit_text}");
         assert!(
             unit_text.contains("physics = {") && unit_text.contains("version = 41200"),
             "the physics scene is a nested object now, not a blob: {unit_text}"

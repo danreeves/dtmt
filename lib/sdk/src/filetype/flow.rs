@@ -120,18 +120,30 @@ fn hex_decode(text: &str) -> Result<Vec<u8>> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Flow {
-    /// The size of the dynamic part, which the header declares.
+    /// The size of the dynamic part, which the header declares. A `flow` resource
+    /// carries that part inline; a **unit** carries it as a separate array, in which
+    /// case `dynamic_data` is empty and this is still the declared size.
+    #[serde(default)]
     pub dynamic_size: u32,
+    #[serde(default)]
     pub external_events: Vec<ExternalEvent>,
+    #[serde(default)]
     pub extra: Vec<[u32; 2]>,
+    #[serde(default)]
     pub variables: Vec<[u32; 3]>,
+    #[serde(default)]
     pub query: Vec<u32>,
+    #[serde(default)]
     pub preload: Vec<[u32; 2]>,
+    #[serde(default)]
     pub subroutines: Vec<u32>,
     /// The four list tables.
+    #[serde(default)]
     pub lists: [Vec<u32>; 4],
+    #[serde(default)]
     pub nodes: Vec<Node>,
-    /// The dynamic part, hex-encoded.
+    /// The dynamic part, hex-encoded; empty when the caller carries it separately.
+    #[serde(default)]
     pub dynamic_data: String,
 }
 
@@ -377,6 +389,19 @@ impl Flow {
         }
         out.extend_from_slice(&dynamic);
         Ok(out)
+    }
+
+    /// The two byte arrays a **unit** carries: the graph and its dynamic data. A
+    /// `flow` resource is those concatenated, which is what [`Self::to_binary`]
+    /// writes, so this only has to split that at the size its own header records.
+    pub fn to_parts(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let bytes = self.to_binary()?;
+        let flow_size = word_of(&bytes, FLOW_SIZE)? as usize;
+        if flow_size > bytes.len() {
+            bail!("a flow's own size word overruns it");
+        }
+        let (graph, dynamic) = bytes.split_at(flow_size);
+        Ok((graph.to_vec(), dynamic.to_vec()))
     }
 
     /// The resource as SJSON.
