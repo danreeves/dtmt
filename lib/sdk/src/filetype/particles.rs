@@ -756,7 +756,45 @@ pub const VISUALIZER_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[(
         "spot_angle_end",
         "volumetric_intensity",
     ],
-)];
+),
+    (
+        // From the reference's `read_visualizer`: six words, then the 204-byte
+        // channel block at 0x1c, the four-word header at 0xe8, and the tail at
+        // 0xf8 - the offsets the reference names (`field_f8`) line up with these
+        // widths, which is the check that the pads are right.
+        "billboard",
+        &[
+            InitializerField::U32,        // hash
+            InitializerField::U32,        // a constant the reference checks
+            InitializerField::Bytes(8),   // material: a 64-bit resource id
+            InitializerField::U32,        // a constant the reference checks
+            InitializerField::U32,        // sort
+            InitializerField::U32,        // mode
+            InitializerField::Bytes(204), // 4 + 10 x 20-byte channel descriptors
+            InitializerField::U32,        // vertex stride
+            InitializerField::U32,        // writers
+            InitializerField::U32,        // first
+            InitializerField::U32,        // size
+            InitializerField::U32,        // field_f8
+            InitializerField::Bytes(4),   // tail pad
+        ],
+        &[
+            "hash",
+            "const_4",
+            "material",
+            "const_1c",
+            "sort",
+            "mode",
+            "channels",
+            "stride",
+            "writers",
+            "first",
+            "size",
+            "field_f8",
+            "pad_100",
+        ],
+    ),
+];
 
 /// A readable view of a visualizer's record, for the types whose leading fields the
 /// reference gives.
