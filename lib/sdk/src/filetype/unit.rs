@@ -193,7 +193,7 @@ struct UnitDef {
     actors: Option<Actors>,
     /// The camera and light lists verbatim.
     #[serde(default)]
-    cameras_raw: Option<String>,
+    cameras: Option<Cameras>,
     /// The unit's default material hash, as stored in the payload. A decompiled
     /// unit carries it; an authored one gets the compiler's zero.
     #[serde(default)]
@@ -1109,6 +1109,171 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// One `CameraDT` record, from `bitsquid-blender-tools`' `stingray/camera.py`: a
+/// name, a word, two ranges, two floats, two `u16`s and a word. That is **32 bytes**,
+/// which is exactly the stride the walk used to skip.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitCamera {
+    name: u32,
+    unknown_1: u32,
+    near_range: f32,
+    far_range: f32,
+    unknown_2: f32,
+    unknown_3: f32,
+    unknown_4: u16,
+    unknown_5: u16,
+    unknown_6: u32,
+}
+
+/// `stingray::LightData`, the DT variant, from `stingray/light.py`. Most of it is
+/// unnamed in the reference and keeps that shape here rather than being guessed at.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LightData {
+    color: Vec<f32>,
+    intensity: f32,
+    volumetric_intensity: f32,
+    unknown_7: f32,
+    unknown_8: f32,
+    parameters: Vec<f32>,
+    unknown_9: u32,
+    light_type: u32,
+    material: u64,
+    ies_profile: u64,
+    unknown_13: u32,
+    unknown_14: Vec<f32>,
+    unknown_18: u32,
+    unknown_19: Vec<f32>,
+    unknown_23: u32,
+    unknown_24: Vec<f32>,
+    unknown_28: u32,
+    unknown_29: f32,
+    unknown_30: u32,
+    unknown_31: u32,
+}
+
+/// One `LightDT` record: a name, a node index and the light data. **160 bytes**,
+/// again exactly the stride that used to be skipped.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnitLight {
+    name: u32,
+    node_index: u32,
+    light: LightData,
+}
+
+/// The camera and light lists a unit carries.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Cameras {
+    cameras: Vec<UnitCamera>,
+    lights: Vec<UnitLight>,
+}
+
+fn read_f32s(reader: &mut Reader, count: usize) -> Result<Vec<f32>> {
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        out.push(reader.f32()?);
+    }
+    Ok(out)
+}
+
+fn read_camera(reader: &mut Reader) -> Result<UnitCamera> {
+    Ok(UnitCamera {
+        name: reader.u32()?,
+        unknown_1: reader.u32()?,
+        near_range: reader.f32()?,
+        far_range: reader.f32()?,
+        unknown_2: reader.f32()?,
+        unknown_3: reader.f32()?,
+        unknown_4: reader.u16()?,
+        unknown_5: reader.u16()?,
+        unknown_6: reader.u32()?,
+    })
+}
+
+fn read_light(reader: &mut Reader) -> Result<UnitLight> {
+    let name = reader.u32()?;
+    let node_index = reader.u32()?;
+    let light = LightData {
+        color: read_f32s(reader, 3)?,
+        intensity: reader.f32()?,
+        volumetric_intensity: reader.f32()?,
+        unknown_7: reader.f32()?,
+        unknown_8: reader.f32()?,
+        parameters: read_f32s(reader, 6)?,
+        unknown_9: reader.u32()?,
+        light_type: reader.u32()?,
+        material: reader.u64()?,
+        ies_profile: reader.u64()?,
+        unknown_13: reader.u32()?,
+        unknown_14: read_f32s(reader, 4)?,
+        unknown_18: reader.u32()?,
+        unknown_19: read_f32s(reader, 4)?,
+        unknown_23: reader.u32()?,
+        unknown_24: read_f32s(reader, 4)?,
+        unknown_28: reader.u32()?,
+        unknown_29: reader.f32()?,
+        unknown_30: reader.u32()?,
+        unknown_31: reader.u32()?,
+    };
+    Ok(UnitLight {
+        name,
+        node_index,
+        light,
+    })
+}
+
+fn write_camera(w: &mut Writer, camera: &UnitCamera) {
+    w.u32(camera.name);
+    w.u32(camera.unknown_1);
+    w.f32(camera.near_range);
+    w.f32(camera.far_range);
+    w.f32(camera.unknown_2);
+    w.f32(camera.unknown_3);
+    w.u16(camera.unknown_4);
+    w.u16(camera.unknown_5);
+    w.u32(camera.unknown_6);
+}
+
+fn write_f32s(w: &mut Writer, values: &[f32], expected: usize, what: &str) -> Result<()> {
+    if values.len() != expected {
+        bail!("a light's {what} is not {expected} floats");
+    }
+    for value in values {
+        w.f32(*value);
+    }
+    Ok(())
+}
+
+fn write_light(w: &mut Writer, light: &UnitLight) -> Result<()> {
+    w.u32(light.name);
+    w.u32(light.node_index);
+    let data = &light.light;
+    write_f32s(w, &data.color, 3, "colour")?;
+    w.f32(data.intensity);
+    w.f32(data.volumetric_intensity);
+    w.f32(data.unknown_7);
+    w.f32(data.unknown_8);
+    write_f32s(w, &data.parameters, 6, "parameter block")?;
+    w.u32(data.unknown_9);
+    w.u32(data.light_type);
+    w.u64(data.material);
+    w.u64(data.ies_profile);
+    w.u32(data.unknown_13);
+    write_f32s(w, &data.unknown_14, 4, "first group")?;
+    w.u32(data.unknown_18);
+    write_f32s(w, &data.unknown_19, 4, "second group")?;
+    w.u32(data.unknown_23);
+    write_f32s(w, &data.unknown_24, 4, "third group")?;
+    w.u32(data.unknown_28);
+    w.f32(data.unknown_29);
+    w.u32(data.unknown_30);
+    w.u32(data.unknown_31);
+    Ok(())
+}
+
 /// One `ActorResourceDT` shape, from `bitsquid-blender-tools`'
 /// `stingray/actor_resource.py` and `actor_desc.py`. The payload is
 /// **type-dependent** - each shape type serializes its own fixed run - so the fields
@@ -1792,7 +1957,7 @@ struct UnitBlobs {
     /// The actor sections verbatim.
     actors: Option<Actors>,
     /// The camera and light lists verbatim.
-    cameras_raw: Option<String>,
+    cameras: Option<Cameras>,
     trailer: Option<String>,
 }
 
@@ -1886,8 +2051,8 @@ fn unit_sjson(
         // here - as with the flow graph and the physics scene.
         text.push_str(&format!("actors = {{\n{}}}\n", serde_sjson::to_string(actors)?));
     }
-    if let Some(data) = &blobs.cameras_raw {
-        text.push_str(&format!("cameras_raw = \"{data}\"\n"));
+    if let Some(cameras) = &blobs.cameras {
+        text.push_str(&format!("cameras = {{\n{}}}\n", serde_sjson::to_string(cameras)?));
     }
     if let Some(scene) = &blobs.physics {
         // A nested object rather than a blob: a decompiled unit then reads as its
@@ -2220,13 +2385,22 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         unknown: unk9,
     };
     // Cameras and lights, both fixed-size records (`CameraDT` 32 bytes and
-    // `LightDT` 160), so a decompiled payload carries the two lists verbatim.
-    let cameras_start = reader.at;
-    let cameras = reader.u32()? as usize;
-    reader.skip(cameras * 32)?;
-    let lights = reader.u32()? as usize;
-    reader.skip(lights * 160)?;
-    let cameras_raw = reader.data[cameras_start..reader.at].to_vec();
+    // `LightDT` 160), read now rather than skipped: `stingray/camera.py` and
+    // `stingray/light.py` give both, and the byte counts close on the strides.
+    let camera_count = reader.u32()?;
+    let mut camera_list = Vec::with_capacity((camera_count as usize).min(4096));
+    for _ in 0..camera_count {
+        camera_list.push(read_camera(&mut reader)?);
+    }
+    let light_count = reader.u32()?;
+    let mut light_list = Vec::with_capacity((light_count as usize).min(4096));
+    for _ in 0..light_count {
+        light_list.push(read_light(&mut reader)?);
+    }
+    let cameras = Cameras {
+        cameras: camera_list,
+        lights: light_list,
+    };
     let device_blob = reader.byte_array()?;
     let lod_start = reader.at;
     let lods = parse_lod_objects(&mut reader)?;
@@ -2316,7 +2490,10 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
             let keep = actor_count > 0 || actors_2 > 0 || !actors.unknown.is_empty();
             keep.then_some(actors)
         },
-        cameras_raw: (cameras > 0 || lights > 0).then(|| hex_encode(&cameras_raw)),
+        cameras: {
+            let keep = !cameras.cameras.is_empty() || !cameras.lights.is_empty();
+            keep.then_some(cameras)
+        },
         physics: (!physics.is_empty())
             .then(|| PhysicsScene::from_binary(&physics))
             .transpose()?,
@@ -2650,13 +2827,23 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
             w.u32_array(&[]);
         }
     }
-    // Cameras and lights. A decompiled unit carries them verbatim; an authored
+    // Cameras and lights. A decompiled unit writes back what it read; an authored
     // one writes them empty.
-    if let Some(hex) = &def.cameras_raw {
-        w.bytes(&hex_decode(hex)?);
-    } else {
-        w.u32(0);
-        w.u32(0);
+    match &def.cameras {
+        Some(cameras) => {
+            w.u32(cameras.cameras.len() as u32);
+            for camera in &cameras.cameras {
+                write_camera(&mut w, camera);
+            }
+            w.u32(cameras.lights.len() as u32);
+            for light in &cameras.lights {
+                write_light(&mut w, light)?;
+            }
+        }
+        None => {
+            w.u32(0);
+            w.u32(0);
+        }
     }
     // Unknown device blob.
     if let Some(hex) = &def.device_blob {
