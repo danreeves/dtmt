@@ -105,17 +105,25 @@ data, and one reader plus one writer that walk them. The invariant to keep is th
 one the container walk already meets - **a shipped effect must still round-trip
 byte-for-byte** - which makes each op safe to land on its own.
 
-**What is actually missing is the *names*, not the sizes.** `particles.rs` already
-has an `INITIALIZER_SIZES` table and an `initializer_size` that handles the three
-variable-length ops (`0x0d`, `0x0e`, `0x11`), and it walks each system's
-initializers with it - so every operand length is already known and, because the
-shipped effects round-trip byte-for-byte, already validated. What the reference
-adds is the *declarative layout per op*: which channel reference or float sits at
-which offset and what it is called. So the work is to turn
-`operands = "<hex>"` into `random_float { channel = 3 min = 0.0 max = 1.5 }` -
+**What is actually missing is the *field* names, not the sizes.** The op codes are
+already named (`INITIALIZERS: [&str; 25]`, the registry order of the community's
+`initializer_specs`), and `particles.rs` already has an `INITIALIZER_SIZES` table
+and an `initializer_size` that handles the three variable-length ops (`0x0d`,
+`0x0e`, `0x11`), walking each system's initializers with it - so every operand
+length is already known and, because the shipped effects round-trip byte-for-byte,
+already validated. What the reference adds is the *declarative layout per op*:
+which channel reference or float sits at which offset and what it is called. So the
+work is to turn `operands = "<hex>"` into `random_float { channel = 3 min = 0.0 max = 1.5 }` -
 taking the field names and the field order from `OpSpec`, reusing the sizes that
 are already right, and keeping the round-trip byte-exact (which is what proves the
 interpretation did not disturb the bytes).
+
+The edit points are settled, and the change is *additive* rather than a format
+break: `Initializer` carries `kind` (the op name) and `data` (the operand hex), and
+the compile path turns `kind` back into the opcode and appends `from_hex(&data)`
+verbatim - so a readable field view can be added alongside `data` with no risk to
+byte-exactness, and the compiler can be taught to prefer authored fields later, once
+the layouts are proven against shipped effects.
 
 Order the work by the occurrence tallies above rather than by opcode:
 
