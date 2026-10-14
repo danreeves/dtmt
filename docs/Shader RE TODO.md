@@ -3946,3 +3946,29 @@ proposes - is moot, because that file no longer exists.
 This also explains the standing note in `File Type - Material.-.md` that adding variables was
 "deployed/implemented and awaiting in-game observation": what is implemented is the *graph export*
 path, and the observation has to go through it.
+
+### The record-clone experiment belongs to the VT2 SDK, not to this tree (2026-10-14)
+
+The "Next action" above was written for an environment that has an engine-data route and a test mod.
+That environment is the **Vermintide 2 SDK**, installed at
+`C:\Program Files (x86)\Steam\steamapps\common\Vermintide 2 SDK`, which ships:
+
+- the authoring sources - `core/shader_nodes/*.shader_node`, with the HLSL inline so the cbuffer's
+  members are written **by hand** (`CBUFFER_START(c_per_object)` and the `#if defined(...)` guards
+  that become `shader43`'s condition tree), and
+  `core/stingray_renderer/shader_libraries/**/*.shader_source` (`common` 71 KB, `lighting_common`
+  59 KB, `noise` 130 KB, ...);
+- `example_mods/` - `endurance_badges` and `streamable_resources` - which are the test mods, with
+  `resource_packages/*.package` and a `.mod`;
+- the compiled results to compare against: `TEMP/` (the compile pipeline the notes already cite for
+  the `.wwise_bank` sources) and `BUILD/mods/streamable_resources/*.mod_bundle`;
+- and Vermintide 2 itself is installed at
+  `E:\SteamLibrary\steamapps\common\Warhammer Vermintide 2`, so an in-game check is possible.
+
+So the experiment - add a member to the cbuffer, patch the records consistently (block, canonical
+records, packed copies, descriptors, tails) and see whether a material declaring the new name binds -
+has both an **input** and an **oracle** there, and a mod to carry it.
+
+In this tree it does not. The engine data is deleted, and for a node material the derivation reads the
+**graph's exports** rather than the declaration's `inputs`, so cloning records into a device block is
+not the path a Darktide material takes - which is why adding an input here changed nothing at all.
