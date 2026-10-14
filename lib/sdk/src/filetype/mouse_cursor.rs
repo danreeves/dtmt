@@ -292,7 +292,7 @@ mod test {
                 3, 2, 1, 4, 7, 6, 5, 8,
             ]),
         )
-        .compile(IdString64::from("cursors/test"), None)
+        .compile(IdString64::from("cursors/test".to_string()), None)
         .expect("the pixels compile");
 
         assert_eq!(
@@ -311,6 +311,6 @@ mod test {
             hotspot_y: 0,
             pixels: None,
         };
-        assert!(source.compile(IdString64::from("cursors/test"), None).is_err());
+        assert!(source.compile(IdString64::from("cursors/test".to_string()), None).is_err());
     }
 }
