@@ -164,11 +164,18 @@ strings, because strings cannot be written back - `fields = { channel = 40 min =
 max = 2 }`, using `FieldValue` (`U32` / `I32` / `F32` / `Vec3`, untagged so it
 writes as a bare SJSON value).
 
-Two caveats to settle *before* the compiler is made to trust `fields`, both visible
-in a shipped effect's dump and both harmless while `data` is authoritative:
+Two caveats showed up in a shipped effect's dump, and both are now **handled**:
 
 - an `f32` prints widened (`1.2000000476837158`) - exact, but verbose;
-- an integer-valued float prints as an integer (`max = 2`), and because the untagged
-  enum tries `U32` before `F32` it would read back as the *integer* variant. Either
-  order the variants by field kind (the layout knows which), or make the value
-  tagged.
+- an integer-valued float prints as an integer (`max = 2`), so the untagged enum
+  reads it back as the *integer* variant. The encoder coerces it: a field's kind
+  comes from the layout, not from the variant it happened to read as, so `U32(2)` in
+  an `F32` slot encodes as `2.0f32` - the same four bytes as the original, which is
+  why the drift was invisible to byte-exactness all along.
+
+`fields` is now what the compiler uses when it is present: `encode_initializer`
+rebuilds the operands from the layout and the names, and a table-driven test proves
+it reproduces the bytes for **every** fixed layout. The authored `data` remains the
+fallback for an op with no layout and for `spline_control_points`, whose block is
+opaque to the view (it emits only the size). So a `max = 2` can now be edited to
+`max = 5` and compiled - the effect is editable, not just readable.

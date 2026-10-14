@@ -579,6 +579,86 @@ fn describe_initializer(
     Some(out)
 }
 
+/// Rebuild an initializer's operands from its typed fields, using the op's layout
+/// for the field order and widths. An integer-valued `F32` field is accepted,
+/// because the untagged form reads `2` back as the integer variant; a value that
+/// does not fit its field is an error rather than a silent truncation. `None` means
+/// the op cannot be rebuilt this way - it has no layout, or holds an opaque byte
+/// block whose contents the view does not carry - and the caller keeps the authored
+/// `data` instead.
+fn encode_initializer(
+    op: usize,
+    fields: &indexmap::IndexMap<String, FieldValue>,
+) -> Result<Option<Vec<u8>>> {
+    let Some((_, layout)) = INITIALIZER_LAYOUTS.get(op) else {
+        return Ok(None);
+    };
+    if layout
+        .iter()
+        .any(|field| matches!(field, InitializerField::Bytes(_)))
+    {
+        return Ok(None);
+    }
+    let names = INITIALIZER_FIELD_NAMES.get(op);
+    let mut out = Vec::with_capacity(layout.iter().map(|field| field.size()).sum());
+    for (index, field) in layout.iter().enumerate() {
+        let name = names
+            .and_then(|names| names.get(index))
+            .copied()
+            .unwrap_or("field");
+        let value = fields.get(name).ok_or_else(|| {
+            color_eyre::eyre::eyre!("initializer op {op} is missing its '{name}' field")
+        })?;
+        match field {
+            InitializerField::Channel | InitializerField::U32 => {
+                out.extend_from_slice(&as_u32(*value, op, name)?.to_le_bytes())
+            }
+            InitializerField::I32 => {
+                out.extend_from_slice(&as_i32(*value, op, name)?.to_le_bytes())
+            }
+            InitializerField::F32 => {
+                out.extend_from_slice(&as_f32(*value, op, name)?.to_le_bytes())
+            }
+            InitializerField::Vec3 => {
+                let FieldValue::Vec3(values) = value else {
+                    bail!("initializer op {op} field '{name}' is not a vector");
+                };
+                for component in values {
+                    out.extend_from_slice(&component.to_le_bytes());
+                }
+            }
+            InitializerField::Bytes(_) => unreachable!("handled above"),
+        }
+    }
+    Ok(Some(out))
+}
+
+fn as_u32(value: FieldValue, op: usize, name: &str) -> Result<u32> {
+    match value {
+        FieldValue::U32(value) => Ok(value),
+        FieldValue::F32(value) if value >= 0.0 && value.fract() == 0.0 => Ok(value as u32),
+        other => bail!("initializer op {op} field '{name}' is not a u32: {other:?}"),
+    }
+}
+
+fn as_i32(value: FieldValue, op: usize, name: &str) -> Result<i32> {
+    match value {
+        FieldValue::I32(value) => Ok(value),
+        FieldValue::U32(value) if value <= i32::MAX as u32 => Ok(value as i32),
+        other => bail!("initializer op {op} field '{name}' is not an i32: {other:?}"),
+    }
+}
+
+fn as_f32(value: FieldValue, op: usize, name: &str) -> Result<f32> {
+    match value {
+        // An integer-valued float writes as an integer, so accept both.
+        FieldValue::F32(value) => Ok(value),
+        FieldValue::U32(value) => Ok(value as f32),
+        FieldValue::I32(value) => Ok(value as f32),
+        other => bail!("initializer op {op} field '{name}' is not a float: {other:?}"),
+    }
+}
+
 fn initializer_size(op: usize, bytes: &[u8], at: usize) -> Result<usize> {
     match op {
         0x0d => Ok(0x18 + 24 * u32_at(bytes, at + 0x14)? as usize),
@@ -763,7 +843,16 @@ impl System {
                     color_eyre::eyre::eyre!("unknown initializer type '{}'", initializer.kind)
                 })?;
             push_u32(&mut initializer_bytes, op as u32);
-            initializer_bytes.extend_from_slice(&from_hex(&initializer.data)?);
+            // A typed field view rebuilds the operands; for an opaque byte block,
+            // or an op with no layout, the authored `data` stays authoritative.
+            let encoded = match &initializer.fields {
+                Some(fields) => encode_initializer(op, fields)?,
+                None => None,
+            };
+            initializer_bytes.extend_from_slice(&match encoded {
+                Some(bytes) => bytes,
+                None => from_hex(&initializer.data)?,
+            });
         }
 
         let records = SYSTEM_HEADER + initializer_bytes.len() + from_hex(&self.initializer_padding)?.len();
@@ -926,6 +1015,31 @@ pub fn compile(name: IdString64, sjson: &str) -> Result<BundleFile> {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    /// Every fixed layout rebuilds byte for byte from its typed view, which is what
+    /// lets the compiler trust `fields` rather than only `data`.
+    #[test]
+    fn initializer_fields_rebuild_their_operands() {
+        for op in 0..INITIALIZER_SIZES.len() {
+            let (name, layout) = INITIALIZER_LAYOUTS[op];
+            if layout.is_empty()
+                || layout
+                    .iter()
+                    .any(|field| matches!(field, InitializerField::Bytes(_)))
+            {
+                continue;
+            }
+            // Distinctive bytes, so a field written in the wrong place shows up.
+            let size: usize = layout.iter().map(|field| field.size()).sum();
+            let operand: Vec<u8> = (0..size).map(|index| (index % 251) as u8).collect();
+            let fields = describe_initializer(op, &operand)
+                .unwrap_or_else(|| panic!("op {op} ({name}) has a layout, so it has a view"));
+            let rebuilt = encode_initializer(op, &fields)
+                .expect("the view encodes")
+                .unwrap_or_else(|| panic!("op {op} ({name}) has a fixed layout"));
+            assert_eq!(rebuilt, operand, "op {op} ({name})");
+        }
+    }
 
     /// The ported initializer layouts must agree with `INITIALIZER_SIZES` - the
     /// table the reader walks and the byte-identical shipped round-trips already
