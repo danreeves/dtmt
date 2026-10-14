@@ -63,6 +63,7 @@ grammar - a custom base material can only use a shipped interface today.
 - **Formats with real work left:** the shader section, Particles, Level, Sound,
   and the resource side a Unit pulls in (Bones, Animation, State Machine, Flow,
   Physics).
+- **Measured absence (`examples/types_probe.rs`, 2026-10-14):** a full bundle census (15,739 bundles, 925,277 files, 925,325 variants, 31 distinct known types) shows that **33 of the named types ship zero instances** - `animation_curves`, `apb`, `baked_lighting`, `bik`, `blend_set`, `chroma`, `common_package`, `crypto`, `data`, `entity`, `font`, `ini`, `input`, `keys`, `mission_themes`, `mod`, `nav_data`, `scene`, `shader`, `shader_library`, `shading_envionment_mapping`, `sound_environment`, `spu_job`, `static_pvs`, `surface_properties`, `timpani_bank`, `timpani_master`, `tome`, `ugg`, `upb`, `wav`, `wwise_metadata` and `xml`. The ids are real - they match the dictionary the game ships - so these are mechanisms the engine knows and Darktide never uses: nothing to derive, and they must not be read as "unread". The same sweep named three id-only types (**`bk2`**, **`mp4`**, **`plugin`**, now in the enum) and leaves exactly one, **`23EE957DD4B1BB94` with 582 files**, that no dictionary contains. Note that `wwise_metadata` is on the list, so the Sound row counts five recognised Wwise types of which only four actually ship.
 - Anything not listed is unknown.
 
 ## File types

@@ -17,6 +17,15 @@ macro_rules! make_enum {
         }
 
         impl BundleFileType {
+            /// Every type DTMT knows by name, in declaration order. A type with no
+            /// shipped instance appears here and nowhere else, which is how a real
+            /// but unused mechanism is told apart from an unread one.
+            pub const ALL: &'static [BundleFileType] = &[
+                $(
+                    Self::$variant,
+                )+
+            ];
+
             pub fn ext_name(&self) -> String {
                 match self {
                     $(
@@ -78,6 +87,7 @@ make_enum! {
     Apb,                      0x3eed05ba83af5090, "apb";
     BakedLighting,            0x7ffdb779b04e4ed1, "baked_lighting";
     Bik,                      0xaa5965f03029fa18, "bik";
+    Bk2,                      0x5ee65304478f8db5, "bk2";
     BlendSet,                 0xe301e8af94e3b5a3, "blend_set";
     Bones,                    0x18dead01056b72e9, "bones";
     Chroma,                   0xb7893adf7567506a, "chroma";
@@ -98,12 +108,14 @@ make_enum! {
     Material,                 0xeac0b497876adedf, "material";
     Mod,                      0x3fcdd69156a46417, "mod";
     MouseCursor,              0xb277b11fe4a61d37, "mouse_cursor";
+    Mp4,                      0x81f59b9ae1d7ebc2, "mp4";
     NavData,                  0x169de9566953d264, "nav_data";
     NetworkConfig,            0x3b1fa9e8f6bac374, "network_config";
     OddleNet,                 0xb0f2c12eb107f4d8, "oodle_net";
     Package,                  0xad9c6d9ed1e5e77a, "package";
     Particles,                0xa8193123526fad64, "particles";
     PhysicsProperties,        0xbf21403a3ab0bbb1, "physics_properties";
+    Plugin,                   0xe932c181c0f705e6, "plugin";
     RenderConfig,             0x27862fe24795319c, "render_config";
     RtPipeline,               0x9ca183c2d0e76dee, "rt_pipeline";
     Scene,                    0x9d0a795bfe818d19, "scene";
