@@ -16,7 +16,7 @@ use indexmap::IndexMap;
 use std::io::Read;
 
 use color_eyre::eyre::{self, Context as _, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::murmur::{IdString64, Murmur32, Murmur64};
 use crate::{BundleFile, BundleFileType, BundleFileVariant};
@@ -190,7 +190,7 @@ struct UnitDef {
     /// The actor sections verbatim: the actor list, the second actor list and the
     /// unknown `u32` list beside them.
     #[serde(default)]
-    actors_raw: Option<String>,
+    actors: Option<Actors>,
     /// The camera and light lists verbatim.
     #[serde(default)]
     cameras_raw: Option<String>,
@@ -1109,44 +1109,294 @@ impl<'a> Reader<'a> {
     }
 }
 
-/// Walks one `ActorResourceDT` record without modelling it, from
-/// `bitsquid-blender-tools`' `stingray/actor_resource.py`: a name, template and
-/// node, a mass, a shape list, six callbacks and four flags. The shape union is
-/// `ShapeType`, and every member is fixed size - a mesh or convex shape
-/// serializes no payload at all (the pointer is not written).
-fn skip_actor(reader: &mut Reader) -> Result<()> {
-    reader.u32()?; // name
-    reader.u32()?; // actor template
-    reader.u32()?; // node
-    reader.f32()?; // mass
-    let shapes = reader.u32()?;
-    for _ in 0..shapes {
-        let kind = reader.u32()?;
-        reader.u32()?; // material
-        reader.u32()?; // shape template
-        reader.skip(64)?; // local transform
-        reader.byte_array()?; // shape data
-        reader.u32()?; // shape node
-        reader.u32()?; // an unknown name
-        let payload = match kind {
-            0 => 4,     // sphere: a radius
-            1 => 12,    // box: half extents
-            2 => 8,     // capsule: a radius and a height
-            3 | 4 => 0, // mesh and convex: no payload
-            5 => 21,    // height field: two counts, three scales and a flag
-            6 => 12,    // plane: a normal
-            other => bail!("unknown actor shape type {other}"),
+/// One `ActorResourceDT` shape, from `bitsquid-blender-tools`'
+/// `stingray/actor_resource.py` and `actor_desc.py`. The payload is
+/// **type-dependent** - each shape type serializes its own fixed run - so the fields
+/// a type does not use are absent here, and the writer derives the payload from
+/// `shape_type` again rather than trusting the fields to match it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActorShape {
+    shape_type: u32,
+    material: u32,
+    shape_template: u32,
+    /// The shape's local frame, sixteen floats.
+    local_transform: Vec<f32>,
+    /// The opaque shape-data array, hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shape_data: Option<String>,
+    shape_node: u32,
+    /// An unknown name beside the shape node.
+    unknown: u32,
+    /// A sphere's or a capsule's radius.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    radius: Option<f32>,
+    /// A box's half extents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    half_extents: Option<Vec<f32>>,
+    /// A capsule's height.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height: Option<f32>,
+    /// A height field's column and row counts and three scales.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    columns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rows: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height_scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    row_scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    column_scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiple_materials: Option<bool>,
+    /// A plane's normal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    normal: Option<Vec<f32>>,
+}
+
+/// One `ActorResourceDT` record: a name, template and node, a mass, its shapes, six
+/// touch and trigger callbacks and the four flags DT closes it with.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Actor {
+    name: u32,
+    actor_template: u32,
+    node: u32,
+    mass: f32,
+    shapes: Vec<ActorShape>,
+    on_start_touch: u32,
+    on_stay_touching: u32,
+    on_end_touch: u32,
+    on_trigger_enter: u32,
+    on_trigger_leave: u32,
+    on_trigger_stay: u32,
+    /// `enabled` and three unknowns.
+    flags: Vec<bool>,
+}
+
+/// The three lists a unit's actor section holds: two actor lists and an unknown one.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Actors {
+    first: Vec<Actor>,
+    second: Vec<Actor>,
+    unknown: Vec<u32>,
+}
+
+/// The shape types `actor_desc.py` names, whose payloads are the sizes the walk
+/// below reads.
+fn actor_shape_name(shape_type: u32) -> &'static str {
+    match shape_type {
+        0 => "sphere",
+        1 => "box",
+        2 => "capsule",
+        3 => "mesh",
+        4 => "convex",
+        5 => "height_field",
+        6 => "plane",
+        _ => "unknown",
+    }
+}
+
+fn read_actor(reader: &mut Reader) -> Result<Actor> {
+    let name = reader.u32()?;
+    let actor_template = reader.u32()?;
+    let node = reader.u32()?;
+    let mass = reader.f32()?;
+    let count = reader.u32()?;
+    let mut shapes = Vec::with_capacity((count as usize).min(4096));
+    for _ in 0..count {
+        let shape_type = reader.u32()?;
+        let material = reader.u32()?;
+        let shape_template = reader.u32()?;
+        let mut local_transform = Vec::with_capacity(16);
+        for _ in 0..16 {
+            local_transform.push(reader.f32()?);
+        }
+        let data = reader.byte_array()?;
+        let shape_node = reader.u32()?;
+        let unknown = reader.u32()?;
+        let mut shape = ActorShape {
+            shape_type,
+            material,
+            shape_template,
+            local_transform,
+            shape_data: (!data.is_empty()).then(|| hex_encode(&data)),
+            shape_node,
+            unknown,
+            radius: None,
+            half_extents: None,
+            height: None,
+            columns: None,
+            rows: None,
+            height_scale: None,
+            row_scale: None,
+            column_scale: None,
+            multiple_materials: None,
+            normal: None,
         };
-        reader.skip(payload)?;
+        match shape_type {
+            0 => shape.radius = Some(reader.f32()?),
+            1 => {
+                let mut v = Vec::with_capacity(3);
+                for _ in 0..3 {
+                    v.push(reader.f32()?);
+                }
+                shape.half_extents = Some(v);
+            }
+            2 => {
+                shape.radius = Some(reader.f32()?);
+                shape.height = Some(reader.f32()?);
+            }
+            3 | 4 => {}
+            5 => {
+                shape.columns = Some(reader.u32()?);
+                shape.rows = Some(reader.u32()?);
+                shape.height_scale = Some(reader.f32()?);
+                shape.row_scale = Some(reader.f32()?);
+                shape.column_scale = Some(reader.f32()?);
+                shape.multiple_materials = Some(reader.bool()?);
+            }
+            6 => {
+                let mut v = Vec::with_capacity(3);
+                for _ in 0..3 {
+                    v.push(reader.f32()?);
+                }
+                shape.normal = Some(v);
+            }
+            other => bail!(
+                "unknown actor shape type {other} ({})",
+                actor_shape_name(other)
+            ),
+        }
+        shapes.push(shape);
     }
-    for _ in 0..6 {
-        reader.u32()?; // the touch and trigger callbacks
+    let mut callbacks = [0u32; 6];
+    for callback in &mut callbacks {
+        *callback = reader.u32()?;
     }
+    let mut flags = Vec::with_capacity(4);
     for _ in 0..4 {
-        reader.bool()?; // the four flags
+        flags.push(reader.bool()?);
+    }
+    Ok(Actor {
+        name,
+        actor_template,
+        node,
+        mass,
+        shapes,
+        on_start_touch: callbacks[0],
+        on_stay_touching: callbacks[1],
+        on_end_touch: callbacks[2],
+        on_trigger_enter: callbacks[3],
+        on_trigger_leave: callbacks[4],
+        on_trigger_stay: callbacks[5],
+        flags,
+    })
+}
+
+/// The inverse of [`read_actor`]. The payload is written from `shape_type`, and the
+/// fields that type needs are checked for rather than guessed at.
+fn write_actor(w: &mut Writer, actor: &Actor) -> Result<()> {
+    w.u32(actor.name);
+    w.u32(actor.actor_template);
+    w.u32(actor.node);
+    w.f32(actor.mass);
+    w.u32(actor.shapes.len() as u32);
+    for shape in &actor.shapes {
+        w.u32(shape.shape_type);
+        w.u32(shape.material);
+        w.u32(shape.shape_template);
+        if shape.local_transform.len() != 16 {
+            bail!("an actor shape's local transform is not sixteen floats");
+        }
+        for value in &shape.local_transform {
+            w.f32(*value);
+        }
+        w.byte_array(&decode_blob(&shape.shape_data, &[])?);
+        w.u32(shape.shape_node);
+        w.u32(shape.unknown);
+        match shape.shape_type {
+            0 => w.f32(shape.radius.ok_or_else(|| {
+                color_eyre::eyre::eyre!("a sphere shape needs its radius")
+            })?),
+            1 => {
+                let extents = shape.half_extents.as_ref().ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a box shape needs its half extents")
+                })?;
+                if extents.len() != 3 {
+                    bail!("a box shape's half extents are not three floats");
+                }
+                for value in extents {
+                    w.f32(*value);
+                }
+            }
+            2 => {
+                w.f32(shape.radius.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a capsule shape needs its radius")
+                })?);
+                w.f32(shape.height.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a capsule shape needs its height")
+                })?);
+            }
+            3 | 4 => {}
+            5 => {
+                w.u32(shape.columns.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its columns")
+                })?);
+                w.u32(shape.rows.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its rows")
+                })?);
+                w.f32(shape.height_scale.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its height scale")
+                })?);
+                w.f32(shape.row_scale.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its row scale")
+                })?);
+                w.f32(shape.column_scale.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its column scale")
+                })?);
+                w.bool(shape.multiple_materials.ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a height field needs its materials flag")
+                })?);
+            }
+            6 => {
+                let normal = shape.normal.as_ref().ok_or_else(|| {
+                    color_eyre::eyre::eyre!("a plane shape needs its normal")
+                })?;
+                if normal.len() != 3 {
+                    bail!("a plane shape's normal is not three floats");
+                }
+                for value in normal {
+                    w.f32(*value);
+                }
+            }
+            other => bail!(
+                "unknown actor shape type {other} ({})",
+                actor_shape_name(other)
+            ),
+        }
+    }
+    for callback in [
+        actor.on_start_touch,
+        actor.on_stay_touching,
+        actor.on_end_touch,
+        actor.on_trigger_enter,
+        actor.on_trigger_leave,
+        actor.on_trigger_stay,
+    ] {
+        w.u32(callback);
+    }
+    if actor.flags.len() != 4 {
+        bail!("an actor does not carry four flags");
+    }
+    for flag in &actor.flags {
+        w.bool(*flag);
     }
     Ok(())
 }
+
 
 /// One compiled vertex stream, kept packed for a byte-exact rewrite.
 struct DecodedStream {
@@ -1540,7 +1790,7 @@ struct UnitBlobs {
     /// The simple-animation group list verbatim.
     animation_groups_raw: Option<String>,
     /// The actor sections verbatim.
-    actors_raw: Option<String>,
+    actors: Option<Actors>,
     /// The camera and light lists verbatim.
     cameras_raw: Option<String>,
     trailer: Option<String>,
@@ -1631,8 +1881,10 @@ fn unit_sjson(
     if let Some(data) = &blobs.animation_groups_raw {
         text.push_str(&format!("animation_groups_raw = \"{data}\"\n"));
     }
-    if let Some(data) = &blobs.actors_raw {
-        text.push_str(&format!("actors_raw = \"{data}\"\n"));
+    if let Some(actors) = &blobs.actors {
+        // The serialiser writes a nested struct without braces, so they are added
+        // here - as with the flow graph and the physics scene.
+        text.push_str(&format!("actors = {{\n{}}}\n", serde_sjson::to_string(actors)?));
     }
     if let Some(data) = &blobs.cameras_raw {
         text.push_str(&format!("cameras_raw = \"{data}\"\n"));
@@ -1947,21 +2199,26 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
     let animation_groups_raw = reader.data[groups_start..reader.at].to_vec();
     let scene_graph = parse_scene_graph(&mut reader)?;
     let meshes = parse_mesh_objects(&mut reader)?;
-    // Actors, and the second actor list and unknown list beside them. An actor
-    // record is walkable - `bitsquid-blender-tools`' `stingray/actor_resource.py`
-    // gives the shape union, whose members are all fixed size - so a decompiled
-    // payload carries the three sections verbatim instead of refusing the unit.
-    let actors_start = reader.at;
+    // Actors, and the second actor list and unknown list beside them. An actor is
+    // read now rather than carried: `bitsquid-blender-tools`' `stingray/actor_resource.py`
+    // and `actor_desc.py` give the record and its shape union, so a decompiled unit
+    // shows its actors and their collision shapes, and a modder can edit them.
     let actor_count = reader.u32()?;
+    let mut actors_first = Vec::with_capacity((actor_count as usize).min(4096));
     for _ in 0..actor_count {
-        skip_actor(&mut reader)?;
+        actors_first.push(read_actor(&mut reader)?);
     }
     let actors_2 = reader.u32()?;
+    let mut actors_second = Vec::with_capacity((actors_2 as usize).min(4096));
     for _ in 0..actors_2 {
-        skip_actor(&mut reader)?;
+        actors_second.push(read_actor(&mut reader)?);
     }
     let unk9 = reader.u32_array()?;
-    let actors_raw = reader.data[actors_start..reader.at].to_vec();
+    let actors = Actors {
+        first: actors_first,
+        second: actors_second,
+        unknown: unk9,
+    };
     // Cameras and lights, both fixed-size records (`CameraDT` 32 bytes and
     // `LightDT` 160), so a decompiled payload carries the two lists verbatim.
     let cameras_start = reader.at;
@@ -2055,8 +2312,10 @@ pub fn decompile(payload: &[u8]) -> Result<(String, String)> {
         skins_raw: (skins > 0).then(|| hex_encode(&skins_raw)),
         simple_animation: (!simple_animation.is_empty()).then(|| hex_encode(&simple_animation)),
         animation_groups_raw: (groups > 0).then(|| hex_encode(&animation_groups_raw)),
-        actors_raw: (actor_count > 0 || actors_2 > 0 || !unk9.is_empty())
-            .then(|| hex_encode(&actors_raw)),
+        actors: {
+            let keep = actor_count > 0 || actors_2 > 0 || !actors.unknown.is_empty();
+            keep.then_some(actors)
+        },
         cameras_raw: (cameras > 0 || lights > 0).then(|| hex_encode(&cameras_raw)),
         physics: (!physics.is_empty())
             .then(|| PhysicsScene::from_binary(&physics))
@@ -2371,14 +2630,25 @@ fn compile_payload(def: &UnitDef, bsi: &BsiDef) -> Result<Vec<u8>> {
         w.u32(0); // unknown
     }
 
-    // Actors, actors2 and an unknown list. A decompiled unit carries them
-    // verbatim; an authored one writes them empty.
-    if let Some(hex) = &def.actors_raw {
-        w.bytes(&hex_decode(hex)?);
-    } else {
-        w.u32(0);
-        w.u32(0);
-        w.u32_array(&[]);
+    // Actors, actors2 and an unknown list. A decompiled unit writes back what it
+    // read; an authored one writes them empty.
+    match &def.actors {
+        Some(actors) => {
+            w.u32(actors.first.len() as u32);
+            for actor in &actors.first {
+                write_actor(&mut w, actor)?;
+            }
+            w.u32(actors.second.len() as u32);
+            for actor in &actors.second {
+                write_actor(&mut w, actor)?;
+            }
+            w.u32_array(&actors.unknown);
+        }
+        None => {
+            w.u32(0);
+            w.u32(0);
+            w.u32_array(&[]);
+        }
     }
     // Cameras and lights. A decompiled unit carries them verbatim; an authored
     // one writes them empty.
