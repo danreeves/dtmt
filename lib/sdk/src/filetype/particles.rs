@@ -798,6 +798,74 @@ pub const VISUALIZER_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[(
             "pad_100",
         ],
     ),
+    (
+        // The reference's `gpu_layout()`, up to `field_84`: every field whose offset
+        // its own name states. `ID` is four bytes and `RES` eight, which is what the
+        // names confirm (`field_40`/`field_44` after 3x(4+4+8) + 16). What follows -
+        // the size word `kSizeAt` locates at 0xa0 and the words around it - is left
+        // unnamed rather than guessed.
+        "gpu",
+        &[
+            InitializerField::U32,  // name
+            InitializerField::U32,  // const
+            InitializerField::Id64, // material
+            InitializerField::U32,  // name_2
+            InitializerField::U32,  // const
+            InitializerField::Id64, // material_2
+            InitializerField::U32,  // name_3
+            InitializerField::U32,  // const
+            InitializerField::Id64, // material_3
+            InitializerField::Bytes(16),
+            InitializerField::U32, // field_40
+            InitializerField::U32, // field_44
+            InitializerField::U32, // field_48
+            InitializerField::U32, // the constant before flags_50
+            InitializerField::U32, // flags_50
+            InitializerField::U32, // field_54
+            InitializerField::U32, // field_58
+            InitializerField::F32, // field_5c
+            InitializerField::F32, // field_60
+            InitializerField::F32, // field_64
+            InitializerField::F32, // field_68
+            InitializerField::F32, // field_6c
+            InitializerField::U32, // field_70
+            InitializerField::U32, // field_74
+            InitializerField::U32, // field_78
+            InitializerField::U32, // field_7c
+            InitializerField::U32, // field_80
+            InitializerField::U32, // field_84
+        ],
+        &[
+            "name",
+            "const_4",
+            "material",
+            "name_14",
+            "const_18",
+            "material_20",
+            "name_24",
+            "const_28",
+            "material_30",
+            "pad",
+            "field_40",
+            "field_44",
+            "field_48",
+            "const_4c",
+            "flags_50",
+            "field_54",
+            "field_58",
+            "field_5c",
+            "field_60",
+            "field_64",
+            "field_68",
+            "field_6c",
+            "field_70",
+            "field_74",
+            "field_78",
+            "field_7c",
+            "field_80",
+            "field_84",
+        ],
+    ),
 ];
 
 /// A readable view of a visualizer's record, for the types whose leading fields the
