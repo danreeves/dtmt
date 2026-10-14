@@ -248,3 +248,20 @@ line of evidence beyond "the fields looked plausible". The exception is
 data carries runtime state beyond the fields. That is worth settling *before* the
 `STATE` / `SELF` ops are ported, since it is the one place where the block and the
 layout visibly disagree.
+**The block is span-driven, not layout-driven.** That resolves the `burst_emitter`
+surprise without any new format work: each simulator's data runs from its offset to
+the *next* offset, and a layout names only the **leading** fields - the rest of the
+span is opaque to the reference too, which validates by the offsets rather than by
+`layout_size`. That reading fits all four measurements at once:
+
+| simulator | span | layout | consistent? |
+|---|---|---|---|
+| `age_age` | 8 | 8 (two channels) | yes |
+| `integrate_float_scaled` | 100 | 100 (four channels + curve) | yes |
+| `position_integrate_scaled` | 108 | 105, aligned | yes |
+| `burst_emitter` | 88 | named prefix is empty | yes - the 88 bytes are simply not named |
+
+which is a better fit than "the layout disagrees with the block". It has a practical
+consequence: `describe_simulator` should be **bounded by the span**, not by the end of
+the data block, so a layout can never read the next simulator's bytes. That belongs
+with the visualizer work, which restructures this area anyway.
