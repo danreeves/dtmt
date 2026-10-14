@@ -342,6 +342,13 @@ pub enum InitializerField {
     Vec3,
     /// A fixed block of bytes.
     Bytes(usize),
+    /// An 8-bit boolean.
+    Bool8,
+    /// A 32-bit boolean.
+    Bool32,
+    /// A curve: a fixed-size sub-format, 84 bytes (`kCurve`), whose contents stay
+    /// opaque - only its width matters, so the fields after it can be reached.
+    Curve,
 }
 
 impl InitializerField {
@@ -350,6 +357,9 @@ impl InitializerField {
             Self::Channel | Self::U32 | Self::I32 | Self::F32 => 4,
             Self::Vec3 => 12,
             Self::Bytes(size) => size,
+            Self::Bool8 => 1,
+            Self::Bool32 => 4,
+            Self::Curve => 0x54,
         }
     }
 }
@@ -633,6 +643,76 @@ pub const SIMULATOR_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[
         ],
         &["position", "velocity", "normal", "offset", "queries_per_frame"],
     ),
+    (
+        "position_integrate_scaled",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Curve,
+            InitializerField::Bool8,
+            InitializerField::I32,
+        ],
+        &[
+            "position",
+            "velocity",
+            "age",
+            "life",
+            "scale",
+            "over_system_lifetime",
+            "scale_variable",
+        ],
+    ),
+    (
+        "integrate_float_scaled",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Curve,
+        ],
+        &["value", "velocity", "age", "life", "scale"],
+    ),
+    (
+        "advance_frame",
+        &[
+            InitializerField::Channel,
+            InitializerField::I32,
+            InitializerField::I32,
+            InitializerField::Bool8,
+            InitializerField::F32,
+        ],
+        &["channel", "start", "end", "loop", "speed"],
+    ),
+    (
+        "spiral",
+        &[
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Channel,
+            InitializerField::Curve,
+            InitializerField::Bool32,
+            InitializerField::Bool8,
+        ],
+        &[
+            "position",
+            "velocity",
+            "spiral_rotation",
+            "spiral_speed",
+            "life",
+            "age",
+            "center",
+            "scale",
+            "over_system_lifetime",
+            "use_center",
+        ],
+    ),
 ];
 
 /// A readable view of one initializer's operands, from the layout the reference
@@ -695,6 +775,12 @@ fn describe_fields(
                 ]),
             ),
             InitializerField::Bytes(_) => ("bytes", FieldValue::U32(width as u32)),
+            InitializerField::Bool8 => ("bool", FieldValue::U32(u32::from(bytes[0]))),
+            InitializerField::Bool32 => (
+                "bool32",
+                FieldValue::U32(u32::from_le_bytes(bytes.try_into().unwrap())),
+            ),
+            InitializerField::Curve => ("curve", FieldValue::U32(width as u32)),
         };
         // The reference's field name when it has one, the kind otherwise.
         let label = names.get(index).copied().unwrap_or(kind_label);
@@ -718,10 +804,12 @@ fn encode_initializer(
     let Some((_, layout)) = INITIALIZER_LAYOUTS.get(op) else {
         return Ok(None);
     };
-    if layout
-        .iter()
-        .any(|field| matches!(field, InitializerField::Bytes(_)))
-    {
+    if layout.iter().any(|field| {
+        matches!(
+            field,
+            InitializerField::Bytes(_) | InitializerField::Curve
+        )
+    }) {
         return Ok(None);
     }
     let names = INITIALIZER_FIELD_NAMES.get(op);
@@ -753,6 +841,13 @@ fn encode_initializer(
                 }
             }
             InitializerField::Bytes(_) => unreachable!("handled above"),
+            InitializerField::Bool8 => {
+                out.push(if as_u32(*value, op, name)? != 0 { 1 } else { 0 })
+            }
+            InitializerField::Bool32 => {
+                out.extend_from_slice(&as_u32(*value, op, name)?.to_le_bytes())
+            }
+            InitializerField::Curve => unreachable!("handled above"),
         }
     }
     Ok(Some(out))
