@@ -129,6 +129,7 @@ pub enum FieldValue {
     I32(i32),
     F32(f32),
     Vec3([f32; 3]),
+    U64(u64),
 }
 
 /// One simulator: its op name and the offset of its data in the system's data
@@ -353,6 +354,8 @@ pub enum InitializerField {
     /// A curve: a fixed-size sub-format, 84 bytes (`kCurve`), whose contents stay
     /// opaque - only its width matters, so the fields after it can be reached.
     Curve,
+    /// An eight-byte resource id (the reference's `RES`, `ID` being four).
+    Id64,
 }
 
 impl InitializerField {
@@ -364,6 +367,7 @@ impl InitializerField {
             Self::Bool8 => 1,
             Self::Bool32 => 4,
             Self::Curve => 0x54,
+            Self::Id64 => 8,
         }
     }
 }
@@ -766,7 +770,7 @@ pub const VISUALIZER_FIELDS: &[(&str, &[InitializerField], &[&str])] = &[(
         &[
             InitializerField::U32,        // hash
             InitializerField::U32,        // a constant the reference checks
-            InitializerField::Bytes(8),   // material: a 64-bit resource id
+            InitializerField::Id64,       // material: a 64-bit resource id
             InitializerField::U32,        // a constant the reference checks
             InitializerField::U32,        // sort
             InitializerField::U32,        // mode
@@ -856,6 +860,10 @@ fn describe_fields(
                 FieldValue::U32(u32::from_le_bytes(bytes.try_into().unwrap())),
             ),
             InitializerField::Curve => ("curve", FieldValue::U32(width as u32)),
+            InitializerField::Id64 => (
+                "id64",
+                FieldValue::U64(u64::from_le_bytes(bytes.try_into().unwrap())),
+            ),
         };
         // The reference's field name when it has one, the kind otherwise.
         let label = names.get(index).copied().unwrap_or(kind_label);
@@ -923,6 +931,9 @@ fn encode_initializer(
                 out.extend_from_slice(&as_u32(*value, op, name)?.to_le_bytes())
             }
             InitializerField::Curve => unreachable!("handled above"),
+            InitializerField::Id64 => {
+                out.extend_from_slice(&as_u64(*value, op, name)?.to_le_bytes())
+            }
         }
     }
     Ok(Some(out))
@@ -944,13 +955,20 @@ fn as_i32(value: FieldValue, op: usize, name: &str) -> Result<i32> {
     }
 }
 
-fn as_f32(value: FieldValue, op: usize, name: &str) -> Result<f32> {
-    match value {
+fn as_f32(value: FieldValue, op: usize, name: &str) -> Result<f32> {    match value {
         // An integer-valued float writes as an integer, so accept both.
         FieldValue::F32(value) => Ok(value),
         FieldValue::U32(value) => Ok(value as f32),
         FieldValue::I32(value) => Ok(value as f32),
         other => bail!("initializer op {op} field '{name}' is not a float: {other:?}"),
+    }
+}
+
+fn as_u64(value: FieldValue, op: usize, name: &str) -> Result<u64> {
+    match value {
+        FieldValue::U64(value) => Ok(value),
+        FieldValue::U32(value) => Ok(u64::from(value)),
+        other => bail!("initializer op {op} field '{name}' is not a u64: {other:?}"),
     }
 }
 
