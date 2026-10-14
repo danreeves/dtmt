@@ -281,3 +281,46 @@ rather than padding, so naming it needs the pad resolved first - and the same is
 of `billboard`'s `before`, which must reach its channel block at 0x1c. After the
 fields come the channel block (up to 10 entries, `kVertexTypeSize = {4, 8, 12, 16,
 4}`) and the writers tail.
+## The visualizer record grammar (settled)
+
+`read_visualizer` in the reference gives the whole record, and it is regular enough to
+walk sequentially because every pad is *static per type*:
+
+```
+type        u32
+before      spec.before fields               (billboard's must reach channels_at = 0x1c)
+channels    u32 count + 10 x 20-byte descriptors      = 204 bytes, always
+after       spec.after fields
+stride      u32     (checked: must equal the channels' vertex stride)
+writers     u32
+first       u32
+size        u32     (checked: record start + size == the record's end)
+tail        spec.tail fields
+(mesh only) `count` material entries at `p + 0x0c`, 16 bytes each
+```
+
+The channel block is **fixed at 4 + 10*0x14 = 204 bytes** whatever the count - which is
+what makes it expressible as a single field - `after` starts at
+`p + channels_at + 204`, and the stride/writers/first/size words follow `after`. The
+reference also cross-checks two fields (`stride` against the channel widths, `size`
+against the record's end) and, for `billboard`/`ribbon`, a hash over the channels
+(`type == 0 || type == 3` in the code, where the spec order is billboard, light, mesh,
+ribbon, gpu).
+
+**The VT2 SDK corroborates the channel *content* from the shader side.** The community
+compiler's `component_name` maps 0/2/3/5/6 to position/tangent/binormal/texcoord/color,
+and `kVertexTypeSize` gives float1..float4/ubyte4 as 4/8/12/16/4. The SDK's
+`core/stingray_renderer/shader_libraries/particle_billboard.shader_source` declares the
+same set for a billboard vertex:
+
+```
+float4 position : POSITION;
+float2 corner_info : POSITION1;
+float2 size : TEXCOORD7;
+float4 color : COLOR;            // under VERTEX_COLOR
+```
+
+so the descriptors, the widths and the shader agree - the first independent check the
+particle work has had beyond the community compiler itself. `particle_ribbon.shader_source`
+and `core/shader_nodes/billboard_particles/*` (9 nodes) are the same kind of help for
+the ribbon and the writers.
