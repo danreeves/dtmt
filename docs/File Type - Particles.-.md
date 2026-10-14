@@ -152,7 +152,10 @@ data    = 2C00000000000000DB0FC940
 decoded = [ "channel = 44", "f32 = 0", "f32 = 6.2831855" ]  # 0 .. 2*pi radians
 ```
 
-The labels are the field *kinds* (`channel`, `f32`, `vec3`), not yet the reference's
-names (`min`, `max`, `radius`); taking those from `OpSpec` is the next refinement.
-`data` remains authoritative - the compiler writes it back verbatim - so the
-round-trip is untouched either way.
+The labels are now the reference's own field *names* (`min`, `max`, `radius_min`,
+`angular_max`, ...), with the field *kind* (`channel`, `f32`, `vec3`) as the
+fallback for any op the name table does not cover; the name list is pinned
+field-by-field to the layouts by the test, so it cannot drift. `data` remains
+authoritative - the compiler writes it back verbatim - so the round-trip is
+untouched either way. The remaining step on this item is teaching the compiler to
+*accept* authored fields, so an effect becomes editable rather than only readable.

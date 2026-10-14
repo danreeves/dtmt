@@ -454,6 +454,65 @@ pub const INITIALIZER_LAYOUTS: &[(&str, &[InitializerField])] = &[
     ("initializer_18", &[InitializerField::Channel]),
 ];
 
+/// The reference's field *names* for each initializer, in the same op order and
+/// the same field order as `INITIALIZER_LAYOUTS`. Kept separate so the layouts stay
+/// the width authority; the test below pins the two together, so a name list
+/// cannot drift out of step with the fields it names.
+pub const INITIALIZER_FIELD_NAMES: &[&[&str]] = &[
+    &["channel", "size"],
+    &["channel", "min", "max"],
+    &[
+        "velocity",
+        "speed_min",
+        "speed_max",
+        "theta_min",
+        "theta_max",
+        "direction",
+    ],
+    &["position", "radius_min", "radius_max"],
+    &["position", "min", "max"],
+    &["channel", "min", "max"],
+    &["velocity"],
+    &["source", "destination", "size"],
+    &["velocity", "min", "max"],
+    &["tangent", "binormal", "min", "max"],
+    &["tangent", "min", "max"],
+    &[
+        "position",
+        "radius_min",
+        "radius_max",
+        "height_min",
+        "height_max",
+        "angle_min",
+        "angle_max",
+        "radius_variable",
+        "height_variable",
+        "angle_variable",
+    ],
+    &[
+        "position",
+        "velocity",
+        "radial_min",
+        "radial_max",
+        "z_min",
+        "z_max",
+        "angular_min",
+        "angular_max",
+    ],
+    &[],
+    &[],
+    &["channel", "value"],
+    &["channel", "value"],
+    &[],
+    &["leap_number"],
+    &["channel"],
+    &["data"],
+    &["channel", "channel_size", "variable"],
+    &["tangent", "binormal"],
+    &["position", "radius_min", "radius_max", "height_min", "height_max"],
+    &["channel"],
+];
+
 /// A readable view of one initializer's operands, from the layout the reference
 /// gives that op: one `"kind = value"` per field. `data` stays authoritative, so
 /// this is descriptive only, and the three variable-length ops have no layout to
@@ -464,12 +523,12 @@ fn describe_initializer(op: usize, operand: &[u8]) -> Vec<String> {
     };
     let mut out = Vec::with_capacity(layout.len());
     let mut at = 0usize;
-    for field in layout.iter() {
+    for (index, field) in layout.iter().enumerate() {
         let width = field.size();
         let Some(bytes) = operand.get(at..at + width) else {
             break;
         };
-        let (label, value) = match field {
+        let (kind_label, value) = match field {
             InitializerField::Channel => (
                 "channel",
                 format!("{}", u32::from_le_bytes(bytes.try_into().unwrap())),
@@ -500,6 +559,12 @@ fn describe_initializer(op: usize, operand: &[u8]) -> Vec<String> {
             ),
             InitializerField::Bytes(size) => ("bytes", format!("{size}")),
         };
+        // The reference's field name when it has one, the kind otherwise.
+        let label = INITIALIZER_FIELD_NAMES
+            .get(op)
+            .and_then(|names| names.get(index))
+            .copied()
+            .unwrap_or(kind_label);
         out.push(format!("{label} = {value}"));
         at += width;
     }
@@ -874,6 +939,12 @@ mod test {
                 INITIALIZER_SIZES[op] == 0,
                 "op {op} ({name})"
             );
+            // The names are the reference's, one per field.
+            assert_eq!(
+                INITIALIZER_FIELD_NAMES[op].len(),
+                fields.len(),
+                "op {op} ({name}) field name count"
+            );
         }
     }
 
@@ -940,7 +1011,7 @@ mod test {
         // The readable view is derived from the op's layout, one entry per field.
         assert_eq!(
             effect.systems[0].initializers[0].decoded,
-            ["channel = 0", "f32 = 0", "f32 = 0"]
+            ["channel = 0", "min = 0", "max = 0"]
         );
         assert_eq!(effect.to_binary().unwrap(), bytes);
     }
