@@ -11,6 +11,7 @@ pub mod mouse_cursor;
 pub mod package;
 pub mod particles;
 pub mod permutation;
+pub mod physics_scene;
 pub mod shader;
 pub mod shader_block;
 pub mod shader_compile;
