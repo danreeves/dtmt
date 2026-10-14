@@ -1210,6 +1210,15 @@ fn derived_group_mid(programs: &[StageResources], channels: &[u32]) -> Vec<u8> {
         }
     }
 
+    if std::env::var_os("DTMT_MID_PROBE").is_some() {
+        eprintln!(
+            "MIDPROBE descriptors={} x_end={} cbuffers={:?}",
+            descriptors.len(),
+            x_end,
+            cbuffers
+        );
+    }
+
     shader_engine_interface::derived_mid(
         &cbuffers,
         &shader_engine_interface::channel_records(channels),

@@ -3821,3 +3821,42 @@ Reproduce with `docs/scripts/capture-screen.ps1` (the HWND-based harnesses get n
 window handle during boot, so they cannot photograph this surface at all), and note
 that the working section and the broken one are both preserved: the working one is
 deployed, the broken one is `out/data/4c/4cc21b79457af061`.
+
+### The section difference is one cbuffer size, and the UI base's mid is carried rather than derived (2026-10-14)
+
+The 108 differing bytes were traced further, and two readings in the note above are corrected.
+A temporary probe in `derived_group_mid` (`DTMT_MID_PROBE=1` in the environment) shows that
+function is called **five times** for the whole mod, and never with the 240 or the 1792 the diff
+carries:
+
+    MIDPROBE descriptors=12 x_end=176 cbuffers=[(16, 3890193121), (416, 3043202584), (400, 3013798792), (304, 3484696816)]
+    MIDPROBE descriptors=10 x_end=160 cbuffers=[same]
+    MIDPROBE descriptors=10 x_end=128 cbuffers=[(272, 3043202584), (16, 3501865744)]
+    MIDPROBE descriptors=6  x_end=80  cbuffers=[(16, 3890193121), (272, 3484696816)]
+    MIDPROBE descriptors=5  x_end=72  cbuffers=[(16, 3890193121), (272, 3484696816)]
+
+Those are the **standard** family's groups. `ui_default_base` is a **declaration-only** material -
+the build log says "Generated a 421584 byte shader section from
+'materials/mods/snoopymod/ui_default_base.shader_node'" - so its engine data text is empty and every
+part derives (`build.rs`: "No engine data: an empty file, so every part derives"). Its 36 groups'
+`mid`s therefore do **not** come from `derived_group_mid`; they are carried from a template the
+build fetches. That is the missing input.
+
+What the two words are, measured: the repo's own `group_parts` probe calls the differing 12 bytes a
+**gap** - uncovered by any canonical run, packed run or condition header - i.e. a `{w1, w2, count}`
+section header, with `count` constant at **73 records**. Good `{240, 64, 73}`, bad `{1792, 0, 73}`.
+
+And 240 is exactly the **derived material table's extent**: the last derived variable sits at 224
+with size 16 (`build.rs` names the table: the engine's matrices at 32/96/160, the declaration's own
+from 224), while **1792 is the compiled `c_per_object`'s size** - the very pair this build already
+*warns* about:
+
+    the derived material table is 240 bytes; the compiled c_per_object is 1792
+
+So the smoking gun is a warning where it needs to be an error, and the section carries the compiled
+flat-array total where the derived layout belongs - the reconstructed source declares `c_per_object`
+as a flat array, and its reflection gives the array's total rather than the layout the engine reads,
+which `build.rs` states in as many words.
+
+Next: find where a declaration-only material's template is fetched from, and why that fetch yields
+the compiled total. `DTMT_MID_PROBE` is left in place as the instrument.
