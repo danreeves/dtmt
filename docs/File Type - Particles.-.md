@@ -324,3 +324,25 @@ so the descriptors, the widths and the shader agree - the first independent chec
 particle work has had beyond the community compiler itself. `particle_ribbon.shader_source`
 and `core/shader_nodes/billboard_particles/*` (9 nodes) are the same kind of help for
 the ribbon and the writers.
+**Correction: `kSizeAt` is the offset *of the size word*, not the size itself.**
+`VISUALIZER_SIZE_AT` (`kSizeAt = {0xf4, 0xf8, 0xf8, 0xf0, 0xa0}`) locates a `u32`
+**within** the record - the parse reads `u32_at(bytes, vis + 4 + VISUALIZER_SIZE_AT[kind])`
+- and *that word* is the record's size. The earlier note here calling them "the payload
+sizes" was wrong.
+
+The two readings agree, which is a useful check. For `billboard` the size word is at
+0xf4, and the layout reaches it at `stride_at + 12 = 0xe8 + 12 = 0xf4` - the same
+place. For `gpu` it is at 0xa0, and the fields reach it exactly:
+
+| from | bytes | lands on |
+|---|---|---|
+| 3 x `ID+CONST+RES` (`ID`=4, `RES`=8) | 48 | - |
+| `PAD(16)` | 16 | **0x40** - the reference's own `field_40`, `field_44` |
+| `ID,ID,ID,CONST` | 16 | **0x50** - `flags_50` |
+| `U,U` then `F` x5 | 28 | 0x6c - `field_5c`..`field_6c` |
+| `U` x4, `ID`, `U` | 24 | **0x84** - `field_80`, `field_84` |
+| 24 + 4 | 28 | **0xa0** - the size word's home |
+
+So the field *names* the reference gives (which encode their offsets) confirm `ID` = 4
+and `RES` = 8 for a third time, and they also show the layout is self-consistent with
+the size-word location - which is what makes `gpu` mechanical.
