@@ -395,3 +395,46 @@ That answers what the three unresolved types are *for*, at least in the VT2 pipe
 between the version word and the chunk - and see whether it is the same wrapper VT2's bank
 source carries; (2) decode `wwise_metadata` (a shipped type with zero instances, so its only
 reference is this VT2 shape); (3) leave the `.bnk` and the `.ogg` opaque, as Wwise's own.
+
+## Corrections (2026-10-15): three claims retracted, with references
+
+Reported with file-and-line references, and each one changes a next step rather than just a sentence.
+
+**1. "The streamed-geometry vertices are in no bundle, so they are genuinely unrecoverable" was
+wrong.** They are recoverable two ways over. `bitsquid-blender-tools` reads a Darktide unit's
+`.stream` side file directly: the unit header carries a `stream_name`, and `patch_mesh_geometry()`
+fills the LOD objects' `stream_mesh_order` meshes from it (`stingray/unit/dt.py:405,431,519,527`,
+plus `patch_mesh_geometry`). What the guard is honest about is narrower - **recompiling a payload in
+isolation**, which is what a mod tool must do when it rebuilds a bundle - and it says nothing about
+*extraction*. The earlier wording conflated "the payload alone cannot reproduce it" with "it does not
+exist". So the Unit type's remaining class is a gap in the **recompiler**, not in the reader: the
+honest row is "readable from the side file, not reproducible from the payload alone".
+
+**2. "Lighting lives outside the shader and is not decoded" was too strong.** `filediver` decodes
+`shading_environment` (`stingray/shading_environment/shading_environment.go`): its variables, the
+shader-variable mappings, the texture names and the entity-setting mappings. That is exactly the piece
+this tree has no reader for - and it is decoded elsewhere, so it is not an open question. Two working
+references exist for the *look* itself: `bitsquid-blender-tools`' hand-rolled **DarktideUbershader**
+node group (`bitsquid/resources/Darktide ubershader.blend`, wired at
+`stingray_materials/__init__.py:49` and `material/import_compiled.py:380`) and `filediver`'s credited
+"Accurate HD2 Shader" material. The material model is therefore a **solved problem in the community**,
+not an open one.
+
+**3. `filediver` is the clincher, and it is the same engine.** It is Autodesk Stingray/Bitsquid -
+Helldivers 2 - and it ships the pipeline end to end:
+
+- models to glTF/GLB/Blender with bones, textures and animations (`cmd/filediver-cli/main.go:691`,
+  `app/app.go:824`), with the format selectable as `blend,glb,gltf,raw`
+  (`app/appconfig/appconfig.go:87`);
+- an in-app real-time preview: `cmd/filediver-gui/widgets/previews/unit_preview.go` renders units with
+  hand-written GLSL (`shaders/object.vert|frag`), binding the decoded material's albedo and normal
+  textures;
+- the `shading_environment` decoder above.
+
+**What this changes here.** `shading_environment` (1,241 shipped) moves from "no reader anywhere" to
+"decoded elsewhere, with the reference on disk"; the Unit row's last class moves from "unrecoverable"
+to "readable from the side file"; and the material model stops being an open question, because the
+ubershader node group and the HD2 shader are two working answers to it. The next moves follow from
+that: (a) read `filediver`'s `shading_environment` decoder and implement the type; (b) read the
+`.stream` side-file path in `dt.py` and correct the guard's wording rather than its behaviour; (c)
+treat the material model as a **port**, not a derivation.

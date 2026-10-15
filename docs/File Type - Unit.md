@@ -238,7 +238,7 @@ The rejections, by class:
 | simple animations | 1,464 | **carried** verbatim (`simple_animation`, `animation_groups_raw`) |
 | actors | 833 | **carried** verbatim (`actors_raw`) - the record is walkable |
 | skinned units | 116 | **carried** verbatim (`skins_raw`) |
-| streamed geometry | 76 | nothing - the bytes are in no bundle (see below) |
+| streamed geometry | 76 | readable from the unit's `.stream` side file (`stingray/unit/dt.py`); not reproducible from the payload alone (see below) |
 | unknown device blob not empty | 7 | **carried** verbatim as `device_blob` |
 | channel component 6 type 2 | 1 | **decoded** as `f32`s |
 | cameras and lights | 1 | **carried** verbatim (`cameras_raw`) |
