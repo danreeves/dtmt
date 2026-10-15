@@ -979,7 +979,11 @@ variable sets (the miner's CSVs give the sets and hashes), diff them and locate
 the record for a known variable (e.g. `dev_wireframe_color` = `795CF4A7` on the
 UI base shader). Then clone that record with a new name hash and offset, patch
 it consistently (block, canonical records, packed copies, descriptors, tails)
-and test in game whether a material declaring the new name binds. If the block
+and test in game whether a material declaring the new name binds. **The plan is written out in
+[Shader Experiment - VT2 SDK](Shader%20Experiment%20-%20VT2%20SDK.md)** - the paths, the steps and
+what each outcome means - and the VT2 SDK needs *no* record patching at all, because its toolchain
+derives the block, the canonical records, the packed copies, the descriptors and the tails from the
+sources. That step belongs to this tree's era of hand-carried engine data, which no longer exists. If the block
 can be grown, generation is a matter of modelling its record stream; if not, the
 interface is engine-compiled and custom base materials stay bound to shipped
 shaders. Supporting decodes, as the experiment needs them: descriptor `Y`
