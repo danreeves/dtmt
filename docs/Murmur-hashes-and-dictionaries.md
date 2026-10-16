@@ -39,3 +39,21 @@ Two things to know before repeating it:
 - the written line count is not `old + added`. The loader materialises entries the file does not spell
   out (39 here), so the file grows by `added + 39`. The arithmetic closes:
   `1,780,864 + 44,284 + 39 = 1,825,187`.
+
+### What the merge resolved in this tree (2026-10-16)
+
+Measured rather than assumed: every hex hash appearing in `docs/`, `lib/`, `crates/` and snoopy-mod
+is **279 candidates**, of which **73 resolved before the merge and 77 after** - five set members,
+four net entries, every one of them `content/texture_categories/...` (`weapon_nm`, `environment_nm`,
+`character_nm`, `environment_hm`, `skydome`), all in the `texture_category` group.
+
+So the honest answer to "what does this unlock?" is: **almost nothing in our own docs and code**. The
+five are the 64-bit forms of categories this tree already had in 32-bit, they appear nowhere in the
+tree, and the texture reader uses `IdString32` only. That matches the shape of the additions too -
+they are overwhelmingly *paths* (`content/...` 34,111, `wwise/...` 10,036), which is what a community
+dictionary from an asset dump mostly contains.
+
+The merge's value is therefore in the **data**, not in the docs: resolving `#<hex>` names as
+decompiled materials, shader channel records, unit sections and animation names are read. This
+measurement does **not** cover that - it checked the repo and snoopy-mod, not the extraction corpus -
+so the data side is still unmeasured.

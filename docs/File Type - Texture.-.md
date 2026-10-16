@@ -491,3 +491,24 @@ together with a 699196-byte `0400F8C315A60225.dds` (all 9 mips,
   verified above).
 * Stingray per-platform texture sections and the non-implemented `output`
   options are ignored.
+
+## Which categories the community dictionary names (2026-10-16)
+
+Merging the community dictionary (44,284 names; see
+`Murmur-hashes-and-dictionaries.md`) resolves **five** of the twelve categories above, and only in
+their **64-bit** form:
+
+| Long hash | Category |
+|---|---|
+| `ACFE5D4396AAE745` | `weapon_nm` |
+| `3390ABA5A2EE8D69` | `environment_nm` |
+| `E4378318511751DE` | `character_nm` |
+| `9E302B8B455F735C` | `environment_hm` |
+| `B032BB5CAF2037C2` | `skydome` |
+
+Be precise about what that is worth: the *names* were already pinned here from shipped data in 32-bit
+form, the 64-bit forms appear **nowhere** in this tree, and this reader uses `IdString32` only
+(`lookup_hash_short(.., HashGroup::TextureCategory)`). So the merge names nothing this type needs - the
+five are the 64-bit twins of categories already known. The other seven (`ui`, `environment_orm`,
+`character_orm`, `weapon_orm`, `weapon_hm`, `character_mask`, `vfx_nm`) are unresolved in **both**
+forms by the dictionary, though this page pins their names from shipped data all the same.
