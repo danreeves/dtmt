@@ -7,3 +7,35 @@ But the dictionary is far from complete, and likely never will be. Therefore, DT
 CSV format for the dictionary: `string,murmur64,murmur32,group`.
 
 The `group` is one of several (see `dtmt dictionary add --help`), which segment hashes by their usage in the engine. While uniformity for Murmur is decent, Fatshark's compilation pipeline only ensures unique hashes within their respective usage groups. E.g. hashes for file names are ensured to be unique among themselves, but may overlap with the ones for localization IDs in `.strings` files. Therefore, DTMT has to respect the same groups to avoid false-positive matches during decompilation.
+## Merging a community dictionary (2026-10-16)
+
+`C:\Users\Dan\Downloads\darktide-dictionary.csv` (235,447 entries) was merged in: **44,284 names
+added**, 241 skipped as duplicates, taking this tree's dictionary from 1,780,864 lines to
+**1,825,186 entries** (1,825,187 lines with the header).
+
+The two formats differ, and that matters when comparing them:
+
+| file | format |
+|---|---|
+| theirs | `hash,type,path` - lowercase hash, no group |
+| this tree's | `value,long,short,group` |
+
+So a comparison must match *their* field 1 against *our* field 2, upper-cased. Matching field 1
+against field 1 - a first attempt - reports **100% different**, which is impossible and is the tell
+that the columns are wrong.
+
+Most of the additions are `content/...` (34,111) and `wwise/...` (10,036), with a long tail
+(`scripts` 159, `base` 93, `dialogues` 31, `packages` 15, ...). The `wwise` ones are the most useful
+of the tail, since the sound workstream's next steps hinge on resolving bank and event names.
+
+`dtmt dictionary add -g filename <file>` does the whole job: names line by line, duplicates skipped in
+O(n) (see the comment in `cmd/dictionary.rs`), and it **writes the dictionary itself** - a following
+`dictionary save` is unnecessary and only re-serialises what is already on disk.
+
+Two things to know before repeating it:
+
+- `dictionary.csv` is **not tracked by git** - it is a local 124 MB artifact - so a merge needs no
+  commit;
+- the written line count is not `old + added`. The loader materialises entries the file does not spell
+  out (39 here), so the file grows by `added + 39`. The arithmetic closes:
+  `1,780,864 + 44,284 + 39 = 1,825,187`.
